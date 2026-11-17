@@ -1,0 +1,108 @@
+﻿BUILD <repo>\spikes\s10-sqlite-smb\data\big.raycad: 200 objects x 1048576 bytes, file 200.9 MB, 4.4 s
+BENCH path=<repo>\spikes\s10-sqlite-smb\data\big.raycad
+  file 200.9 MB, 200 manifest slots (manifest object 6408 bytes), page_size=4096 cache_size=-2000
+  settings: journal_mode=delete synchronous=2 locking_mode=exclusive
+  open + read ref, commit and manifest: 5.3 ms (OS file cache state not controlled)
+  save  1:   19.04 ms,   156296 bytes written in  65 write calls, file grew 57344 bytes
+  save  2:   17.19 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  3:   16.40 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  4:   17.47 ms,   184984 bytes written in  76 write calls, file grew 69632 bytes
+  save  5:   17.86 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  6:   16.57 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  7:   18.17 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  8:   16.95 ms,   164488 bytes written in  67 write calls, file grew 65536 bytes
+  save  9:   16.76 ms,   135792 bytes written in  54 write calls, file grew 61440 bytes
+  save 10:   17.06 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 11:   16.85 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 12:   14.63 ms,   164488 bytes written in  67 write calls, file grew 65536 bytes
+  save 13:   21.28 ms,   160392 bytes written in  66 write calls, file grew 61440 bytes
+  save 14:   20.01 ms,   107096 bytes written in  41 write calls, file grew 57344 bytes
+  save 15:   33.72 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 16:   15.32 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 17:   15.91 ms,   107096 bytes written in  41 write calls, file grew 57344 bytes
+  save 18:   16.11 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 19:   16.84 ms,   189088 bytes written in  79 write calls, file grew 65536 bytes
+  save 20:   14.72 ms,   107096 bytes written in  41 write calls, file grew 57344 bytes
+  SUMMARY change=50000 bytes: save time median 16.95 ms (min 14.63, max 33.72); bytes written median 131696 (min 107096, max 189088); file grew 1191936 bytes over 20 saves
+CHECK <repo>\spikes\s10-sqlite-smb\data\big.raycad: ok head seq 20, 241 objects, 201.1 MB hashed, 2119 ms 
+BUILD <repo>\spikes\s10-sqlite-smb\data\big.raycad: 4000 objects x 51200 bytes, file 205.5 MB, 2.7 s
+BENCH path=<repo>\spikes\s10-sqlite-smb\data\big.raycad
+  file 205.5 MB, 4000 manifest slots (manifest object 128008 bytes), page_size=4096 cache_size=-2000
+  settings: journal_mode=delete synchronous=2 locking_mode=exclusive
+  open + read ref, commit and manifest: 81.4 ms (OS file cache state not controlled)
+  save  1:   42.04 ms,   229976 bytes written in  71 write calls, file grew 180224 bytes
+  save  2:   13.38 ms,   229976 bytes written in  71 write calls, file grew 180224 bytes
+  save  3:   12.16 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save  4:   12.88 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  save  5:   12.42 ms,   258672 bytes written in  84 write calls, file grew 184320 bytes
+  save  6:   11.48 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  save  7:   12.34 ms,   283272 bytes written in  96 write calls, file grew 184320 bytes
+  save  8:   10.26 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save  9:    7.71 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 10:    7.45 ms,   303776 bytes written in 107 write calls, file grew 180224 bytes
+  save 11:    8.21 ms,   336568 bytes written in 121 write calls, file grew 188416 bytes
+  save 12:    7.09 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 13:    7.55 ms,   258672 bytes written in  84 write calls, file grew 184320 bytes
+  save 14:    6.99 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  save 15:    7.40 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  save 16:    7.71 ms,   332472 bytes written in 120 write calls, file grew 184320 bytes
+  save 17:    7.32 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 18:    7.09 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 19:    7.48 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 20:    7.88 ms,   283272 bytes written in  96 write calls, file grew 184320 bytes
+  SUMMARY change=50000 bytes: save time median 7.88 ms (min 6.99, max 42.04); bytes written median 258672 (min 229976, max 336568); file grew 3633152 bytes over 20 saves
+CHECK <repo>\spikes\s10-sqlite-smb\data\big.raycad: ok head seq 20, 4041 objects, 198.8 MB hashed, 2537 ms 
+BUILD <repo>\spikes\s10-sqlite-smb\data\big.raycad: 200 objects x 1048576 bytes, file 200.9 MB, 3.3 s
+BENCH path=<repo>\spikes\s10-sqlite-smb\data\big.raycad
+  file 200.9 MB, 200 manifest slots (manifest object 6408 bytes), page_size=4096 cache_size=-2000
+  settings: journal_mode=delete synchronous=2 locking_mode=exclusive
+  open + read ref, commit and manifest: 14.2 ms (OS file cache state not controlled)
+  save  1:   33.55 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  2:   27.82 ms,   135792 bytes written in  54 write calls, file grew 61440 bytes
+  save  3:   26.31 ms,   123496 bytes written in  49 write calls, file grew 57344 bytes
+  save  4:   26.68 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  5:   31.50 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  6:   27.27 ms,   164488 bytes written in  67 write calls, file grew 65536 bytes
+  save  7:   26.67 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  8:   26.41 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save  9:   28.51 ms,   135792 bytes written in  54 write calls, file grew 61440 bytes
+  save 10:   29.62 ms,   160392 bytes written in  66 write calls, file grew 61440 bytes
+  save 11:   29.46 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 12:   25.22 ms,   156296 bytes written in  65 write calls, file grew 57344 bytes
+  save 13:   30.69 ms,   176792 bytes written in  74 write calls, file grew 61440 bytes
+  save 14:   24.96 ms,   107096 bytes written in  41 write calls, file grew 57344 bytes
+  save 15:   26.24 ms,   176792 bytes written in  74 write calls, file grew 61440 bytes
+  save 16:   21.57 ms,   107096 bytes written in  41 write calls, file grew 57344 bytes
+  save 17:   25.77 ms,   164488 bytes written in  67 write calls, file grew 65536 bytes
+  save 18:   27.63 ms,   135792 bytes written in  54 write calls, file grew 61440 bytes
+  save 19:   25.64 ms,   131696 bytes written in  53 write calls, file grew 57344 bytes
+  save 20:   26.95 ms,   135792 bytes written in  54 write calls, file grew 61440 bytes
+  SUMMARY change=50000 bytes: save time median 26.95 ms (min 21.57, max 33.55); bytes written median 135792 (min 107096, max 176792); file grew 1191936 bytes over 20 saves
+CHECK <repo>\spikes\s10-sqlite-smb\data\big.raycad: ok head seq 20, 241 objects, 201.1 MB hashed, 4106 ms 
+BUILD <repo>\spikes\s10-sqlite-smb\data\big.raycad: 4000 objects x 51200 bytes, file 205.5 MB, 4.5 s
+BENCH path=<repo>\spikes\s10-sqlite-smb\data\big.raycad
+  file 205.5 MB, 4000 manifest slots (manifest object 128008 bytes), page_size=4096 cache_size=-2000
+  settings: journal_mode=delete synchronous=2 locking_mode=exclusive
+  open + read ref, commit and manifest: 91.9 ms (OS file cache state not controlled)
+  save  1:   21.85 ms,   336568 bytes written in 121 write calls, file grew 188416 bytes
+  save  2:   11.85 ms,   307872 bytes written in 108 write calls, file grew 184320 bytes
+  save  3:   13.29 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  save  4:   14.16 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save  5:   12.81 ms,   258672 bytes written in  84 write calls, file grew 184320 bytes
+  save  6:   14.71 ms,   307872 bytes written in 108 write calls, file grew 184320 bytes
+  save  7:   13.61 ms,   311968 bytes written in 109 write calls, file grew 188416 bytes
+  save  8:    9.35 ms,   287368 bytes written in  97 write calls, file grew 188416 bytes
+  save  9:   21.84 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 10:   10.78 ms,   303776 bytes written in 107 write calls, file grew 180224 bytes
+  save 11:    9.92 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 12:    8.84 ms,   283272 bytes written in  96 write calls, file grew 184320 bytes
+  save 13:    9.48 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 14:    8.71 ms,   283272 bytes written in  96 write calls, file grew 184320 bytes
+  save 15:    9.42 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 16:    9.34 ms,   283272 bytes written in  96 write calls, file grew 184320 bytes
+  save 17:    9.14 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 18:    8.87 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  save 19:    9.33 ms,   254576 bytes written in  83 write calls, file grew 180224 bytes
+  save 20:    9.58 ms,   279176 bytes written in  95 write calls, file grew 180224 bytes
+  SUMMARY change=50000 bytes: save time median 9.92 ms (min 8.71, max 21.85); bytes written median 279176 (min 254576, max 336568); file grew 3653632 bytes over 20 saves
+CHECK <repo>\spikes\s10-sqlite-smb\data\big.raycad: ok head seq 20, 4041 objects, 198.8 MB hashed, 5742 ms 

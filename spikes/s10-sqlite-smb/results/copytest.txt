@@ -1,0 +1,220 @@
+﻿  stopping early at copy 137: file reached 300 MB
+COPY TEST path=<repo>\spikes\s10-sqlite-smb\data\c.raycad copies=137 (writer made 18181 saves meanwhile, file 301.8 MB)
+  (a) copy of the database file alone:          126 bad of 137 (0 copy calls failed)
+  (b) copy of database then journal + rollback: 125 bad of 137
+  (c) copy guarded by writer's save counter:    0 bad of 0 (27400 retries, 137 gave up after 200 attempts)
+         1 x db+journal: blob hash mismatch at seq 2124
+         1 x db+journal: head: manifest missing or malformed
+        92 x db+journal: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x db+journal: integrity_check: *** in database main ***
+Page 11435: never 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 10781 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 10999 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 1363 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 14868 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 15658 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 1769 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 21990 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 25747 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 26228:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 2748 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 31008 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 32596 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 33111:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 38392 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 41033 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 4138 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 4331 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 45317 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 46355 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 47182 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 4865 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 57559:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 58304 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 65206 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 6527 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 67664 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 8028 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 6 page 25312:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 6 page 60908:
+         1 x db+journal: integrity_check: row not in PRIMARY KEY order for objects|ro
+       102 x naive: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 11598 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 14142 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 16994 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 2644 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 26630 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 3016 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 309 ce
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 33056 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 33965 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 40823 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 4121 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 45060 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 47350 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 50342 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 5055 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 51922 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 64326 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 6900 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 71692 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 8159 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 934 ce
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 9759 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 6 page 23912 
+         1 x naive: integrity_check: *** in database main ***
+Tree 6 page 52693 
+  stopping early at copy 119: file reached 300 MB
+COPY TEST path=<repo>\spikes\s10-sqlite-smb\data\cs.raycad copies=119 (writer made 18253 saves meanwhile, file 300.2 MB)
+  (a) copy of the database file alone:          112 bad of 119 (0 copy calls failed)
+  (b) copy of database then journal + rollback: 117 bad of 119
+  (c) copy guarded by writer's save counter:    0 bad of 0 (23800 retries, 119 gave up after 200 attempts)
+        87 x db+journal: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 13351 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 15256 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 18565 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 26641 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 27603 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 29799 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 30186 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 31116:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 33504 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 33670 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 34462 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 366 ce
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 3849 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 3906 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 42856:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 4397 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 4529 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 45426 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 4608 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 46589 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 5155 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 5263 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 53326 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 54341:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 56046 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 57616 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 6959 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 72090:
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 7912 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 6 page 75365:
+        94 x naive: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 10144 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 10192 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 15939 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 17479 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 19191 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 25339 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 27391 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 27987 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 29720 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 49324 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 56633 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 57214 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 6344 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 7055 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 7981 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 6 page 12198 
+         1 x naive: integrity_check: *** in database main ***
+Tree 6 page 23896 
+         1 x naive: orphan objects: table has 48448, reachable 48447

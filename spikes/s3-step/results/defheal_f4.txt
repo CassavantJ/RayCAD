@@ -1,0 +1,7 @@
+R|f4_asm_24body.step|file|-|sizeMB=46.90|occt=8.0.1|threads=32|occtThreads=-1
+R|f4_asm_24body.step|init|-|ms=1.8|peakMB=14
+R|f4_asm_24body.step|read|-|ms=1676.6|status=1|peakMB=356|curMB=248
+R|f4_asm_24body.step|transfer|default-heal|ms=7968.3|roots=1|polls=102937|maxPollGapMs=184.3|peakMB=356|curMB=323
+R|f4_asm_24body.step|release-reader|-|ms=176.6|curMB=88
+R|f4_asm_24body.step|shape|-|solids=24|shells=24|faces=13245|edges=62788|freeFaces=0|brepBox=-3.4822774164914329e-07,-3.4822774164914329e-07,-3.4822774164914329e-07,505.00000034822773,347.00000034822773,1055.0000003482285
+R|f4_asm_24body.step|mesh|low/pool|ms=2462.4|tris=1425776|nodes=1383376|hash=e67a9292a51c35cf|unmeshed=0|polls=120563|maxPollGapMs=122.6|peakMB=1960|curMB=212|meshBox=0,0,0,505,347,1055

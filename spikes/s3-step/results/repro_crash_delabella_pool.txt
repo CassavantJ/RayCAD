@@ -1,0 +1,21 @@
+R|f5_asm_46body.step|mesh|high/pool|ms=4318.2|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=274.2|peakMB=1553|curMB=874|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4671.2|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=286.2|peakMB=1674|curMB=891|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+X|unhandled SEH exception code=0xc0000005 address=00007FFCF1F71F32 peakMB=1674 thread=52884
+X|access violation reading address 0000000000000000
+X|#00 TKMesh.dll!BRepMesh_ModelHealer::closestPoints+0x52 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_ModelHealer.hxx:118
+X|#01 TKMesh.dll!BRepMesh_ModelHealer::connectClosestPoints+0x17f M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_ModelHealer.cxx:491
+X|#02 TKMesh.dll!BRepMesh_ModelHealer::fixFaceBoundaries+0x298 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_ModelHealer.cxx:327
+X|#03 TKMesh.dll!BRepMesh_ModelHealer::process+0x6d M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_ModelHealer.cxx:246
+X|#04 TKMesh.dll!OSD_Parallel::For<BRepMesh_ModelHealer>+0x1d7 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\FoundationClasses\TKernel\OSD\OSD_Parallel.hxx:360
+X|#05 TKMesh.dll!BRepMesh_ModelHealer::performInternal+0x213 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_ModelHealer.cxx:153
+X|#06 TKMesh.dll!IMeshTools_ModelAlgo::Perform+0xa M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\IMeshTools\IMeshTools_ModelAlgo.hxx:42
+X|#07 TKMesh.dll!IMeshTools_Context::HealModel+0x5f M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\IMeshTools\IMeshTools_Context.hxx:75
+X|#08 TKMesh.dll!IMeshTools_MeshBuilder::Perform+0xd5 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\IMeshTools\IMeshTools_MeshBuilder.cxx:56
+X|#09 TKMesh.dll!BRepMesh_IncrementalMesh::Perform+0x180 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_IncrementalMesh.cxx:95
+X|#10 TKMesh.dll!BRepMesh_IncrementalMesh::Perform+0x4e M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_IncrementalMesh.cxx:79
+X|#11 TKMesh.dll!BRepMesh_IncrementalMesh::BRepMesh_IncrementalMesh+0x64 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_IncrementalMesh.cxx:67
+X|#12 s3bench.exe!?+0x0 :0
+X|#13 s3bench.exe!?+0x0 :0
+X|#14 ucrtbase.dll!wcsrchr+0x150 :0
+X|#15 KERNEL32.DLL!BaseThreadInitThunk+0x17 :0
+X|#16 ntdll.dll!RtlUserThreadStart+0x2c :0

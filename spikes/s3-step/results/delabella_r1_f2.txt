@@ -1,0 +1,16 @@
+R|f2_asm_5body.step|file|-|sizeMB=9.61|occt=8.0.1|threads=32|occtThreads=-1
+R|f2_asm_5body.step|init|-|ms=1.7|peakMB=14
+R|f2_asm_5body.step|read|-|ms=335.3|status=1|peakMB=86|curMB=64
+R|f2_asm_5body.step|transfer|no-heal|ms=139.6|roots=1|polls=2808|maxPollGapMs=21.7|peakMB=86|curMB=81
+R|f2_asm_5body.step|release-reader|-|ms=28.8|curMB=33
+R|f2_asm_5body.step|heal|ShapeFix_Shape|ms=2447.0|changed=1|polls=18660|maxPollGapMs=226.9|peakMB=86|curMB=35
+R|f2_asm_5body.step|shape|-|solids=5|shells=5|faces=2757|edges=13116|freeFaces=0|brepBox=-3.9327524094064722e-07,-3.9327524094064722e-07,-3.9327524094064722e-07,470.00000039327523,339.00000039327523,215.00000039327591
+R|f2_asm_5body.step|mesh|low/st|ms=1071.7|tris=296606|nodes=287694|hash=6bc83dfe62716bfc|unmeshed=0|polls=16774|maxPollGapMs=318.6|peakMB=123|curMB=57|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|low/occt|ms=378.2|tris=296606|nodes=287694|hash=6bc83dfe62716bfc|unmeshed=0|polls=16774|maxPollGapMs=175.9|peakMB=184|curMB=71|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|low/pool|ms=320.7|tris=296606|nodes=287694|hash=6bc83dfe62716bfc|unmeshed=0|polls=16782|maxPollGapMs=56.0|peakMB=184|curMB=74|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|med/st|ms=1776.1|tris=518772|nodes=490351|hash=aef400f64c696a0e|unmeshed=0|polls=20299|maxPollGapMs=453.4|peakMB=184|curMB=84|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|med/occt|ms=493.9|tris=518772|nodes=490351|hash=aef400f64c696a0e|unmeshed=0|polls=20299|maxPollGapMs=237.6|peakMB=258|curMB=90|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|med/pool|ms=502.2|tris=518772|nodes=490351|hash=aef400f64c696a0e|unmeshed=0|polls=20307|maxPollGapMs=71.6|peakMB=258|curMB=98|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|high/st|ms=3834.6|tris=1130694|nodes=1024748|hash=6e99136cd3766ea4|unmeshed=0|polls=39026|maxPollGapMs=839.8|peakMB=258|curMB=129|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|high/occt|ms=798.4|tris=1130694|nodes=1024748|hash=6e99136cd3766ea4|unmeshed=0|polls=39026|maxPollGapMs=397.6|peakMB=460|curMB=154|meshBox=0,0,0,470,339,215
+R|f2_asm_5body.step|mesh|high/pool|ms=1045.5|tris=1130694|nodes=1024748|hash=6e99136cd3766ea4|unmeshed=0|polls=39034|maxPollGapMs=156.3|peakMB=460|curMB=136|meshBox=0,0,0,470,339,215

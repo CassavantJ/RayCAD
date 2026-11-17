@@ -1,0 +1,71 @@
+﻿COPY TEST path=<repo>\spikes\s10-sqlite-smb\data\c.raycad copies=200 (writer made 11795 saves meanwhile, file 193.5 MB)
+  (a) copy of the database file alone:          34 bad of 200 (0 copy calls failed)
+  (b) copy of database then journal + rollback: 29 bad of 200
+  (c) copy guarded by writer's save counter:    0 bad of 184 (3592 retries, 16 gave up after 200 attempts)
+        23 x db+journal: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 14023 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 14729 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 21871 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 3562 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 8743 c
+         1 x db+journal: orphan objects: table has 30379, reachable 30378
+        28 x naive: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 108 ce
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 2863 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 42733 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 4314 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 7253 c
+         1 x naive: orphan objects: table has 10273, reachable 10272
+  stopping early at copy 71: file reached 300 MB
+COPY TEST path=<repo>\spikes\s10-sqlite-smb\data\cs.raycad copies=71 (writer made 18312 saves meanwhile, file 302.3 MB)
+  (a) copy of the database file alone:          58 bad of 71 (0 copy calls failed)
+  (b) copy of database then journal + rollback: 62 bad of 71
+  (c) copy guarded by writer's save counter:    0 bad of 10 (12279 retries, 61 gave up after 200 attempts)
+        55 x db+journal: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x db+journal: integrity_check: *** in database main ***
+Page 21391: never 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 10467 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 18606 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 26091 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 2697 c
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 32672 
+         1 x db+journal: integrity_check: *** in database main ***
+Tree 4 page 40801 
+        45 x naive: integrity_check failed to run: PRAGMA integrity_check: rc=11
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 14190 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 1939 c
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 25866 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 29797 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 31842 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 35066 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 42418 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 45626 
+         1 x naive: integrity_check: *** in database main ***
+Tree 4 page 8520 c
+         1 x naive: integrity_check: row not in PRIMARY KEY order for commits
+         1 x naive: integrity_check: row not in PRIMARY KEY order for objects
+         1 x naive: orphan objects: table has 18128, reachable 18127
+         1 x naive: orphan objects: table has 19573, reachable 19572

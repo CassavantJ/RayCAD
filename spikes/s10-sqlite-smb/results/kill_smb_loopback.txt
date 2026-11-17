@@ -1,0 +1,38 @@
+  50/500 iterations, 0 failures, head seq 6, db 7.6 MB
+  100/500 iterations, 0 failures, head seq 23, db 16.2 MB
+  150/500 iterations, 0 failures, head seq 14, db 16.1 MB
+  200/500 iterations, 0 failures, head seq 14, db 18.8 MB
+  250/500 iterations, 0 failures, head seq 15, db 17.3 MB
+  300/500 iterations, 0 failures, head seq 29, db 15.0 MB
+  350/500 iterations, 0 failures, head seq 23, db 18.0 MB
+  400/500 iterations, 0 failures, head seq 4, db 5.1 MB
+  450/500 iterations, 0 failures, head seq 20, db 6.9 MB
+  500/500 iterations, 0 failures, head seq 15, db 24.1 MB
+KILL TEST path=<repo>\spikes\s10-sqlite-smb\data\ks.raycad
+iterations (each = kill + check): 500   extra early kills on un-recovered file: 132   total TerminateProcess calls: 632
+check failures: 0   writer exited by itself: 0   SQLITE_BUSY retries: 0
+saves acknowledged by writers: 1731   file rotations (at 24 MB): 58   wall time 530.4 s   mean check 936.1 ms
+writer phase at kill:
+  idle             9
+  in-COMMIT        151
+  starting         53
+  txn-statements   287
+journal file state right after kill (before any reopen):
+  empty            2
+  extra:hdr0       2
+  extra:hot        36
+  extra:none       3
+  extra:zeroed     91
+  hot              164
+  none             17
+  zeroed           317
+phase x journal:
+  idle / journal zeroed                    9
+  in-COMMIT / journal hot                  99
+  in-COMMIT / journal zeroed               52
+  starting / journal none                  14
+  starting / journal zeroed                39
+  txn-statements / journal empty           2
+  txn-statements / journal hot             65
+  txn-statements / journal none            3
+  txn-statements / journal zeroed          217

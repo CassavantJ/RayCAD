@@ -1,0 +1,15 @@
+R|f5_asm_46body.step|file|-|sizeMB=95.47|occt=8.0.1|threads=32|occtThreads=-1
+R|f5_asm_46body.step|init|-|ms=1.8|peakMB=14
+R|f5_asm_46body.step|read|-|ms=3576.8|status=1|peakMB=697|curMB=478
+R|f5_asm_46body.step|transfer|no-heal|ms=1318.8|roots=1|polls=26876|maxPollGapMs=207.1|peakMB=697|curMB=621
+R|f5_asm_46body.step|release-reader|-|ms=365.5|curMB=153
+R|f5_asm_46body.step|heal|ShapeFix_Shape|ms=26616.1|changed=1|polls=178807|maxPollGapMs=1299.0|peakMB=697|curMB=171
+R|f5_asm_46body.step|shape|-|solids=46|shells=46|faces=26456|edges=125660|freeFaces=0|brepBox=-3.4387326592841551e-07,-3.4387326592841551e-07,-3.4387326592841551e-07,705.00000034387324,515.00000034387324,2055.0000003438736
+R|f5_asm_46body.step|mesh|low/st|ms=10673.7|tris=2857162|nodes=2772849|hash=b8a3b12e1d627ed7|unmeshed=0|polls=160755|maxPollGapMs=3211.6|peakMB=970|curMB=371|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|low/occt|ms=3648.9|tris=2857162|nodes=2772849|hash=b8a3b12e1d627ed7|unmeshed=0|polls=160755|maxPollGapMs=1622.7|peakMB=1068|curMB=424|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|low/pool|ms=2241.6|tris=2857162|nodes=2772849|hash=b8a3b12e1d627ed7|unmeshed=0|polls=160845|maxPollGapMs=161.2|peakMB=1068|curMB=417|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|med/st|ms=17869.2|tris=4985060|nodes=4719953|hash=f28a05306bc0c627|unmeshed=0|polls=193649|maxPollGapMs=4733.5|peakMB=1226|curMB=582|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|med/occt|ms=4273.3|tris=4981337|nodes=4718004|hash=449556137b9c13ea|unmeshed=1|polls=192909|maxPollGapMs=2186.2|peakMB=1450|curMB=528|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|med/pool|ms=2572.5|tris=4985060|nodes=4719953|hash=f28a05306bc0c627|unmeshed=0|polls=193739|maxPollGapMs=187.9|peakMB=1450|curMB=548|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|high/st|ms=37568.2|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373097|maxPollGapMs=8606.0|peakMB=1914|curMB=923|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|high/occt|ms=7044.9|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373097|maxPollGapMs=3522.7|peakMB=2523|curMB=1005|meshBox=0,0,0,705,515,2055

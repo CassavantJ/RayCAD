@@ -1,0 +1,24 @@
+## affinity mask 0x4 
+Eigen cache sizes used: L1 49152, L2 2097152, L3 37748736 bytes (detected)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+## affinity mask 0x4 --fix-cache
+Eigen cache sizes used: L1 32768, L2 1048576, L3 8388608 bytes (fixed by --fix-cache)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## affinity mask 0x10000 
+Eigen cache sizes used: L1 32768, L2 4194304, L3 37748736 bytes (detected)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## affinity mask 0x10000 --fix-cache
+Eigen cache sizes used: L1 32768, L2 1048576, L3 8388608 bytes (fixed by --fix-cache)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## affinity mask 0x4 
+Eigen cache sizes used: L1 49152, L2 2097152, L3 37748736 bytes (detected)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+## affinity mask 0x4 --fix-cache
+Eigen cache sizes used: L1 32768, L2 1048576, L3 8388608 bytes (fixed by --fix-cache)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## affinity mask 0x100000 
+Eigen cache sizes used: L1 32768, L2 4194304, L3 37748736 bytes (detected)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## affinity mask 0x100000 --fix-cache
+Eigen cache sizes used: L1 32768, L2 1048576, L3 8388608 bytes (fixed by --fix-cache)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692

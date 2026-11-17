@@ -1,0 +1,56 @@
+## rows 1 default build
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 1, gauss -1, alg 2
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+## rows 1 default build, 1 CPU
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+## rows 1 default build, debugMode Minimal
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+## rows 1 OpenMP build, Eigen::setNbThreads(1)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 1, QR: auto, rows 1, gauss -1, alg 2
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+Eigen::nbThreads() at exit: 1
+## rows 1 OpenMP build, Eigen::setNbThreads(2)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 2, QR: auto, rows 1, gauss -1, alg 2
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+Eigen::nbThreads() at exit: 2
+## rows 1 OpenMP build, Eigen::setNbThreads(8)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 8, QR: auto, rows 1, gauss -1, alg 2
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+Eigen::nbThreads() at exit: 8
+## rows 1 OpenMP build, Eigen::setNbThreads(24)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 24, QR: auto, rows 1, gauss -1, alg 2
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+Eigen::nbThreads() at exit: 24
+## rows 1 OpenMP build, EIGEN threads untouched (GCS sets 1)
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 4a3e7dc5b552af99
+## rows 1 AVX2 build
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: AVX SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, eigen threads requested: 0, QR: auto, rows 1, gauss -1, alg 2
+  reference: 18600 doubles, non-converged solves 0, FNV-1a hash 6e53ee8641fa6dc4
+## rows 4 default build
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+## rows 4 default build, 1 CPU
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+## rows 4 default build, debugMode Minimal
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+## rows 4 OpenMP build, Eigen::setNbThreads(1)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 1, QR: auto, rows 4, gauss -1, alg 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+Eigen::nbThreads() at exit: 1
+## rows 4 OpenMP build, Eigen::setNbThreads(2)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 2, QR: auto, rows 4, gauss -1, alg 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+Eigen::nbThreads() at exit: 2
+## rows 4 OpenMP build, Eigen::setNbThreads(8)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 8, QR: auto, rows 4, gauss -1, alg 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+Eigen::nbThreads() at exit: 8
+## rows 4 OpenMP build, Eigen::setNbThreads(24)
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: yes, SIMD: SSE, SSE2, eigen threads requested: 24, QR: auto, rows 4, gauss -1, alg 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+Eigen::nbThreads() at exit: 24
+## rows 4 OpenMP build, EIGEN threads untouched (GCS sets 1)
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash b1762d1f6f09016d
+## rows 4 AVX2 build
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: AVX SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 0b0c18f77bf62daf

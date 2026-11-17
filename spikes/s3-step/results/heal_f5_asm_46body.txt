@@ -1,0 +1,4 @@
+R|f5_asm_46body.step|heal|none|ms=0.0|solids=46|faces=26456|lowTris=2852994|lowHash=eefc94964b62a6b1|unmeshed=11|peakMB=2484
+R|f5_asm_46body.step|heal|ShapeFix_Shape per solid on pool|ms=7588.6|solids=46|faces=26456|lowTris=2858230|lowHash=dbe429c5358e7eb1|unmeshed=0|peakMB=2700
+R|f5_asm_46body.step|heal|ShapeFix_Shape whole shape|ms=27069.0|solids=46|faces=26456|lowTris=2858230|lowHash=dbe429c5358e7eb1|unmeshed=0|peakMB=2700
+exit=0

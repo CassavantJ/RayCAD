@@ -1,0 +1,56 @@
+C|f3_asm_dominant_11body.step|read|ReadFile|baselineMs=996.1|note=no progress or cancel argument exists
+C|f3_asm_dominant_11body.step|read|DESTEP_Provider precancelled|returnedAfterMs=1015.3|ok=0|polls=1|shapeNull=1
+C|f3_asm_dominant_11body.step|read|ReadStream uncancelled|ms=926.7|status=1|streamConsumedAtMs=248.2|afterStreamMs=678.5
+C|f3_asm_dominant_11body.step|read|ReadStream cancel|at=0.85|phase=load(after stream consumed)|latencyMs=139.5|elapsedMs=929.7|baselineMs=926.7|status=1
+C|f3_asm_dominant_11body.step|read|ReadStream cancel|at=0.17|phase=parse|latencyMs=3.0|elapsedMs=159.0|baselineMs=926.7|status=3
+C|f3_asm_dominant_11body.step|read|ReadStream cancel|at=0.09|phase=parse|latencyMs=1.5|elapsedMs=81.5|baselineMs=926.7|status=3
+C|f3_asm_dominant_11body.step|read|ReadStream cancel|at=0.79|phase=load(after stream consumed)|latencyMs=185.9|elapsedMs=921.9|baselineMs=926.7|status=1
+C|f3_asm_dominant_11body.step|read|ReadStream cancel|at=0.53|phase=load(after stream consumed)|latencyMs=509.1|elapsedMs=1000.3|baselineMs=926.7|status=1
+C|f3_asm_dominant_11body.step|transfer|no-heal|baselineMs=441.5|polls=7204|maxPollGapMs=104.5
+C|f3_asm_dominant_11body.step|transfer|no-heal cancel|at=0.91|latencyMs=-1.0|elapsedMs=381.6|baselineMs=441.5|roots=1
+C|f3_asm_dominant_11body.step|transfer|no-heal cancel|at=0.47|latencyMs=0.7|elapsedMs=207.0|baselineMs=441.5|roots=0
+C|f3_asm_dominant_11body.step|transfer|no-heal cancel|at=0.88|latencyMs=-1.0|elapsedMs=373.1|baselineMs=441.5|roots=1
+C|f3_asm_dominant_11body.step|transfer|default-heal|baselineMs=5243.2|polls=55214|maxPollGapMs=695.6
+C|f3_asm_dominant_11body.step|transfer|default-heal cancel|at=0.39|latencyMs=144.0|elapsedMs=2170.9|baselineMs=5243.2|roots=0
+C|f3_asm_dominant_11body.step|transfer|default-heal cancel|at=0.19|latencyMs=543.3|elapsedMs=1537.8|baselineMs=5243.2|roots=0
+C|f3_asm_dominant_11body.step|transfer|default-heal cancel|at=0.85|latencyMs=22.0|elapsedMs=4496.1|baselineMs=5243.2|roots=0
+C|f3_asm_dominant_11body.step|heal|ShapeFix_Shape|baselineMs=8819.6|polls=47982|maxPollGapMs=1201.5
+C|f3_asm_dominant_11body.step|heal|ShapeFix_Shape cancel|at=0.07|latencyMs=574.0|elapsedMs=1228.4|baselineMs=8819.6
+C|f3_asm_dominant_11body.step|heal|ShapeFix_Shape cancel|at=0.31|latencyMs=1.0|elapsedMs=2756.2|baselineMs=8819.6
+C|f3_asm_dominant_11body.step|heal|ShapeFix_Shape cancel|at=0.41|latencyMs=78.3|elapsedMs=3685.4|baselineMs=8819.6
+C|f3_asm_dominant_11body.step|mesh|low/st|baselineMs=14702.5|polls=64321|maxPollGapMs=1881.8
+C|f3_asm_dominant_11body.step|mesh|low/st cancel|at=0.78|latencyMs=253.4|elapsedMs=11671.3|baselineMs=14702.5|facesMeshed=6687/7099
+C|f3_asm_dominant_11body.step|mesh|low/st cancel|at=0.61|latencyMs=134.7|elapsedMs=9169.3|baselineMs=14702.5|facesMeshed=6316/7099
+C|f3_asm_dominant_11body.step|mesh|low/st cancel|at=0.87|latencyMs=25.8|elapsedMs=12775.9|baselineMs=14702.5|facesMeshed=6830/7099
+C|f3_asm_dominant_11body.step|mesh|low/occt|baselineMs=3279.3|polls=64321|maxPollGapMs=1313.3
+C|f3_asm_dominant_11body.step|mesh|low/occt cancel|at=0.55|latencyMs=1573.0|elapsedMs=3380.1|baselineMs=3279.3|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|low/occt cancel|at=0.81|latencyMs=747.2|elapsedMs=3391.3|baselineMs=3279.3|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|low/occt cancel|at=0.10|latencyMs=233.1|elapsedMs=556.1|baselineMs=3279.3|facesMeshed=0/7099
+C|f3_asm_dominant_11body.step|mesh|low/pool|baselineMs=5152.9|polls=64341|maxPollGapMs=1998.8
+C|f3_asm_dominant_11body.step|mesh|low/pool cancel|at=0.78|latencyMs=879.8|elapsedMs=4877.3|baselineMs=5152.9|facesMeshed=6832/7099
+C|f3_asm_dominant_11body.step|mesh|low/pool cancel|at=0.89|latencyMs=356.3|elapsedMs=4931.6|baselineMs=5152.9|facesMeshed=6832/7099
+C|f3_asm_dominant_11body.step|mesh|low/pool cancel|at=0.38|latencyMs=871.3|elapsedMs=2818.2|baselineMs=5152.9|facesMeshed=6831/7099
+C|f3_asm_dominant_11body.step|mesh|med/st|baselineMs=29812.4|polls=112302|maxPollGapMs=4123.9
+C|f3_asm_dominant_11body.step|mesh|med/st cancel|at=0.67|latencyMs=422.2|elapsedMs=20452.6|baselineMs=29812.4|facesMeshed=6427/7099
+C|f3_asm_dominant_11body.step|mesh|med/st cancel|at=0.17|latencyMs=3348.8|elapsedMs=8309.8|baselineMs=29812.4|facesMeshed=5699/7099
+C|f3_asm_dominant_11body.step|mesh|med/st cancel|at=0.80|latencyMs=500.2|elapsedMs=24333.0|baselineMs=29812.4|facesMeshed=6686/7099
+C|f3_asm_dominant_11body.step|mesh|med/occt|baselineMs=6138.0|polls=112302|maxPollGapMs=2601.9
+C|f3_asm_dominant_11body.step|mesh|med/occt cancel|at=0.34|latencyMs=3969.7|elapsedMs=6036.4|baselineMs=6138.0|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|med/occt cancel|at=0.71|latencyMs=1665.3|elapsedMs=6045.3|baselineMs=6138.0|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|med/occt cancel|at=0.59|latencyMs=2370.9|elapsedMs=5975.7|baselineMs=6138.0|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|med/pool|baselineMs=10493.0|polls=112322|maxPollGapMs=4380.7
+C|f3_asm_dominant_11body.step|mesh|med/pool cancel|at=0.38|latencyMs=1701.6|elapsedMs=5661.6|baselineMs=10493.0|facesMeshed=6831/7099
+C|f3_asm_dominant_11body.step|mesh|med/pool cancel|at=0.77|latencyMs=1984.7|elapsedMs=10018.1|baselineMs=10493.0|facesMeshed=6832/7099
+C|f3_asm_dominant_11body.step|mesh|med/pool cancel|at=0.68|latencyMs=3133.7|elapsedMs=10255.4|baselineMs=10493.0|facesMeshed=6832/7099
+C|f3_asm_dominant_11body.step|mesh|high/st|baselineMs=83928.0|polls=300864|maxPollGapMs=12221.6
+C|f3_asm_dominant_11body.step|mesh|high/st cancel|at=0.79|latencyMs=601.7|elapsedMs=66880.1|baselineMs=83928.0|facesMeshed=6523/7099
+C|f3_asm_dominant_11body.step|mesh|high/st cancel|at=0.86|latencyMs=2837.2|elapsedMs=74975.4|baselineMs=83928.0|facesMeshed=6800/7099
+C|f3_asm_dominant_11body.step|mesh|high/st cancel|at=0.80|latencyMs=1633.0|elapsedMs=68668.8|baselineMs=83928.0|facesMeshed=6686/7099
+C|f3_asm_dominant_11body.step|mesh|high/occt|baselineMs=16027.3|polls=300864|maxPollGapMs=8118.0
+C|f3_asm_dominant_11body.step|mesh|high/occt cancel|at=0.87|latencyMs=2019.8|elapsedMs=15948.3|baselineMs=16027.3|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|high/occt cancel|at=0.93|latencyMs=787.5|elapsedMs=15652.3|baselineMs=16027.3|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|high/occt cancel|at=0.64|latencyMs=4895.3|elapsedMs=15161.8|baselineMs=16027.3|facesMeshed=7099/7099
+C|f3_asm_dominant_11body.step|mesh|high/pool|baselineMs=27438.7|polls=300884|maxPollGapMs=10995.6
+C|f3_asm_dominant_11body.step|mesh|high/pool cancel|at=0.78|latencyMs=5067.6|elapsedMs=26492.8|baselineMs=27438.7|facesMeshed=6832/7099
+C|f3_asm_dominant_11body.step|mesh|high/pool cancel|at=0.14|latencyMs=10749.3|elapsedMs=14659.2|baselineMs=27438.7|facesMeshed=5723/7099
+C|f3_asm_dominant_11body.step|mesh|high/pool cancel|at=0.26|latencyMs=7991.3|elapsedMs=15229.8|baselineMs=27438.7|facesMeshed=6426/7099

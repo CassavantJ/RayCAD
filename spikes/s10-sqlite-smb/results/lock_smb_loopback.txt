@@ -1,0 +1,27 @@
+﻿LOCK TEST path=<repo>\spikes\s10-sqlite-smb\data\locks.raycad heartbeat=500 ms stale limit=2000 ms (plan values: 30 s and 120 s)
+[1] holder has opened and read the document, not yet written
+    second opener: IN_USE: in use by user@HOST since 2026-11-17T20:09:14Z (heartbeat 0.1 s ago, pid 17540)
+    PASS: second opener told who holds the file and since when
+    PASS: owner-alive probe (lock file handle still open) says alive
+    raw SQLite second connection, ignoring the lock file: read: OK (rc=0); write: BEGIN IMMEDIATE OK, COMMIT database is locked (rc=5)
+    after 1500 ms: beat counter 1 -> 3, heartbeat age on server clock 474 ms
+    PASS: heartbeat advances and lock stays fresh while the holder lives
+[2] holder has saved once (now holds SQLite EXCLUSIVE lock for the session)
+    raw SQLite second connection, ignoring the lock file: read: database is locked (rc=5); write: BEGIN IMMEDIATE database is locked, COMMIT database is locked (rc=5)
+    second opener asking to break: IN_USE: in use by user@HOST since 2026-11-17T20:09:14Z (heartbeat 0.1 s ago, pid 17540)
+    PASS: a live lock cannot be broken
+[3] holder killed with TerminateProcess
+    immediately after kill: IN_USE: in use by user@HOST since 2026-11-17T20:09:14Z (heartbeat 0.1 s ago, pid 17540)   owner-alive probe: dead
+    PASS: owner-alive probe reports dead immediately after the kill
+    1957 ms after kill: STALE: stale lock left by user@HOST since 2026-11-17T20:09:14Z (last heartbeat 2.0 s ago, limit 2.0 s)
+    PASS: stale lock detected by heartbeat age
+    break: ACQUIRED (lock acquired)
+    PASS: stale lock broken and re-acquired
+    document after recovery: check ok, head seq 1 
+    PASS: document is intact at the holder's last save
+    PASS: new lock owner can open and save
+[4] clean release
+    PASS: lock file removed on release
+    PASS: next opener acquires without prompt
+    journal file after clean close: none
+LOCK TEST RESULT: PASS

@@ -1,0 +1,9 @@
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+
+== Determinism (100 runs per row; each run = 2 full solves + 6 drags of 3 steps) ==
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+  identical input, contiguous parameters:        0 of 0 runs differ (max |diff| 0)
+  heap fragmented before constraints are created: 0 of 100 runs differ (max |diff| 0)
+  parameters at shuffled heap addresses:          0 of 0 runs differ (max |diff| 0)
+
+Eigen::nbThreads() at exit: 1

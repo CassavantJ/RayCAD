@@ -1,0 +1,16 @@
+R|f3_asm_dominant_11body.step|file|-|sizeMB=24.81|occt=8.0.1|threads=32|occtThreads=-1
+R|f3_asm_dominant_11body.step|init|-|ms=1.8|peakMB=14
+R|f3_asm_dominant_11body.step|read|-|ms=901.9|status=1|peakMB=195|curMB=137
+R|f3_asm_dominant_11body.step|transfer|no-heal|ms=392.6|roots=1|polls=7204|maxPollGapMs=63.5|peakMB=195|curMB=177
+R|f3_asm_dominant_11body.step|release-reader|-|ms=103.9|curMB=54
+R|f3_asm_dominant_11body.step|heal|ShapeFix_Shape|ms=8261.3|changed=1|polls=47982|maxPollGapMs=1279.4|peakMB=195|curMB=60
+R|f3_asm_dominant_11body.step|shape|-|solids=11|shells=11|faces=7099|edges=33724|freeFaces=0|brepBox=-3.8014178916768838e-07,-3.8014178916768838e-07,-3.8014178916768838e-07,690.00000038014184,470.00000038014178,505.00000038014247
+R|f3_asm_dominant_11body.step|mesh|low/st|ms=2994.0|tris=772270|nodes=749729|hash=ebd0c56434d2734c|unmeshed=0|polls=43146|maxPollGapMs=946.6|peakMB=278|curMB=115|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|low/occt|ms=1061.3|tris=772270|nodes=749729|hash=ebd0c56434d2734c|unmeshed=0|polls=43146|maxPollGapMs=522.1|peakMB=419|curMB=143|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|low/pool|ms=940.0|tris=772270|nodes=749729|hash=ebd0c56434d2734c|unmeshed=0|polls=43166|maxPollGapMs=78.3|peakMB=419|curMB=141|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|med/st|ms=5074.0|tris=1345856|nodes=1275531|hash=10479fb6453f12b2|unmeshed=0|polls=51505|maxPollGapMs=1404.7|peakMB=419|curMB=186|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|med/occt|ms=1350.4|tris=1345856|nodes=1275531|hash=10479fb6453f12b2|unmeshed=0|polls=51505|maxPollGapMs=706.8|peakMB=587|curMB=212|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|med/pool|ms=1559.4|tris=1345856|nodes=1275531|hash=10479fb6453f12b2|unmeshed=0|polls=51525|maxPollGapMs=108.9|peakMB=587|curMB=191|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|high/st|ms=10604.9|tris=2915800|nodes=2656780|hash=fa853c320ebabaeb|unmeshed=0|polls=97825|maxPollGapMs=2529.1|peakMB=587|curMB=285|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|high/occt|ms=2279.8|tris=2915800|nodes=2656780|hash=fa853c320ebabaeb|unmeshed=0|polls=97825|maxPollGapMs=1166.4|peakMB=1045|curMB=332|meshBox=0,0,0,690,470,505
+R|f3_asm_dominant_11body.step|mesh|high/pool|ms=3021.1|tris=2915800|nodes=2656780|hash=fa853c320ebabaeb|unmeshed=0|polls=97845|maxPollGapMs=165.8|peakMB=1045|curMB=290|meshBox=0,0,0,690,470,505

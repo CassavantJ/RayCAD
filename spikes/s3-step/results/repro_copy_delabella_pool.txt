@@ -1,0 +1,52 @@
+R|f5_asm_46body.step|mesh|high/pool|ms=4621.6|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=249.5|peakMB=1668|curMB=900|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4348.1|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=230.5|peakMB=1668|curMB=910|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4360.3|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=228.7|peakMB=1668|curMB=907|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4244.9|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=260.4|peakMB=1710|curMB=905|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4359.1|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=238.9|peakMB=1710|curMB=913|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4813.5|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=249.2|peakMB=1710|curMB=909|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4612.5|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=265.8|peakMB=1710|curMB=912|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4593.8|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=234.0|peakMB=1710|curMB=923|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4703.7|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=278.4|peakMB=1722|curMB=910|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4265.0|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=240.6|peakMB=1722|curMB=915|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4282.5|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=244.3|peakMB=1722|curMB=911|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4466.9|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=227.1|peakMB=1722|curMB=916|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4366.9|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=234.7|peakMB=1722|curMB=918|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4377.0|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=217.1|peakMB=1722|curMB=915|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4202.7|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=216.1|peakMB=1722|curMB=914|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4326.8|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=219.5|peakMB=1722|curMB=932|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4512.1|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=268.3|peakMB=1722|curMB=936|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4508.0|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=227.6|peakMB=1722|curMB=911|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4423.5|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=237.2|peakMB=1760|curMB=919|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4240.3|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=257.0|peakMB=1760|curMB=926|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4311.4|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=224.4|peakMB=1760|curMB=917|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4479.5|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=230.1|peakMB=1783|curMB=909|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4219.4|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=234.9|peakMB=1783|curMB=918|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4397.0|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=244.4|peakMB=1783|curMB=919|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4406.3|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=245.9|peakMB=1783|curMB=932|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4310.0|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=211.1|peakMB=1783|curMB=920|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=4285.4|tris=10853078|nodes=9857656|hash=a75b658020cf935a|unmeshed=0|polls=373187|maxPollGapMs=246.6|peakMB=1783|curMB=920|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+X|unhandled SEH exception code=0xc0000005 address=00007FFCE4CEA8BB peakMB=1783 thread=16436
+X|access violation writing address 00007FFCF1F93020
+X|#00 TKernel.dll!NCollection_BaseList::PAppend+0xb M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\FoundationClasses\TKernel\NCollection\NCollection_BaseList.cxx:45
+X|#01 TKMesh.dll!BRepMesh_DataStructureOfDelaun::AddLink+0x139 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_DataStructureOfDelaun.cxx:94
+X|#02 TKMesh.dll!BRepMesh_Delaun::createTriangles+0x3f0 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_Delaun.cxx:534
+X|#03 TKMesh.dll!BRepMesh_Delaun::createTrianglesOnNewVertices+0x43a M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_Delaun.cxx:699
+X|#04 TKMesh.dll!BRepMesh_Delaun::AddVertices+0x123 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_Delaun.cxx:2419
+X|#05 TKMesh.dll!BRepMesh_DelaunayDeflectionControlMeshAlgo<BRepMesh_NURBSRangeSplitter,BRepMesh_CustomDelaunayBaseMeshAlgo<BRepMesh_DelabellaBaseMeshAlgo> >::optimizeMesh+0x87f M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_DelaunayDeflectionControlMeshAlgo.hxx:111
+X|#06 TKMesh.dll!BRepMesh_DelaunayDeflectionControlMeshAlgo<BRepMesh_NURBSRangeSplitter,BRepMesh_CustomDelaunayBaseMeshAlgo<BRepMesh_DelabellaBaseMeshAlgo> >::postProcessMesh+0x1cb M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_DelaunayDeflectionControlMeshAlgo.hxx:63
+X|#07 TKMesh.dll!BRepMesh_CustomBaseMeshAlgo::generateMesh+0x31b M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_CustomBaseMeshAlgo.hxx:76
+X|#08 TKMesh.dll!BRepMesh_BaseMeshAlgo::Perform+0x21e M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_BaseMeshAlgo.cxx:59
+X|#09 TKMesh.dll!BRepMesh_NodeInsertionMeshAlgo<BRepMesh_BoundaryParamsRangeSplitter,BRepMesh_DelaunayBaseMeshAlgo>::Perform+0xb0 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_NodeInsertionMeshAlgo.hxx:54
+X|#10 TKMesh.dll!BRepMesh_FaceDiscret::process+0x110 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_FaceDiscret.cxx:125
+X|#11 TKMesh.dll!OSD_Parallel::For<BRepMesh_FaceDiscret::FaceListFunctor>+0x2af M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\FoundationClasses\TKernel\OSD\OSD_Parallel.hxx:361
+X|#12 TKMesh.dll!BRepMesh_FaceDiscret::performInternal+0xd0 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_FaceDiscret.cxx:87
+X|#13 TKMesh.dll!IMeshTools_ModelAlgo::Perform+0xa M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\IMeshTools\IMeshTools_ModelAlgo.hxx:42
+X|#14 TKMesh.dll!IMeshTools_MeshBuilder::Perform+0x115 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\IMeshTools\IMeshTools_MeshBuilder.cxx:60
+X|#15 TKMesh.dll!BRepMesh_IncrementalMesh::Perform+0x180 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_IncrementalMesh.cxx:95
+X|#16 TKMesh.dll!BRepMesh_IncrementalMesh::Perform+0x4e M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_IncrementalMesh.cxx:79
+X|#17 TKMesh.dll!BRepMesh_IncrementalMesh::BRepMesh_IncrementalMesh+0x64 M:\dev\vcpkg\buildtrees\opencascade\src\V8_0_1-2f604eca2a.clean\src\ModelingAlgorithms\TKMesh\BRepMesh\BRepMesh_IncrementalMesh.cxx:67
+X|#18 s3bench.exe!?+0x0 :0
+X|#19 s3bench.exe!?+0x0 :0
+X|#20 ucrtbase.dll!wcsrchr+0x150 :0
+X|#21 KERNEL32.DLL!BaseThreadInitThunk+0x17 :0
+X|#22 ntdll.dll!RtlUserThreadStart+0x2c :0

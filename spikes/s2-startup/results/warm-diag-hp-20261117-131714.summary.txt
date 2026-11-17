@@ -1,0 +1,11 @@
+variant                  n   median    worst     best |    main     app     qml occtuse |    wall  mods  occt  fail
+delay_aot               12      760     1563      644 |      16      56     754      -1 |     859   129     0     0
+delay_software          12      675     1512      544 |      15      54     669      -1 |     757   118     0     0
+delay_d3d12             12      971     1899      813 |      14      52     962      -1 |    1145   131     0     0
+delay_opengl            12      978     1894      901 |      15      50     974      -1 |    1251   128     0     0
+delay_vulkan            12     1071     1741      939 |      17      72    1064      -1 |    1331   152     0     0
+delay_basicloop         12      837     1211      648 |      14      54     834      -1 |     953   129     0     0
+delay_emptywindow       12      366      690      307 |      18      65     365      -1 |     432   114     0     0
+delay_warp              12      680     1519      541 |      14      54     673      -1 |     770   121     0     0
+Total CPU load from other processes: 96 % before, 53 % after (3 s samples). Runs per variant: 12, interleaved, after 2 discarded warm-up rounds. High priority: True.
+All times in ms since OS process creation. median/worst/best = first frame swapped. main/app/qml = medians of the stage stamps.

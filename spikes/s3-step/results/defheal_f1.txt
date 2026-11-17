@@ -1,0 +1,7 @@
+R|f1_plate_1body.step|file|-|sizeMB=5.11|occt=8.0.1|threads=32|occtThreads=-1
+R|f1_plate_1body.step|init|-|ms=1.9|peakMB=14
+R|f1_plate_1body.step|read|-|ms=182.1|status=1|peakMB=54|curMB=42
+R|f1_plate_1body.step|transfer|default-heal|ms=1853.2|roots=1|polls=12212|maxPollGapMs=744.9|peakMB=62|curMB=57
+R|f1_plate_1body.step|release-reader|-|ms=16.1|curMB=28
+R|f1_plate_1body.step|shape|-|solids=1|shells=1|faces=1569|edges=7488|freeFaces=0|brepBox=-9.9999999999999995e-08,-9.9999999999999995e-08,-9.9999999999999995e-08,700.00000009999997,480.00000010000002,45.000000100000676
+R|f1_plate_1body.step|mesh|low/pool|ms=4414.5|tris=178752|nodes=174315|hash=a77f14f8fae54f6e|unmeshed=0|polls=13388|maxPollGapMs=1842.1|peakMB=562|curMB=42|meshBox=0,0,0,700,480,45

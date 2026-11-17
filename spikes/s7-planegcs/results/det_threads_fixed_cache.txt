@@ -1,0 +1,22 @@
+## default build
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(1), run 1
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(1), run 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(2), run 1
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(2), run 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(8), run 1
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(8), run 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(24), run 1
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## OpenMP build, Eigen::setNbThreads(24), run 2
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692
+## AVX2 build
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 2166ee7fe5f75694
+## MPL2-only build
+  reference: 9600 doubles, non-converged solves 0, FNV-1a hash 5283710287414692

@@ -1,0 +1,13 @@
+variant                  n   median    worst     best |    main     app     qml occtuse |    wall  mods  occt  fail
+base_aot                20      863     3425      692 |      26      71     855      -1 |     998   163    27     0
+delay_aot               20      845     1616      586 |      23      68     840      -1 |     948   129     0     0
+noocct_aot              20      839     2323      680 |      19      62     832      -1 |     966   129     0     0
+base_loose_nocache      20      923     2729      705 |      29      73     917      -1 |    1036   163    27     0
+delay_loose_nocache     20      830     2180      693 |      19      56     821      -1 |     961   129     0     0
+base_loose_qmlc         20      968     1885      704 |      27      70     959      -1 |    1110   163    27     0
+delay_loose_qmlc        20      890     2157      702 |      20      63     884      -1 |    1026   129     0     0
+base_aot_nocache        20      895     1913      672 |      24      69     889      -1 |    1011   163    27     0
+delay_aot_useocct       20      777     4957      653 |      18      52     770      46 |     945   129     0     0
+base_aot_useocct        20      780     2153      669 |      25      65     774      35 |     937   162    27     0
+Total CPU load from other processes: 70 % before, 91 % after (3 s samples). Runs per variant: 20, interleaved, after 3 discarded warm-up rounds.
+All times in ms since OS process creation. median/worst/best = first frame swapped. main/app/qml = medians of the stage stamps.

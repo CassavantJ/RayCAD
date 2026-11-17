@@ -1,0 +1,46 @@
+S6 tri-dexel spike. cell 0.2 mm, stock 152.4 x 101.6 x 25.4 mm, affinity mask 0x55
+grid 762 x 508 x 127 cells, actual cell 0.20000 x 0.20000 x 0.20000 mm
+
+== accuracy (cell 0.2 mm): removed volume vs analytic, percent error per grid ==
+a  slot, flat 12.7, full depth, along X exact  32249.792 mm3 | Z  +0.7154% | X  +0.7147% | Y  -0.0057% | cut() return  +0.7154%
+a' slot, flat 12.7, full depth, 15 deg  exact  32249.792 mm3 | Z  +0.0160% | X  +0.0061% | Y  +0.0032% | cut() return  +0.0160%
+b  groove, ball 6.35, 5 deep, along X   exact   2592.932 mm3 | Z  +0.4170% | X  +0.6211% | Y  +0.0916% | cut() return  +0.4170%
+b' groove, ball 6.35, 5 deep, 15 deg    exact   2592.932 mm3 | Z  +0.0054% | X  +0.0979% | Y  +0.1024% | cut() return  +0.0054%
+c  plunge, flat 12.7, 10 deep           exact   1266.769 mm3 | Z  +0.0656% | X  +0.0589% | Y  -0.0571% | cut() return  +0.0656%
+c' plunge, ball 6.35, 10 deep           exact    283.176 mm3 | Z  -0.2734% | X  +0.1846% | Y  -0.1121% | cut() return  -0.2734%
+
+== workload ==
+moves 112092 (facing 28, adaptive-like 80860, ball scallop 31204), sloped moves 31250, path length 140887 mm, mean move 1.257 mm
+
+== throughput ==
+each line is the best of 3 run(s)
+tri-dexel 1 thread  batch 512                3.755 s       29849 moves/s  hash a608d82f847bb612
+    removed volume: Z grid 155863.92, X grid 155829.69 (-0.0220% vs Z), Y grid 155829.13 (-0.0223% vs Z), sum of cut() returns 155863.92 mm3
+    dexels 548386 (Z 387096, X 64516, Y 96774); intervals Z 387096 X 112351 Y 147348; max intervals per dexel Z 1 X 15 Y 13
+    memory: dexel arrays 12.6 MB + overflow lists 0.7 MB; process peak working set 38.5 MB
+tri-dexel 4 threads batch 512                0.991 s      113073 moves/s  hash a608d82f847bb612
+tri-dexel 4 threads batch 512 (repeat)       0.988 s      113445 moves/s  hash a608d82f847bb612
+tri-dexel 4 threads batch 64                 1.062 s      105568 moves/s  hash a608d82f847bb612
+tri-dexel 4 threads batch 1                  3.409 s       32885 moves/s  hash a608d82f847bb612
+tri-dexel 1 thread  batch 1                  3.994 s       28065 moves/s  hash a608d82f847bb612
+Z grid only 1 thread  batch 512              0.918 s      122130 moves/s  hash aec7909b931f0214
+Z grid only 4 threads batch 512              0.277 s      404755 moves/s  hash aec7909b931f0214
+determinism: all full tri-dexel runs (1 thread, 4 threads, repeat, other batch sizes) hash identical: YES
+process peak working set after throughput runs: 52.2 MB
+
+== clone (timeline keyframe) ==
+deep copy of the cut stock: 3.64 ms (best of 3), hash equal: YES, size 13.3 MB
+
+== rapid-through-stock query (read-only, Z grid) ==
+rapid above stock (z=30), 170 mm               -> miss        0.00 us per query
+rapid inside pocket, clear (z=7.5), 60 mm       -> miss       17.28 us per query
+rapid across stock through walls (z=10), 170 mm -> HIT         0.02 us per query
+rapid below pocket floor (z=4.9), 60 mm         -> HIT         0.02 us per query
+plunge rapid onto uncut corner, 2 mm deep       -> HIT         0.02 us per query
+
+== display mesh (heightfield from Z dexels, 2 triangles per cell, per-vertex normals) ==
+dirty 20 x 20 mm , 1 thread(s):     0.246 ms  10000 vertices, 19602 triangles, 0.5 MB
+whole stock      , 1 thread(s):     7.095 ms  387096 vertices, 771654 triangles, 17.7 MB
+dirty 20 x 20 mm , 4 thread(s):     0.319 ms  10000 vertices, 19602 triangles, 0.5 MB
+whole stock      , 4 thread(s):     4.630 ms  387096 vertices, 771654 triangles, 17.7 MB
+working set before meshing 24.8 MB, process peak after meshing 52.2 MB

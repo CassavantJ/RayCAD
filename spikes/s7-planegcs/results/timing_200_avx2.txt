@@ -1,0 +1,36 @@
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: AVX SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+
+== Timing (20 full-solve runs, 1 x 100 drag steps) ==
+
+-- NEARLY constrained sketch: 200 entities, 1200 parameters, 475 constraints (+80 arc rules), DOF 5, solve result 0, max constraint error 3.55e-15 --
+  build system (add constraints, declare unknowns)     n=20    median    1.824 ms   p95    2.677 ms   worst    2.677 ms
+  initSolution (diagnose + partition)                  n=20    median  400.721 ms   p95  510.426 ms   worst  510.426 ms
+  solve + applySolution (from 0.3 mm noise)            n=20    median  406.037 ms   p95  572.254 ms   worst  572.254 ms
+  FULL SOLVE total                                     n=20    median  807.934 ms   p95 1085.022 ms   worst 1085.022 ms
+  diagnose() alone, repeated                           n=20    median  345.646 ms   p95  457.679 ms   worst  457.679 ms
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, FreeCAD default (solve from drag start): failed steps 0 of 100, point moved 10.000 mm, max constraint error after 1.86e-16, max |end - end of default mode| 0
+    DRAG STEP                                          n=100   median  501.972 ms   p95  646.412 ms   worst  729.304 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    6.050 ms   p95    6.050 ms   worst    6.050 ms
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, re-init every step: failed steps 0 of 100, point moved 10.000 mm, max constraint error after 1.86e-16, max |end - end of default mode| 1.42e-14
+    DRAG STEP                                          n=100   median  399.594 ms   p95  599.520 ms   worst  710.677 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    4.161 ms   p95    4.161 ms   worst    4.161 ms
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, REDUCED unknowns (getDependentParams only): 272 of 1200 parameters are unknowns
+    parameters that moved in default mode: 24, of those missing from getDependentParams: 0
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, REDUCED unknowns (getDependentParams only): failed steps 0 of 100, point moved 0.000 mm, max constraint error after 3.55e-15, max |end - end of default mode| 10
+    DRAG STEP                                          n=100   median    0.141 ms   p95    0.259 ms   worst    0.335 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    1.833 ms   p95    1.833 ms   worst    1.833 ms
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=3     median  742.493 ms   p95  982.503 ms   worst  982.503 ms
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, FreeCAD default (solve from drag start): failed steps 0 of 100, point moved 5.831 mm, max constraint error after 3.55e-15, max |end - end of default mode| 0
+    DRAG STEP                                          n=100   median  319.515 ms   p95  554.193 ms   worst  612.616 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    3.970 ms   p95    3.970 ms   worst    3.970 ms
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, re-init every step: failed steps 0 of 100, point moved 5.831 mm, max constraint error after 3.55e-15, max |end - end of default mode| 1.42e-14
+    DRAG STEP                                          n=100   median  350.566 ms   p95  569.752 ms   worst  755.307 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    4.638 ms   p95    4.638 ms   worst    4.638 ms
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, REDUCED unknowns (getDependentParams only): 272 of 1200 parameters are unknowns
+    parameters that moved in default mode: 48, of those missing from getDependentParams: 0
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, REDUCED unknowns (getDependentParams only): failed steps 0 of 100, point moved 5.831 mm, max constraint error after 3.55e-15, max |end - end of default mode| 7.11e-15
+    DRAG STEP                                          n=100   median    1.235 ms   p95    1.495 ms   worst    2.405 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    4.213 ms   p95    4.213 ms   worst    4.213 ms
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=3     median 1046.227 ms   p95 1208.560 ms   worst 1208.560 ms
+
+Eigen::nbThreads() at exit: 1

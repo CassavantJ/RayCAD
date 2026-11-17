@@ -1,0 +1,44 @@
+C|f5_asm_46body.step|read|ReadFile|baselineMs=3407.3|note=no progress or cancel argument exists
+C|f5_asm_46body.step|read|DESTEP_Provider precancelled|returnedAfterMs=3871.5|ok=0|polls=1|shapeNull=1
+C|f5_asm_46body.step|read|ReadStream uncancelled|ms=3489.7|status=1|streamConsumedAtMs=953.4|afterStreamMs=2536.3
+C|f5_asm_46body.step|read|ReadStream cancel|at=0.85|phase=load(after stream consumed)|latencyMs=547.4|elapsedMs=3518.5|baselineMs=3489.7|status=1
+C|f5_asm_46body.step|read|ReadStream cancel|at=0.17|phase=parse|latencyMs=5.4|elapsedMs=591.5|baselineMs=3489.7|status=3
+C|f5_asm_46body.step|read|ReadStream cancel|at=0.09|phase=parse|latencyMs=3.3|elapsedMs=304.1|baselineMs=3489.7|status=3
+C|f5_asm_46body.step|read|ReadStream cancel|at=0.79|phase=load(after stream consumed)|latencyMs=738.2|elapsedMs=3509.0|baselineMs=3489.7|status=1
+C|f5_asm_46body.step|read|ReadStream cancel|at=0.53|phase=load(after stream consumed)|latencyMs=1636.0|elapsedMs=3482.0|baselineMs=3489.7|status=1
+C|f5_asm_46body.step|transfer|no-heal|baselineMs=1424.2|polls=26876|maxPollGapMs=229.3
+C|f5_asm_46body.step|transfer|no-heal cancel|at=0.91|latencyMs=61.4|elapsedMs=1358.6|baselineMs=1424.2|roots=1
+C|f5_asm_46body.step|transfer|no-heal cancel|at=0.47|latencyMs=0.5|elapsedMs=664.5|baselineMs=1424.2|roots=0
+C|f5_asm_46body.step|transfer|no-heal cancel|at=0.88|latencyMs=95.5|elapsedMs=1351.8|baselineMs=1424.2|roots=1
+C|f5_asm_46body.step|transfer|default-heal|baselineMs=18209.9|polls=205808|maxPollGapMs=794.5
+C|f5_asm_46body.step|transfer|default-heal cancel|at=0.39|latencyMs=70.2|elapsedMs=7109.8|baselineMs=18209.9|roots=0
+C|f5_asm_46body.step|transfer|default-heal cancel|at=0.19|latencyMs=3.6|elapsedMs=3454.9|baselineMs=18209.9|roots=0
+C|f5_asm_46body.step|transfer|default-heal cancel|at=0.85|latencyMs=4.2|elapsedMs=15540.0|baselineMs=18209.9|roots=0
+C|f5_asm_46body.step|heal|ShapeFix_Shape|baselineMs=27058.8|polls=178807|maxPollGapMs=1319.6
+C|f5_asm_46body.step|heal|ShapeFix_Shape cancel|at=0.07|latencyMs=792.6|elapsedMs=2798.3|baselineMs=27058.8
+C|f5_asm_46body.step|heal|ShapeFix_Shape cancel|at=0.31|latencyMs=0.4|elapsedMs=8453.4|baselineMs=27058.8
+C|f5_asm_46body.step|heal|ShapeFix_Shape cancel|at=0.41|latencyMs=200.0|elapsedMs=11264.6|baselineMs=27058.8
+C|f5_asm_46body.step|mesh|low/occt|baselineMs=6435.4|polls=240655|maxPollGapMs=1584.6
+C|f5_asm_46body.step|mesh|low/occt cancel|at=0.78|latencyMs=1333.8|elapsedMs=6331.8|baselineMs=6435.4|facesMeshed=26456/26456
+C|f5_asm_46body.step|mesh|low/occt cancel|at=0.61|latencyMs=1909.2|elapsedMs=5863.8|baselineMs=6435.4|facesMeshed=24291/26456
+C|f5_asm_46body.step|mesh|low/occt cancel|at=0.87|latencyMs=930.5|elapsedMs=6511.4|baselineMs=6435.4|facesMeshed=26456/26456
+C|f5_asm_46body.step|mesh|low/pool|baselineMs=6535.4|polls=240745|maxPollGapMs=1514.8
+C|f5_asm_46body.step|mesh|low/pool cancel|at=0.55|latencyMs=799.3|elapsedMs=4399.7|baselineMs=6535.4|facesMeshed=25631/26456
+C|f5_asm_46body.step|mesh|low/pool cancel|at=0.81|latencyMs=1106.4|elapsedMs=6374.5|baselineMs=6535.4|facesMeshed=25880/26456
+C|f5_asm_46body.step|mesh|low/pool cancel|at=0.10|latencyMs=87.5|elapsedMs=711.8|baselineMs=6535.4|facesMeshed=6045/26456
+C|f5_asm_46body.step|mesh|med/occt|baselineMs=10737.6|polls=421644|maxPollGapMs=2149.5
+C|f5_asm_46body.step|mesh|med/occt cancel|at=0.78|latencyMs=2278.0|elapsedMs=10607.4|baselineMs=10737.6|facesMeshed=26456/26456
+C|f5_asm_46body.step|mesh|med/occt cancel|at=0.89|latencyMs=1131.2|elapsedMs=10664.1|baselineMs=10737.6|facesMeshed=26456/26456
+C|f5_asm_46body.step|mesh|med/occt cancel|at=0.38|latencyMs=5401.9|elapsedMs=9459.4|baselineMs=10737.6|facesMeshed=23096/26456
+C|f5_asm_46body.step|mesh|med/pool|baselineMs=12717.4|polls=421734|maxPollGapMs=3817.5
+C|f5_asm_46body.step|mesh|med/pool cancel|at=0.67|latencyMs=3470.3|elapsedMs=12015.8|baselineMs=12717.4|facesMeshed=25880/26456
+C|f5_asm_46body.step|mesh|med/pool cancel|at=0.17|latencyMs=1025.4|elapsedMs=3143.2|baselineMs=12717.4|facesMeshed=14449/26456
+C|f5_asm_46body.step|mesh|med/pool cancel|at=0.80|latencyMs=2015.6|elapsedMs=12182.9|baselineMs=12717.4|facesMeshed=25880/26456
+C|f5_asm_46body.step|mesh|high/occt|baselineMs=29338.9|polls=1152785|maxPollGapMs=3551.2
+C|f5_asm_46body.step|mesh|high/occt cancel|at=0.34|latencyMs=13880.6|elapsedMs=23754.5|baselineMs=29338.9|facesMeshed=24020/26456
+C|f5_asm_46body.step|mesh|high/occt cancel|at=0.71|latencyMs=5824.2|elapsedMs=26758.6|baselineMs=29338.9|facesMeshed=26456/26456
+C|f5_asm_46body.step|mesh|high/occt cancel|at=0.59|latencyMs=9157.0|elapsedMs=26384.6|baselineMs=29338.9|facesMeshed=26158/26456
+C|f5_asm_46body.step|mesh|high/pool|baselineMs=36785.4|polls=1152875|maxPollGapMs=10922.1
+C|f5_asm_46body.step|mesh|high/pool cancel|at=0.38|latencyMs=8706.2|elapsedMs=22587.6|baselineMs=36785.4|facesMeshed=24310/26456
+C|f5_asm_46body.step|mesh|high/pool cancel|at=0.77|latencyMs=6298.9|elapsedMs=34457.6|baselineMs=36785.4|facesMeshed=25880/26456
+C|f5_asm_46body.step|mesh|high/pool cancel|at=0.68|latencyMs=13783.4|elapsedMs=38747.7|baselineMs=36785.4|facesMeshed=25880/26456

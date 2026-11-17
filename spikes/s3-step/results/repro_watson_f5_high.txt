@@ -1,0 +1,4 @@
+R|f5_asm_46body.step|mesh|high/pool|ms=35202.8|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10106.9|peakMB=14931|curMB=888|meshBox=0,0,0,705,515,2055
+R|f5_asm_46body.step|mesh|high/pool|ms=36092.3|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10828.3|peakMB=14931|curMB=887|meshBox=0,0,0,705,515,2055
+X|unhandled SEH exception code=0xc0000005 address=00007FFCFDB8C649 peakMB=14931
+exit=139

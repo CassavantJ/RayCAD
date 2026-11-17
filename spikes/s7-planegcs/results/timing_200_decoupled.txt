@@ -1,0 +1,24 @@
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+
+== Timing (30 full-solve runs, 3 x 100 drag steps) ==
+
+-- DECOUPLED (20 independent groups, 1 DOF) sketch: 200 entities, 1200 parameters, 479 constraints (+80 arc rules), DOF 1, solve result 0, max constraint error 1.82e-11 --
+  build system (add constraints, declare unknowns)     n=30    median    2.345 ms   p95    3.454 ms   worst    3.595 ms
+  initSolution (diagnose + partition)                  n=30    median  492.351 ms   p95 1324.902 ms   worst 1415.212 ms
+  solve + applySolution (from 0.3 mm noise)            n=30    median    4.167 ms   p95    4.905 ms   worst    4.937 ms
+  FULL SOLVE total                                     n=30    median  498.999 ms   p95 1331.365 ms   worst 1421.225 ms
+  diagnose() alone, repeated                           n=30    median  426.174 ms   p95  934.821 ms   worst  963.730 ms
+  D5 decoupled: resize last unit, right.p2, +0.05/+0.03 mm per step, FreeCAD default (solve from drag start): failed steps 0 of 300, point moved 5.000 mm, max constraint error after 1.82e-11, max |end - end of default mode| 0
+    DRAG STEP                                          n=300   median    0.630 ms   p95    0.778 ms   worst    0.985 ms
+    drag begin (add temp constraint + initSolution)    n=3     median    4.323 ms   p95    5.376 ms   worst    5.376 ms
+  D5 decoupled: resize last unit, right.p2, +0.05/+0.03 mm per step, re-init every step: failed steps 0 of 300, point moved 5.000 mm, max constraint error after 1.82e-11, max |end - end of default mode| 6.88e-15
+    DRAG STEP                                          n=300   median    5.570 ms   p95    6.400 ms   worst    7.253 ms
+    drag begin (add temp constraint + initSolution)    n=3     median    4.529 ms   p95    4.614 ms   worst    4.614 ms
+  D5 decoupled: resize last unit, right.p2, +0.05/+0.03 mm per step, REDUCED unknowns (getDependentParams only): 38 of 1200 parameters are unknowns
+    parameters that moved in default mode: 12, of those missing from getDependentParams: 0
+  D5 decoupled: resize last unit, right.p2, +0.05/+0.03 mm per step, REDUCED unknowns (getDependentParams only): failed steps 0 of 300, point moved 0.000 mm, max constraint error after 1.82e-11, max |end - end of default mode| 5
+    DRAG STEP                                          n=300   median    0.050 ms   p95    0.072 ms   worst    0.125 ms
+    drag begin (add temp constraint + initSolution)    n=3     median    1.973 ms   p95    2.243 ms   worst    2.243 ms
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=5     median  427.678 ms   p95  462.681 ms   worst  462.681 ms
+
+Eigen::nbThreads() at exit: 1

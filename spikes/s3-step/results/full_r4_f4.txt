@@ -1,0 +1,10 @@
+R|f4_asm_24body.step|file|-|sizeMB=46.90|occt=8.0.1|threads=32|occtThreads=-1
+R|f4_asm_24body.step|init|-|ms=1.9|peakMB=14
+R|f4_asm_24body.step|read|-|ms=1717.4|status=1|peakMB=357|curMB=249
+R|f4_asm_24body.step|transfer|no-heal|ms=695.6|roots=1|polls=13467|maxPollGapMs=110.5|peakMB=357|curMB=322
+R|f4_asm_24body.step|release-reader|-|ms=176.5|curMB=86
+R|f4_asm_24body.step|heal|ShapeFix_Shape|ms=12152.9|changed=1|polls=89403|maxPollGapMs=320.8|peakMB=357|curMB=96
+R|f4_asm_24body.step|shape|-|solids=24|shells=24|faces=13245|edges=62788|freeFaces=0|brepBox=-3.4822774164914329e-07,-3.4822774164914329e-07,-3.4822774164914329e-07,505.00000034822773,347.00000034822773,1055.0000003482285
+R|f4_asm_24body.step|mesh|low/st|ms=19062.3|tris=1425776|nodes=1383376|hash=4339ee7ea8210362|unmeshed=0|polls=120517|maxPollGapMs=1561.8|peakMB=607|curMB=196|meshBox=0,0,0,505,347,1055|status=0x0|unmeshedFaces=
+R|f4_asm_24body.step|mesh|med/st|ms=42303.8|tris=2488190|nodes=2355066|hash=55de78cda9fa8aaf|unmeshed=0|polls=211559|maxPollGapMs=2264.0|peakMB=854|curMB=252|meshBox=0,0,0,505,347,1055|status=0x0|unmeshedFaces=
+R|f4_asm_24body.step|mesh|high/st|ms=124517.8|tris=5428706|nodes=4924397|hash=10631c2684d11836|unmeshed=0|polls=582811|maxPollGapMs=4094.2|peakMB=1830|curMB=451|meshBox=0,0,0,505,347,1055|status=0x0|unmeshedFaces=

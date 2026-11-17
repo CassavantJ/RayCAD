@@ -1,0 +1,12 @@
+variant                  n   median    worst     best |    main     app     qml occtuse |    wall  mods  occt  fail
+full                    12     1054     1515      763 |      23      71    1046      -1 |    1203   129     0     0
+no_menubar              12     1270     3967      773 |      23      72    1263      -1 |    1400   129     0     0
+no_palette              12     1165     1585      869 |      24      74    1158      -1 |    1299   129     0     0
+no_ribbon               12     1056     2313      822 |      22      69    1049      -1 |    1169   129     0     0
+no_props                12     1050     2112      850 |      23      72    1045      -1 |    1176   129     0     0
+no_sidepanel            12      759     1073      560 |      22      72     753      -1 |     865   129     0     0
+no_timeline             12      990     1310      601 |      22      69     983      -1 |    1144   129     0     0
+no_start                12     1091     1385      825 |      22      68    1083      -1 |    1233   129     0     0
+viewport_only           12      658      857      393 |      22      70     653      -1 |     796   122     0     0
+Total CPU load from other processes: 18 % before, 99 % after (3 s samples). Runs per variant: 12, interleaved, after 2 discarded warm-up rounds.
+All times in ms since OS process creation. median/worst/best = first frame swapped. main/app/qml = medians of the stage stamps.

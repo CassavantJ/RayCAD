@@ -1,0 +1,16 @@
+R|f1_plate_1body.step|file|-|sizeMB=5.11|occt=8.0.1|threads=32|occtThreads=-1
+R|f1_plate_1body.step|init|-|ms=1.8|peakMB=14
+R|f1_plate_1body.step|read|-|ms=182.3|status=1|peakMB=53|curMB=42
+R|f1_plate_1body.step|transfer|no-heal|ms=78.9|roots=1|polls=1578|maxPollGapMs=11.6|peakMB=53|curMB=53
+R|f1_plate_1body.step|release-reader|-|ms=17.3|curMB=26
+R|f1_plate_1body.step|heal|ShapeFix_Shape|ms=1920.9|changed=1|polls=10633|maxPollGapMs=818.3|peakMB=54|curMB=29
+R|f1_plate_1body.step|shape|-|solids=1|shells=1|faces=1569|edges=7488|freeFaces=0|brepBox=-9.9999999999999995e-08,-9.9999999999999995e-08,-9.9999999999999995e-08,700.00000009999997,480.00000010000002,45.000000100000676
+R|f1_plate_1body.step|mesh|low/st|ms=762.6|tris=178726|nodes=174302|hash=b2869f644553bfc1|unmeshed=0|polls=9194|maxPollGapMs=300.6|peakMB=100|curMB=42|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|low/occt|ms=354.6|tris=178726|nodes=174302|hash=b2869f644553bfc1|unmeshed=0|polls=9194|maxPollGapMs=181.6|peakMB=132|curMB=53|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|low/pool|ms=749.0|tris=178726|nodes=174302|hash=b2869f644553bfc1|unmeshed=0|polls=9194|maxPollGapMs=294.4|peakMB=132|curMB=53|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|med/st|ms=1257.8|tris=307854|nodes=294858|hash=605ea36b88de7424|unmeshed=0|polls=9867|maxPollGapMs=455.6|peakMB=136|curMB=59|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|med/occt|ms=501.3|tris=307854|nodes=294858|hash=605ea36b88de7424|unmeshed=0|polls=9867|maxPollGapMs=275.0|peakMB=173|curMB=66|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|med/pool|ms=1263.8|tris=307854|nodes=294858|hash=605ea36b88de7424|unmeshed=0|polls=9867|maxPollGapMs=451.6|peakMB=173|curMB=65|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|high/st|ms=2595.1|tris=646288|nodes=603762|hash=20fcb681017ce52f|unmeshed=0|polls=14230|maxPollGapMs=875.1|peakMB=213|curMB=86|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|high/occt|ms=942.4|tris=646288|nodes=603762|hash=20fcb681017ce52f|unmeshed=0|polls=14230|maxPollGapMs=506.8|peakMB=285|curMB=90|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|high/pool|ms=2606.8|tris=646288|nodes=603762|hash=20fcb681017ce52f|unmeshed=0|polls=14230|maxPollGapMs=871.1|peakMB=285|curMB=93|meshBox=0,0,0,700,480,45

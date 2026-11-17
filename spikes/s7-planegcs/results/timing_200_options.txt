@@ -1,0 +1,78 @@
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss 1, alg 2
+
+== Timing (10 full-solve runs, 3 x 100 drag steps) ==
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 0, max constraint error 3.55e-15 --
+  max |solved - intended design| = 3.55e-15 mm
+  build system (add constraints, declare unknowns)     n=10    median    1.933 ms   p95    2.620 ms   worst    2.620 ms
+  initSolution (diagnose + partition)                  n=10    median  331.054 ms   p95  446.650 ms   worst  446.650 ms
+  solve + applySolution (from 0.3 mm noise)            n=10    median  618.872 ms   p95  759.844 ms   worst  759.844 ms
+  FULL SOLVE total                                     n=10    median  966.296 ms   p95 1184.295 ms   worst 1184.295 ms
+  diagnose() alone, repeated                           n=10    median  297.537 ms   p95  377.617 ms   worst  377.617 ms
+
+Eigen::nbThreads() at exit: 1
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss 2, alg 2
+
+== Timing (10 full-solve runs, 3 x 100 drag steps) ==
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 0, max constraint error 1.78e-15 --
+  max |solved - intended design| = 3.55e-15 mm
+  build system (add constraints, declare unknowns)     n=10    median    1.899 ms   p95    2.424 ms   worst    2.424 ms
+  initSolution (diagnose + partition)                  n=10    median  339.896 ms   p95  435.712 ms   worst  435.712 ms
+  solve + applySolution (from 0.3 mm noise)            n=10    median  264.913 ms   p95  341.253 ms   worst  341.253 ms
+  FULL SOLVE total                                     n=10    median  638.821 ms   p95  715.007 ms   worst  715.007 ms
+  diagnose() alone, repeated                           n=10    median  279.031 ms   p95  351.894 ms   worst  351.894 ms
+
+Eigen::nbThreads() at exit: 1
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 1
+
+== Timing (10 full-solve runs, 3 x 100 drag steps) ==
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 0, max constraint error 1.22e-11 --
+  max |solved - intended design| = 3e-10 mm
+  build system (add constraints, declare unknowns)     n=10    median    1.702 ms   p95    1.913 ms   worst    1.913 ms
+  initSolution (diagnose + partition)                  n=10    median  278.208 ms   p95  347.804 ms   worst  347.804 ms
+  solve + applySolution (from 0.3 mm noise)            n=10    median  731.540 ms   p95  792.283 ms   worst  792.283 ms
+  FULL SOLVE total                                     n=10    median 1028.833 ms   p95 1112.756 ms   worst 1112.756 ms
+  diagnose() alone, repeated                           n=10    median  298.484 ms   p95  372.500 ms   worst  372.500 ms
+
+Eigen::nbThreads() at exit: 1
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 0
+
+== Timing (10 full-solve runs, 3 x 100 drag steps) ==
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 2, max constraint error 0.836 --
+  max |solved - intended design| = 0.299 mm
+  build system (add constraints, declare unknowns)     n=10    median    1.547 ms   p95    1.617 ms   worst    1.617 ms
+  initSolution (diagnose + partition)                  n=10    median  261.490 ms   p95  275.057 ms   worst  275.057 ms
+  solve + applySolution (from 0.3 mm noise)            n=10    median  248.502 ms   p95  280.285 ms   worst  280.285 ms
+  FULL SOLVE total                                     n=10    median  506.629 ms   p95  556.618 ms   worst  556.618 ms
+  diagnose() alone, repeated                           n=10    median  256.969 ms   p95  308.876 ms   worst  308.876 ms
+
+Eigen::nbThreads() at exit: 1
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: dense, rows 4, gauss -1, alg 2
+
+== Timing (10 full-solve runs, 3 x 100 drag steps) ==
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 0, max constraint error 1.78e-15 --
+  max |solved - intended design| = 3.55e-15 mm
+  build system (add constraints, declare unknowns)     n=10    median    1.663 ms   p95    1.806 ms   worst    1.806 ms
+  initSolution (diagnose + partition)                  n=10    median  878.308 ms   p95 1248.276 ms   worst 1248.276 ms
+  solve + applySolution (from 0.3 mm noise)            n=10    median  310.916 ms   p95  396.563 ms   worst  396.563 ms
+  FULL SOLVE total                                     n=10    median 1240.698 ms   p95 1612.140 ms   worst 1612.140 ms
+  diagnose() alone, repeated                           n=10    median  965.389 ms   p95 1098.431 ms   worst 1098.431 ms
+
+Eigen::nbThreads() at exit: 1
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+
+== Timing (10 full-solve runs, 3 x 100 drag steps) ==
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 0, max constraint error 1.78e-15 --
+  max |solved - intended design| = 3.55e-15 mm
+  build system (add constraints, declare unknowns)     n=10    median    1.606 ms   p95    2.605 ms   worst    2.605 ms
+  initSolution (diagnose + partition)                  n=10    median  311.700 ms   p95  373.423 ms   worst  373.423 ms
+  solve + applySolution (from 0.3 mm noise)            n=10    median  339.856 ms   p95  450.707 ms   worst  450.707 ms
+  FULL SOLVE total                                     n=10    median  641.648 ms   p95  825.643 ms   worst  825.643 ms
+  diagnose() alone, repeated                           n=10    median  262.223 ms   p95  283.211 ms   worst  283.211 ms
+
+Eigen::nbThreads() at exit: 1

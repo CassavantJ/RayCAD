@@ -1,0 +1,44 @@
+C|f4_asm_24body.step|read|ReadFile|baselineMs=1663.7|note=no progress or cancel argument exists
+C|f4_asm_24body.step|read|DESTEP_Provider precancelled|returnedAfterMs=1810.6|ok=0|polls=1|shapeNull=1
+C|f4_asm_24body.step|read|ReadStream uncancelled|ms=1700.4|status=1|streamConsumedAtMs=465.5|afterStreamMs=1234.9
+C|f4_asm_24body.step|read|ReadStream cancel|at=0.85|phase=load(after stream consumed)|latencyMs=246.9|elapsedMs=1695.9|baselineMs=1700.4|status=1
+C|f4_asm_24body.step|read|ReadStream cancel|at=0.17|phase=parse|latencyMs=3.8|elapsedMs=289.2|baselineMs=1700.4|status=3
+C|f4_asm_24body.step|read|ReadStream cancel|at=0.09|phase=parse|latencyMs=2.5|elapsedMs=149.1|baselineMs=1700.4|status=3
+C|f4_asm_24body.step|read|ReadStream cancel|at=0.79|phase=load(after stream consumed)|latencyMs=350.7|elapsedMs=1701.4|baselineMs=1700.4|status=1
+C|f4_asm_24body.step|read|ReadStream cancel|at=0.53|phase=load(after stream consumed)|latencyMs=782.6|elapsedMs=1682.9|baselineMs=1700.4|status=1
+C|f4_asm_24body.step|transfer|no-heal|baselineMs=677.6|polls=13467|maxPollGapMs=107.3
+C|f4_asm_24body.step|transfer|no-heal cancel|at=0.91|latencyMs=53.2|elapsedMs=671.4|baselineMs=677.6|roots=1
+C|f4_asm_24body.step|transfer|no-heal cancel|at=0.47|latencyMs=0.3|elapsedMs=317.4|baselineMs=677.6|roots=0
+C|f4_asm_24body.step|transfer|no-heal cancel|at=0.88|latencyMs=74.8|elapsedMs=673.2|baselineMs=677.6|roots=1
+C|f4_asm_24body.step|transfer|default-heal|baselineMs=7900.1|polls=102937|maxPollGapMs=183.4
+C|f4_asm_24body.step|transfer|default-heal cancel|at=0.39|latencyMs=0.7|elapsedMs=3055.0|baselineMs=7900.1|roots=0
+C|f4_asm_24body.step|transfer|default-heal cancel|at=0.19|latencyMs=60.6|elapsedMs=1557.8|baselineMs=7900.1|roots=0
+C|f4_asm_24body.step|transfer|default-heal cancel|at=0.85|latencyMs=0.8|elapsedMs=6741.1|baselineMs=7900.1|roots=0
+C|f4_asm_24body.step|heal|ShapeFix_Shape|baselineMs=11930.1|polls=89403|maxPollGapMs=315.5
+C|f4_asm_24body.step|heal|ShapeFix_Shape cancel|at=0.07|latencyMs=69.6|elapsedMs=954.5|baselineMs=11930.1
+C|f4_asm_24body.step|heal|ShapeFix_Shape cancel|at=0.31|latencyMs=140.2|elapsedMs=3867.1|baselineMs=11930.1
+C|f4_asm_24body.step|heal|ShapeFix_Shape cancel|at=0.41|latencyMs=80.3|elapsedMs=4958.3|baselineMs=11930.1
+C|f4_asm_24body.step|mesh|low/st|baselineMs=5156.6|polls=80892|maxPollGapMs=1511.7
+C|f4_asm_24body.step|mesh|low/st cancel|at=0.78|latencyMs=62.4|elapsedMs=4067.5|baselineMs=5156.6|facesMeshed=10543/13245
+C|f4_asm_24body.step|mesh|low/st cancel|at=0.61|latencyMs=73.0|elapsedMs=3242.5|baselineMs=5156.6|facesMeshed=5538/13245
+C|f4_asm_24body.step|mesh|low/st cancel|at=0.87|latencyMs=119.8|elapsedMs=4591.6|baselineMs=5156.6|facesMeshed=1893/13245
+C|f4_asm_24body.step|mesh|low/occt|baselineMs=1792.1|polls=80892|maxPollGapMs=836.6
+C|f4_asm_24body.step|mesh|low/occt cancel|at=0.55|latencyMs=47.9|elapsedMs=1036.4|baselineMs=1792.1|facesMeshed=3118/13245
+C|f4_asm_24body.step|mesh|low/occt cancel|at=0.81|latencyMs=69.1|elapsedMs=1513.9|baselineMs=1792.1|facesMeshed=10536/13245
+C|f4_asm_24body.step|mesh|low/occt cancel|at=0.10|latencyMs=648.8|elapsedMs=821.7|baselineMs=1792.1|facesMeshed=0/13245
+C|f4_asm_24body.step|mesh|med/st|baselineMs=8810.8|polls=98429|maxPollGapMs=2193.9
+C|f4_asm_24body.step|mesh|med/st cancel|at=0.78|latencyMs=105.2|elapsedMs=6939.6|baselineMs=8810.8|facesMeshed=10752/13245
+C|f4_asm_24body.step|mesh|med/st cancel|at=0.89|latencyMs=73.1|elapsedMs=7894.9|baselineMs=8810.8|facesMeshed=2919/13245
+C|f4_asm_24body.step|mesh|med/st cancel|at=0.38|latencyMs=1814.2|elapsedMs=5146.3|baselineMs=8810.8|facesMeshed=0/13245
+C|f4_asm_24body.step|mesh|med/occt|baselineMs=3351.1|polls=98429|maxPollGapMs=1642.4
+C|f4_asm_24body.step|mesh|med/occt cancel|at=0.67|latencyMs=128.4|elapsedMs=2384.3|baselineMs=3351.1|facesMeshed=7983/13245
+C|f4_asm_24body.step|mesh|med/occt cancel|at=0.17|latencyMs=1231.1|elapsedMs=1791.9|baselineMs=3351.1|facesMeshed=0/13245
+C|f4_asm_24body.step|mesh|med/occt cancel|at=0.80|latencyMs=-1.0|elapsedMs=2469.7|baselineMs=3351.1|facesMeshed=13245/13245
+C|f4_asm_24body.step|mesh|high/st|baselineMs=34454.4|polls=194323|maxPollGapMs=7590.4
+C|f4_asm_24body.step|mesh|high/st cancel|at=0.34|latencyMs=64.0|elapsedMs=11667.3|baselineMs=34454.4|facesMeshed=5802/13245
+C|f4_asm_24body.step|mesh|high/st cancel|at=0.71|latencyMs=-1.0|elapsedMs=19751.5|baselineMs=34454.4|facesMeshed=13245/13245
+C|f4_asm_24body.step|mesh|high/st cancel|at=0.59|latencyMs=-1.0|elapsedMs=19219.4|baselineMs=34454.4|facesMeshed=13245/13245
+C|f4_asm_24body.step|mesh|high/occt|baselineMs=3451.7|polls=194323|maxPollGapMs=1665.8
+C|f4_asm_24body.step|mesh|high/occt cancel|at=0.38|latencyMs=505.4|elapsedMs=1812.8|baselineMs=3451.7|facesMeshed=0/13245
+C|f4_asm_24body.step|mesh|high/occt cancel|at=0.77|latencyMs=104.8|elapsedMs=2748.0|baselineMs=3451.7|facesMeshed=7442/13245
+C|f4_asm_24body.step|mesh|high/occt cancel|at=0.68|latencyMs=67.5|elapsedMs=2411.2|baselineMs=3451.7|facesMeshed=7107/13245

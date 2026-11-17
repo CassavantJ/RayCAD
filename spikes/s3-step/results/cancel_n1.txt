@@ -1,0 +1,56 @@
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadFile|baselineMs=120.6|note=no progress or cancel argument exists
+C|nist_ftc_09_asme1_ap242-e1.stp|read|DESTEP_Provider precancelled|returnedAfterMs=122.7|ok=0|polls=1|shapeNull=1
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadStream uncancelled|ms=119.5|status=1|streamConsumedAtMs=55.8|afterStreamMs=63.7
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadStream cancel|at=0.85|phase=load(after stream consumed)|latencyMs=17.7|elapsedMs=120.7|baselineMs=119.5|status=1
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadStream cancel|at=0.17|phase=parse|latencyMs=0.9|elapsedMs=22.2|baselineMs=119.5|status=3
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadStream cancel|at=0.09|phase=parse|latencyMs=0.4|elapsedMs=11.2|baselineMs=119.5|status=3
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadStream cancel|at=0.79|phase=load(after stream consumed)|latencyMs=22.0|elapsedMs=117.3|baselineMs=119.5|status=1
+C|nist_ftc_09_asme1_ap242-e1.stp|read|ReadStream cancel|at=0.53|phase=load(after stream consumed)|latencyMs=52.5|elapsedMs=116.7|baselineMs=119.5|status=1
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|no-heal|baselineMs=7.4|polls=665|maxPollGapMs=1.4
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|no-heal cancel|at=0.91|latencyMs=-1.0|elapsedMs=6.4|baselineMs=7.4|roots=4
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|no-heal cancel|at=0.47|latencyMs=0.0|elapsedMs=4.1|baselineMs=7.4|roots=2
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|no-heal cancel|at=0.88|latencyMs=-1.0|elapsedMs=6.4|baselineMs=7.4|roots=4
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|default-heal|baselineMs=72.2|polls=3204|maxPollGapMs=13.8
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|default-heal cancel|at=0.39|latencyMs=0.3|elapsedMs=28.8|baselineMs=72.2|roots=1
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|default-heal cancel|at=0.19|latencyMs=0.3|elapsedMs=15.1|baselineMs=72.2|roots=1
+C|nist_ftc_09_asme1_ap242-e1.stp|transfer|default-heal cancel|at=0.85|latencyMs=1.0|elapsedMs=63.7|baselineMs=72.2|roots=1
+C|nist_ftc_09_asme1_ap242-e1.stp|heal|ShapeFix_Shape|baselineMs=73.2|polls=2390|maxPollGapMs=15.2
+C|nist_ftc_09_asme1_ap242-e1.stp|heal|ShapeFix_Shape cancel|at=0.07|latencyMs=0.1|elapsedMs=6.5|baselineMs=73.2
+C|nist_ftc_09_asme1_ap242-e1.stp|heal|ShapeFix_Shape cancel|at=0.31|latencyMs=9.1|elapsedMs=32.3|baselineMs=73.2
+C|nist_ftc_09_asme1_ap242-e1.stp|heal|ShapeFix_Shape cancel|at=0.41|latencyMs=2.1|elapsedMs=32.3|baselineMs=73.2
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/st|baselineMs=59.7|polls=980|maxPollGapMs=14.7
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/st cancel|at=0.78|latencyMs=8.0|elapsedMs=54.8|baselineMs=59.7|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/st cancel|at=0.61|latencyMs=1.2|elapsedMs=38.7|baselineMs=59.7|facesMeshed=137/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/st cancel|at=0.87|latencyMs=2.9|elapsedMs=54.8|baselineMs=59.7|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/occt|baselineMs=32.4|polls=980|maxPollGapMs=10.9
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/occt cancel|at=0.55|latencyMs=11.8|elapsedMs=30.1|baselineMs=32.4|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/occt cancel|at=0.81|latencyMs=1.6|elapsedMs=28.8|baselineMs=32.4|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/occt cancel|at=0.10|latencyMs=2.8|elapsedMs=7.6|baselineMs=32.4|facesMeshed=0/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/pool|baselineMs=56.6|polls=982|maxPollGapMs=14.4
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/pool cancel|at=0.78|latencyMs=8.7|elapsedMs=53.0|baselineMs=56.6|facesMeshed=139/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/pool cancel|at=0.89|latencyMs=3.0|elapsedMs=54.9|baselineMs=56.6|facesMeshed=139/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|low/pool cancel|at=0.38|latencyMs=0.5|elapsedMs=22.0|baselineMs=56.6|facesMeshed=88/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/st|baselineMs=108.7|polls=1108|maxPollGapMs=33.5
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/st cancel|at=0.67|latencyMs=28.6|elapsedMs=102.8|baselineMs=108.7|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/st cancel|at=0.17|latencyMs=0.5|elapsedMs=20.1|baselineMs=108.7|facesMeshed=27/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/st cancel|at=0.80|latencyMs=17.2|elapsedMs=105.1|baselineMs=108.7|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/occt|baselineMs=53.0|polls=1108|maxPollGapMs=32.0
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/occt cancel|at=0.34|latencyMs=32.5|elapsedMs=51.0|baselineMs=53.0|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/occt cancel|at=0.71|latencyMs=21.0|elapsedMs=59.2|baselineMs=53.0|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/occt cancel|at=0.59|latencyMs=19.0|elapsedMs=50.6|baselineMs=53.0|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/pool|baselineMs=111.9|polls=1110|maxPollGapMs=37.1
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/pool cancel|at=0.38|latencyMs=23.7|elapsedMs=66.7|baselineMs=111.9|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/pool cancel|at=0.77|latencyMs=16.2|elapsedMs=103.0|baselineMs=111.9|facesMeshed=139/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|med/pool cancel|at=0.68|latencyMs=23.0|elapsedMs=99.9|baselineMs=111.9|facesMeshed=139/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/st|baselineMs=333.9|polls=1468|maxPollGapMs=137.7
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/st cancel|at=0.79|latencyMs=60.4|elapsedMs=325.0|baselineMs=333.9|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/st cancel|at=0.86|latencyMs=46.8|elapsedMs=334.5|baselineMs=333.9|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/st cancel|at=0.80|latencyMs=57.5|elapsedMs=324.3|baselineMs=333.9|facesMeshed=138/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/occt|baselineMs=178.4|polls=1468|maxPollGapMs=122.1
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/occt cancel|at=0.87|latencyMs=16.1|elapsedMs=172.5|baselineMs=178.4|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/occt cancel|at=0.93|latencyMs=8.7|elapsedMs=174.6|baselineMs=178.4|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/occt cancel|at=0.64|latencyMs=61.2|elapsedMs=176.9|baselineMs=178.4|facesMeshed=163/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/pool|baselineMs=338.0|polls=1470|maxPollGapMs=146.3
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/pool cancel|at=0.78|latencyMs=54.1|elapsedMs=318.7|baselineMs=338.0|facesMeshed=139/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/pool cancel|at=0.14|latencyMs=0.8|elapsedMs=49.6|baselineMs=338.0|facesMeshed=72/163
+C|nist_ftc_09_asme1_ap242-e1.stp|mesh|high/pool cancel|at=0.26|latencyMs=87.4|elapsedMs=177.6|baselineMs=338.0|facesMeshed=138/163

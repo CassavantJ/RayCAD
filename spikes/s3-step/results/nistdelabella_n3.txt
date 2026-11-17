@@ -1,0 +1,13 @@
+R|nist_ctc_02_asme1_ap203.stp|file|-|sizeMB=3.21|occt=8.0.1|threads=32|occtThreads=-1
+R|nist_ctc_02_asme1_ap203.stp|init|-|ms=1.8|peakMB=14
+R|nist_ctc_02_asme1_ap203.stp|read|-|ms=81.7|status=1|peakMB=35|curMB=27
+R|nist_ctc_02_asme1_ap203.stp|transfer|no-heal|ms=11.6|roots=1|polls=500|maxPollGapMs=2.7|peakMB=35|curMB=31
+R|nist_ctc_02_asme1_ap203.stp|release-reader|-|ms=4.7|curMB=21
+R|nist_ctc_02_asme1_ap203.stp|heal|ShapeFix_Shape|ms=336.8|changed=1|polls=3974|maxPollGapMs=38.7|peakMB=35|curMB=25
+R|nist_ctc_02_asme1_ap203.stp|shape|-|solids=1|shells=1|faces=487|edges=2621|freeFaces=0|brepBox=-340.01943137025381,-40.011065157531618,-360.01106515753168,340.01943137025421,820.01106515753168,40.170702006042077
+R|nist_ctc_02_asme1_ap203.stp|mesh|low/st|ms=179.5|tris=44360|nodes=34386|hash=82fb087efa5ac482|unmeshed=0|polls=9466|maxPollGapMs=36.6|peakMB=37|curMB=28|meshBox=-340,-40,-360,340,820,40|status=0x0|unmeshedFaces=
+R|nist_ctc_02_asme1_ap203.stp|mesh|low/occt|ms=54.2|tris=44360|nodes=34386|hash=82fb087efa5ac482|unmeshed=0|polls=9466|maxPollGapMs=21.0|peakMB=53|curMB=39|meshBox=-340,-40,-360,340,820,40|status=0x0|unmeshedFaces=
+R|nist_ctc_02_asme1_ap203.stp|mesh|med/st|ms=506.1|tris=132328|nodes=86765|hash=41d6182d06c74a43|unmeshed=0|polls=37788|maxPollGapMs=44.3|peakMB=58|curMB=41|meshBox=-340,-40,-360,340,820,40|status=0x0|unmeshedFaces=
+R|nist_ctc_02_asme1_ap203.stp|mesh|med/occt|ms=119.1|tris=132328|nodes=86765|hash=41d6182d06c74a43|unmeshed=0|polls=37788|maxPollGapMs=24.9|peakMB=90|curMB=44|meshBox=-340,-40,-360,340,820,40|status=0x0|unmeshedFaces=
+R|nist_ctc_02_asme1_ap203.stp|mesh|high/st|ms=2155.5|tris=434650|nodes=259145|hash=5d3b7d05edcb0d72|unmeshed=0|polls=134871|maxPollGapMs=122.7|peakMB=103|curMB=55|meshBox=-340,-40,-360,340,820,40|status=0x0|unmeshedFaces=
+R|nist_ctc_02_asme1_ap203.stp|mesh|high/occt|ms=628.8|tris=434650|nodes=259145|hash=5d3b7d05edcb0d72|unmeshed=0|polls=134871|maxPollGapMs=43.9|peakMB=164|curMB=61|meshBox=-340,-40,-360,340,820,40|status=0x0|unmeshedFaces=

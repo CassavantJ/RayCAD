@@ -1,0 +1,10 @@
+R|f1_plate_1body.step|file|-|sizeMB=5.11|occt=8.0.1|threads=32|occtThreads=-1
+R|f1_plate_1body.step|init|-|ms=1.8|peakMB=14
+R|f1_plate_1body.step|read|-|ms=181.5|status=1|peakMB=54|curMB=42
+R|f1_plate_1body.step|transfer|no-heal|ms=78.0|roots=1|polls=1578|maxPollGapMs=11.2|peakMB=54|curMB=53
+R|f1_plate_1body.step|release-reader|-|ms=14.6|curMB=26
+R|f1_plate_1body.step|heal|ShapeFix_Shape|ms=1900.3|changed=1|polls=10633|maxPollGapMs=814.4|peakMB=54|curMB=28
+R|f1_plate_1body.step|shape|-|solids=1|shells=1|faces=1569|edges=7488|freeFaces=0|brepBox=-9.9999999999999995e-08,-9.9999999999999995e-08,-9.9999999999999995e-08,700.00000009999997,480.00000010000002,45.000000100000676
+R|f1_plate_1body.step|mesh|low/pool|ms=743.3|tris=178726|nodes=174302|hash=b2869f644553bfc1|unmeshed=0|polls=9194|maxPollGapMs=293.9|peakMB=99|curMB=42|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|med/pool|ms=1251.6|tris=307854|nodes=294858|hash=605ea36b88de7424|unmeshed=0|polls=9867|maxPollGapMs=451.5|peakMB=126|curMB=49|meshBox=0,0,0,700,480,45
+R|f1_plate_1body.step|mesh|high/pool|ms=2624.8|tris=646288|nodes=603762|hash=20fcb681017ce52f|unmeshed=0|polls=14230|maxPollGapMs=874.1|peakMB=197|curMB=71|meshBox=0,0,0,700,480,45

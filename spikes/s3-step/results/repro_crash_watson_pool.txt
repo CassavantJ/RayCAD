@@ -1,0 +1,9 @@
+R|f5_asm_46body.step|mesh|high/pool|ms=36829.6|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=11248.9|peakMB=14324|curMB=875|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=35225.3|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=11365.5|peakMB=14639|curMB=890|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=36179.1|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=11064.7|peakMB=14710|curMB=891|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=34234.5|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10796.7|peakMB=14710|curMB=891|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=33123.1|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10996.9|peakMB=14710|curMB=890|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=33298.2|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10374.1|peakMB=14710|curMB=898|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=32789.4|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10594.0|peakMB=14839|curMB=894|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/pool|ms=32977.9|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152875|maxPollGapMs=10469.0|peakMB=14839|curMB=899|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+exit=0

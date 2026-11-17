@@ -1,0 +1,97 @@
+PlaneGCS spike S7. Eigen 3.4.0, OpenMP in Eigen: no, SIMD: SSE, SSE2, eigen threads requested: 0, QR: auto, rows 4, gauss -1, alg 2
+
+== Diagnosis API ==
+  fully constrained: diagnose() = 0 DOF, 223.36 ms, getDependentParams 0 entries (0 distinct parameters), 0 groups
+    conflicting: 0
+    redundant: 0
+    partially redundant: 0
+    solve() after diagnosis = 0 (0 Success, 1 Converged, 2 Failed)
+  nearly (5 dimensions left out): diagnose() = 5 DOF, 235.10 ms, getDependentParams 216 entries (216 distinct parameters), 5 groups
+    conflicting: 0
+    redundant: 0
+    partially redundant: 0
+    solve() after diagnosis = 0 (0 Success, 1 Converged, 2 Failed)
+  fully constrained + redundant constraint: diagnose() = 0 DOF, 487.74 ms, getDependentParams 0 entries (0 distinct parameters), 0 groups
+    conflicting: 0
+    redundant: 1
+      tag 481  EXTRA horizontal top of u3 (redundant)
+    partially redundant: 0
+    solve() after diagnosis = 0 (0 Success, 1 Converged, 2 Failed)
+  fully constrained + conflicting constraint: diagnose() = -1 DOF, 498.13 ms, getDependentParams 0 entries (0 distinct parameters), 0 groups
+    conflicting: 2
+      tag 20  u0 radius BL
+      tag 481  EXTRA radius 5 on u0 BL (conflicting)
+    redundant: 0
+    partially redundant: 0
+    solve() after diagnosis = 2 (0 Success, 1 Converged, 2 Failed)
+
+== Timing (100 full-solve runs, 1 x 100 drag steps) ==
+
+-- NEARLY constrained sketch: 200 entities, 1200 parameters, 475 constraints (+80 arc rules), DOF 5, solve result 0, max constraint error 3.55e-15 --
+  build system (add constraints, declare unknowns)     n=100   median    1.574 ms   p95    2.451 ms   worst    7.517 ms
+  initSolution (diagnose + partition)                  n=100   median  316.541 ms   p95  428.101 ms   worst  486.201 ms
+  solve + applySolution (from 0.3 mm noise)            n=100   median  327.474 ms   p95  452.555 ms   worst  502.733 ms
+  FULL SOLVE total                                     n=100   median  644.247 ms   p95  860.897 ms   worst  981.507 ms
+  diagnose() alone, repeated                           n=100   median  269.545 ms   p95  371.352 ms   worst  413.274 ms
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, FreeCAD default (solve from drag start): failed steps 0 of 100, point moved 10.000 mm, max constraint error after 1.86e-16, max |end - end of default mode| 0
+    DRAG STEP                                          n=100   median  807.808 ms   p95 1260.274 ms   worst 2182.156 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    3.784 ms   p95    3.784 ms   worst    3.784 ms
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, re-init every step: failed steps 0 of 100, point moved 10.000 mm, max constraint error after 1.86e-16, max |end - end of default mode| 3.55e-15
+    DRAG STEP                                          n=100   median  413.135 ms   p95  486.878 ms   worst  742.333 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    5.558 ms   p95    5.558 ms   worst    5.558 ms
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, REDUCED unknowns (getDependentParams only): 272 of 1200 parameters are unknowns
+    parameters that moved in default mode: 24, of those missing from getDependentParams: 0
+  D1 slide: last unit bottom.p2, +0.10/+0.05 mm per step, REDUCED unknowns (getDependentParams only): failed steps 0 of 100, point moved 0.000 mm, max constraint error after 3.55e-15, max |end - end of default mode| 10
+    DRAG STEP                                          n=100   median    0.133 ms   p95    0.176 ms   worst    0.222 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    1.383 ms   p95    1.383 ms   worst    1.383 ms
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=5     median  672.119 ms   p95  687.000 ms   worst  687.000 ms
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, FreeCAD default (solve from drag start): failed steps 0 of 100, point moved 5.831 mm, max constraint error after 3.55e-15, max |end - end of default mode| 0
+    DRAG STEP                                          n=100   median  413.905 ms   p95  465.288 ms   worst  501.180 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    4.057 ms   p95    4.057 ms   worst    4.057 ms
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, re-init every step: failed steps 0 of 100, point moved 5.831 mm, max constraint error after 3.55e-15, max |end - end of default mode| 1.42e-14
+    DRAG STEP                                          n=100   median  434.621 ms   p95  530.931 ms   worst  552.328 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    3.053 ms   p95    3.053 ms   worst    3.053 ms
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, REDUCED unknowns (getDependentParams only): 272 of 1200 parameters are unknowns
+    parameters that moved in default mode: 48, of those missing from getDependentParams: 0
+  D2 resize: u0 right.p2, +0.05/+0.03 mm per step, REDUCED unknowns (getDependentParams only): failed steps 0 of 100, point moved 5.831 mm, max constraint error after 1.78e-15, max |end - end of default mode| 7.11e-15
+    DRAG STEP                                          n=100   median    0.782 ms   p95    1.255 ms   worst    1.387 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    1.448 ms   p95    1.448 ms   worst    1.448 ms
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=5     median  808.537 ms   p95  901.948 ms   worst  901.948 ms
+
+-- FULLY constrained sketch: 200 entities, 1200 parameters, 480 constraints (+80 arc rules), DOF 0, solve result 0, max constraint error 1.78e-15 --
+  max |solved - intended design| = 3.55e-15 mm
+  build system (add constraints, declare unknowns)     n=100   median    1.453 ms   p95    2.142 ms   worst    2.623 ms
+  initSolution (diagnose + partition)                  n=100   median  275.069 ms   p95  316.472 ms   worst  353.907 ms
+  solve + applySolution (from 0.3 mm noise)            n=100   median  322.757 ms   p95  420.422 ms   worst  442.567 ms
+  FULL SOLVE total                                     n=100   median  607.197 ms   p95  700.157 ms   worst  798.442 ms
+  diagnose() alone, repeated                           n=100   median  235.165 ms   p95  280.772 ms   worst  313.318 ms
+  D3 blocked: fully constrained, last unit bottom.p2, FreeCAD default (solve from drag start): failed steps 0 of 100, point moved 0.000 mm, max constraint error after 1.87e-16, max |end - end of default mode| 0
+    DRAG STEP                                          n=100   median   91.764 ms   p95  106.770 ms   worst  130.881 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    3.307 ms   p95    3.307 ms   worst    3.307 ms
+  D3 blocked: fully constrained, last unit bottom.p2, re-init every step: failed steps 0 of 100, point moved 0.000 mm, max constraint error after 1.86e-16, max |end - end of default mode| 2.22e-16
+    DRAG STEP                                          n=100   median   95.518 ms   p95  134.381 ms   worst  155.227 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    4.138 ms   p95    4.138 ms   worst    4.138 ms
+  D3 blocked: fully constrained, last unit bottom.p2, REDUCED unknowns (getDependentParams only): 0 of 1200 parameters are unknowns
+    parameters that moved in default mode: 0, of those missing from getDependentParams: 0
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=5     median  328.985 ms   p95  342.356 ms   worst  342.356 ms
+
+-- LOOSE (no distance dimensions) sketch: 200 entities, 1200 parameters, 441 constraints (+80 arc rules), DOF 39, solve result 0, max constraint error 1.85e-14 --
+  build system (add constraints, declare unknowns)     n=100   median    1.370 ms   p95    1.775 ms   worst    2.116 ms
+  initSolution (diagnose + partition)                  n=100   median  297.414 ms   p95  367.533 ms   worst  375.765 ms
+  solve + applySolution (from 0.3 mm noise)            n=100   median  286.231 ms   p95  344.992 ms   worst  379.354 ms
+  FULL SOLVE total                                     n=100   median  589.500 ms   p95  678.373 ms   worst  740.306 ms
+  diagnose() alone, repeated                           n=100   median  256.138 ms   p95  320.437 ms   worst  424.919 ms
+  D4 loose: no distance dimensions, last unit bottom.p2, FreeCAD default (solve from drag start): failed steps 0 of 100, point moved 11.180 mm, max constraint error after 1.42e-14, max |end - end of default mode| 0
+    DRAG STEP                                          n=100   median 1238.959 ms   p95 1665.712 ms   worst 3740.227 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    3.174 ms   p95    3.174 ms   worst    3.174 ms
+  D4 loose: no distance dimensions, last unit bottom.p2, re-init every step: failed steps 0 of 100, point moved 11.180 mm, max constraint error after 1.42e-14, max |end - end of default mode| 2.9e-11
+    DRAG STEP                                          n=100   median 1104.771 ms   p95 1536.518 ms   worst 1629.209 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    2.958 ms   p95    2.958 ms   worst    2.958 ms
+  D4 loose: no distance dimensions, last unit bottom.p2, REDUCED unknowns (getDependentParams only): 1102 of 1200 parameters are unknowns
+    parameters that moved in default mode: 192, of those missing from getDependentParams: 0
+  D4 loose: no distance dimensions, last unit bottom.p2, REDUCED unknowns (getDependentParams only): failed steps 0 of 100, point moved 11.180 mm, max constraint error after 1.85e-14, max |end - end of default mode| 3.13e-13
+    DRAG STEP                                          n=100   median  168.549 ms   p95  210.265 ms   worst  286.160 ms
+    drag begin (add temp constraint + initSolution)    n=1     median    4.527 ms   p95    4.527 ms   worst    4.527 ms
+    STATELESS DRAG STEP (rebuild + diagnose + solve)   n=5     median 1382.900 ms   p95 1590.743 ms   worst 1590.743 ms
+
+Eigen::nbThreads() at exit: 1

@@ -1,0 +1,10 @@
+R|f4_asm_24body.step|file|-|sizeMB=46.90|occt=8.0.1|threads=32|occtThreads=-1
+R|f4_asm_24body.step|init|-|ms=1.8|peakMB=14
+R|f4_asm_24body.step|read|-|ms=1654.0|status=1|peakMB=356|curMB=248
+R|f4_asm_24body.step|transfer|no-heal|ms=671.5|roots=1|polls=13467|maxPollGapMs=104.4|peakMB=356|curMB=321
+R|f4_asm_24body.step|release-reader|-|ms=166.6|curMB=87
+R|f4_asm_24body.step|heal|ShapeFix_Shape|ms=11800.9|changed=1|polls=89403|maxPollGapMs=315.9|peakMB=356|curMB=97
+R|f4_asm_24body.step|shape|-|solids=24|shells=24|faces=13245|edges=62788|freeFaces=0|brepBox=-3.4822774164914329e-07,-3.4822774164914329e-07,-3.4822774164914329e-07,505.00000034822773,347.00000034822773,1055.0000003482285
+R|f4_asm_24body.step|mesh|low/pool|ms=2583.0|tris=1425776|nodes=1383376|hash=4339ee7ea8210362|unmeshed=0|polls=120563|maxPollGapMs=131.6|peakMB=2071|curMB=214|meshBox=0,0,0,505,347,1055
+R|f4_asm_24body.step|mesh|med/pool|ms=4577.2|tris=2488190|nodes=2355066|hash=55de78cda9fa8aaf|unmeshed=0|polls=211605|maxPollGapMs=303.5|peakMB=4200|curMB=295|meshBox=0,0,0,505,347,1055
+R|f4_asm_24body.step|mesh|high/pool|ms=11971.9|tris=5428706|nodes=4924397|hash=10631c2684d11836|unmeshed=0|polls=582857|maxPollGapMs=1086.4|peakMB=12139|curMB=463|meshBox=0,0,0,505,347,1055

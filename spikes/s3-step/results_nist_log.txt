@@ -1,0 +1,11 @@
+== 15:27:22 run data/nist/NIST-PMI-STEP-Files/nist_ftc_09_asme1_ap242-e1.stp
+== 15:27:24 run data/nist/NIST-PMI-STEP-Files/nist_stc_09_asme1_ap242-e3.stp
+== 15:27:26 run data/nist/NIST-PMI-STEP-Files/AP203 with PMI/nist_ctc_02_asme1_ap203.stp
+== 15:27:34 run data/nist/NIST-PMI-STEP-Files/nist_ftc_09_asme1_ap242-e1.stp
+== 15:27:36 run data/nist/NIST-PMI-STEP-Files/nist_stc_09_asme1_ap242-e3.stp
+== 15:27:38 run data/nist/NIST-PMI-STEP-Files/AP203 with PMI/nist_ctc_02_asme1_ap203.stp
+== 15:27:46 run data/nist/NIST-PMI-STEP-Files/nist_ftc_09_asme1_ap242-e1.stp
+== 15:27:48 run data/nist/NIST-PMI-STEP-Files/nist_stc_09_asme1_ap242-e3.stp
+== 15:27:50 run data/nist/NIST-PMI-STEP-Files/AP203 with PMI/nist_ctc_02_asme1_ap203.stp
+== 15:27:59 cancel data/nist/NIST-PMI-STEP-Files/nist_ftc_09_asme1_ap242-e1.stp --trials 3 --modes st,occt,pool
+== done 15:28:05

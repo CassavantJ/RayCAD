@@ -1,0 +1,51 @@
+== 12:48:38 run data/f1_plate_1body.step
+== 12:51:32 run data/f2_asm_5body.step
+== 12:53:01 run data/f3_asm_dominant_11body.step
+== 12:58:29 run data/f4_asm_24body.step
+== 13:05:20 run data/f5_asm_46body.step
+== 13:20:44 run data/f1_plate_1body.step
+== 13:23:32 run data/f2_asm_5body.step
+== 13:24:53 run data/f3_asm_dominant_11body.step
+== 13:29:10 run data/f4_asm_24body.step --modes pool
+== 13:29:45 run data/f5_asm_46body.step --modes pool
+== 13:31:24 run data/f1_plate_1body.step
+== 13:33:40 run data/f2_asm_5body.step
+== 13:34:57 run data/f3_asm_dominant_11body.step
+== 13:39:38 run data/f4_asm_24body.step --modes pool
+== 13:40:12 run data/f5_asm_46body.step --modes pool
+== 13:41:03 run data/f1_plate_1body.step --default-heal --tiers low --modes pool
+== 13:41:10 run data/f2_asm_5body.step --default-heal --tiers low --modes pool
+== 13:41:13 run data/f3_asm_dominant_11body.step --default-heal --tiers low --modes pool
+== 13:41:24 run data/f4_asm_24body.step --default-heal --tiers low --modes pool
+== 13:41:36 run data/f5_asm_46body.step --default-heal --tiers low --modes pool
+== 13:42:04 run data/f1_plate_1body.step --algo delabella --modes st,occt,pool
+== 13:42:17 run data/f1_plate_1body.step --algo delabella --modes pool
+== 13:42:24 run data/f1_plate_1body.step --algo delabella --modes pool
+== 13:42:31 run data/f2_asm_5body.step --algo delabella --modes st,occt,pool
+== 13:42:45 run data/f2_asm_5body.step --algo delabella --modes pool
+== 13:42:50 run data/f2_asm_5body.step --algo delabella --modes pool
+== 13:42:55 run data/f3_asm_dominant_11body.step --algo delabella --modes st,occt,pool
+== 13:43:34 run data/f3_asm_dominant_11body.step --algo delabella --modes pool
+== 13:43:50 run data/f3_asm_dominant_11body.step --algo delabella --modes pool
+== 13:44:05 run data/f4_asm_24body.step --algo delabella --modes st,occt,pool
+== 13:45:06 run data/f4_asm_24body.step --algo delabella --modes pool
+== 13:45:27 run data/f4_asm_24body.step --algo delabella --modes pool
+== 13:45:46 run data/f5_asm_46body.step --algo delabella --modes st,occt,pool
+== 13:47:47 run data/f5_asm_46body.step --algo delabella --modes pool
+== 13:48:29 run data/f5_asm_46body.step --algo delabella --modes pool
+== 13:49:10 run data/f5_asm_46body.step --tiers med --modes pool --threads 2
+== 13:50:28 run data/f5_asm_46body.step --tiers med --modes occt --occt-threads 2
+== 13:51:46 run data/f5_asm_46body.step --tiers med --modes pool --threads 4
+== 13:52:44 run data/f5_asm_46body.step --tiers med --modes occt --occt-threads 4
+== 13:53:45 run data/f5_asm_46body.step --tiers med --modes pool --threads 8
+== 13:54:35 run data/f5_asm_46body.step --tiers med --modes occt --occt-threads 8
+== 13:55:26 run data/f5_asm_46body.step --tiers med --modes pool --threads 16
+== 13:56:12 run data/f5_asm_46body.step --tiers med --modes occt --occt-threads 16
+== 13:56:57 run data/f5_asm_46body.step --tiers med --modes pool --threads 32
+== 13:57:41 run data/f5_asm_46body.step --tiers med --modes occt --occt-threads 32
+== 13:58:27 cancel data/f1_plate_1body.step --trials 3 --modes st,occt,pool
+== 14:05:25 cancel data/f2_asm_5body.step --trials 3 --modes st,occt,pool
+== 14:09:07 cancel data/f3_asm_dominant_11body.step --trials 3 --modes st,occt,pool
+== 14:20:48 cancel data/f4_asm_24body.step --trials 3 --modes occt,pool
+== 14:24:09 cancel data/f5_asm_46body.step --trials 3 --modes occt,pool
+== done 14:32:23

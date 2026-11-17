@@ -1,0 +1,4 @@
+R|f1_plate_1body.step|heal|none|ms=0.0|solids=1|faces=1569|lowTris=178145|lowHash=6db8857db13f8638|unmeshed=1|peakMB=561
+R|f1_plate_1body.step|heal|ShapeFix_Shape per solid on pool|ms=2005.4|solids=1|faces=1569|lowTris=178752|lowHash=a77f14f8fae54f6e|unmeshed=0|peakMB=568
+R|f1_plate_1body.step|heal|ShapeFix_Shape whole shape|ms=2037.5|solids=1|faces=1569|lowTris=178752|lowHash=a77f14f8fae54f6e|unmeshed=0|peakMB=569
+exit=0

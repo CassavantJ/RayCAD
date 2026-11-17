@@ -1,0 +1,10 @@
+variant                  n   median    worst     best |    main     app     qml occtuse |    wall  mods  occt  fail
+delay_aot                5      657      700      647 |      13      40     653      -1 |     762   129     0     0
+delay_software           5      546      566      536 |      12      39     540      -1 |     628   118     0     0
+delay_d3d12              5      807      822      795 |      13      38     799      -1 |     969   131     0     0
+delay_opengl             5      797     1048      786 |      12      38     794      -1 |    1038   128     0     0
+delay_vulkan             5      944      998      884 |      13      43     938      -1 |    1214   152     0     0
+delay_basicloop          5      677      796      641 |      12      40     675      -1 |     775   129     0     0
+delay_emptywindow        5      316      361      312 |      14      42     315      -1 |     388   114     0     0
+delay_warp               5      559      590      536 |      12      43     553      -1 |     646   121     0     0
+All times in ms since OS process creation. median/worst/best = first frame swapped. main/app/qml = medians of the stage stamps.

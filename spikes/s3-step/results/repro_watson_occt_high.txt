@@ -1,0 +1,11 @@
+R|f5_asm_46body.step|mesh|high/occt|ms=27902.5|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3646.7|peakMB=22769|curMB=853|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=28021.5|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3491.3|peakMB=22769|curMB=909|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=26169.6|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3498.3|peakMB=23284|curMB=987|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=26642.8|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3507.7|peakMB=23284|curMB=989|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=27206.6|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3645.8|peakMB=23296|curMB=986|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=26015.9|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=4079.5|peakMB=23296|curMB=991|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=25297.5|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3260.4|peakMB=23296|curMB=997|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=25731.5|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3541.4|peakMB=23296|curMB=997|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=25613.0|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3387.9|peakMB=23296|curMB=992|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+R|f5_asm_46body.step|mesh|high/occt|ms=26626.3|tris=10854674|nodes=9858454|hash=1a81d27cca1ced4a|unmeshed=0|polls=1152785|maxPollGapMs=3508.5|peakMB=23296|curMB=992|meshBox=0,0,0,705,515,2055|status=0x0|unmeshedFaces=
+exit=0
