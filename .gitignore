@@ -1,0 +1,8 @@
+build/
+out/
+spikes/*/build/
+spikes/*/third_party/
+spikes/*/data/
+*.user
+.vs/
+CMakeUserPresets.json
