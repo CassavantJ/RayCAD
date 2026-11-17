@@ -21,19 +21,22 @@ struct HardwareInfo {
     bool discreteGpu; std::uint64_t vramBytes, ramBytes; int physicalCores;
     bool computeShaders; int maxTextureSize; bool softwareRasterizer;
 };
-HardwareInfo detectHardware();      // after the first window exists; cached in settings with the driver version
+// After the first window exists; cached in settings with the driver version. On Windows discreteGpu and vramBytes
+// come from DXGI: QRhi reports device type Unknown and no VRAM for real adapters (spike S1).
+HardwareInfo detectHardware();
 
 enum class Tier { Low, Medium, High };
 struct TierPreset {
     Tier tier;
     // Display only
-    double meshChordTolMm, meshAngleTolDeg;   // Low 0.2/20, Medium 0.05/12, High 0.01/6 (starting values)
+    double meshChordTolMm, meshAngleTolDeg;   // Low 0.2/20, Medium 0.05/12, High 0.01/6 (starting values).
+                                              // An imported model is FIRST meshed at 0.2/20 on every tier, then refined (PLAN 9).
     int msaaSamples;                          // 0, 4, 4
     bool ambientOcclusion, shadows, smoothEdges, transparency, sectionCaps;
     bool liquidGlass;                         // default per tier; user override stored separately
     int maxBackplotSegments;                  // beyond this the backplot is decimated FOR DISPLAY only
     // Simulation resolution and backend
-    double simCellMm;                         // 0.5, 0.2, 0.05
+    double simCellMm;                         // 0.2, 0.1, 0.05 (upper bound, snapped per axis; PLAN 6.2)
     bool gpuSimulation;                       // High only, v2
     int workerThreads;                        // 0 = physical cores - 1
 };
@@ -74,6 +77,7 @@ struct MeshStyle { Token face; Token edge; float opacity = 1; bool showEdges = t
 struct Camera { Vec3 eye, target, up; bool perspective; double fovDeg, orthoHeight; };
 struct SectionPlane { Vec3 origin, normal; bool cap; };
 
+// `point` needs a depth read-back at the picked pixel in addition to the ID buffer (spike S1).
 struct PickHit { ItemId item; kernel::SubKind kind; std::uint32_t subIndex; Vec3 point; std::uint32_t moveIndex; };
 enum class PickFilter : std::uint8_t { Faces = 1, Edges = 2, Vertices = 4, Bodies = 8, Toolpath = 16 };
 
@@ -110,8 +114,13 @@ public:
     virtual FrameStats lastFrameStats() const = 0;
 
     // Liquid Glass support: a downsampled, blurred copy of the last viewport frame, regenerated only when the
-    // viewport image changed. Panels sample this ONE texture. Returns an opaque handle the UI layer wraps.
-    virtual void* blurredBackdropTexture() = 0;
+    // viewport image changed. Panels sample this ONE texture.
+    // Ownership and threading (spike S1 hit a double free here): the viewport OWNS the texture; the handle is valid
+    // only on the render thread until the next resize or setBackdropEnabled(false), after which the UI must fetch it
+    // again. The UI wraps it WITHOUT taking ownership (QQuickWindow::createTextureFromRhiTexture takes ownership
+    // by default; that must be turned off).
+    struct Backdrop { void* rhiTexture; int width, height; bool yUp; std::uint64_t generation; };
+    virtual Backdrop blurredBackdropTexture() = 0;
     virtual void setBackdropEnabled(bool) = 0;                     // off => zero cost (flat panels)
 };
 

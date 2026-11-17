@@ -22,7 +22,9 @@ struct Backplot { std::vector<BackplotVertex> lineVertices; std::vector<std::uin
 Backplot buildBackplot(const cam::Toolpath&, const Xform& modelFromWcs, double chordTol);
 
 // ---------- Stock model ----------
-struct StockResolution { double cellMm; };      // from tier preset: Low 0.5, Medium 0.2, High 0.05 (starting values)
+// From the tier preset: Low 0.2, Medium 0.1, High 0.05 (PLAN.md 6.2). An UPPER BOUND: the model snaps the cell
+// per axis to extent / ceil(extent / cellMm) so the stock is spanned exactly (without it S6 saw a +2% volume error).
+struct StockResolution { double cellMm; };
 
 class IStockModel {
 public:
@@ -31,10 +33,21 @@ public:
     // Remove the volume swept by the cutting part of the tool along one move. Returns removed volume in mm^3.
     virtual double cut(const struct ToolShape&, const Vec3& from, const Vec3& to, bool rapid) = 0;
     virtual double cutArc(const struct ToolShape&, const Vec3& from, const Vec3& to, const Vec3& centre, bool cw, cam::ArcPlane) = 0;
+    // Batch of linear moves with one tool, applied in order. This is the fast path: one cut() per move with
+    // threading inside was 11x slower in spike S6. The result must not depend on thread count or batch size.
+    struct CutMove { Vec3 from, to; bool rapid; };
+    virtual void cutBatch(const struct ToolShape&, std::span<const CutMove>, std::span<double> removedMm3) = 0;
+    // RESOLUTION-DEPENDENT: material thinner than one cell between rays can be missed. Not a safety verdict on
+    // its own; see EventKind::RapidIntoCutStock.
     virtual bool intersects(const struct ToolShape& nonCuttingPart, const Vec3& from, const Vec3& to) const = 0;
-    virtual kernel::Mesh toMesh(std::uint32_t changedSinceVersion, Box3* dirtyOut) const = 0;   // incremental display mesh
+    // Incremental display mesh. maxTriangles caps the output (a full 0.05 mm heightfield is 12.4 M triangles).
+    virtual kernel::Mesh toMesh(std::uint32_t changedSinceVersion, Box3* dirtyOut, std::uint32_t maxTriangles) const = 0;
     virtual kernel::TriSoup toSolid() const = 0;                                                // carried to the next setup
-    virtual std::unique_ptr<IStockModel> clone() const = 0;                                     // timeline keyframes
+    virtual std::unique_ptr<IStockModel> clone() const = 0;                                     // full deep copy (214 MB, 57 ms at 0.05 mm)
+    // Timeline keyframes: cheaper than clone() (copy-on-write strips or deltas); restore() returns to it.
+    struct Snapshot { virtual ~Snapshot() = default; };
+    virtual std::shared_ptr<const Snapshot> snapshot() const = 0;
+    virtual void restore(const Snapshot&) = 0;
     virtual std::uint32_t version() const = 0;
 };
 // CPU tri-dexel (three orthogonal dexel grids) so stock survives re-orientation between setups.
@@ -52,7 +65,9 @@ ToolShape makeToolShape(const lib::Tool&, const lib::Holder*, double stickOut);
 // ---------- Events ----------
 enum class Severity { Info, Warning, Error };
 enum class EventKind {
-    RapidIntoStock,            // Error, tier-independent
+    RapidIntoStock,            // Error, tier-independent: analytic, against the INITIAL stock solid
+    RapidIntoCutStock,         // Error: against in-process stock, at a fixed resolution that does not come from the tier
+                               // preset; the message states that resolution
     HolderHitsStock, ShankHitsStock, ToolHitsFixture, HolderHitsFixture, HolderHitsPart,   // Error, tier-independent
     Gouge,                     // tool cuts below the design surface by more than tolerance
     PlungeWithNonCentreCutting, ExcessEngagement, FeedIntoStockAtRapidHeight,
@@ -89,7 +104,7 @@ public:
     // Full material-removal run. Stores a stock keyframe every N moves so scrubbing backwards is fast.
     virtual Status run(const SimProgram&, const SimOptions&, JobContext&) = 0;
     virtual std::span<const SimEvent> events() const = 0;               // sorted by (opIndex, moveIndex)
-    virtual Status seek(TimelinePosition) = 0;                          // budget: under 250 ms on Low via keyframes
+    virtual Status seek(TimelinePosition) = 0;                          // budget: PLAN.md section 9, via IStockModel::snapshot keyframes
     virtual const IStockModel& stock() const = 0;
     virtual Xform toolPose() const = 0;
     virtual std::uint64_t totalMoves() const = 0;

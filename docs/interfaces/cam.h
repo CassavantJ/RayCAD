@@ -107,8 +107,9 @@ struct Toolpath {
     Hash256 inputHash;               // hash of everything the generator consumed
     std::vector<Move> moves;
     Nm startX, startY, startZ;
-    struct Stats { double cutLengthMm, rapidLengthMm; double minZ, maxZ; double maxEngagementDeg; } stats;
-    std::vector<std::string> warnings;
+    // maxEngagementDeg alone is a short spike (S5); p99 and air-cut length are what describe an adaptive path.
+    struct Stats { double cutLengthMm, rapidLengthMm; double minZ, maxZ; double maxEngagementDeg, p99EngagementDeg, airCutLengthMm; } stats;
+    std::vector<std::string> warnings;   // includes generator failure flags: start point not found, uncleared area remains, lead failed
     std::vector<std::byte> serialize() const;        // canonical little-endian; the golden-file format
     static Result<Toolpath> deserialize(std::span<const std::byte>);
     Hash256 hash() const;
@@ -161,11 +162,16 @@ public:
     // from its stored toolpath becomes Stale. A Stale or ReferenceBroken operation can NOT be posted.
     virtual std::map<OperationId, OpState> status(doc::DocStatePtr, doc::BuildResultPtr) const = 0;
     virtual JobHandle<std::shared_ptr<const Toolpath>> generate(doc::DocStatePtr, doc::BuildResultPtr, OperationId) = 0;
-    virtual void generateAllStale(doc::DocStatePtr, doc::BuildResultPtr) = 0;   // operations run in parallel; each is internally deterministic
+    // Operations run in parallel; each is internally deterministic and MUST be re-entrant (no shared globals, no
+    // clock-driven branches). Cancellation is polled by iteration count, never by wall clock.
+    virtual void generateAllStale(doc::DocStatePtr, doc::BuildResultPtr) = 0;
 };
 
 // ---------- Linking (shared by all milling operation types) ----------
-struct LinkOptions { double maxStayDownDistance; bool allowRapidRetract; double leadRadius; double rampAngleDeg; double helixDiameter; };
+// Entry falls back in order helix -> ramp along the cut -> pre-drill point (if given); if none fits, generation
+// fails with the minimum width needed (S5: upstream adaptive produced nothing for a slot 1.8 mm wider than the tool).
+enum class EntryKind : std::uint8_t { Helix, Ramp, PreDrill };
+struct LinkOptions { double maxStayDownDistance; bool allowRapidRetract; double leadRadius; double rampAngleDeg; double helixDiameter; double helixMinDiameter; std::vector<EntryKind> entryOrder; };
 // Orders cut passes and inserts leads, ramps, retracts and links. Never rapids below feedPlane inside stock bounds.
 Result<std::vector<Move>> linkPasses(std::span<const std::vector<Move>> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&);
 

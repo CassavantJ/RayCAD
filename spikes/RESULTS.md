@@ -21,7 +21,7 @@ Each spike's own `REPORT.md` has the method, the full numbers and what was not m
 
 ## What the spikes change in the plan
 
-Ordered by how much they move the plan. None is applied to `PLAN.md` yet.
+Ordered by how much they move the plan. All are applied in `PLAN.md` revision 2 and the headers in `docs/interfaces/` (2026-11-17).
 
 ### Changes to design
 

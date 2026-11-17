@@ -40,7 +40,18 @@ struct Ref { std::string name; Hash256 commit; };   // "heads/main", "heads/<bra
 
 // ---------- One open .raycad file ----------
 enum class OpenMode { ReadWrite, ReadOnly };
-struct OpenInfo { int formatVersion; bool migrated; bool openedReadOnlyBecauseLocked; std::string lockOwner; };
+// Who holds the write lock (PLAN.md 4.3). Heartbeat age is measured on the file server's clock.
+struct LockInfo { std::string user, host; std::int64_t pid; std::int64_t sinceUnixMs; double heartbeatAgeSec; bool stale; bool ownerProvablyDead; };
+struct OpenInfo {
+    int formatVersion; bool migrated;
+    bool openedReadOnlyBecauseLocked;      // if true, the file opened is a VERIFIED SNAPSHOT COPY in a local temp
+                                           // path (copied under the lock file's save counter, then hash-checked),
+                                           // not a live connection: the writer's exclusive lock blocks all readers.
+    std::optional<LockInfo> lock;
+};
+// Break a stale lock after the user agreed: renames the stale lock file away, then the caller opens ReadWrite.
+// Fails with Busy if the lock is live.
+Status breakStaleLock(const std::string& path);
 
 class IDocumentFile : public IObjectStore {
 public:

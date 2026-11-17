@@ -1,6 +1,6 @@
 // RayCAD interface contract: sketch
 // Module: src/sketch   Depends on: core, kernel (Profile types only), PlaneGCS (private)
-// Status: PLAN DRAFT.
+// Status: PLAN DRAFT, revision 2 (after spike S7).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -49,16 +49,32 @@ struct SolveResult {
     int freeDof;
     std::vector<Uuid> conflicting;        // constraint ids
     std::vector<Uuid> redundant;
+    std::vector<Uuid> partiallyRedundant;
+    // OverConstrained: redundant constraints exist but the sketch still solves. Conflicting: no solution; `conflicting` is set.
     Sketch solved;                        // same ids, updated coordinates
 };
 
 class ISketchSolver {
 public:
     virtual ~ISketchSolver() = default;
-    // Deterministic: same input gives bit-identical output on one build. Single-threaded.
+    // Full solve with diagnosis. Measured in spike S7: about 0.65 s for 200 curves in one coupled group,
+    // so this ALWAYS runs on a worker, never on the UI thread.
+    // Deterministic: same input gives bit-identical output on one build, PROVIDED the implementation keeps all
+    // solver parameters in one contiguous array in canonical entity order, pins Eigen's cache sizes at start-up
+    // and is built with one fixed set of floating-point flags (PLAN.md section 8).
     virtual Result<SolveResult> solve(const Sketch&, JobContext&) = 0;
-    // Interactive drag: solve with one point pulled toward `target`; must return in under 16 ms for 200 entities.
-    virtual Result<SolveResult> drag(const Sketch&, SketchEntId point, Vec2 target) = 0;
+
+    // Interactive drag is a SESSION that keeps the solver alive; a stateless call would rebuild and diagnose
+    // on every step (22 to 42 ms even at 50 curves). Budget (PLAN.md section 9): one step under 16 ms for a
+    // coupled group of up to 50 curves. Larger groups take longer (0.4 to 0.8 s at 200), so the caller runs
+    // the session on the drag worker and always passes the newest pointer position.
+    class IDragSession {
+    public:
+        virtual ~IDragSession() = default;
+        virtual Result<SolveResult> move(Vec2 target) = 0;     // diagnosis fields are those from beginDrag
+        virtual Sketch end() = 0;                              // final solved sketch
+    };
+    virtual Result<std::unique_ptr<IDragSession>> beginDrag(const Sketch&, SketchEntId point) = 0;
 };
 std::unique_ptr<ISketchSolver> makePlaneGcsSolver();
 
