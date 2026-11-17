@@ -14,3 +14,10 @@ Rules for every spike:
 
 Machine used for the first run: Core i9-13900K (24 cores), 64 GB RAM, RTX 3090 and Intel UHD 770, Windows 11.
 This is a High-tier machine. Low-tier numbers from it are estimates only.
+
+## Dependencies on this machine (M: drive)
+
+- OpenCASCADE 8.0.1: vcpkg at `M:\dev\vcpkg`, triplet `x64-windows` (release DLLs in `installed\x64-windows\bin`, debug in `debug\bin`).
+- Qt 6.12.0 (MSVC 2022 64-bit, open-source packages from download.qt.io): `M:\Qt\6.12.0\msvc2022_64`.
+  Includes qtbase, qtdeclarative, qtsvg, qttools, qtshadertools (`qsb`).
+- `spikes\build.cmd` passes both to CMake. To run a built program, put the OpenCASCADE and Qt `bin` folders on `PATH`.
