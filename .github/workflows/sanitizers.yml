@@ -1,0 +1,90 @@
+# AddressSanitizer and UndefinedBehaviorSanitizer on Linux (Clang), preset linux-clang-asan.
+# The vcpkg libraries and Qt are not instrumented; RayCAD's own code and the tests are.
+# Needs no secret. Actions are pinned to commit SHAs; the comment gives the release tag.
+name: sanitizers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.12.0"
+
+jobs:
+  asan-ubsan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang ninja-build pkg-config autoconf automake libtool curl zip unzip tar \
+            libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxmu-dev \
+            libxkbcommon-dev libvulkan-dev
+
+      # vcpkg at the exact commit that vcpkg-configuration.json pins as the baseline.
+      - name: Set up vcpkg
+        run: |
+          baseline=$(python3 -c "import json; print(json.load(open('vcpkg-configuration.json'))['default-registry']['baseline'])")
+          root="$RUNNER_TEMP/vcpkg"
+          cache="$RUNNER_TEMP/vcpkg-cache"
+          mkdir -p "$root" "$cache"
+          git -C "$root" init -q
+          git -C "$root" remote add origin https://github.com/microsoft/vcpkg.git
+          git -C "$root" fetch -q --depth 1 origin "$baseline"
+          git -C "$root" checkout -q FETCH_HEAD
+          "$root/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$cache" >> "$GITHUB_ENV"
+          echo "VCPKG_BASELINE=$baseline" >> "$GITHUB_ENV"
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-linux-clang-asan-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-linux-clang-asan-${{ env.VCPKG_BASELINE }}-
+            vcpkg-linux-clang-asan-
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Configure
+        run: cmake --preset linux-clang-asan
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-linux-clang-asan-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build
+        run: cmake --build --preset linux-clang-asan
+
+      # Leak detection is off for now: Qt, Fontconfig and OpenCASCADE keep process-lifetime allocations
+      # that LeakSanitizer reports, and no suppression list has been built yet.
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+          ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset linux-clang-asan

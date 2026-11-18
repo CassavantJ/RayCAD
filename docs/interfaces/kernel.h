@@ -44,7 +44,7 @@ public:
 
 // How an operation changed topology. Built from BRepTools_History / Modified() / Generated() /
 // IsDeleted() and normalised to SubId on both sides. BRepGraph is NOT used (withdrawn upstream
-// from master on 2026-10-13 pending API review; see PLAN.md 2.2).
+// from master on 2026-10-13 pending API review; see PLAN.md 0.2 row 2).
 // Normalisation guarantees (spike S4): results that are not in the final shape are dropped; history of a
 // boolean already includes its same-domain unification; a sub-shape with NO entry is unchanged (same SubId
 // meaning, same geometry); for direct edits the edited face is reported Modified, never "Deleted plus a

@@ -1,0 +1,122 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{QT_ROOT_DIR}",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/vcpkg_installed"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows, MSVC x64 (run from a Visual Studio developer prompt, or after tools\\win-env.cmd)",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "RAY_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-clang",
+      "displayName": "Linux, Clang",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic"
+      }
+    },
+    {
+      "name": "linux-gcc",
+      "displayName": "Linux, GCC",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic"
+      }
+    },
+    {
+      "name": "macos-arm64",
+      "displayName": "macOS, Apple Silicon, Clang",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.4",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx-dynamic"
+      }
+    },
+    {
+      "name": "linux-clang-asan",
+      "displayName": "Linux, Clang, AddressSanitizer and UndefinedBehaviorSanitizer",
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
+        "RAY_SANITIZE": "address,undefined"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux, Clang, ThreadSanitizer",
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
+        "RAY_SANITIZE": "thread"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc", "configuration": "Debug" },
+    { "name": "windows-msvc-relwithdebinfo", "configurePreset": "windows-msvc", "configuration": "RelWithDebInfo" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc", "configuration": "Release" },
+    { "name": "linux-clang-debug", "configurePreset": "linux-clang", "configuration": "Debug" },
+    { "name": "linux-clang-relwithdebinfo", "configurePreset": "linux-clang", "configuration": "RelWithDebInfo" },
+    { "name": "linux-clang-release", "configurePreset": "linux-clang", "configuration": "Release" },
+    { "name": "linux-gcc-debug", "configurePreset": "linux-gcc", "configuration": "Debug" },
+    { "name": "linux-gcc-relwithdebinfo", "configurePreset": "linux-gcc", "configuration": "RelWithDebInfo" },
+    { "name": "linux-gcc-release", "configurePreset": "linux-gcc", "configuration": "Release" },
+    { "name": "macos-arm64-debug", "configurePreset": "macos-arm64", "configuration": "Debug" },
+    { "name": "macos-arm64-relwithdebinfo", "configurePreset": "macos-arm64", "configuration": "RelWithDebInfo" },
+    { "name": "macos-arm64-release", "configurePreset": "macos-arm64", "configuration": "Release" },
+    { "name": "linux-clang-asan", "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan", "configurePreset": "linux-clang-tsan" }
+  ],
+  "testPresets": [
+    { "name": "test-base", "hidden": true, "output": { "outputOnFailure": true }, "execution": { "timeout": 300 } },
+    { "name": "windows-msvc-debug", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "Debug" },
+    { "name": "windows-msvc-relwithdebinfo", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "RelWithDebInfo" },
+    { "name": "windows-msvc-release", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "Release" },
+    { "name": "linux-clang-debug", "inherits": "test-base", "configurePreset": "linux-clang", "configuration": "Debug" },
+    { "name": "linux-clang-relwithdebinfo", "inherits": "test-base", "configurePreset": "linux-clang", "configuration": "RelWithDebInfo" },
+    { "name": "linux-clang-release", "inherits": "test-base", "configurePreset": "linux-clang", "configuration": "Release" },
+    { "name": "linux-gcc-debug", "inherits": "test-base", "configurePreset": "linux-gcc", "configuration": "Debug" },
+    { "name": "linux-gcc-relwithdebinfo", "inherits": "test-base", "configurePreset": "linux-gcc", "configuration": "RelWithDebInfo" },
+    { "name": "linux-gcc-release", "inherits": "test-base", "configurePreset": "linux-gcc", "configuration": "Release" },
+    { "name": "macos-arm64-debug", "inherits": "test-base", "configurePreset": "macos-arm64", "configuration": "Debug" },
+    { "name": "macos-arm64-relwithdebinfo", "inherits": "test-base", "configurePreset": "macos-arm64", "configuration": "RelWithDebInfo" },
+    { "name": "macos-arm64-release", "inherits": "test-base", "configurePreset": "macos-arm64", "configuration": "Release" },
+    { "name": "linux-clang-asan", "inherits": "test-base", "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan", "inherits": "test-base", "configurePreset": "linux-clang-tsan" }
+  ]
+}

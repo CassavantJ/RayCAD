@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "raycad",
+  "version-string": "0.1.0",
+  "description": "Open-source desktop CAD/CAM",
+  "license": "LGPL-2.1-or-later",
+  "dependencies": [
+    "boost-graph",
+    "boost-math",
+    "catch2",
+    "opencascade",
+    "tl-expected"
+  ],
+  "overrides": [
+    {
+      "name": "opencascade",
+      "version": "8.0.1",
+      "port-version": 1
+    }
+  ]
+}

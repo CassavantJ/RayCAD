@@ -10,12 +10,14 @@
 #pragma once
 #include <array>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 #include <tl/expected.hpp>
 

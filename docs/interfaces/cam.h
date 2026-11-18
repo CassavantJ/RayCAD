@@ -10,6 +10,7 @@
 #include <variant>
 
 namespace ray::lib { struct Tool; struct Holder; struct MachineDef; struct Material; }
+namespace ray::doc { struct DocState; using DocStatePtr = std::shared_ptr<const DocState>; struct BuildResult; using BuildResultPtr = std::shared_ptr<const BuildResult>; }
 
 namespace ray::cam {
 
@@ -193,5 +194,3 @@ struct CycleTime { double cutSec, rapidSec, toolChangeSec, totalSec; };
 CycleTime estimateCycleTime(std::span<const Toolpath* const>, const lib::MachineDef&);   // v1: trapezoidal accel per axis
 
 } // namespace ray::cam
-
-namespace ray::doc { struct DocState; using DocStatePtr = std::shared_ptr<const DocState>; struct BuildResult; using BuildResultPtr = std::shared_ptr<const BuildResult>; }

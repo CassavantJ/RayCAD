@@ -1289,3 +1289,13 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 - Numbers marked [measured Sn] are from throwaway prototypes and synthetic or small data sets. Numbers marked [guess] or [estimate] are not measurements.
 - Three spike agents (S1, S3, S9) wrote their `REPORT.md` by a route around a harness rule that subagents return text; the content was not affected.
 - The task sizes are estimates with no track record behind them yet. After M1, re-estimate from actuals.
+
+**Found by T-001 (2026-11-17), to settle before the named task**
+
+- **`cam.h` against section 1.1 (blocks T-032):** `ICamEngine` takes `doc::DocStatePtr` and `doc::BuildResultPtr`, but 1.1 lets `doc` depend on `cam` and not the reverse, so `src/cam` cannot include `document.h`. Proposed fix: keep the operation types, toolpath IR and generators in `cam`, and move the `ICamEngine` implementation (staleness tracking over document snapshots) into `doc`, declared in `document.h`. Needs Jake's approval as an interface change.
+- **`document.h` `RebuildContext`** has reference members and no constructor; T-010 adds one.
+- **`sim.h` `makeTriDexelGpu`** takes a `render::IComputeBackend&` while rule 2 forbids `sim` linking `render`; the v2 implementation must live in `src/render` or a new module.
+- **Binary cache in CI** uses `actions/cache` on vcpkg's archive folder, not NuGet on GitHub Packages as section 10 says (NuGet needs mono on Linux and macOS and write access that fork pull requests do not get).
+- **CI runners** are `windows-latest`, `ubuntu-latest` and `macos-14`, not the images named in section 10.
+- **gperf (GPL-3.0-or-later)** is pulled in on Linux as a host build tool by OCCT's freetype feature. The licence lint allows GPL for rows marked "Build tool only". Building OCCT without freetype would remove it.
+- From T-001 on, `include/ray/` holds the real headers; `docs/interfaces/` is kept identical as the reviewable copy.

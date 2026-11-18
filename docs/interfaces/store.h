@@ -50,7 +50,7 @@ struct OpenInfo {
     std::optional<LockInfo> lock;
 };
 // Break a stale lock after the user agreed: renames the stale lock file away, then the caller opens ReadWrite.
-// Fails with Busy if the lock is live.
+// Fails with ErrorCode::Locked if the lock is live.
 Status breakStaleLock(const std::string& path);
 
 class IDocumentFile : public IObjectStore {

@@ -1,0 +1,10 @@
+# Text files are stored with LF line endings; Windows command scripts need CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.step binary
+*.stp binary
+*.raycad binary
+# Spike code is throwaway and is kept byte for byte as it was written.
+spikes/** -text !eol

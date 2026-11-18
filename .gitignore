@@ -5,4 +5,8 @@ spikes/*/third_party/
 spikes/*/data/
 *.user
 .vs/
+.vscode/
 CMakeUserPresets.json
+vcpkg_installed/
+__pycache__/
+*.pyc
