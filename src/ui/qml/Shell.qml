@@ -24,11 +24,14 @@ FocusScope {
     id: shell
     objectName: "shell"
 
-    property bool leftPanelOpen: true
-    property bool rightPanelOpen: true
+    // T-024: the panels open as they were left (AppSettings); changes are saved.
+    property bool leftPanelOpen: AppSettings.panelOpen("model")
+    property bool rightPanelOpen: AppSettings.panelOpen("properties")
     property bool jobsPanelOpen: false
-    property real leftPanelWidth: Theme.sidePanelWidth
-    property real rightPanelWidth: Theme.sidePanelWidth
+    property real leftPanelWidth: AppSettings.panelWidth("model", Theme.sidePanelWidth)
+    property real rightPanelWidth: AppSettings.panelWidth("properties", Theme.sidePanelWidth)
+    onLeftPanelOpenChanged: AppSettings.setPanelOpen("model", leftPanelOpen)
+    onRightPanelOpenChanged: AppSettings.setPanelOpen("properties", rightPanelOpen)
     readonly property real gap: Theme.panelGap
 
     readonly property alias viewportHost: viewportHost
@@ -55,6 +58,30 @@ FocusScope {
     function openFileMenu() {
         fileMenuLoader.active = true
         fileMenuLoader.item.menu.popup(fileMenuButton, 0, fileMenuButton.height + Theme.spacingXs)
+    }
+
+    // T-024: panels/Settings.qml, created on first use (view options menu, ui.settings, Ctrl+,).
+    function openSettings(section) {
+        viewport.view.forceActiveFocus()
+        settingsLoader.active = true
+        settingsLoader.item.open(section || "")
+    }
+    Connections {
+        target: AppSettings
+        function onOpenRequested() {
+            shell.openSettings()
+        }
+    }
+    Loader {
+        id: settingsLoader
+        objectName: "settingsLoader"
+        active: false
+        sourceComponent: Component {
+            Settings {
+                onClosed: viewport.view.forceActiveFocus()
+                onShortcutsRequested: Commands.openShortcutSettings()
+            }
+        }
     }
 
     // ---------- Viewport (full window, under every panel) ----------
@@ -423,6 +450,13 @@ FocusScope {
                         shortcutText: Shortcuts.revision >= 0 ? Shortcuts.shortcutText("ui.keyboardShortcuts") : ""
                         onTriggered: Commands.openShortcutSettings()
                     }
+                    // T-024
+                    MenuItem {
+                        objectName: "openSettings"
+                        text: qsTr("Settings…")
+                        shortcutText: Shortcuts.revision >= 0 ? Shortcuts.shortcutText("ui.settings") : ""
+                        onTriggered: shell.openSettings()
+                    }
                     MenuSeparator {}
                     MenuItem {
                         text: qsTr("Perspective projection")
@@ -530,8 +564,14 @@ FocusScope {
         anchors.bottom: leftPanel.bottom
         width: shell.gap
         accessibleName: qsTr("Resize the model panel")
-        onMoved: delta => shell.leftPanelWidth = shell.clampPanelWidth(leftPanel.width + delta)
-        onReset: shell.leftPanelWidth = Theme.sidePanelWidth
+        onMoved: delta => {
+            shell.leftPanelWidth = shell.clampPanelWidth(leftPanel.width + delta)
+            AppSettings.setPanelWidth("model", shell.leftPanelWidth)
+        }
+        onReset: {
+            shell.leftPanelWidth = Qt.binding(() => Theme.sidePanelWidth)
+            AppSettings.setPanelWidth("model", -1)
+        }
     }
 
     PanelBase {
@@ -585,8 +625,14 @@ FocusScope {
         anchors.bottom: rightPanel.bottom
         width: shell.gap
         accessibleName: qsTr("Resize the properties panel")
-        onMoved: delta => shell.rightPanelWidth = shell.clampPanelWidth(rightPanel.width - delta)
-        onReset: shell.rightPanelWidth = Theme.sidePanelWidth
+        onMoved: delta => {
+            shell.rightPanelWidth = shell.clampPanelWidth(rightPanel.width - delta)
+            AppSettings.setPanelWidth("properties", shell.rightPanelWidth)
+        }
+        onReset: {
+            shell.rightPanelWidth = Qt.binding(() => Theme.sidePanelWidth)
+            AppSettings.setPanelWidth("properties", -1)
+        }
     }
 
     // ---------- Status bar ----------
@@ -672,6 +718,19 @@ FocusScope {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingL
 
+            // T-024: the quick unit toggle of the open document (display only; Units, units.h).
+            ToolButton {
+                objectName: "unitsToggle"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: Units.hasDocument
+                compact: true
+                text: Units.unitLabel
+                checked: Units.overridden
+                toolTipText: Units.system === "inch" ? qsTr("Show lengths in millimetres")
+                                                     : qsTr("Show lengths in inches")
+                Accessible.name: qsTr("Display units: %1").arg(Units.unitLabel)
+                onClicked: Units.toggle()
+            }
             Label {
                 objectName: "statusLook"
                 anchors.verticalCenter: parent.verticalCenter

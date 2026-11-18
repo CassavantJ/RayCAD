@@ -110,6 +110,7 @@ public:
     Q_INVOKABLE QVariantList contextEntries() const;
     Q_INVOKABLE void openPalette(const QString& text = QString());
     Q_INVOKABLE void openShortcutSettings();
+    Q_INVOKABLE void openSettings(); // T-024: panels/Settings.qml (ui.settings, Ctrl+,)
     Q_INVOKABLE QString localPath(const QUrl& url) const { return url.toLocalFile(); }
     Q_INVOKABLE QUrl fileUrl(const QString& path) const { return QUrl::fromLocalFile(path); }
 
@@ -124,6 +125,7 @@ signals:
     void paletteRequested(const QString& text);
     void formRequested(const QString& id);
     void shortcutSettingsRequested();
+    void settingsRequested();
     // A command finished (or failed to start): what the banner showed.
     void finished(const QString& id, bool ok, const QString& message);
     // A right-click (press and release without dragging) at this window point; ContextMenu.qml opens there.

@@ -3,6 +3,8 @@ add_library(ray_api STATIC
     api_module.cpp
     include/ray_api/viewer.h
     include/ray_api/recent_files.h
+    include/ray_api/settings.h
+    settings.cpp
     viewer.cpp
     app.cpp
     builtin_actions.cpp

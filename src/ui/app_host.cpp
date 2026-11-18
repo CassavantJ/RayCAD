@@ -8,8 +8,10 @@
 #include "selection_model.h"
 #include "session.h"
 #include "session_recovery.h"
+#include "settings.h"
 #include "shortcuts.h"
 #include "theme_object.h"
+#include "units.h"
 #include "viewport_item.h"
 
 #include <ray_api/viewer.h>
@@ -67,6 +69,11 @@ AppHost::AppHost(const AppOptions& options, QString cacheDir, QObject* parent)
     }
     context_->setPage(options_.gallery ? QStringLiteral("gallery") : QStringLiteral("shell"));
     context_->setScreenshotMode(!options_.screenshot.isEmpty());
+    // T-024: units and settings, after the command-line theme and glass (those are not saved as settings).
+    units_ = std::make_unique<UnitsObject>(session_.get());
+    settings_ = std::make_unique<SettingsObject>(theme_.get(), context_.get(), scene_.get(), units_.get(),
+                                                 [this] { return jobs(); });
+    connect(commands_.get(), &CommandCatalog::settingsRequested, settings_.get(), &SettingsObject::open);
 
     // Text without an explicit font gets the theme's UI font.
     QGuiApplication::setFont(theme_->uiFont());
@@ -77,10 +84,15 @@ AppHost::~AppHost()
 {
     // The window belongs to the engine; destroy both before the singletons they reference.
     if (window_ != nullptr) {
+        if (persistGeometry()) {
+            saveWindowGeometry(); // only while it is shown; else what was tracked while it was
+        }
+        settings_->flush();
         window_->removeEventFilter(this);
     }
     engine_.reset();
     window_ = nullptr;
+    settings_->attachView(nullptr);
     // Then what observes the session, then the viewer's objects (their jobs are cancelled), then the session (it
     // cancels and waits for its jobs and closes its documents), then the job system, which waits for the rest.
     shortcuts_.reset();
@@ -128,7 +140,33 @@ bool AppHost::startSession(std::optional<std::string> userDataDir)
     }
     session_->setRecoverySource(std::move(recovery_));
     session_->checkRecovery();
+    // T-024: hardware detection, on a worker and only now (after the first frame): the tier and its reason.
+    if (settingsLoaded_) {
+        settings_->requestHardware();
+    }
     return true;
+}
+
+void AppHost::loadSettings(std::optional<std::string> userDataDir)
+{
+    settings_->load(userDataDir, !options_.theme.isEmpty(), options_.glass.has_value());
+    settingsLoaded_ = true;
+}
+
+void AppHost::saveWindowGeometry()
+{
+    saveWindowGeometry(true);
+}
+
+void AppHost::saveWindowGeometry(bool now)
+{
+    // A hidden or minimized window has no geometry worth keeping (and a closed one may report a stale one).
+    if (window_ == nullptr || !window_->isVisible() || window_->visibility() == QWindow::Minimized ||
+        window_->visibility() == QWindow::FullScreen) {
+        return;
+    }
+    const QRect g = window_->geometry();
+    settings_->saveWindow(g.x(), g.y(), g.width(), g.height(), window_->visibility() == QWindow::Maximized, now);
 }
 
 void AppHost::setRecoverySource(std::unique_ptr<IRecoverySource> source)
@@ -144,6 +182,9 @@ bool AppHost::eventFilter(QObject* watched, QEvent* event)
         event->ignore();
         QTimer::singleShot(0, files_.get(), [files = files_.get()] { files->requestQuit(); });
         return true;
+    }
+    if (watched == window_ && event->type() == QEvent::Close && persistGeometry()) {
+        saveWindowGeometry();
     }
     return QObject::eventFilter(watched, event);
 }
@@ -200,6 +241,8 @@ bool AppHost::load()
     Files::provideFor(engine_.get(), files_.get());
     CommandCatalog::provideFor(engine_.get(), commands_.get());
     ShortcutManager::provideFor(engine_.get(), shortcuts_.get());
+    UnitsObject::provideFor(engine_.get(), units_.get());
+    SettingsObject::provideFor(engine_.get(), settings_.get());
     connect(engine_.get(), &QQmlEngine::warnings, this, [this](const QList<QQmlError>& list) {
         for (const QQmlError& e : list) {
             warnings_ << e.toString();
@@ -236,18 +279,77 @@ bool AppHost::load()
         const QSize available = screen != nullptr ? screen->availableSize() : QSize(1600, 1000);
         size = QSize(std::min(1600, available.width() * 9 / 10), std::min(1000, available.height() * 9 / 10));
     }
-    window_->resize(size);
-    if (const QScreen* screen = window_->screen()) {
-        const QRect area = screen->availableGeometry();
-        window_->setPosition(area.center() - QPoint(size.width() / 2, size.height() / 2));
+    // T-024: the geometry saved when the window last closed, kept on the screens there are now.
+    std::optional<api::WindowGeometry> saved;
+    if (settingsLoaded_ && !options_.size.isValid()) {
+        saved = settings_->current().window;
+    }
+    if (saved) {
+        window_->setGeometry(clampToScreens(QRect(saved->x, saved->y, saved->width, saved->height),
+                                            QSize(window_->minimumWidth(), window_->minimumHeight())));
+        restoreMaximized_ = saved->maximized;
+    } else {
+        window_->resize(size);
+        if (const QScreen* screen = window_->screen()) {
+            const QRect area = screen->availableGeometry();
+            window_->setPosition(area.center() - QPoint(size.width() / 2, size.height() / 2));
+        }
+    }
+    settings_->attachView(viewport());
+    // Kept up to date as the window moves (saved after a pause), so a crash does not lose it either.
+    if (persistGeometry()) {
+        const auto track = [this] {
+            saveWindowGeometry(false);
+        };
+        connect(window_, &QWindow::xChanged, this, track);
+        connect(window_, &QWindow::yChanged, this, track);
+        connect(window_, &QWindow::widthChanged, this, track);
+        connect(window_, &QWindow::heightChanged, this, track);
+        connect(window_, &QWindow::visibilityChanged, this, track);
     }
     return true;
+}
+
+QRect AppHost::clampToScreens(const QRect& wanted, const QSize& minimum)
+{
+    // The screen that shows most of it; none (a monitor was unplugged): the primary screen.
+    const QScreen* best = nullptr;
+    qint64 bestArea = 0;
+    for (const QScreen* screen : QGuiApplication::screens()) {
+        const QRect part = screen->availableGeometry().intersected(wanted);
+        const qint64 area = qint64(part.width()) * part.height();
+        if (area > bestArea) {
+            bestArea = area;
+            best = screen;
+        }
+    }
+    const bool offScreen = best == nullptr;
+    if (offScreen) {
+        best = QGuiApplication::primaryScreen();
+    }
+    if (best == nullptr) {
+        return wanted;
+    }
+    const QRect area = best->availableGeometry();
+    const int w = std::clamp(wanted.width(), std::min(minimum.width(), area.width()), area.width());
+    const int h = std::clamp(wanted.height(), std::min(minimum.height(), area.height()), area.height());
+    if (offScreen) {
+        return QRect(area.center().x() - w / 2, area.center().y() - h / 2, w, h);
+    }
+    // Wholly on that screen: the title bar can always be reached.
+    const int x = std::clamp(wanted.x(), area.left(), area.left() + area.width() - w);
+    const int y = std::clamp(wanted.y(), area.top(), area.top() + area.height() - h);
+    return QRect(x, y, w, h);
 }
 
 void AppHost::show()
 {
     if (window_ != nullptr) {
-        window_->show();
+        if (restoreMaximized_) {
+            window_->showMaximized();
+        } else {
+            window_->show();
+        }
     }
 }
 
@@ -261,6 +363,7 @@ void AppHost::setApp(api::IApp* app)
     app_ = app;
     context_->setApp(app);
     session_->setApp(app);
+    settings_->setApp(app);
 }
 
 } // namespace ray::ui

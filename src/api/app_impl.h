@@ -7,6 +7,7 @@
 #include "ui_thread.h"
 
 #include <ray/api.h>
+#include <ray_api/settings.h>
 
 #include <atomic>
 #include <cstdint>
@@ -100,6 +101,8 @@ void removeDocumentFiles(const std::string& path);
 class AppImpl;
 std::unique_ptr<IActionRegistry> makeActionRegistry(AppImpl& app);
 Status registerBuiltinActions(AppImpl& app);
+// settings.get, settings.set and settings.reset over `store` (settings.cpp, T-024).
+Status registerSettingsActions(IActionRegistry& actions, std::shared_ptr<SettingsStore> store);
 
 class AppImpl final : public HeadlessApp {
 public:
@@ -180,6 +183,10 @@ public:
     void closeEntry(DocEntry* entry, bool keepJournal = false);
     // UI thread (ray_api/recent_files.h): drops a path from the recent-files list and posts RecentFilesChanged.
     bool forgetRecent(const std::string& path);
+    // The user settings of userDataDir() (ray_api/settings.h, T-024); never null.
+    std::shared_ptr<SettingsStore> settings() const { return settings_; }
+    // Any thread: the state a new document starts from (the default unit system of the settings).
+    doc::DocStatePtr newDocumentState() const;
 
     // ---- Recovery journal (recovery.cpp) ----
     Result<OpenDocument*> recoverWork(const RecoveryInfo& info, JobContext& ctx); // on a worker
@@ -250,6 +257,7 @@ private:
     std::unique_ptr<IActionRegistry> actions_;
     std::string userDataDir_;
     std::unique_ptr<RecentFiles> recent_;
+    std::shared_ptr<SettingsStore> settings_;
 
     mutable std::mutex hookMutex_;
     ConfirmHook hook_;

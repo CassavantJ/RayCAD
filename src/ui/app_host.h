@@ -16,6 +16,7 @@
 #include "app_options.h"
 
 #include <QtCore/QObject>
+#include <QtCore/QRect>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 
@@ -43,8 +44,10 @@ class IRecoverySource;
 class SceneController;
 class Session;
 class SelectionModel;
+class SettingsObject;
 class ShortcutManager;
 class ThemeObject;
+class UnitsObject;
 class ViewportItem;
 
 class AppHost : public QObject {
@@ -56,6 +59,14 @@ public:
 
     // Problems found while applying the options (an unknown --theme); empty if none.
     QString optionError() const { return optionError_; }
+
+    // T-024: reads the user settings (cheap: one small file) and applies them: theme and glass (unless the command
+    // line set them), units, tier preset and overrides, and, in load(), the window geometry (clamped to the screens)
+    // and the navigation preset. Call before load(). Without it nothing from the user's profile is read or applied
+    // (tests build their windows that way). `userDataDir` as for startSession.
+    void loadSettings(std::optional<std::string> userDataDir = std::nullopt);
+    // Saves the main window's geometry into the settings (also done when the window closes).
+    void saveWindowGeometry();
 
     // Creates the main window (hidden). False if the QML failed to load; errorString() says why.
     bool load();
@@ -98,9 +109,15 @@ public:
     // T-021: the Commands and Shortcuts singletons (palette_commands.h, shortcuts.h).
     CommandCatalog* commands() const { return commands_.get(); }
     ShortcutManager* shortcuts() const { return shortcuts_.get(); }
+    // T-024: the AppSettings and Units singletons (settings.h, units.h).
+    SettingsObject* settings() const { return settings_.get(); }
+    UnitsObject* units() const { return units_.get(); }
 
     // <per-user cache location>/: QStandardPaths::CacheLocation for organisation and application "RayCAD".
     static QString cacheDirectory();
+    // A saved window rectangle made to fit the screens there are now: on the screen showing most of it, no larger
+    // than its available area and wholly inside it; centred on the primary screen when it is on none.
+    static QRect clampToScreens(const QRect& wanted, const QSize& minimum);
     // Sets the organisation and application names. Call before constructing QGuiApplication.
     static void configureProcess();
 
@@ -126,9 +143,21 @@ private:
     std::unique_ptr<Files> files_;
     std::unique_ptr<CommandCatalog> commands_;
     std::unique_ptr<ShortcutManager> shortcuts_;
+    std::unique_ptr<UnitsObject> units_;
+    std::unique_ptr<SettingsObject> settings_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QQuickWindow* window_ = nullptr;
     bool quitApproved_ = false;
+    bool settingsLoaded_ = false;
+    bool restoreMaximized_ = false;
+    // The geometry is saved for a normal run with the user's settings; not for --size, --smoke, --bench-start or
+    // --screenshot runs, which would otherwise replace the user's window with theirs.
+    void saveWindowGeometry(bool now);
+    bool persistGeometry() const
+    {
+        return settingsLoaded_ && !options_.size.isValid() && !options_.smoke && !options_.benchStart &&
+               options_.screenshot.isEmpty();
+    }
 };
 
 } // namespace ray::ui

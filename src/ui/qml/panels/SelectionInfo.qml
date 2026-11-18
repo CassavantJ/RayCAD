@@ -1,6 +1,7 @@
 // Properties of the current selection (task T-020): the right panel's content. Type, and for a face its surface
 // type and area, for an edge its curve type, length and radius, for a vertex its coordinates, for a body its
-// volume, area and bounding box, all in millimetres. The values are worked out off the UI thread (Selection.info).
+// volume, area and bounding box, shown in the display units (Units, T-024). The values are worked out off the UI
+// thread (Selection.info).
 // T-022 builds the real measure tools.
 import QtQuick
 import RayCad.Ui
@@ -48,7 +49,8 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     horizontalAlignment: Text.AlignRight
                     mono: true
-                    text: modelData.value
+                    // T-024: lengths, areas, volumes and points in the display units; switches live.
+                    text: Units.revision >= 0 ? Units.formatRow(modelData) : modelData.value
                 }
             }
         }

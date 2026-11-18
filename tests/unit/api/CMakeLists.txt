@@ -10,6 +10,7 @@ add_executable(ray_api_tests
     external_app_test.cpp
     recovery_test.cpp
     session_test.cpp
+    settings_test.cpp
     # Temp folders with non-ASCII names and child processes, shared with the store tests.
     "${CMAKE_SOURCE_DIR}/tests/unit/store/store_test_util.cpp"
 )

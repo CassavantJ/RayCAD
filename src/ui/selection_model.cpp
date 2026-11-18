@@ -52,6 +52,21 @@ QVariantMap row(const QString& label, const QString& value)
     return QVariantMap{{QStringLiteral("label"), label}, {QStringLiteral("value"), value}};
 }
 
+// T-024: a measured row also carries its quantity and raw value in mm, so the read-out formats it in the display
+// units (Units.formatRow) and switches live; `value` keeps the mm text for anything that shows rows as they are.
+QVariantMap measured(const QString& label, const QString& value, const char* quantity, const QVariant& mm)
+{
+    QVariantMap r = row(label, value);
+    r.insert(QStringLiteral("quantity"), QString::fromLatin1(quantity));
+    r.insert(QStringLiteral("mm"), mm);
+    return r;
+}
+
+QVariant pointValue(const Vec3& p)
+{
+    return QVariantList{p.x, p.y, p.z};
+}
+
 // What a sub/ref job finds out about one entry.
 struct Resolution {
     std::optional<kernel::SubId> sub;
@@ -406,27 +421,31 @@ void SelectionModel::updateInfo()
             if (info.surface) {
                 rows << row(tr("Surface"),
                             QString::fromLatin1(api::viewer::surfaceTypeName(info.surface->type).data()));
-                rows << row(tr("Area"), tr("%1 mm²").arg(QString::number(info.surface->area, 'f', 3)));
+                rows << measured(tr("Area"), tr("%1 mm²").arg(QString::number(info.surface->area, 'f', 3)), "area",
+                                 info.surface->area);
                 if (info.surface->radius > 0)
-                    rows << row(tr("Radius"), mm(info.surface->radius));
+                    rows << measured(tr("Radius"), mm(info.surface->radius), "length", info.surface->radius);
             }
             if (info.curve) {
                 rows << row(tr("Curve"), QString::fromLatin1(api::viewer::curveTypeName(info.curve->type).data()));
-                rows << row(tr("Length"), mm(info.curve->length));
+                rows << measured(tr("Length"), mm(info.curve->length), "length", info.curve->length);
                 if (info.curve->radius > 0)
-                    rows << row(tr("Radius"), mm(info.curve->radius));
+                    rows << measured(tr("Radius"), mm(info.curve->radius), "length", info.curve->radius);
             }
             if (info.point)
-                rows << row(tr("Position"), point(*info.point));
+                rows << measured(tr("Position"), point(*info.point), "point", pointValue(*info.point));
             if (info.mass) {
-                rows << row(tr("Volume"), tr("%1 mm³").arg(QString::number(info.mass->volume, 'f', 3)));
-                rows << row(tr("Area"), tr("%1 mm²").arg(QString::number(info.mass->area, 'f', 3)));
+                rows << measured(tr("Volume"), tr("%1 mm³").arg(QString::number(info.mass->volume, 'f', 3)), "volume",
+                                 info.mass->volume);
+                rows << measured(tr("Area"), tr("%1 mm²").arg(QString::number(info.mass->area, 'f', 3)), "area",
+                                 info.mass->area);
             }
             if (info.bounds) {
                 const Box3& b = *info.bounds;
-                rows << row(tr("Size"), point(Vec3{b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z}));
-                rows << row(tr("Min"), point(b.min));
-                rows << row(tr("Max"), point(b.max));
+                const Vec3 size{b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z};
+                rows << measured(tr("Size"), point(size), "point", pointValue(size));
+                rows << measured(tr("Min"), point(b.min), "point", pointValue(b.min));
+                rows << measured(tr("Max"), point(b.max), "point", pointValue(b.max));
             }
         }
         if (entry && entry->ref)

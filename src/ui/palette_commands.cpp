@@ -54,6 +54,9 @@ constexpr UiCommand kUiCommands[] = {
     {"ui.keyboardShortcuts", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Keyboard Shortcuts"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "General"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows and changes the keyboard shortcuts"), ""},
+    {"ui.settings", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Settings"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "General"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows and changes units, appearance, graphics and navigation"), "Ctrl+,"},
     {"view.fitAll", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Fit All"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Frames everything shown"), ""},
@@ -768,6 +771,10 @@ bool CommandCatalog::runUi(const QString& id)
         emit shortcutSettingsRequested();
         return true;
     }
+    if (id == QLatin1String("ui.settings")) {
+        emit settingsRequested();
+        return true;
+    }
     std::vector<int> bodies;
     if (selection_) {
         for (const SelectionEntry& e : selection_->entries()) {
@@ -965,6 +972,11 @@ void CommandCatalog::openPalette(const QString& text)
 void CommandCatalog::openShortcutSettings()
 {
     emit shortcutSettingsRequested();
+}
+
+void CommandCatalog::openSettings()
+{
+    emit settingsRequested();
 }
 
 // ---------- use statistics ----------
