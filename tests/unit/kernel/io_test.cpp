@@ -638,6 +638,61 @@ TEST_CASE("broken, truncated and foreign files give an error, never a crash", "[
     }
 }
 
+TEST_CASE("a STEP file that defines an entity twice is rejected before OCCT reads it", "[kernel][io]")
+{
+    // OCCT's model builder handles a repeated entity name in a second pass that, for some damaged files, looped
+    // forever depending on what the process had done before (a ThreadSanitizer run of this suite hung for 900 s on
+    // a damaged copy of box_hole.step with "#2 =" twice). The import must reject such a file up front. A watchdog
+    // cancels the import after 60 s, so a regression fails here instead of hanging the run.
+    TempDir dir;
+    const std::vector<char> bytes = readAll(dataFile("box_hole.step"));
+    std::string text(bytes.begin(), bytes.end());
+    const std::size_t at = text.find("\n#3 =");
+    REQUIRE(at != std::string::npos);
+    REQUIRE(text.find("\n#2 =") != std::string::npos);
+    text.replace(at, 5, "\n#2 =");
+    const std::string twice = dir.file("defined twice.step");
+    writeAll(twice, text);
+    // A '#2 =' inside a string or a comment is not a definition.
+    std::string quoted(bytes.begin(), bytes.end());
+    const std::size_t header = quoted.find("DATA;");
+    REQUIRE(header != std::string::npos);
+    quoted.insert(header + 5, "\n/* #2 = not an entity */\n");
+    const std::string commented = dir.file("commented.step");
+    writeAll(commented, quoted);
+
+    for (const bool expectRejected : {true, false}) {
+        const std::string& path = expectRejected ? twice : commented;
+        INFO(path);
+        CancelSource watchdogSource;
+        JobContext ctx{watchdogSource.token(), Progress()};
+        std::atomic<bool> finished{false};
+        std::thread watchdog([&] {
+            const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (!finished.load() && std::chrono::steady_clock::now() < end)
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            watchdogSource.cancel();
+        });
+        const Result<ImportResult> result = importStep(path, ImportOptions{}, ctx);
+        finished = true;
+        watchdog.join();
+        if (!result.has_value() && result.error().code == ErrorCode::Cancelled) {
+            // The abandoned I/O thread may never end: report and leave without waiting for it.
+            FAIL_CHECK("the import did not finish within 60 s");
+            std::fflush(stdout);
+            std::_Exit(3);
+        }
+        if (expectRejected) {
+            REQUIRE_FALSE(result.has_value());
+            CHECK(result.error().code == ErrorCode::FormatError);
+            CHECK(result.error().message.find("#2 ") != std::string::npos);
+        } else {
+            REQUIRE(result.has_value());
+            CHECK_FALSE(result->bodies.empty());
+        }
+    }
+}
+
 // ---------- Progress and cancel ----------
 
 TEST_CASE("progress is monotonic, names its stages and ends at 1", "[kernel][io]")

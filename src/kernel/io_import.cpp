@@ -560,6 +560,102 @@ int damagedEntities(const occ::handle<Interface_InterfaceModel>& model, Format f
     return broken;
 }
 
+// Finds an entity instance name that the data section defines twice ("#12 = ..." twice), outside strings and
+// comments. Such a file is invalid (ISO 10303-21 allows a repeated name only inside &SCOPE ... ENDSCOPE, so a file
+// with scopes is not checked), and must not reach OCCT: a repeated name sends OCCT 8.0.1's model builder
+// (StepData_StepReaderData::SetEntityNumbers) into its second resolution pass, which on damaged files was seen to
+// loop forever in some processes and finish in others for the same file, depending on what the process had done
+// before (a ThreadSanitizer test run hung for 900 s; a fresh process read the file in 11 ms). The file is read once
+// more here, at disk speed; the scan stops at a cancel. Returns the repeated name, 0 if there is none, -1 if the
+// task was stopped, -2 on a read error.
+std::int64_t repeatedStepEntityName(const std::filesystem::path& path, IoTask& task)
+{
+    std::FILE* file = detail::openFile(path, false);
+    if (file == nullptr)
+        return -2;
+    std::unordered_set<std::int64_t> names;
+    enum class State : std::uint8_t { Normal, String, Comment, Name, AfterName } state = State::Normal;
+    bool slash = false; // Normal: the previous byte was '/'
+    bool star = false;  // Comment: the previous byte was '*'
+    std::int64_t name = 0;
+    int digits = 0;
+    std::string word; // the current keyword in Normal state, to spot &SCOPE
+    std::vector<char> buffer(1 << 20);
+    std::int64_t result = 0;
+    for (;;) {
+        if (task.stopRequested()) {
+            result = -1;
+            break;
+        }
+        const std::size_t got = std::fread(buffer.data(), 1, buffer.size(), file);
+        if (got == 0) {
+            if (std::ferror(file) != 0)
+                result = -2;
+            break;
+        }
+        for (std::size_t i = 0; i < got && result == 0; ++i) {
+            const char c = buffer[i];
+            switch (state) {
+            case State::String:
+                if (c == '\'')
+                    state = State::Normal; // '' (an escaped quote) re-enters the string at once
+                break;
+            case State::Comment:
+                if (star && c == '/')
+                    state = State::Normal;
+                star = c == '*';
+                break;
+            case State::Name:
+                if (c >= '0' && c <= '9') {
+                    if (++digits <= 18)
+                        name = name * 10 + (c - '0');
+                    break;
+                }
+                state = State::AfterName;
+                [[fallthrough]];
+            case State::AfterName:
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+                    break;
+                if (c == '=' && digits > 0 && digits <= 18 && !names.insert(name).second)
+                    result = name; // a second definition
+                state = State::Normal;
+                if (c == '=')
+                    break;
+                [[fallthrough]];
+            case State::Normal:
+                if (slash && c == '*') {
+                    state = State::Comment;
+                    star = false;
+                    slash = false;
+                    break;
+                }
+                slash = c == '/';
+                if (c == '\'') {
+                    state = State::String;
+                } else if (c == '#') {
+                    state = State::Name;
+                    name = 0;
+                    digits = 0;
+                }
+                if (c == '&' || (!word.empty() && ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')))) {
+                    word.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                    if (word == "&SCOPE")
+                        result = -3; // scopes: names may repeat legitimately
+                    if (word.size() > 6)
+                        word.clear();
+                } else {
+                    word.clear();
+                }
+                break;
+            }
+        }
+        if (result != 0)
+            break;
+    }
+    std::fclose(file);
+    return result == -3 ? 0 : result;
+}
+
 // ---------- The import ----------
 
 ShapeProcess::OperationsFlags noShapeProcessing()
@@ -588,6 +684,17 @@ Result<Transferred> transferStep(IoTask& task, const std::filesystem::path& path
     const std::uintmax_t size = std::filesystem::file_size(path, ec);
     if (ec)
         return tl::unexpected(failure(ErrorCode::IoError, "The file cannot be read: " + detail::utf8Of(path), where));
+    task.report(0.0, kStageRead);
+    if (const std::int64_t repeated = repeatedStepEntityName(path, task); repeated != 0) {
+        if (repeated == -1)
+            return tl::unexpected(failure(ErrorCode::Cancelled, "Cancelled.", where));
+        if (repeated == -2)
+            return tl::unexpected(
+                failure(ErrorCode::IoError, "Reading the file failed: " + detail::utf8Of(path), where));
+        return tl::unexpected(failure(
+            ErrorCode::FormatError,
+            "The STEP file is damaged: entity #" + std::to_string(repeated) + " is defined more than once.", where));
+    }
     std::FILE* file = detail::openFile(path, false);
     if (file == nullptr)
         return tl::unexpected(failure(ErrorCode::IoError, "The file cannot be opened: " + detail::utf8Of(path), where));
