@@ -1,8 +1,11 @@
 // The UI-thread half of every viewport (task T-014). See viewport_frontend.h.
 #include "viewport_frontend.h"
 
+#include "section.h"
+
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
+#include <QtCore/QThreadPool>
 
 #include <algorithm>
 #include <cmath>
@@ -236,8 +239,10 @@ ItemId ViewportFrontend::addMesh(std::shared_ptr<const kernel::Mesh> mesh, const
     sanitize(style);
     item.style = style;
     item.geometryGeneration = nextGeometryGeneration_++;
+    item.closed = std::make_shared<ClosedCheck>();
     const ItemId id = item.id;
     items_.emplace(id, std::move(item));
+    startClosedChecks();
     changed(true, false);
     return id;
 }
@@ -257,6 +262,8 @@ void ViewportFrontend::updateMesh(ItemId id, std::shared_ptr<const kernel::Mesh>
     item->localBounds = meshBounds(*mesh);
     item->mesh = std::move(mesh);
     item->geometryGeneration = nextGeometryGeneration_++;
+    item->closed = std::make_shared<ClosedCheck>();
+    startClosedChecks();
     changed(true, false);
 }
 
@@ -380,7 +387,30 @@ void ViewportFrontend::setSection(std::optional<SectionPlane> section)
     if (same(section, state_.section))
         return;
     state_.section = section;
+    startClosedChecks();
     changed(true, false); // what the picking ID buffer holds changes with it
+}
+
+void ViewportFrontend::startClosedChecks()
+{
+    // Caps need to know which bodies are watertight (section.h): O(n log n) per mesh, about 60 ms for 500k
+    // triangles, so it runs on Qt's thread pool. Until it is known the body is drawn uncapped; the answer asks for a
+    // new frame (and a new ID buffer, which holds the caps).
+    if (!state_.section || !state_.section->cap)
+        return;
+    for (auto& [id, item] : items_) {
+        if (item.kind != ItemKind::Mesh || !item.mesh || !item.closed || item.closed->started.exchange(true))
+            continue;
+        closedChecksPending_->fetch_add(1);
+        std::weak_ptr<Outbox> outbox = outbox_;
+        QThreadPool::globalInstance()->start(
+            [mesh = item.mesh, check = item.closed, pending = closedChecksPending_, outbox, this] {
+                check->state.store(isClosedMesh(*mesh) ? 1 : 0);
+                pending->fetch_sub(1);
+                if (auto box = outbox.lock())
+                    box->post([this] { changed(true, false); }); // dropped once this front is gone (Outbox::detach)
+            });
+    }
 }
 
 void ViewportFrontend::setDraftAnalysis(std::optional<DraftAnalysis> draft)
@@ -521,7 +551,9 @@ std::optional<Box3> ViewportFrontend::sceneBounds() const
 ViewportInfo ViewportFrontend::info() const
 {
     std::lock_guard lock(status_->mutex);
-    return status_->info;
+    ViewportInfo info = status_->info;
+    info.closedChecksPending = std::uint32_t(std::max(0, closedChecksPending_->load()));
+    return info;
 }
 
 void ViewportFrontend::setDevicePixelRatio(double ratio)

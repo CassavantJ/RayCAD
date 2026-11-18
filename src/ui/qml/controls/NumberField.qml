@@ -15,6 +15,9 @@ TextField {
     property int decimals: 3
     property string unit: ""
     property string label: ""
+    // Optional: text -> value in this field's units (NaN when it does not read), e.g. through Units.parseLength so
+    // "1/2 in" or "12.7 mm" are accepted; without it the text must be a plain number.
+    property var parser: null
 
     signal valueModified(real value)
 
@@ -25,7 +28,7 @@ TextField {
         return Math.min(control.to, Math.max(control.from, v))
     }
     function commit() {
-        const parsed = Number(control.text.trim())
+        const parsed = control.parser ? Number(control.parser(control.text)) : Number(control.text.trim())
         if (control.text.trim() === "" || !isFinite(parsed)) {
             control.invalid = true
             return

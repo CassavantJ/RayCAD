@@ -82,6 +82,9 @@
         "SimGouge",
         "SimLeftover",
         "SimCollision",
+        "DraftPositive",
+        "DraftNegative",
+        "DraftVertical",
         "GcodeText",
         "GcodeComment",
         "GcodeGWord",
@@ -225,6 +228,15 @@
           "$ref": "#/$defs/colour"
         },
         "SimCollision": {
+          "$ref": "#/$defs/colour"
+        },
+        "DraftPositive": {
+          "$ref": "#/$defs/colour"
+        },
+        "DraftNegative": {
+          "$ref": "#/$defs/colour"
+        },
+        "DraftVertical": {
           "$ref": "#/$defs/colour"
         },
         "GcodeText": {

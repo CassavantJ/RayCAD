@@ -98,6 +98,7 @@ Status AppImpl::init(AppOptions options, std::unique_ptr<QueueDispatcher> owned)
     }
     userDataDir_ = resolveUserDataDir(options.userDataDir);
     recent_ = std::make_unique<RecentFiles>(userDataDir_);
+    settings_ = SettingsStore::open(userDataDir_); // shared with the desktop UI, which may have opened it already
     if (journaling()) {
         // Journals live in <user data dir>/recovery (store.h). The store has no public setting for the folder, so the
         // app names it through the store's own hook; for the platform default it is the store's default anyway.
@@ -106,6 +107,9 @@ Status AppImpl::init(AppOptions options, std::unique_ptr<QueueDispatcher> owned)
     actions_ = makeActionRegistry(*this);
     if (auto st = registerBuiltinActions(*this); !st) {
         return withContext(st.error(), "registering the built-in actions");
+    }
+    if (auto st = registerSettingsActions(*actions_, settings_); !st) {
+        return withContext(st.error(), "registering the settings actions");
     }
     return {};
 }
@@ -337,13 +341,23 @@ Result<DocEntry*> AppImpl::addEntry(NewEntry e)
     return raw;
 }
 
+doc::DocStatePtr AppImpl::newDocumentState() const
+{
+    // The user's default unit system and its display decimals (settings, T-024; inch unless changed).
+    auto initial = std::make_shared<doc::DocState>();
+    const UserSettings user = settings_->get();
+    initial->settings.units = user.newDocumentUnits;
+    initial->settings.decimals = user.decimalsFor(user.newDocumentUnits);
+    return initial;
+}
+
 Result<OpenDocument*> AppImpl::newDocument(std::string_view templateId)
 {
     if (!templateId.empty() && templateId != "default") {
         return fail(ErrorCode::NotFound, "There is no document template named '" + std::string(templateId) + "'");
     }
     try {
-        auto entry = addEntry(nullptr, nullptr, {}, untitledName(), false, std::nullopt);
+        auto entry = addEntry(nullptr, newDocumentState(), {}, untitledName(), false, std::nullopt);
         if (!entry) {
             return tl::unexpected<Error>(entry.error());
         }
@@ -676,8 +690,11 @@ Result<std::string> AppImpl::importWork(std::optional<std::string> documentId, c
                 journalError = appendObjects(*existing->od.journal);
             }
         }
-    } else if (journaling()) {
-        *slot = startUnsavedJournal(nullptr);
+    }
+    // A STEP/IGES file opened as a new document starts like file.new (the journal from the same state).
+    const doc::DocStatePtr initial = guard->get() == nullptr ? newDocumentState() : nullptr;
+    if (guard->get() == nullptr && journaling()) {
+        *slot = startUnsavedJournal(initial);
         if (slot->journal) {
             if (auto error = appendObjects(*slot->journal)) {
                 (void)slot->journal->discard();
@@ -690,11 +707,12 @@ Result<std::string> AppImpl::importWork(std::optional<std::string> documentId, c
         }
     }
     return bridge_->call<std::string>(
-        [this, guard, shared, path, slot, journalError]() -> Result<std::string> {
+        [this, guard, shared, path, slot, journalError, initial]() -> Result<std::string> {
             DocEntry* entry = guard->get();
             if (entry == nullptr) {
                 NewEntry e;
                 e.title = fileStem(path);
+                e.initial = initial;
                 e.journal = std::move(*slot);
                 auto created = addEntry(std::move(e));
                 if (!created) {

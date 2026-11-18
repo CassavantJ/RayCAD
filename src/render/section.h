@@ -27,7 +27,9 @@ namespace ray::render::detail {
 
 // True when the mesh's triangles form closed surfaces: after welding coincident positions (tolerance 1e-5 of the
 // mesh's extent) every triangle edge is shared by an even number of triangles, none by more than two of one face,
-// and the kernel reported no face without triangles. O(n log n); the renderer caches it per geometry.
+// and the kernel reported no face without triangles. O(n log n), about 60 ms for 500k triangles: the viewport's
+// front runs it once per geometry on Qt's thread pool (ClosedCheck in viewport_frontend.h), never on the UI or
+// render thread, and a body is capped from the frame after it finished.
 bool isClosedMesh(const kernel::Mesh&);
 
 // The plane as n.x * x + n.y * y + n.z * z + d = 0 with a unit normal; points with a positive value are cut away.

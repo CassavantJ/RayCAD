@@ -29,7 +29,6 @@ struct GpuItem {
     Owned<QRhiBuffer> wideEdges; // mesh edges or line items: one instance per segment, p0 p1 edge id (28 bytes)
     std::uint32_t indexCount = 0, thinEdgeVertexCount = 0, segmentCount = 0;
     std::shared_ptr<const detail::MeshIndex> index; // mesh items: face, edge and vertex lookups (T-015)
-    std::optional<bool> closed; // T-023: watertight (section.h), worked out the first time a cap is wanted
 };
 
 class PickPass;

@@ -33,9 +33,10 @@ target_link_libraries(ray_ui PRIVATE ray_api ray_render Qt6::Core Qt6::Gui Qt6::
 # QML is compiled ahead of time by qmlcachegen, the default of qt_add_qml_module. qmltc is NOT used: it does
 # not build with Qt Quick Controls in Qt 6.12.0 (spike S2).
 # The C++ singletons Theme (theme_object.h), AppContext (app_context.h), Scene (scene_controller.h), Selection
-# (selection_model.h), Session (session.h), Files (files.h), Commands (palette_commands.h) and Shortcuts
-# (shortcuts.h), and the ViewportItem (viewport_item.h) and PaletteModel (palette_model.h) types, are registered
-# declaratively through QML_SINGLETON / QML_NAMED_ELEMENT in the headers listed under SOURCES.
+# (selection_model.h), Session (session.h), Files (files.h), Commands (palette_commands.h), Shortcuts
+# (shortcuts.h), MeasureTool (measure_model.h, T-022), AppSettings (settings.h) and Units (units.h), and the
+# ViewportItem (viewport_item.h) and PaletteModel (palette_model.h) types, are registered declaratively through
+# QML_SINGLETON / QML_NAMED_ELEMENT in the headers listed under SOURCES.
 set(RAY_UI_QML_FILES
     qml/Main.qml
     qml/Shell.qml
@@ -51,6 +52,8 @@ set(RAY_UI_QML_FILES
     qml/panels/ModelTree.qml
     qml/panels/SelectionInfo.qml
     qml/panels/JobsPanel.qml
+    qml/panels/Measure.qml
+    qml/panels/MeasureOverlay.qml
     qml/panels/Section.qml
     qml/dialogs/DialogBase.qml
     qml/dialogs/UnsavedChangesDialog.qml
@@ -59,6 +62,7 @@ set(RAY_UI_QML_FILES
     qml/dialogs/FileDialogs.qml
     qml/dialogs/FileMenu.qml
     qml/panels/ShortcutSettings.qml
+    qml/panels/Settings.qml
     qml/controls/icons.js
     qml/controls/Icon.qml
     qml/controls/IconText.qml
@@ -109,6 +113,12 @@ qt_add_qml_module(ray_ui
         palette_model.cpp
         shortcuts.h
         shortcuts.cpp
+        settings.h
+        settings.cpp
+        units.h
+        units.cpp
+        measure_model.h
+        measure_model.cpp
         section_model.h
         section_model.cpp
     QML_FILES ${RAY_UI_QML_FILES}

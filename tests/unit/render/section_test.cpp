@@ -117,8 +117,18 @@ void buildSectionScene(const std::string& name, IViewport& vp, bool cap, double 
     vp.setCamera(lookingFrom(Vec3{0.45, 1.0, 0.75}, Box3{box.min, Vec3{box.max.x, y, box.max.z}}, aspect, true));
 }
 
+// Closedness of the meshes for the caps is worked out on a worker (ViewportInfo::closedChecksPending); until then a
+// body is drawn uncapped. Tests that look at caps wait for it.
+void waitForClosedChecks(IViewport& vp)
+{
+    auto& rv = dynamic_cast<IRenderViewport&>(vp);
+    REQUIRE(processEventsUntil([&] { return rv.info().closedChecksPending == 0; }, 30000));
+    processEventsFor(1); // the wake-up the last check posted
+}
+
 Image draw(IOffscreenViewport& vp, int w = kWidth, int h = kHeight)
 {
+    waitForClosedChecks(vp);
     return capture(vp, w, h);
 }
 
@@ -265,9 +275,9 @@ TEST_CASE("draft classes follow the angle to the pull direction", "[render][draf
     CHECK(draftClassOf(at(-0.8), d) == DraftClass::Vertical);
     CHECK(draftClassOf(at(-1.2), d) == DraftClass::Negative);
     CHECK(draftClassOf(Vec3{0, 0, -1}, d) == DraftClass::Negative);
-    CHECK(draftToken(DraftClass::Positive) == Token::Success);
-    CHECK(draftToken(DraftClass::Negative) == Token::Error);
-    CHECK(draftToken(DraftClass::Vertical) == Token::Warning);
+    CHECK(draftToken(DraftClass::Positive) == Token::DraftPositive);
+    CHECK(draftToken(DraftClass::Negative) == Token::DraftNegative);
+    CHECK(draftToken(DraftClass::Vertical) == Token::DraftVertical);
 }
 
 // ---------- rendering ----------
@@ -458,6 +468,7 @@ TEST_CASE("picks through the cut find the inner face, never a face that was cut 
         DYNAMIC_SECTION((cap ? "with a cap" : "without a cap"))
         {
             vp->setSection(SectionPlane{Vec3{0, 30, 0}, Vec3{0, 1, 0}, cap});
+            waitForClosedChecks(*vp);
             // Through the hole: its far half.
             hit = pickAt(*vp, px(50), py(10), kFaces);
             REQUIRE(hit.has_value());
@@ -619,6 +630,7 @@ TEST_CASE("moving the section plane re-renders without uploading meshes again", 
     vp->setTheme(theme("graphite-dark"));
     vp->setPreset(presetFor(Tier::Medium));
     buildSectionScene("section_filleted_cap", *vp, true, double(kWidth) / kHeight);
+    waitForClosedChecks(*vp);
     REQUIRE(vp->renderNow().has_value());
     const ViewportInfo before = vp->info();
     CHECK(before.meshUploads == 1);
@@ -683,6 +695,7 @@ TEST_CASE("the glass backdrop is blurred again from the sectioned image", "[rend
     vp->setTheme(theme("graphite-dark"));
     vp->setPreset(presetFor(Tier::Medium));
     buildSectionScene("section_cut_body_cap", *vp, true, double(kWidth) / kHeight);
+    waitForClosedChecks(*vp); // known from here on: the capped frame below is the first and only one
     vp->setSection(std::nullopt);
     vp->setBackdropEnabled(true);
     REQUIRE(vp->renderNow().has_value());
@@ -700,6 +713,7 @@ TEST_CASE("the glass backdrop is blurred again from the sectioned image", "[rend
     other->setTheme(theme("graphite-dark"));
     other->setPreset(presetFor(Tier::Medium));
     buildSectionScene("section_cut_body_cap", *other, true, double(kWidth) / kHeight);
+    waitForClosedChecks(*other);
     other->setBackdropEnabled(true);
     REQUIRE(other->renderNow().has_value());
     auto expected = other->readBackdrop();
@@ -722,8 +736,16 @@ TEST_CASE("cost of section caps on a 500k-triangle body", "[render][section][cos
     vp->addMesh(mesh, Xform::identity(), kModel);
     vp->setCamera(standardViewCamera(StandardView::Iso, Box3{Vec3{-50, -50, -50}, Vec3{50, 50, 50}}, 16.0 / 9.0, true));
     vp->setSection(SectionPlane{Vec3{0, 0, 0}, Vec3{0, 0, 1}, true});
-    REQUIRE(vp->renderNow().has_value()); // the first capped frame works out whether the mesh is closed
+    // The closedness check runs on a worker: the render thread never waits for it.
+    REQUIRE(vp->renderNow().has_value());
+    const std::uint32_t capsBeforeCheck = vp->info().sectionCaps;
+    const auto t1 = Clock::now();
+    waitForClosedChecks(*vp);
+    const double workerMs = std::chrono::duration<double, std::milli>(Clock::now() - t1).count();
+    REQUIRE(vp->renderNow().has_value());
     CHECK(vp->info().sectionCaps == 1);
+    std::cout << "[section] the first capped frame came before the worker's check: " << (capsBeforeCheck == 0)
+              << " (check finished " << workerMs << " ms later)\n";
     // Interleaved, so GPU clock changes hit both alike: no section / a section without cap / a capped section.
     std::vector<double> plainMs, cutMs, cappedMs;
     for (int i = 0; i < 30; ++i) {

@@ -38,6 +38,9 @@ struct ViewportInfo {
     // Bodies that got a section cap in the last drawn frame (task T-023): closed, visible, opaque meshes the plane
     // cuts, while the preset allows caps and the section asks for them.
     std::uint32_t sectionCaps = 0;
+    // Closed-mesh checks for section caps still running on a worker (task T-023); a body is capped once its check
+    // is done (the viewport then draws again by itself).
+    std::uint32_t closedChecksPending = 0;
 };
 
 // ---------- Section view and draft analysis (task T-023) ----------
@@ -50,8 +53,7 @@ struct ViewportInfo {
 // Draft analysis colours every mesh face per pixel by the angle between its outward normal n and the unit pull
 // direction p: draft angle = asin(dot(n, p)). Above +threshold the face has positive draft (it releases), below
 // -threshold negative draft (an undercut), in between it is near-vertical. While on it replaces MeshStyle::faceColor
-// and the face token. Colours: the theme has no draft tokens yet, so Success (positive), Error (negative) and
-// Warning (near-vertical) are used.
+// and the face token. Colours: the theme tokens DraftPositive, DraftNegative and DraftVertical.
 struct DraftAnalysis {
     Vec3 pull{0, 0, 1};        // normalised by the renderer; a zero or non-finite vector turns the analysis off
     double thresholdDeg = 1.0; // clamped to 0..89

@@ -14,11 +14,14 @@
 #include "app_host.h"
 #include "app_options.h"
 #include "files.h"
+#include "measure_model.h"
 #include "palette_commands.h"
 #include "scene_controller.h"
 #include "section_model.h"
 #include "selection_model.h"
+#include "settings.h"
 #include "theme_object.h"
+#include "units.h"
 #include "viewport_item.h"
 
 #include <ray_render/viewport.h>
@@ -28,6 +31,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
+#include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtQuick/QSGRendererInterface>
@@ -275,7 +279,8 @@ TEST_CASE("the section panel drives the viewport's plane; dragging redraws witho
     CHECK(std::abs(s->offsetMin() - box->min.z) < 1e-9);
     CHECK(std::abs(s->offsetMax() - box->max.z) < 1e-9);
     CHECK(std::abs(plane->origin.z - 0.5 * (box->min.z + box->max.z)) < 1e-9); // the middle at first
-    CHECK(w.info().sectionCaps == 1); // the part is a closed solid and Medium has caps
+    // The part is a closed solid and Medium has caps (its closedness is worked out on a worker first).
+    CHECK(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
 
     // Drag the slider's handle across its groove: every move redraws, nothing is uploaded again.
     QQuickItem* slider = w.find("sectionOffsetSlider");
@@ -360,7 +365,7 @@ TEST_CASE("caps follow the tier; section and draft survive theme and tier switch
     CHECK(s->capAvailable());
     CHECK(cap->isEnabled());
     CHECK_FALSE(reason->isVisible());
-    CHECK(w.info().sectionCaps == 1);
+    CHECK(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
     const auto plane = w.view()->viewport()->section();
     const auto draft = w.view()->viewport()->draftAnalysis();
     REQUIRE(plane.has_value());
@@ -383,7 +388,7 @@ TEST_CASE("caps follow the tier; section and draft survive theme and tier switch
     CHECK(draft2->thresholdDeg == 2.5);
     CHECK(s->active());
     CHECK(s->draft());
-    CHECK(w.info().sectionCaps == 1);
+    CHECK(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
     CHECK(w.host->warnings().isEmpty());
 }
 
@@ -439,6 +444,179 @@ TEST_CASE("with glass panels a section change blurs the backdrop again", "[ui][s
     const std::uint64_t blurs2 = w.info().backdropBlurs;
     w.section()->setOffset(w.section()->offsetMin() + 0.25 * (w.section()->offsetMax() - w.section()->offsetMin()));
     REQUIRE(QTest::qWaitFor([&] { return w.info().backdropBlurs > blurs2; }, 5000));
+    CHECK(w.host->warnings().isEmpty());
+}
+
+TEST_CASE("the section offset shows and takes the display units and follows the unit toggle", "[ui][section][units]")
+{
+    REQUIRE_RHI();
+    Window w("dark", false);
+    w.open(kBoxHole);
+    SectionModel* s = w.section();
+    ui::UnitsObject* units = w.host->units();
+    s->setPanelOpen(true);
+    s->setActive(true);
+    w.settle();
+    QQuickItem* field = w.find("sectionOffsetField");
+    QQuickItem* slider = w.find("sectionOffsetSlider");
+    REQUIRE(field != nullptr);
+    REQUIRE(slider != nullptr);
+    const auto check = [&](const char* when) {
+        INFO(when << ": unit " << s->unit().toStdString() << ", field "
+                  << field->property("text").toString().toStdString());
+        const double scale = units->system() == UnitSystem::Inch ? 25.4 : 1.0;
+        CHECK(s->unit() == units->unitLabel());
+        CHECK(s->unitDecimals() == units->decimals());
+        CHECK(field->property("unit").toString() == units->unitLabel());
+        CHECK(field->property("decimals").toInt() == units->decimals());
+        CHECK(std::abs(field->property("value").toDouble() - s->offset() / scale) < 1e-9);
+        CHECK(field->property("text").toString() == QString::number(s->offset() / scale, 'f', units->decimals()));
+        CHECK(std::abs(slider->property("to").toDouble() - s->offsetMax() / scale) < 1e-9);
+        CHECK(std::abs(slider->property("value").toDouble() - s->offset() / scale) < 1e-9);
+        CHECK(s->offsetText() == units->formatLength(s->offset()));
+    };
+    s->setOffset(s->offsetMin() + 0.3 * (s->offsetMax() - s->offsetMin()));
+    QTest::qWait(50);
+    check("as opened");
+    const ray::UnitSystem before = units->system();
+    units->toggle(); // the status bar's unit button
+    REQUIRE(units->system() != before);
+    QTest::qWait(50);
+    check("after the toggle");
+    // Typed in either unit; the plane moves in mm.
+    const double mm = s->offsetMin() + 0.6 * (s->offsetMax() - s->offsetMin());
+    const auto type = [&](const QString& text) {
+        field->forceActiveFocus();
+        field->setProperty("text", text);
+        QMetaObject::invokeMethod(field, "commit");
+        w.settle();
+    };
+    type(QStringLiteral("%1 mm").arg(mm, 0, 'f', 4));
+    CHECK(std::abs(s->offset() - mm) < 1e-3);
+    CHECK(std::abs(w.view()->viewport()->section()->origin.z - mm) < 1e-3);
+    type(QStringLiteral("%1 in").arg(mm / 25.4, 0, 'f', 6));
+    CHECK(std::abs(s->offset() - mm) < 1e-3);
+    units->toggle();
+    w.view()->forceActiveFocus(); // the field shows the formatted value again once it loses the focus
+    QTest::qWait(50);
+    check("toggled back");
+    CHECK(w.host->warnings().isEmpty());
+}
+
+TEST_CASE("caps follow the effective preset: the settings override and the tier, live", "[ui][section][settings]")
+{
+    REQUIRE_RHI();
+    Window w("dark", false);
+    w.open(kBoxHole);
+    SectionModel* s = w.section();
+    ui::SettingsObject* settings = w.host->settings();
+    REQUIRE(settings->set(QStringLiteral("graphics.tier"), QStringLiteral("high")));
+    s->setPanelOpen(true);
+    s->setActive(true);
+    REQUIRE(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
+    QQuickItem* cap = w.find("sectionCap");
+    QQuickItem* reason = w.find("sectionCapReason");
+    REQUIRE(cap != nullptr);
+    REQUIRE(reason != nullptr);
+    CHECK(cap->isEnabled());
+
+    // The override turns caps off on a tier that has them: disabled with a reason that names the setting.
+    REQUIRE(settings->set(QStringLiteral("graphics.sectionCaps"), false));
+    CHECK_FALSE(s->capAvailable());
+    CHECK(s->capReason().contains(QStringLiteral("Settings")));
+    CHECK_FALSE(cap->isEnabled());
+    CHECK(reason->isVisible());
+    REQUIRE(QTest::qWaitFor([&] { return w.info().sectionCaps == 0; }, 10000));
+    // ...and on, even on Low.
+    REQUIRE(settings->set(QStringLiteral("graphics.tier"), QStringLiteral("low")));
+    REQUIRE(settings->set(QStringLiteral("graphics.sectionCaps"), true));
+    CHECK(s->capAvailable());
+    CHECK(cap->isEnabled());
+    REQUIRE(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
+    // Unset: the tier decides (Low has none, and the reason names the tier).
+    REQUIRE(settings->reset(QStringLiteral("graphics.sectionCaps")));
+    CHECK_FALSE(s->capAvailable());
+    CHECK(s->capReason().contains(QStringLiteral("tier")));
+    REQUIRE(QTest::qWaitFor([&] { return w.info().sectionCaps == 0; }, 10000));
+    REQUIRE(settings->set(QStringLiteral("graphics.tier"), QStringLiteral("medium")));
+    CHECK(s->capAvailable());
+    REQUIRE(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
+    CHECK(s->active()); // the section itself never went away
+    CHECK(w.host->warnings().isEmpty());
+}
+
+TEST_CASE("the section panel fits small windows and a face seen through the cut can be measured",
+          "[ui][section][layout][measure]")
+{
+    REQUIRE_RHI();
+    Window w("dark", false);
+    w.window()->resize(900, 440);
+    REQUIRE(QTest::qWaitFor([&] { return std::abs(w.window()->width() - 900) < 1; }, 5000));
+    w.open(kBoxHole);
+    SectionModel* s = w.section();
+    s->setPanelOpen(true);
+    s->setActive(true);
+    s->setCap(false);
+    w.settle();
+    QQuickItem* panel = w.find("sectionPanel");
+    QQuickItem* area = w.find("viewportArea");
+    QQuickItem* filter = w.find("selectionFilter");
+    REQUIRE(panel != nullptr);
+    REQUIRE(area != nullptr);
+    REQUIRE(panel->isVisible());
+    const QRectF p = panel->mapRectToScene(QRectF(0, 0, panel->width(), panel->height()));
+    const QRectF a = area->mapRectToScene(QRectF(0, 0, area->width(), area->height()));
+    INFO("panel " << p.x() << "," << p.y() << " " << p.width() << "x" << p.height() << ", view area " << a.x() << ","
+                  << a.y() << " " << a.width() << "x" << a.height());
+    CHECK(a.adjusted(-0.5, -0.5, 0.5, 0.5).contains(p)); // never past the view area: it scrolls instead
+    if (filter != nullptr && filter->isVisible()) {
+        const QRectF f = filter->mapRectToScene(QRectF(0, 0, filter->width(), filter->height()));
+        CHECK_FALSE(p.intersects(f));
+    }
+    QQuickItem* scroller = w.find("sectionPanelScroller");
+    REQUIRE(scroller != nullptr);
+    // Whatever does not fit scrolls.
+    CHECK((scroller->property("contentHeight").toDouble() <= scroller->height() + 0.5 ||
+           scroller->property("interactive").toBool()));
+
+    // Look straight down into the cut (the top half is cut away, no cap): what a click finds lies below the plane
+    // and is never a face wholly in the cut-away half; it can be measured.
+    s->setPanelOpen(false);
+    REQUIRE(w.view()->setStandardView(QStringLiteral("top")));
+    w.settle();
+    const double planeZ = s->offset();
+    const auto mesh = w.host->scene()->meshOf(0);
+    REQUIRE(mesh != nullptr);
+    auto* measure = w.host->engine()->singletonInstance<ui::MeasureModel*>(QStringLiteral("RayCad.Ui"),
+                                                                           QStringLiteral("MeasureTool"));
+    REQUIRE(measure != nullptr);
+    int picked = 0;
+    for (double fx = 0.3; fx <= 0.71 && picked < 3; fx += 0.1) {
+        for (double fy = 0.3; fy <= 0.71 && picked < 3; fy += 0.2) {
+            w.host->selection()->clear();
+            const QPointF at = w.view()->mapFromItem(area, QPointF(a.width() * fx, a.height() * fy));
+            w.view()->selectAt(at.x(), at.y());
+            if (!QTest::qWaitFor([&] { return w.host->selection()->count() == 1; }, 1500))
+                continue;
+            const render::PickHit hit = w.host->selection()->entries().front().hit;
+            if (hit.kind != kernel::SubKind::Face)
+                continue;
+            ++picked;
+            INFO("pick at " << fx << "," << fy << ": face " << hit.subIndex << " at z " << hit.point.z);
+            CHECK(hit.point.z <= planeZ + 1e-3);
+            for (const kernel::FaceRange& f : mesh->faces) {
+                if (f.face.index != hit.subIndex)
+                    continue;
+                float lowest = 1e30f;
+                for (std::uint32_t i = 0; i < f.indexCount; ++i)
+                    lowest = std::min(lowest, mesh->positions[std::size_t(mesh->indices[f.firstIndex + i]) * 3 + 2]);
+                CHECK(lowest <= planeZ + 1e-3);
+            }
+            REQUIRE(w.commands()->run(QStringLiteral("measure.tool")));
+            CHECK(QTest::qWaitFor([&] { return !measure->busy() && measure->hasResult(); }, 20000));
+        }
+    }
+    CHECK(picked > 0);
     CHECK(w.host->warnings().isEmpty());
 }
 

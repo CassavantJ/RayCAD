@@ -2,6 +2,7 @@
 
 #include "scene_controller.h"
 #include "selection_model.h"
+#include "units.h"
 #include "viewport_item.h"
 
 #include <QtCore/QVariant>
@@ -22,19 +23,7 @@ constexpr double kMaxThresholdDeg = 89.0;
 constexpr double kPlanarCos = 0.99996; // 0.5 degree
 constexpr double kPlanarFlatness = 1e-4;
 
-// ---------- Document units: SEAM for the settings and units task (T-024) ----------
-// The section panel shows lengths in the document's unit. Until T-024's units object exists there is none to ask,
-// so this is millimetres; T-024 replaces the body of lengthUnit() (and the panel follows, it reads unit,
-// unitDecimals, toUnits and fromUnits).
-struct LengthUnit {
-    const char* suffix;
-    double mmPerUnit;
-    int decimals;
-};
-LengthUnit lengthUnit()
-{
-    return LengthUnit{"mm", 1.0, 3};
-}
+constexpr double kMmPerInch = 25.4;
 
 Vec3 axisNormal(const QString& plane)
 {
@@ -87,6 +76,8 @@ SectionModel::SectionModel(SceneController* scene, SelectionModel* selection, Vi
     }
     if (selection_)
         connect(selection_, &SelectionModel::changed, this, &SectionModel::availabilityChanged);
+    connect(this, &SectionModel::changed, this, &SectionModel::offsetTextChanged);
+    connect(this, &SectionModel::unitChanged, this, &SectionModel::offsetTextChanged);
 }
 
 SectionModel::~SectionModel() = default;
@@ -182,6 +173,9 @@ QString SectionModel::capReason() const
 {
     if (capAvailable())
         return {};
+    // The effective preset (T-024: the tier with the user's overrides) has no caps: say which of the two decided.
+    if (scene_ && render::presetFor(scene_->preset().tier).sectionCaps)
+        return tr("Section caps are turned off in Settings (Graphics)");
     const QString tier = scene_ ? scene_->tierName() : QString();
     return tier.isEmpty() ? tr("Section caps need the Medium or High graphics tier")
                           : tr("Section caps need the Medium or High graphics tier (this computer uses %1)").arg(tier);
@@ -220,24 +214,56 @@ void SectionModel::setDraftThreshold(double degrees)
     apply();
 }
 
+// ---------- display units: the Units singleton (units.h, T-024), live ----------
+void SectionModel::setUnits(UnitsObject* units)
+{
+    if (units_ == units)
+        return;
+    if (units_)
+        disconnect(units_, nullptr, this, nullptr);
+    units_ = units;
+    if (units_)
+        connect(units_, &UnitsObject::changed, this, &SectionModel::unitChanged);
+    emit unitChanged();
+}
+
+bool SectionModel::inch() const
+{
+    return units_ && units_->system() == UnitSystem::Inch;
+}
+
 QString SectionModel::unit() const
 {
-    return QString::fromLatin1(lengthUnit().suffix);
+    return units_ ? units_->unitLabel() : QStringLiteral("mm");
 }
 
 int SectionModel::unitDecimals() const
 {
-    return lengthUnit().decimals;
+    return units_ ? units_->decimals() : 3;
 }
 
 double SectionModel::toUnits(double mm) const
 {
-    return mm / lengthUnit().mmPerUnit;
+    return inch() ? mm / kMmPerInch : mm;
 }
 
 double SectionModel::fromUnits(double value) const
 {
-    return value * lengthUnit().mmPerUnit;
+    return inch() ? value * kMmPerInch : value;
+}
+
+QString SectionModel::offsetText() const
+{
+    return units_ ? units_->formatLength(offset_) : QString::number(offset_, 'f', 3) + QStringLiteral(" mm");
+}
+
+double SectionModel::parseLength(const QString& text) const
+{
+    if (units_)
+        return units_->parseLength(text);
+    bool ok = false;
+    const double v = text.trimmed().toDouble(&ok);
+    return ok ? v : std::numeric_limits<double>::quiet_NaN();
 }
 
 // ---------- the selected face ----------

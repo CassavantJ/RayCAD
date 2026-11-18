@@ -65,6 +65,8 @@ enum class Token : std::uint16_t {
     // toolpaths
     PathCut, PathRapid, PathPlunge, PathRamp, PathLead, PathLink, PathSelected, PathStale,
     SimGouge, SimLeftover, SimCollision,
+    // draft analysis (T-023): positive draft, negative draft (undercut), near-vertical
+    DraftPositive, DraftNegative, DraftVertical,
     // G-code editor
     GcodeText, GcodeComment, GcodeGWord, GcodeMWord, GcodeAxis, GcodeFeedSpeed, GcodeLineNumber, GcodeCurrentLine,
     Count

@@ -65,9 +65,22 @@ namespace {
 const QString kBoxHole = QStringLiteral(RAY_KERNEL_TEST_DATA_DIR "/box_hole.step");
 constexpr int kOpenTimeoutMs = 120000;
 
+// Whether the viewport can render (and so answer a pick), asked of a real, shown window: QQuickWindow::graphicsApi()
+// only says what would be requested, and where the platform has no OpenGL (the offscreen platform on Linux) Qt Quick
+// falls back to its software backend afterwards ("No QRhi found for window").
 bool rhiSceneGraph()
 {
-    return QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi());
+    static const bool rhi = [] {
+        QQuickWindow probe;
+        probe.resize(64, 64);
+        probe.show();
+        if (!QTest::qWaitForWindowExposed(&probe))
+            return false;
+        (void)probe.grabWindow(); // initialises the scene graph
+        const QSGRendererInterface* renderer = probe.rendererInterface();
+        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
+    }();
+    return rhi;
 }
 
 // Calls of the test actions, from any thread.
@@ -602,8 +615,7 @@ TEST_CASE("commands that cannot run say why; long-running ones use the job slot"
 TEST_CASE("file and edit commands follow the session's document; path commands use the file dialogs",
           "[palette][session]")
 {
-    if (!QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi()))
-        SKIP("the scene graph has no QRhi (software backend): the part cannot be shown here");
+    // Needs no rendering viewport (no pick, no pixels): runs on every scene graph.
     QTemporaryDir data;
     QTemporaryDir work;
     Window w(data.path());

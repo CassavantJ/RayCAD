@@ -10,8 +10,8 @@
 // Draft analysis: faces coloured by the angle between their normal and the pull direction (+-X, +-Y, +-Z or a
 // selected planar face's outward normal), with a threshold angle (ray_render/viewport.h, DraftAnalysis).
 //
-// Lengths are shown in document units through lengthUnit() in the .cpp, which is a SEAM: until the settings and
-// units task (T-024) provides the document's unit object it is millimetres.
+// Lengths are shown and typed in the display units of the Units singleton (units.h, T-024: the document's units,
+// the status bar's toggle, the decimals from the settings) and follow a switch live; values are kept in mm.
 //
 // The state lives here and is pushed into the window's viewport on every change and whenever a viewport appears;
 // the renderer keeps it across theme and preset switches.
@@ -31,6 +31,7 @@ namespace ray::ui {
 
 class SceneController;
 class SelectionModel;
+class UnitsObject;
 class ViewportItem;
 
 class SectionModel : public QObject {
@@ -60,9 +61,11 @@ class SectionModel : public QObject {
     // ---- the selected face ----
     Q_PROPERTY(bool faceAvailable READ faceAvailable NOTIFY availabilityChanged)
     Q_PROPERTY(QString faceReason READ faceReason NOTIFY availabilityChanged)
-    // ---- document units (seam for T-024) ----
-    Q_PROPERTY(QString unit READ unit CONSTANT)
-    Q_PROPERTY(int unitDecimals READ unitDecimals CONSTANT)
+    // ---- display units (the Units singleton) ----
+    Q_PROPERTY(QString unit READ unit NOTIFY unitChanged)
+    Q_PROPERTY(int unitDecimals READ unitDecimals NOTIFY unitChanged)
+    // The offset formatted in the display units ("0.5000 in"); also changes with the offset.
+    Q_PROPERTY(QString offsetText READ offsetText NOTIFY offsetTextChanged)
 
 public:
     using ViewportProvider = std::function<ViewportItem*()>;
@@ -100,12 +103,17 @@ public:
     void setDraftThreshold(double degrees);
     bool faceAvailable() const { return selectedFace().has_value(); }
     QString faceReason() const;
+    // The display units (null: millimetres, 3 decimals). AppHost hands in the Units singleton.
+    void setUnits(UnitsObject* units);
     QString unit() const;
     int unitDecimals() const;
+    QString offsetText() const;
 
     // Millimetres to and from the document's length unit (the seam above).
     Q_INVOKABLE double toUnits(double mm) const;
     Q_INVOKABLE double fromUnits(double value) const;
+    // What a person typed ("0.5", "1/2 in", "12.7 mm") as mm, read in the display units; NaN if it does not read.
+    Q_INVOKABLE double parseLength(const QString& text) const;
     // Cut parallel to the selected planar face (its outward normal), through the middle of the model. False (and
     // nothing changes) when no single planar face is selected.
     Q_INVOKABLE bool planeFromSelectedFace();
@@ -128,6 +136,8 @@ signals:
     void changed();
     void rangeChanged();
     void availabilityChanged();
+    void unitChanged();
+    void offsetTextChanged();
 
 private:
     struct Face {
@@ -137,11 +147,13 @@ private:
     ViewportItem* view() const;
     void apply();
     void updateRange(bool recentre);
+    bool inch() const;
 
     QPointer<SceneController> scene_;
     QPointer<SelectionModel> selection_;
     ViewportProvider viewportProvider_;
     mutable QPointer<ViewportItem> view_;
+    QPointer<UnitsObject> units_;
 
     bool panelOpen_ = false;
     bool active_ = false;

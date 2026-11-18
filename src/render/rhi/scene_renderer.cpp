@@ -863,10 +863,8 @@ void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
         }
         if (!below || !above)
             continue;
-        GpuItem& gpu = gpu_[item.id];
-        if (!gpu.closed)
-            gpu.closed = detail::isClosedMesh(*item.mesh); // once per geometry
-        if (*gpu.closed)
+        // Worked out on a worker by the front (viewport_frontend.cpp); not known yet: no cap this frame.
+        if (item.closed && item.closed->state.load() == 1)
             capped_.push_back(i);
     }
     if (capped_.empty())

@@ -27,6 +27,13 @@ struct LineSet {
     bool dashed = false;
 };
 
+// Whether a mesh is closed (watertight), for section caps (T-023, section.h). Worked out once per geometry on Qt's
+// global thread pool, never on the UI or render thread; state is -1 until then, 0 open, 1 closed.
+struct ClosedCheck {
+    std::atomic<int> state{-1};
+    std::atomic<bool> started{false};
+};
+
 struct SceneItem {
     ItemId id = 0;
     ItemKind kind = ItemKind::Mesh;
@@ -37,6 +44,7 @@ struct SceneItem {
     bool visible = true;
     std::uint64_t geometryGeneration = 0; // changes whenever mesh or lines are replaced
     std::optional<Box3> localBounds;
+    std::shared_ptr<ClosedCheck> closed; // Mesh items, new with every geometry (T-023)
 };
 
 struct CaptureRequest {
@@ -154,6 +162,8 @@ public:
 private:
     SceneItem* find(ItemId);
     void changed(bool scene, bool camera);
+    // T-023: starts the closed-mesh checks a capped section needs (no-op without one).
+    void startClosedChecks();
 
     std::function<void()> requestUpdate_;
     std::map<ItemId, SceneItem> items_;
@@ -166,6 +176,7 @@ private:
     std::shared_ptr<Outbox> outbox_;
     std::shared_ptr<SharedStatus> status_;
     std::unique_ptr<QObject> uiContext_; // receives the outbox's queued wake-ups on the UI thread
+    std::shared_ptr<std::atomic<int>> closedChecksPending_ = std::make_shared<std::atomic<int>>(0);
 };
 
 // Validates a mesh for display: sizes of the arrays agree and every index and range is in bounds.

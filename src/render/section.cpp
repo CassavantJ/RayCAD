@@ -40,16 +40,15 @@ DraftClass draftClassOf(Vec3 normal, const DraftAnalysis& draft)
 
 Token draftToken(DraftClass c)
 {
-    // The theme has no draft tokens yet (render.h's Token list is an interface): the status colours stand in.
     switch (c) {
     case DraftClass::Positive:
-        return Token::Success;
+        return Token::DraftPositive;
     case DraftClass::Negative:
-        return Token::Error;
+        return Token::DraftNegative;
     case DraftClass::Vertical:
-        return Token::Warning;
+        return Token::DraftVertical;
     }
-    return Token::Warning;
+    return Token::DraftVertical;
 }
 
 namespace detail {

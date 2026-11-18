@@ -3,6 +3,7 @@
 // Actions that name a document take an optional "document" argument (OpenDocument::id); without it they act on the
 // active document. Results are canonical JSON objects.
 #include "app_impl.h"
+#include "measure_actions.h"
 #include "schema.h"
 
 #include <string>
@@ -523,6 +524,11 @@ Status registerBuiltinActions(AppImpl& app)
         if (!st) {
             return st;
         }
+    }
+
+    // ---- measure (T-022) ----
+    if (st = registerMeasureActions(app); !st) {
+        return st;
     }
 
     // ---- every document command ----

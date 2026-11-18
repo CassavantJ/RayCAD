@@ -84,6 +84,7 @@ int runApp(int argc, char** argv)
         std::fprintf(stderr, "raycad: %s\n", qPrintable(host.optionError()));
         return kExitUsage;
     }
+    host.loadSettings(); // T-024: the user's settings ($RAYCAD_USER_DATA_DIR or the per-user folder); one small file
     if (!host.load()) {
         std::fprintf(stderr, "raycad: %s\n", qPrintable(host.errorString()));
         return kExitLoad;
