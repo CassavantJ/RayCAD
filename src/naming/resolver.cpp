@@ -1,8 +1,9 @@
-// The resolver (task T-007): Exact and Broken. See resolver.h for the stages; Split, Merged and Repaired are
-// added by T-081 between the Exact stage and the final Broken.
+// The resolver (task T-007): Exact and Broken. See resolver.h for the stages; Split, Merged and Repaired (task
+// T-081a) run between the Exact stage and the final Broken, in propagate_resolve.cpp.
 #include "resolver.h"
 
 #include "naming_internal.h"
+#include "propagate.h"
 
 #include <algorithm>
 #include <optional>
@@ -108,13 +109,18 @@ private:
 
     // Stage 1. A value is final (Exact, or Broken because an ambiguous name no longer matches its hint);
     // nullopt passes the reference on to the next stage.
-    static std::optional<Resolved> exact(const ElementMap& map, const TopoRef& ref, const Lookup& lookup)
+    static std::optional<Resolved> exact(const ResolverBody& body, const TopoRef& ref, const Lookup& lookup)
     {
+        const ElementMap& map = body.map;
         if (lookup.found.size() != 1 || lookup.missing != 0 || lookup.shared != 0)
             return std::nullopt;
         const kernel::SubId element = lookup.found.front();
         if (element.kind != ref.kind)
             return std::nullopt;
+        // An element that also holds a name the reference does not have absorbed another element (T-081a): Merged.
+        for (const Hash256& name : map.namesOf(element))
+            if (std::find(ref.names.begin(), ref.names.end(), name) == ref.names.end())
+                return std::nullopt;
         bool ambiguous = false;
         for (const std::size_t i : lookup.foundNames) {
             const TopoName* record = map.record(ref.names[i]);
@@ -124,6 +130,9 @@ private:
         if (ambiguous && !map.fingerprintOf(element).matches(ref.hint))
             return broken("The picked element could only be told apart from identical neighbours by its "
                           "geometry, and that geometry has changed.");
+        // An edge or vertex whose faces are no longer the ones it was picked on is another element (T-081a).
+        if (!detail::onPickedFaces(map, body.shape, element, ref))
+            return broken("The picked element no longer lies on the faces it was picked on.");
         return Resolved{ResolveState::Exact, {element}, {}};
     }
 
@@ -148,9 +157,11 @@ private:
         if (!wellFormed(ref))
             return broken("The reference is damaged: it holds no usable name.");
         const Lookup lookup = lookUp(body->map, ref);
-        if (auto result = exact(body->map, ref, lookup))
+        if (auto result = exact(*body, ref, lookup))
             return std::move(*result);
-        // T-081 adds, in this order: lineage (Split, Merged), the family rule (Split, Merged), Repaired.
+        // T-081a, in this order: lineage (Split, Merged), the family rule (Split, Merged), Repaired.
+        if (auto result = detail::resolveThroughBuild(body->map, body->shape, ref))
+            return std::move(*result);
         return broken(brokenReason(lookup, ref));
     }
 
@@ -165,16 +176,17 @@ private:
             ref.names.push_back(name);
             ref.families.push_back(record != nullptr ? record->family : Hash256{});
             ref.ambiguous.push_back(record != nullptr && record->ambiguous());
-            if (record != nullptr && record->role == "split" && !record->parents.empty())
-                ref.splitParents.push_back(record->parents.front());
+            // A piece of an element that held several names has several parents (T-081a): all of them.
+            if (record != nullptr && record->role == "split")
+                ref.splitParents.insert(ref.splitParents.end(), record->parents.begin(), record->parents.end());
         }
         if (ref.names.empty())
             return;
         // The faces around the element: adjacent faces of a face, the faces containing an edge or a vertex.
+        // Every name of each of them (T-081a): a merged face's first name is arbitrary.
         for (const kernel::SubId face : kernel::adjacent(body->shape, sub, kernel::SubKind::Face)) {
             const std::span<const Hash256> names = map.namesOf(face);
-            if (!names.empty())
-                ref.neighbourNames.push_back(names.front());
+            ref.neighbourNames.insert(ref.neighbourNames.end(), names.begin(), names.end());
         }
         std::sort(ref.neighbourNames.begin(), ref.neighbourNames.end());
         ref.neighbourNames.erase(std::unique(ref.neighbourNames.begin(), ref.neighbourNames.end()),
