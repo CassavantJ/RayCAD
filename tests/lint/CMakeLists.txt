@@ -18,3 +18,7 @@ add_test(NAME lint_licences_selftest COMMAND Python3::Interpreter "${CMAKE_SOURC
 # The licence ledger is also checked against what vcpkg really installed for this build (transitive ports).
 add_test(NAME lint_licences_installed
     COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/lint_licences.py" --installed "${VCPKG_INSTALLED_DIR}")
+
+# The JSON the document model writes (golden files pinned by ray_doc_tests) against schemas/doc*.schema.json.
+add_test(NAME doc_schema COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tests/lint/check_doc_schema.py")
+add_test(NAME doc_schema_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tests/lint/check_doc_schema.py" --self-test)

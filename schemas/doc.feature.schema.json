@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RayCAD feature",
+  "description": "One feature of the history (PLAN.md 3.2), stored as its own canonical JSON object and named in the manifest (doc.manifest.schema.json) by the BLAKE3 hash of its bytes. The props of each feature type are described by that type's own schema (IFeatureType::propsSchemaJson). Unknown keys are allowed and are kept when an older RayCAD rewrites the document (PLAN.md 4.4).",
+  "type": "object",
+  "required": ["schema", "id", "type", "name", "suppressed", "props"],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "Version of this object's format. A larger value means a newer RayCAD wrote it."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Feature type name, e.g. \"import\", \"sketch\", \"extrude\", \"fillet\", \"delete_face\"."
+    },
+    "name": { "type": "string", "description": "User-visible name, e.g. \"Extrude 3\"." },
+    "suppressed": { "type": "boolean" },
+    "props": { "type": "object", "description": "Type-specific properties; dimensions are expression strings." }
+  }
+}

@@ -19,16 +19,24 @@ namespace ray::cam { struct CamState; }   // defined in cam.h
 
 namespace ray::doc {
 
+// Unknown keys: every stored JSON object keeps the keys this version does not know in `extraJson`
+// (a canonical JSON object, or empty for none) and writes them back unchanged (PLAN.md 4.4).
+
 // ---------- Parameters ----------
 struct Parameter {
     ParamId id;
     std::string name;            // identifier: [A-Za-z_][A-Za-z0-9_]*
     std::string expression;      // "25.4 mm", "width * 2", "0.5 in"
     enum class Kind { Length, Angle, Count, Unitless } kind;
+    std::string extraJson;
 };
 // Expression language: + - * / ^ ( ) , unit suffixes (mm, in, deg, rad), functions
 // min max abs sqrt sin cos tan floor ceil round, and parameter names. Evaluated with dmath.
+// Names in `params` carry no unit, so they are not unit-checked here; evaluateParameters checks them.
 Result<double> evaluate(std::string_view expression, const std::map<std::string, double>& params, Parameter::Kind);
+// Evaluates every parameter (in internal units: mm, rad) with full unit checking of references between them.
+// Errors (cycle, unknown name, unit mismatch, division by zero, bad or duplicate name) name the parameter.
+Result<std::map<std::string, double>> evaluateParameters(const std::vector<Parameter>&);
 
 // ---------- Features ----------
 // A feature is plain data: a type name plus a canonical-JSON property bag. Built-in and scripted
@@ -40,6 +48,7 @@ struct Feature {
     std::string name;            // user-visible, e.g. "Extrude 3"
     std::string propsJson;       // canonical JSON; may contain TopoRefs, ParamIds, expressions, blob hashes
     bool suppressed = false;
+    std::string extraJson;
 };
 
 struct Body {
@@ -48,9 +57,10 @@ struct Body {
     enum class Role { Part, Fixture, StockModel } role;   // Fixture bodies are static collision bodies in v1
     std::array<float, 4> color;
     bool visible = true;
+    std::string extraJson;
 };
 
-struct DocSettings { UnitSystem units = UnitSystem::Inch; int decimals = 4; MaterialId material; };
+struct DocSettings { UnitSystem units = UnitSystem::Inch; int decimals = 4; MaterialId material; std::string extraJson; };
 
 struct DocState {
     DocSettings settings;
@@ -58,9 +68,24 @@ struct DocState {
     std::vector<Feature> features;        // ordered history; the order IS the rebuild order
     std::vector<Body> bodies;
     std::shared_ptr<const cam::CamState> cam;
+    std::string extraJson;
     Hash256 stateHash() const;            // hash of canonical serialisation; equals the stored object hash
 };
 using DocStatePtr = std::shared_ptr<const DocState>;
+
+// ---------- Serialisation (PLAN.md 3.1, 4.1) ----------
+// A snapshot is stored as a manifest object that lists its feature objects by hash, so editing one feature
+// rewrites one small object plus the manifest. Hashes are BLAKE3 of the canonical JSON bytes.
+// stateHash() is the hash of `manifest`.
+struct StateObjects {
+    std::string manifest;                                   // canonical JSON
+    std::vector<std::pair<Hash256, std::string>> features;  // each feature object, in history order
+};
+StateObjects serializeState(const DocState&);
+// `featureObject` returns the bytes stored under a hash. Malformed input returns FormatError and a newer
+// "schema" returns FormatTooNew; never throws.
+Result<DocState> deserializeState(std::string_view manifest,
+                                  const std::function<Result<std::string>(const Hash256&)>& featureObject);
 
 // ---------- Feature type plug-in point ----------
 struct RebuildContext {
@@ -151,6 +176,7 @@ public:
 
 // Canonical JSON: UTF-8, keys sorted, no insignificant whitespace, doubles printed with the
 // shortest round-trip representation, -0 written as 0. All hashing of JSON uses this form.
+// Returns an empty string if `anyJson` is not valid JSON.
 std::string canonicalJson(std::string_view anyJson);
 
 } // namespace ray::doc

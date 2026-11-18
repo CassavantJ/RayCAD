@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RayCAD document manifest",
+  "description": "One snapshot of a RayCAD document (PLAN.md 3.1, 4.1), stored as canonical JSON in the objects table with kind DocState. Features are separate objects named by the BLAKE3 hash of their canonical bytes (doc.feature.schema.json). Lengths are millimetres and angles radians unless a field is an expression string with its own unit. Unknown keys are allowed everywhere and are kept when an older RayCAD rewrites the document (PLAN.md 4.4).",
+  "type": "object",
+  "required": ["schema", "settings", "parameters", "features", "bodies"],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "Version of this object's format. A larger value means a newer RayCAD wrote it."
+    },
+    "settings": {
+      "type": "object",
+      "required": ["units", "decimals", "material"],
+      "properties": {
+        "units": { "enum": ["inch", "metric"], "description": "Display units." },
+        "decimals": { "type": "integer", "description": "Decimal places shown for lengths." },
+        "material": {
+          "anyOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }],
+          "description": "Workpiece material id, or null for none."
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "expression", "kind"],
+        "properties": {
+          "id": { "$ref": "#/$defs/uuid" },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "description": "Unit and function names (mm, in, deg, rad, sqrt, sin, pi, ...) are reserved."
+          },
+          "expression": { "type": "string", "description": "For example \"4 in\" or \"width / 2\"." },
+          "kind": { "enum": ["length", "angle", "count", "unitless"] }
+        }
+      }
+    },
+    "features": {
+      "type": "array",
+      "description": "Feature object hashes in rebuild order.",
+      "items": { "$ref": "#/$defs/hash" }
+    },
+    "bodies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "role", "color", "visible"],
+        "properties": {
+          "id": { "$ref": "#/$defs/uuid" },
+          "name": { "type": "string" },
+          "role": { "enum": ["part", "fixture", "stock_model"] },
+          "color": {
+            "type": "array",
+            "description": "Linear RGBA, each a float written with the shortest decimal that reads back to it.",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": { "type": "number" }
+          },
+          "visible": { "type": "boolean" }
+        }
+      }
+    },
+    "cam": {
+      "$ref": "#/$defs/hash",
+      "description": "The CAM object (PLAN.md 3.6). Not written yet; kept unchanged when present."
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
