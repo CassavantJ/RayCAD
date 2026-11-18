@@ -86,6 +86,13 @@ Configure presets: `windows-msvc`, `linux-gcc`, `linux-clang`, `macos-arm64` (ea
 UndefinedBehaviorSanitizer) and `linux-clang-tsan` (ThreadSanitizer). Build output goes to
 `build/<preset>/`.
 
+`linux-clang-tsan` uses the overlay triplet `triplets/x64-linux-dynamic-tsan.cmake`, which builds oneTBB
+with Clang and ThreadSanitizer so that TSan sees the synchronisation inside the job system's thread pool.
+Its dependencies are installed separately, in `build/vcpkg_installed-tsan/`, and the first configure builds
+all of them once for that triplet (release only; about 25 minutes on 32 hardware threads, then they come
+from the vcpkg binary cache). Its tests include `ray_core_jobs_tsan_selftest`, which passes only if TSan
+reports a deliberate race in a `parallelChunks` body.
+
 ## Tests and lints
 
 `ctest` runs everything: a standalone-compile test for every public header, the module link-graph test,

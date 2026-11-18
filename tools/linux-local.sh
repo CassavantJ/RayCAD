@@ -3,9 +3,11 @@
 #
 #   wsl.exe -d raycad-build -u root -- bash /mnt/m/RayCAD/tools/linux-local.sh [preset] [config ...]
 #
-# preset: linux-gcc (default) or linux-clang-asan. config: debug and/or release (default: debug).
-# The source tree is copied into the distribution's own file system first, because building on a
-# Windows drive through /mnt is slow. vcpkg, its binary cache and Qt live under $HOME and are reused.
+# preset: linux-gcc (default), linux-clang-asan or linux-clang-tsan. config: debug and/or release
+# (default: debug). The source tree is copied into the distribution's own file system first, because
+# building on a Windows drive through /mnt is slow. vcpkg, its binary cache and Qt live under $HOME
+# and are reused. RAYCAD_WORK (default $HOME/raycad) is the folder the source is copied to and built
+# in; give each concurrent build its own, for example: wsl.exe ... -- env RAYCAD_WORK=/tmp/w bash ...
 set -euo pipefail
 
 src="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,7 +16,7 @@ shift || true
 configs=("$@")
 [ ${#configs[@]} -eq 0 ] && configs=(debug)
 
-work="$HOME/raycad"
+work="${RAYCAD_WORK:-$HOME/raycad}"
 mkdir -p "$work"
 rsync -a --delete --exclude .git --exclude build --exclude 'spikes/*/build*' --exclude 'spikes/*/third_party' \
       --exclude 'spikes/*/data' "$src/" "$work/src/"

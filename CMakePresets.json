@@ -81,7 +81,9 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CXX_COMPILER": "clang++",
-        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build/vcpkg_installed-tsan",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic-tsan",
         "RAY_SANITIZE": "thread"
       }
     }
