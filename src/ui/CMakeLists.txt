@@ -20,7 +20,9 @@ add_library(ray_ui STATIC
     app_host.cpp
     scene_jobs.h
     viewport_navigation.h
-    viewport_navigation.cpp)
+    viewport_navigation.cpp
+    palette_schema.h
+    palette_schema.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -29,7 +31,8 @@ target_link_libraries(ray_ui PRIVATE ray_api ray_render Qt6::Core Qt6::Gui Qt6::
 # QML is compiled ahead of time by qmlcachegen, the default of qt_add_qml_module. qmltc is NOT used: it does
 # not build with Qt Quick Controls in Qt 6.12.0 (spike S2).
 # The C++ singletons Theme (theme_object.h), AppContext (app_context.h), Scene (scene_controller.h), Selection
-# (selection_model.h) and DevOpen (dev_open.h), and the ViewportItem type (viewport_item.h), are registered
+# (selection_model.h), DevOpen (dev_open.h), Commands (palette_commands.h) and Shortcuts (shortcuts.h), and the
+# ViewportItem (viewport_item.h) and PaletteModel (palette_model.h) types, are registered
 # declaratively through QML_SINGLETON / QML_NAMED_ELEMENT in the headers listed under SOURCES.
 set(RAY_UI_QML_FILES
     qml/Main.qml
@@ -38,9 +41,13 @@ set(RAY_UI_QML_FILES
     qml/Viewport.qml
     qml/ViewCube.qml
     qml/SelectionFilterBar.qml
+    qml/CommandHost.qml
+    qml/CommandPalette.qml
+    qml/ContextMenu.qml
     qml/panels/PanelBase.qml
     qml/panels/ModelTree.qml
     qml/panels/SelectionInfo.qml
+    qml/panels/ShortcutSettings.qml
     qml/controls/icons.js
     qml/controls/Icon.qml
     qml/controls/IconText.qml
@@ -83,6 +90,12 @@ qt_add_qml_module(ray_ui
         selection_model.cpp
         dev_open.h
         dev_open.cpp
+        palette_commands.h
+        palette_commands.cpp
+        palette_model.h
+        palette_model.cpp
+        shortcuts.h
+        shortcuts.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick

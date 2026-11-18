@@ -5,6 +5,7 @@
 #include "app_options.h"
 #include "dev_open.h"
 #include "scene_controller.h"
+#include "scene_jobs.h"
 #include "selection_model.h"
 #include "viewport_item.h"
 
@@ -79,7 +80,25 @@ int runApp(int argc, char** argv)
         return 0;
     }
 
+    // --dev-session (hidden developer option, T-021): an application session made here until T-019 provides one. The
+    // dispatcher and the app outlive the host, which holds the app as a plain pointer.
+    std::unique_ptr<QtUiDispatcher> sessionDispatcher;
+    std::unique_ptr<api::IApp> session;
+    if (options.session) {
+        sessionDispatcher = std::make_unique<QtUiDispatcher>();
+        api::AppOptions appOptions;
+        appOptions.dispatcher = sessionDispatcher.get();
+        session = api::makeApp(std::move(appOptions));
+        if (!session) {
+            std::fprintf(stderr, "raycad: the application session could not be created\n");
+            return kExitLoad;
+        }
+    }
+
     AppHost host(options);
+    if (session) {
+        host.setApp(session.get());
+    }
     if (!host.optionError().isEmpty()) {
         std::fprintf(stderr, "raycad: %s\n", qPrintable(host.optionError()));
         return kExitUsage;

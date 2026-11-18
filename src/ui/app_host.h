@@ -31,9 +31,11 @@ class IApp;
 namespace ray::ui {
 
 class AppContext;
+class CommandCatalog;
 class DevOpen;
 class SceneController;
 class SelectionModel;
+class ShortcutManager;
 class ThemeObject;
 class ViewportItem;
 
@@ -74,6 +76,9 @@ public:
     // Lets the empty state's Open button, drag-and-drop and command-line files open STEP/IGES files without a
     // session (the developer path until T-019). runApp turns it on; tests that need it do too.
     void enableDevOpen(bool on = true);
+    // T-021: the Commands and Shortcuts singletons (palette_commands.h, shortcuts.h).
+    CommandCatalog* commands() const { return commands_.get(); }
+    ShortcutManager* shortcuts() const { return shortcuts_.get(); }
 
     // <per-user cache location>/: QStandardPaths::CacheLocation for organisation and application "RayCAD".
     static QString cacheDirectory();
@@ -96,6 +101,8 @@ private:
     std::unique_ptr<SceneController> scene_;
     std::unique_ptr<SelectionModel> selection_;
     std::unique_ptr<DevOpen> devOpen_;
+    std::unique_ptr<CommandCatalog> commands_;
+    std::unique_ptr<ShortcutManager> shortcuts_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QQuickWindow* window_ = nullptr;
 };
