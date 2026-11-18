@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace ray::kernel::testing {
@@ -25,6 +26,34 @@ Result<Shape> makePlanarFace();
 // triangulations and polygons, sets the Modified flag) and adds it into a compound (clears its Free flag).
 // For the canonical-serialisation test only; never call it on a shape another thread can see.
 Status meshAndShare(const Shape& shape);
+
+// ---------- Import / export tests (task T-005) ----------
+
+// Number of parts makeTestPart() builds.
+inline constexpr int kTestPartCount = 20;
+// Twenty different valid solids for round-trip tests: primitives, booleans, fillets, chamfers, sweeps,
+// B-spline lofts and revolutions, and a transformed body. `index` in [0, kTestPartCount).
+Result<Shape> makeTestPart(int index);
+
+// A compound of the six faces of a 10 x 20 x 30 box, each face with its own edges, so that only sewing turns
+// them into a closed shell.
+Result<Shape> makeLooseBoxFaces();
+
+// Writes an AP214 STEP assembly through XCAF, in inches if `inches` (else millimetres):
+//   "Fixture" with components, in this order:
+//     "Bracket" (box 0..40 x 0..20 x 0..10 mm, part colour sRGB 0.8 0.1 0.1) at the identity,
+//     "Bracket" again, rotated 90 degrees about +Z and moved by (100, 0, 0) mm,
+//     "Pin" (cylinder radius 3, height 30 along +Z from the origin, colour sRGB 0.1 0.2 0.9) moved by (10, 10, 10) mm,
+//     "Plate" (box 0..100 x 0..50 x 0..5 mm, no part colour, its first face sRGB 0.1 0.7 0.2) moved by (0, 0, -5) mm.
+// `path` is UTF-8.
+Status writeStepAssembly(const std::string& path, bool inches);
+
+// Writes an IGES file (faces mode, as most CAD systems write) through XCAF with one box 0..40 x 0..20 x 0..10 mm,
+// coloured sRGB 0.8 0.1 0.1, in inches if `inches`. `path` is UTF-8.
+Status writeIgesColoredBox(const std::string& path, bool inches);
+
+// True if BRepCheck_Analyzer finds the shape valid. KernelFailure for a null shape or if OCCT throws.
+Result<bool> isValidShape(const Shape& shape);
 
 // The OCCT payload inside serialize() output; empty if the envelope is not well formed.
 std::vector<std::byte> payloadOf(std::span<const std::byte> serialized);
