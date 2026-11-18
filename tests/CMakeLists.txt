@@ -28,6 +28,7 @@ endfunction()
 
 add_subdirectory(headers)
 add_subdirectory(unit/modules)
+add_subdirectory(unit/core)
 add_subdirectory(unit/kernel)
 add_subdirectory(unit/render)
 add_subdirectory(lint)

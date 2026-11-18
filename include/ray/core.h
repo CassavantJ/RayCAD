@@ -56,11 +56,20 @@ struct Hash256 {
 };
 class Hasher {
 public:
-    Hasher& bytes(std::span<const std::byte>);
-    Hasher& str(std::string_view);
+    Hasher() noexcept;
+    ~Hasher();
+    Hasher(Hasher&&) noexcept;
+    Hasher& operator=(Hasher&&) noexcept;
+    Hasher(const Hasher&) = delete;
+    Hasher& operator=(const Hasher&) = delete;
+    Hasher& bytes(std::span<const std::byte>);   // raw bytes, no length
+    Hasher& str(std::string_view);               // 8-byte little-endian length, then the bytes
     Hasher& f64(double);          // hashes the IEEE-754 bit pattern; -0.0 is normalised to +0.0
-    Hasher& i64(std::int64_t);
-    Hash256 finish();
+    Hasher& i64(std::int64_t);    // 8 bytes, little-endian
+    Hash256 finish();             // does not reset; more input may follow
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 // ---------- Errors ----------
