@@ -1,0 +1,532 @@
+// The built-in actions: app.*, file.*, edit.undo/redo, and one action per registered document command.
+//
+// Actions that name a document take an optional "document" argument (OpenDocument::id); without it they act on the
+// active document. Results are canonical JSON objects.
+#include "app_impl.h"
+#include "schema.h"
+
+#include <string>
+#include <utility>
+
+namespace ray::api::detail {
+namespace {
+
+using json::Value;
+
+constexpr const char* kUuidPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+Value prop(const char* type, const char* description)
+{
+    return Value::object({{"type", Value::string(type)}, {"description", Value::string(description)}});
+}
+
+Value documentProp()
+{
+    return prop("string", "The OpenDocument id; the active document when omitted");
+}
+
+std::string schemaOf(Value properties, std::vector<std::string> required = {})
+{
+    Value req = Value::array();
+    for (auto& r : required) {
+        req.push(Value::string(std::move(r)));
+    }
+    Value schema = Value::object({{"$schema", Value::string("https://json-schema.org/draft/2020-12/schema")},
+                                  {"type", Value::string("object")},
+                                  {"additionalProperties", Value::boolean(false)},
+                                  {"properties", std::move(properties)}});
+    if (!req.asArray().empty()) {
+        schema.set("required", std::move(req));
+    }
+    return json::canonical(schema);
+}
+
+Result<Value> parseArgs(std::string_view argsJson)
+{
+    auto parsed = json::parse(argsJson);
+    if (!parsed || !parsed->isObject()) {
+        return fail(ErrorCode::InvalidArgument, "The arguments must be a JSON object");
+    }
+    return std::move(*parsed);
+}
+
+ActionResult result(Value v)
+{
+    return ActionResult{json::canonical(v), {}};
+}
+
+Value documentResult(const OpenDocument& od)
+{
+    Value out = Value::object();
+    out.set("document", Value::string(od.id));
+    out.set("title", Value::string(od.title));
+    out.set("path", Value::string(od.path));
+    out.set("readOnly", Value::boolean(od.readOnly));
+    if (od.lock) {
+        Value lock = Value::object();
+        lock.set("user", Value::string(od.lock->user));
+        lock.set("host", Value::string(od.lock->host));
+        lock.set("pid", Value::integer(od.lock->pid));
+        lock.set("sinceUnixMs", Value::integer(od.lock->sinceUnixMs));
+        lock.set("stale", Value::boolean(od.lock->stale));
+        out.set("lock", std::move(lock));
+    }
+    if (od.document) {
+        out.set("stateHash", Value::string(od.document->state()->stateHash().hex()));
+        out.set("dirty", Value::boolean(od.document->dirty()));
+    }
+    return out;
+}
+
+// UI thread hop from a long-running action: claims the document (busy) so it cannot close under the job.
+Result<std::shared_ptr<BusyGuard>> claimOnUi(AppImpl& app, std::string id, JobContext& ctx)
+{
+    return app.bridge().call<std::shared_ptr<BusyGuard>>(
+        [&app, id]() -> Result<std::shared_ptr<BusyGuard>> {
+            auto guard = app.claim(id);
+            if (!guard) {
+                return tl::unexpected<Error>(guard.error());
+            }
+            return std::make_shared<BusyGuard>(std::move(*guard));
+        },
+        ctx.cancel);
+}
+
+Result<Value> describeOnUi(AppImpl& app, const std::string& id, JobContext& ctx)
+{
+    return app.bridge().call<Value>(
+        [&app, id]() -> Result<Value> {
+            OpenDocument* od = app.findDocument(id);
+            if (!od) {
+                return fail(ErrorCode::NotFound, "The document was closed");
+            }
+            return documentResult(*od);
+        },
+        ctx.cancel);
+}
+
+struct CommandText {
+    const char* name;
+    const char* title;
+    const char* description;
+};
+constexpr CommandText kCommandTexts[] = {
+    {"feature.add", "Add Feature", "Adds a feature to the history"},
+    {"feature.edit", "Edit Feature", "Changes a feature's name or properties"},
+    {"feature.remove", "Remove Feature", "Removes a feature from the history"},
+    {"feature.reorder", "Reorder Feature", "Moves a feature to another place in the history"},
+    {"feature.suppress", "Suppress Feature", "Suppresses or unsuppresses a feature"},
+    {"param.set", "Set Parameter", "Adds or changes a named parameter"},
+    {"body.set", "Edit Body", "Changes a body's name, role, colour or visibility"},
+    {"document.import", "Add Import Feature",
+     "Adds a prepared import feature and its bodies (file.import reads the file and does this)"},
+};
+
+std::string titleCase(std::string_view name)
+{
+    std::string out;
+    bool start = true;
+    for (const char c : name) {
+        if (c == '.' || c == '_' || c == '-') {
+            out += ' ';
+            start = true;
+        } else if (start && c >= 'a' && c <= 'z') {
+            out += static_cast<char>(c - 'a' + 'A');
+            start = false;
+        } else {
+            out += c;
+            start = false;
+        }
+    }
+    return out;
+}
+
+// The command's own schema with an optional "document" property added.
+std::string commandSchema(std::string_view commandSchemaJson)
+{
+    auto parsed = json::parse(commandSchemaJson);
+    if (!parsed || !parsed->isObject()) {
+        return schemaOf(Value::object({{"document", documentProp()}}));
+    }
+    Value schema = std::move(*parsed);
+    Value* properties = schema.find("properties");
+    if (properties == nullptr || !properties->isObject()) {
+        schema.set("properties", Value::object());
+        properties = schema.find("properties");
+    }
+    properties->set("document", documentProp());
+    // "minProperties" counted the command's own arguments; "document" must not satisfy it.
+    if (Value* minimum = schema.find("minProperties"); minimum && minimum->isNumber()) {
+        Value any = Value::array();
+        for (const auto& [key, value] : properties->asObject()) {
+            if (key != "document" && key != "id") {
+                any.push(Value::object({{"required", Value::array({Value::string(key)})}}));
+            }
+        }
+        schema.erase("minProperties");
+        if (!any.asArray().empty()) {
+            schema.set("anyOf", std::move(any));
+        }
+    }
+    return json::canonical(schema);
+}
+
+Status addCommandActions(AppImpl& app)
+{
+    const doc::CommandRegistry& commands = app.commandTypes();
+    for (const std::string& name : commands.names()) {
+        const doc::ICommandHandler* handler = commands.find(name);
+        if (handler == nullptr) {
+            continue;
+        }
+        ActionInfo info;
+        info.id = name;
+        info.title = titleCase(name);
+        info.category = "Document";
+        info.description = "Runs the document command " + name;
+        for (const CommandText& t : kCommandTexts) {
+            if (name == t.name) {
+                info.title = t.title;
+                info.description = t.description;
+            }
+        }
+        info.argsSchemaJson = commandSchema(handler->argsSchemaJson());
+        info.changesDocument = true;
+        info.changesToolpathsOrGcode = handler->changesToolpathsOrGcode();
+        const std::string title = info.title;
+        auto fn = [&app, name, title](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+            auto args = parseArgs(argsJson);
+            if (!args) {
+                return tl::unexpected<Error>(args.error());
+            }
+            const std::string docId = args->stringOr("document", "");
+            args->erase("document");
+            auto entry = app.resolve(docId);
+            if (!entry) {
+                return tl::unexpected<Error>(entry.error());
+            }
+            std::string label = title;
+            if (const Value* n = args->find("name"); n && n->isString()) {
+                label += " " + n->asString();
+            }
+            auto executed = app.execute(**entry, doc::Command{name, json::canonical(*args), label});
+            if (!executed) {
+                return tl::unexpected<Error>(executed.error());
+            }
+            return result(documentResult((*entry)->od));
+        };
+        if (auto st = app.actions().add(std::move(info), std::move(fn)); !st) {
+            return st;
+        }
+    }
+    return {};
+}
+
+std::optional<kernel::Heal> healOf(const Value& args)
+{
+    const std::string heal = args.stringOr("heal", "");
+    if (heal == "none") {
+        return kernel::Heal::None;
+    }
+    if (heal == "reader") {
+        return kernel::Heal::Reader;
+    }
+    if (heal == "full") {
+        return kernel::Heal::Full;
+    }
+    return std::nullopt;
+}
+
+Status addExport(AppImpl& app, const char* id, const char* title, const char* format, ExportFormat kind)
+{
+    ActionInfo info;
+    info.id = id;
+    info.title = title;
+    info.category = "File";
+    info.description = std::string("Writes the document's built bodies to a ") + format + " file";
+    Value props = Value::object(
+        {{"path", prop("string", "Output file (UTF-8)")},
+         {"document", documentProp()},
+         {"bodies", Value::object({{"type", Value::string("array")},
+                                   {"items", Value::object({{"type", Value::string("string")},
+                                                            {"pattern", Value::string(kUuidPattern)}})},
+                                   {"description", Value::string("Body ids; all built bodies when omitted")}})}});
+    props.find("path")->set("minLength", Value::integer(1));
+    if (kind == ExportFormat::Stl) {
+        Value tol = prop("number", "Chord tolerance in mm");
+        tol.set("exclusiveMinimum", Value::integer(0));
+        tol.set("default", Value::number(0.01));
+        props.set("chordTolerance", std::move(tol));
+    }
+    info.argsSchemaJson = schemaOf(std::move(props), {"path"});
+    info.longRunning = true;
+    return app.actions().add(
+        std::move(info), [&app, kind](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
+            auto args = parseArgs(argsJson);
+            if (!args) {
+                return tl::unexpected<Error>(args.error());
+            }
+            auto guard = claimOnUi(app, args->stringOr("document", ""), ctx);
+            if (!guard) {
+                return tl::unexpected<Error>(guard.error());
+            }
+            std::optional<std::vector<BodyId>> bodies;
+            if (const Value* list = args->find("bodies")) {
+                bodies.emplace();
+                for (const Value& b : list->asArray()) {
+                    bodies->push_back(BodyId{Uuid::fromString(b.asString())});
+                }
+            }
+            const std::string path = args->stringOr("path", "");
+            auto st = app.exportWork(*(*guard)->get(), path, kind, args->numberOr("chordTolerance", 0.01),
+                                     bodies ? &*bodies : nullptr, ctx);
+            if (!st) {
+                return tl::unexpected<Error>(st.error());
+            }
+            Value out =
+                Value::object({{"path", Value::string(path)}, {"document", Value::string((*guard)->get()->od.id)}});
+            return result(std::move(out));
+        });
+}
+
+} // namespace
+
+Status registerBuiltinActions(AppImpl& app)
+{
+    IActionRegistry& actions = app.actions();
+    const auto add = [&actions](ActionInfo info, ActionFn fn) {
+        return actions.add(std::move(info), std::move(fn));
+    };
+    Status st;
+
+    // ---- app ----
+    st = add(ActionInfo{"app.about", "About RayCAD", "App", "Name, version and licence of this build",
+                        schemaOf(Value::object()), "", false, false, false},
+             [](std::string_view, Caller, JobContext&) -> Result<ActionResult> {
+                 return result(Value::object({{"name", Value::string("RayCAD")},
+                                              {"version", Value::string(RAY_VERSION_STRING)},
+                                              {"license", Value::string("LGPL-2.1-or-later")}}));
+             });
+    if (!st) {
+        return st;
+    }
+    st = add(ActionInfo{"app.version", "Version", "App", "The version of this build", schemaOf(Value::object()), "",
+                        false, false, false},
+             [](std::string_view, Caller, JobContext&) -> Result<ActionResult> {
+                 return result(Value::object({{"version", Value::string(RAY_VERSION_STRING)}}));
+             });
+    if (!st) {
+        return st;
+    }
+
+    // ---- file ----
+    {
+        Value tpl = prop("string", "Template id; \"\" is the default (inch)");
+        tpl.set("default", Value::string(""));
+        st = add(ActionInfo{"file.new", "New Document", "File", "Creates an empty document",
+                            schemaOf(Value::object({{"template", std::move(tpl)}})), "Ctrl+N", false, false, false},
+                 [&app](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+                     auto args = parseArgs(argsJson);
+                     if (!args) {
+                         return tl::unexpected<Error>(args.error());
+                     }
+                     auto od = app.newDocument(args->stringOr("template", ""));
+                     if (!od) {
+                         return tl::unexpected<Error>(od.error());
+                     }
+                     return result(documentResult(**od));
+                 });
+        if (!st) {
+            return st;
+        }
+    }
+    {
+        Value path = prop("string", ".raycad document, or a STEP or IGES file to import into a new document");
+        path.set("minLength", Value::integer(1));
+        st = add(ActionInfo{"file.open", "Open...", "File", "Opens a document, or imports a STEP or IGES file",
+                            schemaOf(Value::object({{"path", std::move(path)}}), {"path"}), "Ctrl+O", false, false,
+                            true},
+                 [&app](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
+                     auto args = parseArgs(argsJson);
+                     if (!args) {
+                         return tl::unexpected<Error>(args.error());
+                     }
+                     auto od = app.openWork(args->stringOr("path", ""), ctx);
+                     if (!od) {
+                         return tl::unexpected<Error>(od.error());
+                     }
+                     auto described = describeOnUi(app, (*od)->id, ctx);
+                     if (!described) {
+                         return tl::unexpected<Error>(described.error());
+                     }
+                     return result(std::move(*described));
+                 });
+        if (!st) {
+            return st;
+        }
+    }
+    const auto saveFn = [&app](bool as) {
+        return [&app, as](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
+            auto args = parseArgs(argsJson);
+            if (!args) {
+                return tl::unexpected<Error>(args.error());
+            }
+            auto guard = claimOnUi(app, args->stringOr("document", ""), ctx);
+            if (!guard) {
+                return tl::unexpected<Error>(guard.error());
+            }
+            DocEntry& entry = *(*guard)->get();
+            std::optional<std::string> path;
+            if (as) {
+                path = args->stringOr("path", "");
+            }
+            auto commit = app.saveWork(entry, path, args->boolOr("overwrite", false), ctx);
+            if (!commit) {
+                return tl::unexpected<Error>(commit.error());
+            }
+            auto described = describeOnUi(app, entry.od.id, ctx);
+            if (!described) {
+                return tl::unexpected<Error>(described.error());
+            }
+            described->set("commit", Value::string(commit->id.hex()));
+            return result(std::move(*described));
+        };
+    };
+    st = add(ActionInfo{"file.save", "Save", "File", "Saves the document (a new version in its .raycad file)",
+                        schemaOf(Value::object({{"document", documentProp()}})), "Ctrl+S", false, false, true},
+             saveFn(false));
+    if (!st) {
+        return st;
+    }
+    {
+        Value path = prop("string", "The new .raycad file (UTF-8)");
+        path.set("minLength", Value::integer(1));
+        Value overwrite = prop("boolean", "Replace an existing RayCAD file that nobody has open");
+        overwrite.set("default", Value::boolean(false));
+        st = add(ActionInfo{"file.saveAs", "Save As...", "File", "Saves the document as a new .raycad file",
+                            schemaOf(Value::object({{"path", std::move(path)},
+                                                    {"overwrite", std::move(overwrite)},
+                                                    {"document", documentProp()}}),
+                                     {"path"}),
+                            "Ctrl+Shift+S", false, false, true},
+                 saveFn(true));
+        if (!st) {
+            return st;
+        }
+    }
+    {
+        Value discard = prop("boolean", "Close even with unsaved changes");
+        discard.set("default", Value::boolean(false));
+        st = add(
+            ActionInfo{"file.close", "Close", "File", "Closes the document",
+                       schemaOf(Value::object({{"document", documentProp()}, {"discardChanges", std::move(discard)}})),
+                       "Ctrl+W", false, false, false},
+            [&app](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+                auto args = parseArgs(argsJson);
+                if (!args) {
+                    return tl::unexpected<Error>(args.error());
+                }
+                auto entry = app.resolve(args->stringOr("document", ""));
+                if (!entry) {
+                    return tl::unexpected<Error>(entry.error());
+                }
+                OpenDocument& od = (*entry)->od;
+                if (od.document->dirty() && !args->boolOr("discardChanges", false)) {
+                    return fail(ErrorCode::InvalidArgument,
+                                "'" + od.title + "' has unsaved changes; save it, or pass discardChanges");
+                }
+                const std::string id = od.id;
+                if (auto closed = app.close(od); !closed) {
+                    return tl::unexpected<Error>(closed.error());
+                }
+                return result(Value::object({{"closed", Value::string(id)}}));
+            });
+        if (!st) {
+            return st;
+        }
+    }
+    {
+        Value path = prop("string", "STEP or IGES file (UTF-8)");
+        path.set("minLength", Value::integer(1));
+        Value heal = Value::object(
+            {{"enum", Value::array({Value::string("none"), Value::string("reader"), Value::string("full")})},
+             {"description", Value::string("Healing; full when omitted")}});
+        Value role = Value::object({{"enum", Value::array({Value::string("part"), Value::string("fixture")})},
+                                    {"default", Value::string("part")},
+                                    {"description", Value::string("Fixture bodies are static collision bodies")}});
+        Value name = prop("string", "Feature name; \"Import <file name>\" when omitted");
+        name.set("minLength", Value::integer(1));
+        st = add(ActionInfo{"file.import", "Import...", "File",
+                            "Imports a STEP or IGES file into the document as one import feature (a new document when "
+                            "none is open)",
+                            schemaOf(Value::object({{"path", std::move(path)},
+                                                    {"heal", std::move(heal)},
+                                                    {"role", std::move(role)},
+                                                    {"name", std::move(name)},
+                                                    {"document", documentProp()}}),
+                                     {"path"}),
+                            "Ctrl+I", true, false, true},
+                 [&app](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
+                     auto args = parseArgs(argsJson);
+                     if (!args) {
+                         return tl::unexpected<Error>(args.error());
+                     }
+                     AppImpl::ImportOptions options;
+                     options.heal = healOf(*args);
+                     options.role =
+                         args->stringOr("role", "part") == "fixture" ? doc::Body::Role::Fixture : doc::Body::Role::Part;
+                     options.name = args->stringOr("name", "");
+                     auto id = app.importWork(args->stringOr("document", ""), args->stringOr("path", ""), options, ctx);
+                     if (!id) {
+                         return tl::unexpected<Error>(id.error());
+                     }
+                     auto described = describeOnUi(app, *id, ctx);
+                     if (!described) {
+                         return tl::unexpected<Error>(described.error());
+                     }
+                     return result(std::move(*described));
+                 });
+        if (!st) {
+            return st;
+        }
+    }
+    if (st = addExport(app, "file.exportStep", "Export STEP...", "STEP (AP214)", ExportFormat::Step); !st) {
+        return st;
+    }
+    if (st = addExport(app, "file.exportIges", "Export IGES...", "IGES", ExportFormat::Iges); !st) {
+        return st;
+    }
+    if (st = addExport(app, "file.exportStl", "Export STL...", "STL", ExportFormat::Stl); !st) {
+        return st;
+    }
+
+    // ---- edit ----
+    for (const bool redo : {false, true}) {
+        st = add(ActionInfo{redo ? "edit.redo" : "edit.undo", redo ? "Redo" : "Undo", "Edit",
+                            redo ? "Repeats the last undone change" : "Reverts the last change",
+                            schemaOf(Value::object({{"document", documentProp()}})), redo ? "Ctrl+Y" : "Ctrl+Z", true,
+                            false, false},
+                 [&app, redo](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+                     auto args = parseArgs(argsJson);
+                     if (!args) {
+                         return tl::unexpected<Error>(args.error());
+                     }
+                     auto entry = app.resolve(args->stringOr("document", ""));
+                     if (!entry) {
+                         return tl::unexpected<Error>(entry.error());
+                     }
+                     if (auto done = app.undo(**entry, redo); !done) {
+                         return tl::unexpected<Error>(done.error());
+                     }
+                     return result(documentResult((*entry)->od));
+                 });
+        if (!st) {
+            return st;
+        }
+    }
+
+    // ---- every document command ----
+    return addCommandActions(app);
+}
+
+} // namespace ray::api::detail

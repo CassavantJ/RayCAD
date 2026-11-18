@@ -2,7 +2,17 @@
 add_library(ray_api STATIC
     api_module.cpp
     include/ray_api/viewer.h
-    viewer.cpp)
+    viewer.cpp
+    app.cpp
+    builtin_actions.cpp
+    describe.cpp
+    files.cpp
+    json.cpp
+    registry.cpp
+    schema.cpp
+    search.cpp
+    ui_thread.cpp
+)
 ray_module(ray_api)
 # ray_api/viewer.h: what the desktop viewer (src/ui) needs from kernel and naming, without Qt (task T-020).
 target_include_directories(ray_api PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
