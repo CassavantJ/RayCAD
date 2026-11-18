@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Colour-literal rule (PLAN.md section 0.4 rule 6 and section 6.5).
+"""Colour- and font-literal rule (PLAN.md section 0.4 rule 6 and section 6.5).
 
 No hard-coded colours in UI or viewport code: colours come from render::Token and the theme files in
 resources/themes/. Reported in src/, apps/ and resources/ (except resources/themes/):
@@ -8,6 +8,13 @@ resources/themes/. Reported in src/, apps/ and resources/ (except resources/them
   - a hex colour passed to QColor, QRgb or QColor::fromString: QColor(0xff8800), QColor("#f80")
   - Qt.rgba(...), Qt.hsla(...), Qt.hsva(...), Qt.color(...) and qRgb(...)/qRgba(...) with literal numbers
   - a QML colour property set to a named colour: color: "red"
+
+No hard-coded fonts in QML and JavaScript: families and sizes come from the Theme singleton (theme metrics and
+fonts). Reported in .qml and .js files:
+
+  - a font family written as a string: font.family: "Arial", or family: "Arial" inside a font group
+  - a font size written as a number: font.pixelSize: 12, font.pointSize: 9.5, pixelSize: 12
+  - a font built in place: Qt.font(...)
 
 A line can be excused with a trailing comment  // colour-lint: allow <reason>.
 
@@ -31,6 +38,10 @@ QT_FUNCTION = re.compile(r"\b(?:Qt\s*\.\s*(?:rgba|hsla|hsva|color|tint|lighter|d
 QML_NAMED = re.compile(r"""\b[A-Za-z.]*[cC]olor\s*:\s*(["'])[a-zA-Z]+\1""")
 # "transparent" carries no theme decision.
 QML_NAMED_OK = re.compile(r"""(["'])transparent\1""")
+FONT_FAMILY = re.compile(r"""\b(?:font\s*\.\s*)?family\s*:\s*["']""")
+FONT_SIZE = re.compile(r"\b(?:font\s*\.\s*)?(?:pixelSize|pointSize)\s*:\s*[-+]?[0-9.]")
+QT_FONT = re.compile(r"\bQt\s*\.\s*font\s*\(")
+FONT_EXTENSIONS = (".qml", ".js", ".mjs")
 
 
 def check_text(relpath, raw):
@@ -59,6 +70,20 @@ def check_text(relpath, raw):
                 "%s:%d: %s %s; use a theme token (PLAN.md 0.4 rule 6), colours live in resources/themes/"
                 % (relpath, number, found[0], found[1].strip())
             )
+            continue
+        if relpath.endswith(FONT_EXTENSIONS):
+            for pattern, what in (
+                (FONT_FAMILY, "font family literal"),
+                (FONT_SIZE, "font size literal"),
+                (QT_FONT, "font built in place"),
+            ):
+                match = pattern.search(line)
+                if match:
+                    problems.append(
+                        "%s:%d: %s %s; use the Theme fonts and metrics (PLAN.md 0.4 rule 6)"
+                        % (relpath, number, what, match.group(0).strip())
+                    )
+                    break
     return problems
 
 
@@ -83,6 +108,8 @@ Rectangle {
     border.color: "transparent"
     property string anchorId: "#section"   // not a colour: wrong length
     Text { text: qsTr("Issue #12345") }
+    Text { font: Theme.uiFont; font.pixelSize: Theme.fontSmallPx }
+    Text { font.family: Theme.monoFontFamily }
 }
 """
     rm.expect(failures, check_text("src/ui/qml/Ok.qml", clean_qml) == [], "clean QML was reported: %r" % check_text("src/ui/qml/Ok.qml", clean_qml))
@@ -95,6 +122,11 @@ Rectangle {
         ("src/ui/qml/Bad.qml", 'Rectangle { border.color: "#80ff8800" }\n', "#80ff8800"),
         ("src/ui/qml/Bad.qml", 'Rectangle { color: "red" }\n', "named colour"),
         ("src/ui/qml/Bad.qml", "Rectangle { color: Qt.rgba(1, 0.5, 0, 1) }\n", "literal numbers"),
+        ("src/ui/qml/Bad.qml", 'Text { font.family: "Arial" }\n', "font family literal"),
+        ("src/ui/qml/Bad.qml", "Text { font { family: 'Inter'; bold: true } }\n", "font family literal"),
+        ("src/ui/qml/Bad.qml", "Text { font.pixelSize: 12 }\n", "font size literal"),
+        ("src/ui/qml/Bad.qml", "Text { font.pointSize: 9.5 }\n", "font size literal"),
+        ("src/ui/qml/controls/bad.js", "var f = Qt.font({ family: theme });\n", "font built in place"),
         ("src/render/bad.cpp", 'QColor c("#112233");\n', "#112233"),
         ("src/render/bad.cpp", "QColor c(0xff8800);\n", "0xff8800"),
         ("src/render/bad.cpp", "auto c = qRgb(255, 128, 0);\n", "literal numbers"),
