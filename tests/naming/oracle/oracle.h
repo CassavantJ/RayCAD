@@ -3,33 +3,40 @@
 //
 // INDEPENDENCE. This library links ray_kernel and ray_core only, never ray_naming, and includes no naming header:
 // it never sees a name, a history entry, a fingerprint of the naming code, or an index from another build. It
-// knows (a) the script (script_model.h): the parameters of every sweep and blend, and the imported base shape,
+// knows (a) the script (Feature, below): the parameters of every sweep and blend, and the imported base shape,
 // and (b) the geometry of a built shape through the public kernel queries (tessellate, surfaceInfo, curveInfo,
 // vertexPoint, adjacent). No kernel history is used.
 //
 // IDENTITY. Every logical face of the script is an "owner": a carrier surface (plane, cylinder, cone, torus or
 // sphere, from the script in closed form; for an imported face, its own surface, or its fine mesh for B-splines)
 // plus an extent (the sketch region swept, the neighbourhood of the blended edge, or the imported face itself).
-// A face of a built shape is described by the owner(s) whose carrier all its mesh nodes lie on and whose extent
-// covers it; when one logical face is in several pieces, also by the side of other owners' carriers each piece
-// lies on ("separators"). An edge is described by the descriptions of its faces (it lies on both carriers), a
-// vertex by those of all its faces, each with separators if needed. After an edit the owners are recomputed from
-// the edited script and the elements of the new shape that fit the description are the expected answer E
-// (possibly empty, several, or "merged" when a matching face extends beyond the description).
+// A face of a built shape is described by the owner(s) whose carrier its mesh nodes lie on (with its surface type
+// and material side) and whose extent covers it; when one logical face is in several pieces, also by the side of
+// other owners' carriers each piece lies on ("separators", applied only where a point projects into the
+// separator owner's extent). An edge is described by the owners of its faces (it lies on both carriers, and
+// borders a face lying on each with that face's type and material side), a vertex by those of all its faces, each
+// with separators of its own if needed. After an edit the owners are recomputed from the features of the edited
+// script that built, and the elements of the new shape that fit the description are the expected answer E
+// (possibly empty, several, or "merged" when a matching element extends beyond the description). A second look
+// (reconsider, below) settles parts of the picked element's logical face that did not exist at pick time.
 //
 // WHAT IT CAN MISS (also in the T-081a report):
 //  - It shares the script's idea of identity: "the same element" means the same sketch entity, cap, blended edge
 //    or imported face. An error both the naming code and the script make (for example two sketch lines swapping
 //    places) is invisible.
-//  - Edges and vertices have no orientation test: two different edges on the same two carriers inside both extents
-//    are pieces of one logical edge unless a separator tells them apart.
-//  - Elements whose description needs no separator but whose carriers coincide with another owner's (two logical
-//    faces on one plane with the same material side and overlapping extents) cannot be told apart; such faces are
-//    described by both owners ("merged") and judged as one.
+//  - Which piece of a split logical face or edge is which is decided by separators. When the separating feature
+//    itself moves, a separator's verdict far from where it now cuts is not trusted (band rule), and parts that did
+//    not exist at pick time may be included in the answer or left out (the new-territory rule of reconsider()):
+//    an answer that differs from the expectation only in such parts is not counted as wrong.
+//  - Elements whose carriers coincide with another owner's (two logical faces on one plane with the same material
+//    side and overlapping extents) cannot be told apart; such faces are described by both owners ("merged") and
+//    judged as one. An owner covering under 2 % of a face when it was picked is not part of its description.
 //  - Weak references (seam-induced pieces, vertices on fewer than three faces) are checked only for membership of
 //    the logical element, not for which piece.
 //  - Sampling: a face counts as part of a region from 2 % of its area and as fully inside from 98 %; slivers below
-//    2 % are ignored. Edges count from 5 %, vertices from 50 %.
+//    2 % are ignored. Edges count from 5 %, vertices from 50 %. Up to 5 % of an element's mesh nodes may lie off
+//    its carrier by up to ten times the tolerance (boolean edges are often less precise). A face the mesher leaves
+//    without triangles cannot be described; an answer on one is not judged (and counted).
 //  - Only the carriers listed above. A blend between faces that are not plane/plane or plane/coaxial cylinder has
 //    no owner, so its faces cannot be described and are never used as references; scripts avoid them.
 #pragma once
