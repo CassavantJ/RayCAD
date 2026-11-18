@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace ray::render::rhi {
 
@@ -44,7 +45,16 @@ struct FrameContext {
     quint32 frameUniformOffset = 0;                 // the main pass's FrameBlock
     std::uint64_t sceneGeneration = 0, cameraGeneration = 0;
     detail::Outbox* outbox = nullptr; // to deliver results on the UI thread
+    // Added by T-015.
+    bool colourRedrawn = true; // false: the main pass was skipped, `colour` holds the last image
+    std::vector<detail::PickRequest>* picks = nullptr; // pending picks; the pick pass takes them
+    QRhiBuffer* lineCorners = nullptr;                 // quad template of the wide-line pipeline (wideline.vert)
 };
+
+// Vertex layouts of the scene's buffers (GpuItem), for passes that draw them with their own shaders.
+QRhiVertexInputLayout meshVertexLayout();     // mesh.vert: position, normal, face id
+QRhiVertexInputLayout thinEdgeVertexLayout(); // line.vert: position, edge id
+QRhiVertexInputLayout wideLineVertexLayout(); // wideline.vert: corner (lineCorners), then per instance p0 p1 edge id
 
 class IFramePass {
 public:

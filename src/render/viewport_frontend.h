@@ -44,6 +44,15 @@ struct CaptureRequest {
     std::function<void(std::vector<std::byte>)> done; // run on the UI thread
 };
 
+// pick (rect false: x0, y0 is the cursor) or pickRect, in logical pixels as the caller gave them (task T-015).
+struct PickRequest {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool rect = false;
+    std::uint8_t filterMask = 0;
+    std::function<void(std::optional<PickHit>)> one; // run on the UI thread
+    std::function<void(std::vector<PickHit>)> many;  // run on the UI thread
+};
+
 // Everything the renderer needs for one frame. Items are sorted by id.
 struct FrameSnapshot {
     std::vector<SceneItem> items;
@@ -61,6 +70,10 @@ struct FrameSnapshot {
     std::uint64_t sceneGeneration = 0;
     std::uint64_t cameraGeneration = 0;
     std::vector<CaptureRequest> captures; // moved out of the front at each sync
+    std::vector<PickRequest> picks;       // moved out of the front at each sync (T-015)
+    // False when only picks asked for this frame: the picture is unchanged, so the renderer may keep the image it
+    // drew last instead of drawing it again (T-015).
+    bool redraw = true;
 };
 
 // Render thread to UI thread: closures queued here run on the UI thread, in order. post() is thread-safe; the
@@ -143,6 +156,8 @@ private:
     std::uint64_t nextGeometryGeneration_ = 1;
     FrameSnapshot state_; // everything except items and captures
     std::vector<CaptureRequest> captures_;
+    std::vector<PickRequest> picks_;
+    bool pictureDirty_ = true; // something other than a pick changed since the last snapshot
     std::shared_ptr<Outbox> outbox_;
     std::shared_ptr<SharedStatus> status_;
     std::unique_ptr<QObject> uiContext_; // receives the outbox's queued wake-ups on the UI thread

@@ -187,6 +187,7 @@ void ViewportFrontend::changed(bool scene, bool camera)
         ++state_.sceneGeneration;
     if (camera)
         ++state_.cameraGeneration;
+    pictureDirty_ = true;
     if (requestUpdate_)
         requestUpdate_();
 }
@@ -291,8 +292,9 @@ void ViewportFrontend::setTransform(ItemId id, const Xform& xf)
 void ViewportFrontend::setStyle(ItemId id, MeshStyle style)
 {
     if (SceneItem* item = find(id); item && style.face < Token::Count && style.edge < Token::Count) {
+        // Whether edges are drawn changes what the picking ID buffer holds, so a style change counts as a scene change.
         item->style = style;
-        changed(false, false);
+        changed(true, false);
     }
 }
 
@@ -312,7 +314,7 @@ void ViewportFrontend::remove(ItemId id)
 
 void ViewportFrontend::setHighlight(std::span<const PickHit> selected, std::optional<PickHit> hover)
 {
-    // Stored for T-015, which draws it; T-014 draws no highlight.
+    // Drawn in the main pass (SceneRenderer::drawHighlights); the ID buffer does not depend on it.
     state_.selected.assign(selected.begin(), selected.end());
     state_.hover = hover;
     changed(false, false);
@@ -351,26 +353,43 @@ void ViewportFrontend::setPreset(const TierPreset& preset)
     changed(false, false);
 }
 
-void ViewportFrontend::pick(int, int, std::uint8_t, std::function<void(std::optional<PickHit>)> done)
+void ViewportFrontend::pick(int x, int y, std::uint8_t filterMask, std::function<void(std::optional<PickHit>)> done)
 {
-    // T-015 renders the ID buffer and reads it back. Until then every pick misses, delivered asynchronously like
-    // the real answer will be.
-    static std::once_flag once;
-    notImplemented(once, "IViewport::pick");
-    if (done)
-        outbox_->post([done = std::move(done)] { done(std::nullopt); });
+    // Queued like a capture; the pick pass (rhi/pick_pass.cpp) answers through the outbox. A pick alone does not
+    // make the picture dirty, so the renderer only reads back the ID buffer (and draws it if it is stale).
+    if (!done)
+        return;
+    PickRequest request;
+    request.x0 = request.x1 = x;
+    request.y0 = request.y1 = y;
+    request.filterMask = filterMask;
+    request.one = std::move(done);
+    picks_.push_back(std::move(request));
+    if (requestUpdate_)
+        requestUpdate_();
 }
 
-void ViewportFrontend::pickRect(int, int, int, int, std::uint8_t, std::function<void(std::vector<PickHit>)> done)
+void ViewportFrontend::pickRect(int x0, int y0, int x1, int y1, std::uint8_t filterMask,
+                                std::function<void(std::vector<PickHit>)> done)
 {
-    static std::once_flag once;
-    notImplemented(once, "IViewport::pickRect");
-    if (done)
-        outbox_->post([done = std::move(done)] { done({}); });
+    if (!done)
+        return;
+    PickRequest request;
+    request.x0 = std::min(x0, x1);
+    request.y0 = std::min(y0, y1);
+    request.x1 = std::max(x0, x1);
+    request.y1 = std::max(y0, y1);
+    request.rect = true;
+    request.filterMask = filterMask;
+    request.many = std::move(done);
+    picks_.push_back(std::move(request));
+    if (requestUpdate_)
+        requestUpdate_();
 }
 
 void ViewportFrontend::requestFrame()
 {
+    pictureDirty_ = true; // the caller wants the picture drawn, even if nothing it knows of changed
     if (requestUpdate_)
         requestUpdate_();
 }
@@ -435,7 +454,7 @@ void ViewportFrontend::setDevicePixelRatio(double ratio)
 {
     if (ratio > 0 && std::isfinite(ratio) && ratio != state_.devicePixelRatio) {
         state_.devicePixelRatio = ratio;
-        changed(false, false);
+        changed(true, false); // line widths scale with it, and so does what the picking ID buffer holds
     }
 }
 
@@ -457,6 +476,10 @@ FrameSnapshot ViewportFrontend::takeSnapshot()
         snap.items.push_back(item);
     snap.captures = std::move(captures_);
     captures_.clear();
+    snap.picks = std::move(picks_);
+    picks_.clear();
+    snap.redraw = pictureDirty_;
+    pictureDirty_ = false;
     return snap;
 }
 

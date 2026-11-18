@@ -17,6 +17,10 @@ add_library(ray_render STATIC
     viewport_runtime.cpp
     viewport_offscreen.cpp
     viewport_hosted.cpp
+    pick.h
+    pick.cpp
+    rhi/pick_pass.h
+    rhi/pick_pass.cpp
     rhi/rhi_util.h
     rhi/rhi_util.cpp
     rhi/rhi_device.h
@@ -46,6 +50,10 @@ qt_add_shaders(ray_render "ray_render_shaders"
         shaders/line.vert
         shaders/line.frag
         shaders/wideline.vert
-        shaders/wideline.frag)
+        shaders/wideline.frag
+        shaders/pick_mesh.vert
+        shaders/pick_line.vert
+        shaders/pick_wideline.vert
+        shaders/pick.frag)
 set_source_files_properties(shaders/frame.glsl PROPERTIES HEADER_FILE_ONLY TRUE)
 target_sources(ray_render PRIVATE shaders/frame.glsl)
