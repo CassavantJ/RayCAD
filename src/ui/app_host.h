@@ -42,6 +42,7 @@ class Files;
 class IRecoverySource;
 class SceneController;
 class Session;
+class SectionModel;
 class SelectionModel;
 class ShortcutManager;
 class ThemeObject;
@@ -97,6 +98,8 @@ public:
     bool eventFilter(QObject* watched, QEvent* event) override;
     // T-021: the Commands and Shortcuts singletons (palette_commands.h, shortcuts.h).
     CommandCatalog* commands() const { return commands_.get(); }
+    // T-023: the SectionView singleton (section view and draft analysis).
+    SectionModel* section() const { return section_.get(); }
     ShortcutManager* shortcuts() const { return shortcuts_.get(); }
 
     // <per-user cache location>/: QStandardPaths::CacheLocation for organisation and application "RayCAD".
@@ -126,6 +129,7 @@ private:
     std::unique_ptr<Files> files_;
     std::unique_ptr<CommandCatalog> commands_;
     std::unique_ptr<ShortcutManager> shortcuts_;
+    std::unique_ptr<SectionModel> section_; // T-023
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QQuickWindow* window_ = nullptr;
     bool quitApproved_ = false;

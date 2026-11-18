@@ -10,6 +10,8 @@
 //   1  item   rgb = ItemId, little-endian
 //   2  depth  rgb = round((0.5 * NDC z + 0.5) * (2^24 - 1)), little-endian
 // The faces are pushed back with the main pass's depth bias, so visible edges win over the faces they border.
+// T-023: everything beyond the section plane is discarded, and section caps are drawn as IdKind::Cap (their body),
+// so a pick through the cut finds what is seen there and never a face that was cut away.
 #pragma once
 
 #include "frame_pass.h"
@@ -55,6 +57,7 @@ private:
     Owned<QRhiTextureRenderTarget> rt_;
     Owned<QRhiRenderPassDescriptor> rp_;
     Owned<QRhiGraphicsPipeline> faces_, thinEdges_, segments_;
+    Owned<QRhiGraphicsPipeline> capStencil_, capFill_;       // T-023: section caps; null: caps are not drawn here
     QRhiShaderResourceBindings* pipelineBindings_ = nullptr; // what the pipelines were made against
     bool pipelinesTried_ = false;
 

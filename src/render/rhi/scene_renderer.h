@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace ray::render::rhi {
@@ -28,6 +29,7 @@ struct GpuItem {
     Owned<QRhiBuffer> wideEdges; // mesh edges or line items: one instance per segment, p0 p1 edge id (28 bytes)
     std::uint32_t indexCount = 0, thinEdgeVertexCount = 0, segmentCount = 0;
     std::shared_ptr<const detail::MeshIndex> index; // mesh items: face, edge and vertex lookups (T-015)
+    std::optional<bool> closed; // T-023: watertight (section.h), worked out the first time a cap is wanted
 };
 
 class PickPass;
@@ -94,6 +96,9 @@ private:
     void prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& theme, quint32 base, quint32 slot);
     void drawHighlights(QRhiCommandBuffer* cb, PipelineSet& set, const QRhiViewport& viewport, quint32 frameOffset,
                         std::uint64_t& drawCalls);
+    // Section caps (T-023): which draws get one this frame, and the cap quad they share.
+    void prepareCaps(QRhiResourceUpdateBatch* u);
+    std::optional<Box3> visibleBounds() const;
 
     QRhi* rhi_ = nullptr;
     ResourceCounter counter_;
@@ -126,6 +131,11 @@ private:
     Owned<QRhiBuffer> markers_;         // vertex markers, wide-line instances
     quint32 markerCapacity_ = 0;
     bool needRedraw_ = true, lastDrew_ = true;
+    // T-023: section caps and the upload counter.
+    Owned<QRhiBuffer> capQuad_;
+    std::vector<std::size_t> capped_; // indices into draws_
+    std::uint32_t capsDrawn_ = 0;     // bodies capped in the last drawn frame
+    std::uint64_t uploads_ = 0;
 
     bool smoothEdges_ = false;
     int samples_ = 1;

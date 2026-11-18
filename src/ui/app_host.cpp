@@ -5,6 +5,7 @@
 #include "palette_commands.h"
 #include "scene_controller.h"
 #include "scene_jobs.h"
+#include "section_model.h"
 #include "selection_model.h"
 #include "session.h"
 #include "session_recovery.h"
@@ -55,6 +56,9 @@ AppHost::AppHost(const AppOptions& options, QString cacheDir, QObject* parent)
         std::make_unique<CommandCatalog>(context_.get(), scene_.get(), selection_.get(), [this] { return viewport(); });
     shortcuts_ = std::make_unique<ShortcutManager>(commands_.get());
     commands_->setShortcuts(shortcuts_.get());
+    // T-023: section view and draft analysis, also run as view.section.* / view.draft.* commands.
+    section_ = std::make_unique<SectionModel>(scene_.get(), selection_.get(), [this] { return viewport(); });
+    commands_->setSectionView(section_.get());
     if (!theme_->loadErrors().isEmpty()) {
         optionError_ = theme_->loadErrors().join(QLatin1Char('\n'));
     }
@@ -85,6 +89,7 @@ AppHost::~AppHost()
     // cancels and waits for its jobs and closes its documents), then the job system, which waits for the rest.
     shortcuts_.reset();
     commands_.reset();
+    section_.reset();
     context_->setActionHandler({});
     files_.reset();
     session_.reset();
@@ -200,6 +205,7 @@ bool AppHost::load()
     Files::provideFor(engine_.get(), files_.get());
     CommandCatalog::provideFor(engine_.get(), commands_.get());
     ShortcutManager::provideFor(engine_.get(), shortcuts_.get());
+    SectionModel::provideFor(engine_.get(), section_.get());
     connect(engine_.get(), &QQmlEngine::warnings, this, [this](const QList<QQmlError>& list) {
         for (const QQmlError& e : list) {
             warnings_ << e.toString();

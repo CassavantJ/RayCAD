@@ -4,11 +4,14 @@
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec4 edgeId;
 layout(location = 0) out vec4 v_edgeId;
+layout(location = 1) out float v_section; // T-023: signed distance to the section plane
 
 #include "frame.glsl"
 
 void main()
 {
+    vec4 world = item.model * vec4(position, 1.0);
     v_edgeId = edgeId;
-    gl_Position = frame.viewProj * (item.model * vec4(position, 1.0));
+    v_section = sectionDistance(world.xyz);
+    gl_Position = frame.viewProj * world;
 }

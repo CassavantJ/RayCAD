@@ -32,7 +32,35 @@ struct ViewportInfo {
     // Times the glass backdrop was blurred (task T-016): at most once per frame, only while the backdrop is enabled
     // and only when the viewport image changed (or the backdrop has no blur of the current image yet).
     std::uint64_t backdropBlurs = 0;
+    // Times an item's geometry was uploaded to the GPU (task T-023): moving a section plane or switching draft
+    // analysis changes only uniforms, so it never moves this.
+    std::uint64_t meshUploads = 0;
+    // Bodies that got a section cap in the last drawn frame (task T-023): closed, visible, opaque meshes the plane
+    // cuts, while the preset allows caps and the section asks for them.
+    std::uint32_t sectionCaps = 0;
 };
+
+// ---------- Section view and draft analysis (task T-023) ----------
+// IViewport::setSection(SectionPlane{origin, normal, cap}): everything on the side the normal points to,
+// dot(p - origin, normal) > 0, is cut away (faces, edges, lines and the picking ID buffer alike); the viewer usually
+// looks along -normal into the cut. A zero or non-finite normal turns the section off. With `cap` and a preset whose
+// sectionCaps is set, every closed (watertight) visible opaque mesh gets a solid cap on the cut, in a darker shade of
+// its own face colour; open shells, lone faces, see-through and hidden bodies get none. The cut line is outlined on
+// the faces in the edge colour. Caps answer picks as their body (PickFilter::Bodies) and hide what lies behind them.
+// Draft analysis colours every mesh face per pixel by the angle between its outward normal n and the unit pull
+// direction p: draft angle = asin(dot(n, p)). Above +threshold the face has positive draft (it releases), below
+// -threshold negative draft (an undercut), in between it is near-vertical. While on it replaces MeshStyle::faceColor
+// and the face token. Colours: the theme has no draft tokens yet, so Success (positive), Error (negative) and
+// Warning (near-vertical) are used.
+struct DraftAnalysis {
+    Vec3 pull{0, 0, 1};        // normalised by the renderer; a zero or non-finite vector turns the analysis off
+    double thresholdDeg = 1.0; // clamped to 0..89
+};
+enum class DraftClass : std::uint8_t { Positive, Vertical, Negative };
+// The class draft analysis paints for a surface normal (CPU reference of the shader; `normal` need not be unit).
+DraftClass draftClassOf(Vec3 normal, const DraftAnalysis&);
+// The colour token of a class.
+Token draftToken(DraftClass);
 
 // ---------- Picking (task T-015) ----------
 // pick and pickRect take LOGICAL pixels, origin top-left (what Qt Quick's input events give); the renderer scales
@@ -68,6 +96,10 @@ public:
     virtual ViewportInfo info() const = 0;
     // Physical pixels per logical pixel; scales line widths taken from theme metrics. Default 1.
     virtual void setDevicePixelRatio(double) = 0;
+    // Task T-023 (see "Section view and draft analysis" above). Both survive theme and preset changes.
+    virtual std::optional<SectionPlane> section() const = 0;
+    virtual void setDraftAnalysis(std::optional<DraftAnalysis>) = 0;
+    virtual std::optional<DraftAnalysis> draftAnalysis() const = 0;
 };
 
 // ---------- Camera helpers (pure math; the UI's navigation calls these, then setCamera) ----------

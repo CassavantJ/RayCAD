@@ -7,6 +7,7 @@
 #include "pick_pass.h"
 
 #include "../highlight.h"
+#include "../section.h"
 
 #include "../tier_internal.h"
 
@@ -15,6 +16,7 @@
 #include <QtGui/QVector3D>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <iterator>
@@ -35,6 +37,12 @@ struct FrameBlock {
     float bgBottom[4];
     float misc[4];
     float section[4];
+    // T-023
+    float analysis[4];
+    float draftPull[4];
+    float draftPositive[4];
+    float draftNegative[4];
+    float draftVertical[4];
 };
 struct ItemBlock {
     float model[16];
@@ -44,13 +52,17 @@ struct ItemBlock {
     float line[4];
     float ids[4];
 };
-static_assert(sizeof(FrameBlock) == 224);
+static_assert(sizeof(FrameBlock) == 304);
 static_assert(sizeof(ItemBlock) == 192);
 
 constexpr quint32 kMeshStride = 28; // position, normal, face id
 constexpr quint32 kThinStride = 16; // position, edge id
 constexpr quint32 kWideStride = 28; // p0, p1, edge id
-constexpr int kFaceDepthBias = 2;   // faces sit behind their edges (S1)
+constexpr quint32 kCapStride = 12;  // position (T-023)
+constexpr quint32 kCapVertices = 6; // the cap quad as two triangles
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kHatchPeriodPx = 10.0; // section caps' hatch (T-023), logical pixels before snapping
+constexpr int kFaceDepthBias = 2;       // faces sit behind their edges (S1)
 constexpr float kFaceSlopeDepthBias = 1.5f;
 // Theme metrics used here, with the value used when a theme has none.
 constexpr const char* kMetricThinLine = "line.thin.px";
@@ -99,7 +111,8 @@ void copyMatrix(float dst[16], const QMatrix4x4& m)
 // Loaded once per process; a QShader holds no GPU resource.
 struct Shaders {
     QShader backgroundVs, backgroundFs, meshVs, meshFs, lineVs, lineFs, wideVs, wideFs;
-    bool ok = false;
+    QShader capVs, capFs; // T-023: section caps (optional: without them nothing is capped)
+    bool ok = false, capOk = false;
 };
 
 const Shaders& shaders()
@@ -114,15 +127,71 @@ const Shaders& shaders()
         out.lineFs = loadShader("line.frag");
         out.wideVs = loadShader("wideline.vert");
         out.wideFs = loadShader("wideline.frag");
+        out.capVs = loadShader("cap.vert");
+        out.capFs = loadShader("cap.frag");
         out.ok = out.backgroundVs.isValid() && out.backgroundFs.isValid() && out.meshVs.isValid() &&
                  out.meshFs.isValid() && out.lineVs.isValid() && out.lineFs.isValid() && out.wideVs.isValid() &&
                  out.wideFs.isValid();
+        out.capOk = out.capVs.isValid() && out.capFs.isValid();
         return out;
     }();
     return s;
 }
 
 } // namespace
+
+QRhiVertexInputLayout capVertexLayout()
+{
+    QRhiVertexInputLayout cap;
+    cap.setBindings({QRhiVertexInputBinding(kCapStride)});
+    cap.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, 0)});
+    return cap;
+}
+
+void setCapStencilMarking(QRhiGraphicsPipeline& p, int colourTargets)
+{
+    // Section caps (T-023, section.h), step 1: both sides of the body's clipped faces flip stencil bit 0; nothing
+    // else is written and nothing is depth tested.
+    using P = QRhiGraphicsPipeline;
+    p.setDepthTest(false);
+    p.setDepthWrite(false);
+    p.setCullMode(P::None);
+    P::TargetBlend none;
+    none.colorWrite = {};
+    // (The iterator overload of setTargetBlends trips MSVC's C4702 inside Qt's overflow helpers.)
+    if (colourTargets >= 3)
+        p.setTargetBlends({none, none, none}); // the picking ID pass
+    else
+        p.setTargetBlends({none});
+    P::StencilOpState op;
+    op.failOp = P::Keep;
+    op.depthFailOp = P::Keep;
+    op.passOp = P::Invert;
+    op.compareOp = P::Always;
+    p.setStencilTest(true);
+    p.setStencilFront(op);
+    p.setStencilBack(op);
+    p.setStencilReadMask(1);
+    p.setStencilWriteMask(1);
+}
+
+void setCapStencilFill(QRhiGraphicsPipeline& p)
+{
+    // Step 2: the cap quad where bit 0 is set (reference 0, NotEqual), depth tested and written; the bit is cleared
+    // wherever the quad lands, visible or not, so the next body starts from a clear stencil.
+    using P = QRhiGraphicsPipeline;
+    P::StencilOpState op;
+    op.failOp = P::Keep;
+    op.depthFailOp = P::StencilZero;
+    op.passOp = P::StencilZero;
+    op.compareOp = P::NotEqual;
+    p.setStencilTest(true);
+    p.setStencilFront(op);
+    p.setStencilBack(op);
+    p.setStencilReadMask(1);
+    p.setStencilWriteMask(1);
+    p.setFlags(p.flags() | P::UsesStencilRef);
+}
 
 QRhiVertexInputLayout meshVertexLayout()
 {
@@ -159,7 +228,8 @@ struct SceneRenderer::PipelineSet {
     Owned<QRhiRenderPassDescriptor> rp;
     int samples = 1;
     Owned<QRhiGraphicsPipeline> background, meshOpaque, meshBlend, lineThin, lineWide;
-    Owned<QRhiGraphicsPipeline> highlightFaces; // T-015: mesh shaders, blended, on the faces' own depth
+    Owned<QRhiGraphicsPipeline> highlightFaces;      // T-015: mesh shaders, blended, on the faces' own depth
+    Owned<QRhiGraphicsPipeline> capStencil, capFill; // T-023: section caps (section.h); null: no caps
     bool ok = false;
 };
 
@@ -308,6 +378,8 @@ void SceneRenderer::releaseResources()
     highlights_.clear();
     markers_.reset();
     markerCapacity_ = 0;
+    capQuad_.reset();
+    capped_.clear();
     needRedraw_ = true;
     bindings_.reset();
     uniforms_.reset();
@@ -394,6 +466,39 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
         set->lineWide = make(sh.wideVs, sh.wideFs, wide, P::Triangles, true, false, P::LessOrEqual, true, false);
     // Same shaders and depth bias as the faces, so a highlight lands on exactly their depth and passes LessOrEqual.
     set->highlightFaces = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, false, P::LessOrEqual, true, true);
+    if (sh.capOk) {
+        const auto finish = [&](Owned<QRhiGraphicsPipeline>& p) {
+            p->setSampleCount(set->samples);
+            p->setShaderResourceBindings(bindings_.get());
+            p->setRenderPassDescriptor(set->rp.get());
+            if (!p->create())
+                p.reset();
+        };
+        set->capStencil = own(counter_, rhi_->newGraphicsPipeline());
+        set->capStencil->setShaderStages(
+            {{QRhiShaderStage::Vertex, sh.meshVs}, {QRhiShaderStage::Fragment, sh.meshFs}});
+        set->capStencil->setVertexInputLayout(mesh);
+        set->capStencil->setTopology(P::Triangles);
+        setCapStencilMarking(*set->capStencil, 1);
+        finish(set->capStencil);
+        // Same depth bias as the faces, so edges lying in the plane stay on top of a cap.
+        set->capFill = own(counter_, rhi_->newGraphicsPipeline());
+        set->capFill->setShaderStages({{QRhiShaderStage::Vertex, sh.capVs}, {QRhiShaderStage::Fragment, sh.capFs}});
+        set->capFill->setVertexInputLayout(capVertexLayout());
+        set->capFill->setTopology(P::Triangles);
+        set->capFill->setDepthTest(true);
+        set->capFill->setDepthWrite(true);
+        set->capFill->setDepthOp(P::Less);
+        set->capFill->setCullMode(P::None);
+        set->capFill->setDepthBias(kFaceDepthBias);
+        set->capFill->setSlopeScaledDepthBias(kFaceSlopeDepthBias);
+        setCapStencilFill(*set->capFill);
+        finish(set->capFill);
+        if (!set->capStencil || !set->capFill) {
+            set->capStencil.reset();
+            set->capFill.reset();
+        }
+    }
     set->ok = set->background && set->meshOpaque && set->meshBlend && set->lineThin;
     pipelineSets_.push_back(std::move(set));
     return pipelineSets_.back().get();
@@ -454,6 +559,7 @@ bool SceneRenderer::ensureUniformCapacity(quint32 bytes)
 void SceneRenderer::uploadItem(const detail::SceneItem& item, GpuItem& gpu, bool wantWide, QRhiResourceUpdateBatch* u)
 {
     gpu.generation = item.geometryGeneration;
+    ++uploads_;
     if (item.kind == detail::ItemKind::Lines) {
         ensureWide(item, gpu, u);
         if (!rhi_->isFeatureSupported(QRhi::Instancing)) {
@@ -618,20 +724,7 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
     view.lookAt(eye, eye + forward, up);
 
     // Clip planes from the bounding sphere of what is drawn.
-    std::optional<Box3> bounds;
-    for (const detail::SceneItem& item : snap_.items) {
-        if (!item.visible || !item.localBounds)
-            continue;
-        const Box3 b = detail::transformBox(*item.localBounds, item.xform);
-        if (!bounds) {
-            bounds = b;
-        } else {
-            bounds->min = {std::min(bounds->min.x, b.min.x), std::min(bounds->min.y, b.min.y),
-                           std::min(bounds->min.z, b.min.z)};
-            bounds->max = {std::max(bounds->max.x, b.max.x), std::max(bounds->max.y, b.max.y),
-                           std::max(bounds->max.z, b.max.z)};
-        }
-    }
+    const std::optional<Box3> bounds = visibleBounds();
     double nearPlane = 0.1;
     double farPlane = 10000.0;
     if (bounds) {
@@ -680,8 +773,121 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
     }
     block.misc[0] = rhi_->isYUpInNDC() ? 1.0f : -1.0f;
     block.misc[1] = cam.perspective ? 0.0f : 1.0f;
-    block.misc[2] = 0.0f; // section off until T-023
+    // T-023: the section plane (the outline of the cut a thin line wide) and draft analysis.
+    if (const std::optional<detail::PlaneEquation> plane =
+            snap_.section ? detail::planeEquation(*snap_.section) : std::nullopt) {
+        block.misc[2] = 1.0f;
+        block.section[0] = float(plane->nx);
+        block.section[1] = float(plane->ny);
+        block.section[2] = float(plane->nz);
+        block.section[3] = float(plane->d);
+        const double thin =
+            snap_.theme ? metric(*snap_.theme, kMetricThinLine, kDefaultThinLinePx) : kDefaultThinLinePx;
+        block.analysis[2] = float(thin * snap_.devicePixelRatio);
+        // The caps' hatch: about kHatchPeriodPx logical pixels at the camera target, snapped to a power of two (mm).
+        const double dx = cam.target.x - cam.eye.x, dy = cam.target.y - cam.eye.y, dz = cam.target.z - cam.eye.z;
+        const double viewHeightMm = cam.perspective ? 2.0 * std::sqrt(dx * dx + dy * dy + dz * dz) *
+                                                          std::tan(std::clamp(cam.fovDeg, 1.0, 150.0) * kPi / 360.0)
+                                                    : std::max(cam.orthoHeight, 1e-6);
+        const double wanted =
+            viewHeightMm / double(std::max(1, size.height())) * kHatchPeriodPx * snap_.devicePixelRatio;
+        if (std::isfinite(wanted) && wanted > 0)
+            block.analysis[3] = float(std::exp2(std::round(std::log2(wanted))));
+    }
+    if (snap_.draft && snap_.theme) {
+        const DraftAnalysis& d = *snap_.draft;
+        const QVector3D pull =
+            view.mapVector(QVector3D(float(d.pull.x), float(d.pull.y), float(d.pull.z))).normalized();
+        block.analysis[0] = 1.0f;
+        block.analysis[1] = float(std::sin(std::clamp(d.thresholdDeg, 0.0, 89.0) * kPi / 180.0));
+        block.draftPull[0] = pull.x();
+        block.draftPull[1] = pull.y();
+        block.draftPull[2] = pull.z();
+        const Theme& theme = *snap_.theme;
+        toFloat4(theme.colors[std::size_t(draftToken(DraftClass::Positive))], block.draftPositive);
+        toFloat4(theme.colors[std::size_t(draftToken(DraftClass::Negative))], block.draftNegative);
+        toFloat4(theme.colors[std::size_t(draftToken(DraftClass::Vertical))], block.draftVertical);
+    }
     u->updateDynamicBuffer(uniforms_.get(), offset, sizeof(block), &block);
+}
+
+std::optional<Box3> SceneRenderer::visibleBounds() const
+{
+    std::optional<Box3> bounds;
+    for (const detail::SceneItem& item : snap_.items) {
+        if (!item.visible || !item.localBounds)
+            continue;
+        const Box3 b = detail::transformBox(*item.localBounds, item.xform);
+        if (!bounds) {
+            bounds = b;
+        } else {
+            bounds->min = {std::min(bounds->min.x, b.min.x), std::min(bounds->min.y, b.min.y),
+                           std::min(bounds->min.z, b.min.z)};
+            bounds->max = {std::max(bounds->max.x, b.max.x), std::max(bounds->max.y, b.max.y),
+                           std::max(bounds->max.z, b.max.z)};
+        }
+    }
+    return bounds;
+}
+
+void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
+{
+    // Caps only when the section asks for them AND the preset allows them (PLAN.md 6.2: Medium and High).
+    capped_.clear();
+    if (!snap_.section || !snap_.section->cap || !snap_.preset.sectionCaps || !snap_.theme)
+        return;
+    const std::optional<detail::PlaneEquation> plane = detail::planeEquation(*snap_.section);
+    const std::optional<Box3> bounds = visibleBounds();
+    if (!plane || !bounds)
+        return;
+    const std::optional<std::array<Vec3, 4>> quad = detail::capQuad(*plane, *bounds);
+    if (!quad)
+        return; // the plane misses everything
+    const bool transparency = snap_.preset.transparency;
+    for (std::size_t i = 0; i < draws_.size(); ++i) {
+        const detail::SceneItem& item = *draws_[i].item;
+        const GpuItem& drawn = *draws_[i].gpu;
+        if (item.kind != detail::ItemKind::Mesh || !item.mesh || !item.localBounds || !drawn.indices ||
+            drawn.indexCount == 0)
+            continue;
+        if (transparency && item.style.opacity < 1.0f)
+            continue; // see-through bodies get no cap
+        // Only bodies the plane really cuts.
+        const Box3 b = detail::transformBox(*item.localBounds, item.xform);
+        bool below = false, above = false;
+        for (int corner = 0; corner < 8; ++corner) {
+            const double dist = plane->distance(Vec3{(corner & 1) ? b.max.x : b.min.x, (corner & 2) ? b.max.y : b.min.y,
+                                                     (corner & 4) ? b.max.z : b.min.z});
+            below = below || dist < 0;
+            above = above || dist > 0;
+        }
+        if (!below || !above)
+            continue;
+        GpuItem& gpu = gpu_[item.id];
+        if (!gpu.closed)
+            gpu.closed = detail::isClosedMesh(*item.mesh); // once per geometry
+        if (*gpu.closed)
+            capped_.push_back(i);
+    }
+    if (capped_.empty())
+        return;
+    const std::array<Vec3, 4>& q = *quad;
+    const Vec3 corners[kCapVertices] = {q[0], q[1], q[2], q[0], q[2], q[3]};
+    float data[kCapVertices * 3];
+    for (quint32 v = 0; v < kCapVertices; ++v) {
+        data[v * 3 + 0] = float(corners[v].x);
+        data[v * 3 + 1] = float(corners[v].y);
+        data[v * 3 + 2] = float(corners[v].z);
+    }
+    if (!capQuad_) {
+        capQuad_ = own(counter_, rhi_->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, sizeof(data)));
+        if (!capQuad_->create()) {
+            capQuad_.reset();
+            capped_.clear();
+            return;
+        }
+    }
+    u->updateDynamicBuffer(capQuad_.get(), 0, sizeof(data), data);
 }
 
 void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize size, quint32 frameOffset)
@@ -730,6 +936,23 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
     for (const DrawItem& d : draws_) {
         if (d.item->kind == detail::ItemKind::Mesh && !isBlended(d))
             drawFaces(d, set.meshOpaque.get());
+    }
+    // 1b. section caps (T-023, section.h): per closed body, mark its inside in the stencil, then fill the cap quad
+    // there. The stencil marking adds the body's triangles once more (no colour, no depth), the fill one quad.
+    if (!capped_.empty() && capQuad_ && set.capStencil && set.capFill) {
+        const QRhiCommandBuffer::VertexInput quadInput(capQuad_.get(), 0);
+        for (const std::size_t index : capped_) {
+            const DrawItem& d = draws_[index];
+            use(set.capStencil.get(), d.itemUniformOffset);
+            const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
+            cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
+            cb->drawIndexed(d.gpu->indexCount);
+            use(set.capFill.get(), d.itemUniformOffset);
+            cb->setStencilRef(0);
+            cb->setVertexInput(0, 1, &quadInput);
+            cb->draw(kCapVertices);
+            drawCalls += 2;
+        }
     }
     // 2. edges and lines
     for (const DrawItem& d : draws_) {
@@ -1068,6 +1291,8 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
             }
             block.line[2] = smooth ? 1.0f : 0.0f;
             block.ids[0] = float(d.item->id);
+            // T-023: draft analysis paints body faces (over their own colour too), never lines or highlights.
+            block.ids[1] = d.item->kind == detail::ItemKind::Mesh ? 1.0f : 0.0f;
             u->updateDynamicBuffer(uniforms_.get(), d.itemUniformOffset, sizeof(block), &block);
         }
         // Transparent items far to near.
@@ -1084,8 +1309,10 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
                              [&](const DrawItem& a, const DrawItem& b) { return depthOf(a) < depthOf(b); });
         }
         prepareHighlights(u, *theme, itemBase + quint32(draws_.size()) * itemSlot, itemSlot);
+        prepareCaps(u); // after the sort: capped_ indexes draws_
     } else {
         highlights_.clear();
+        capped_.clear();
     }
 
     // Capture targets and their FrameBlocks, written in the same batch as the main pass.
@@ -1149,6 +1376,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
             stats_.triangles = stats_.drawCalls = 0;
         cb->endPass();
         needRedraw_ = false;
+        capsDrawn_ = theme && set.ok && set.capStencil && set.capFill ? std::uint32_t(capped_.size()) : 0;
     } else {
         cb->resourceUpdate(u);
     }
@@ -1186,6 +1414,8 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         ctx.colourRedrawn = drawMain;
         ctx.picks = &snap_.picks;
         ctx.lineCorners = corners_.get();
+        ctx.capQuad = capQuad_.get();
+        ctx.capped = capped_;
         for (auto& pass : passes_)
             pass->record(ctx);
     }
@@ -1234,6 +1464,8 @@ void SceneRenderer::publishStats(double cpuMs)
     info.framesRendered = frames_;
     info.pickBufferRenders = pickBufferRenders();
     info.backdropBlurs = backdropBlurs();
+    info.meshUploads = uploads_;
+    info.sectionCaps = capsDrawn_;
     info.liveRhiResources = counter_.live.load();
     // The UI thread learns size, orientation and generation; the handle itself stays on this thread (render.h).
     status_->backdrop = backdrop();

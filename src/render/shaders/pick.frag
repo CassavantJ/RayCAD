@@ -5,6 +5,7 @@
 // shaders are also baked for GLSL 120).
 layout(location = 0) in vec4 v_id;
 layout(location = 1) in vec3 v_depthKind;
+layout(location = 2) in float v_section; // T-023: beyond the section plane nothing is pickable
 layout(location = 0) out vec4 outIds;
 layout(location = 1) out vec4 outItem;
 layout(location = 2) out vec4 outDepth;
@@ -22,7 +23,9 @@ vec3 bytes24(float v)
 
 void main()
 {
-    outIds = vec4(v_id.rgb, floor(v_depthKind.z + 0.5) / 255.0);
+    if (v_section > 0.0)
+        discard;
+    outIds =vec4(v_id.rgb, floor(v_depthKind.z + 0.5) / 255.0);
     outItem = vec4(bytes24(floor(item.ids.x + 0.5)), 1.0);
     float ndcZ = v_depthKind.x / v_depthKind.y;
     float depth = clamp(0.5 * ndcZ + 0.5, 0.0, 1.0);

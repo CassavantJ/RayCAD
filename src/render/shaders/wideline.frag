@@ -3,12 +3,15 @@
 layout(location = 0) in float v_across;
 layout(location = 1) in float v_along;
 layout(location = 2) in vec4 v_edgeId;
+layout(location = 3) in float v_section;
 layout(location = 0) out vec4 fragColor;
 
 #include "frame.glsl"
 
 void main()
 {
+    if (v_section > 0.0)
+        discard; // beyond the section plane (T-023)
     float alpha = 1.0;
     if (item.line.z > 0.5)
         alpha = clamp(0.5 * item.line.x + 0.5 - abs(v_across), 0.0, 1.0);

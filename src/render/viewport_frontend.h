@@ -60,11 +60,12 @@ struct FrameSnapshot {
     std::shared_ptr<const Theme> theme;
     TierPreset preset{};
     double devicePixelRatio = 1.0;
-    // State the later tasks consume; T-014 stores it and draws nothing for it.
-    std::optional<SectionPlane> section; // T-023
-    std::vector<PickHit> selected;       // T-015
-    std::optional<PickHit> hover;        // T-015
-    bool backdropEnabled = false;        // T-016: rhi/backdrop_pass.h blurs the frame
+    // Section and draft analysis (T-023): validated by the front (unit normal / pull, finite values).
+    std::optional<SectionPlane> section;
+    std::optional<DraftAnalysis> draft;
+    std::vector<PickHit> selected; // T-015
+    std::optional<PickHit> hover;  // T-015
+    bool backdropEnabled = false;  // T-016: rhi/backdrop_pass.h blurs the frame
     // Bumped by any change to items, transforms, visibility (sceneGeneration) or the camera (cameraGeneration);
     // T-015 re-renders its ID buffer only when one of them moved.
     std::uint64_t sceneGeneration = 0;
@@ -140,6 +141,9 @@ public:
     std::optional<Box3> sceneBounds() const override;
     ViewportInfo info() const override;
     void setDevicePixelRatio(double) override;
+    std::optional<SectionPlane> section() const override { return state_.section; }
+    void setDraftAnalysis(std::optional<DraftAnalysis>) override;
+    std::optional<DraftAnalysis> draftAnalysis() const override { return state_.draft; }
 
     // For the hosts. takeSnapshot runs on the render thread while the UI thread is blocked (Qt Quick), or on the
     // UI thread (offscreen).

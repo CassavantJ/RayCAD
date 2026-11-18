@@ -8,6 +8,7 @@ layout(location = 2) in vec3 p1;
 layout(location = 3) in vec4 edgeId;
 layout(location = 0) out vec4 v_id;
 layout(location = 1) out vec3 v_depthKind; // clip z, clip w, IdKind
+layout(location = 2) out float v_section;  // T-023: signed distance to the section plane
 
 #include "frame.glsl"
 
@@ -21,8 +22,10 @@ vec4 clipNear(vec4 a, vec4 b)
 
 void main()
 {
-    vec4 c0 = frame.viewProj * (item.model * vec4(p0, 1.0));
-    vec4 c1 = frame.viewProj * (item.model * vec4(p1, 1.0));
+    vec4 w0 = item.model * vec4(p0, 1.0);
+    vec4 w1 = item.model * vec4(p1, 1.0);
+    vec4 c0 = frame.viewProj * w0;
+    vec4 c1 = frame.viewProj * w1;
     vec4 a = clipNear(c0, c1);
     vec4 b = clipNear(c1, c0);
     vec2 halfSize = 0.5 * frame.viewport.xy;
@@ -38,5 +41,6 @@ void main()
     pos.xy += nrm * (corner.y * halfWidth) / halfSize * pos.w;
     v_id = edgeId;
     v_depthKind = vec3(pos.z, pos.w, 3.0);
+    v_section = sectionDistance(corner.x < 0.5 ? w0.xyz : w1.xyz);
     gl_Position = pos;
 }

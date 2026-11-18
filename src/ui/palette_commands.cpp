@@ -3,6 +3,7 @@
 #include "app_context.h"
 #include "palette_schema.h"
 #include "scene_controller.h"
+#include "section_model.h"
 #include "selection_model.h"
 #include "shortcuts.h"
 #include "viewport_item.h"
@@ -105,6 +106,20 @@ constexpr UiCommand kUiCommands[] = {
     {"selection.copyCoordinates", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy Coordinates"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selection"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the selected vertex's X, Y and Z in mm"), ""},
+    // T-023: section view and draft analysis (section_model.h).
+    {"view.section.toggle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Section View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Cuts the model with a plane to show its inside"), ""},
+    {"view.section.fromFace", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Section Parallel to Face"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Cuts the model parallel to the selected planar face"), ""},
+    {"view.draft.toggle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draft Analysis"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Colours faces by their draft angle to the pull direction"), ""},
+    {"view.draft.fromFace", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Pull Direction from Face"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draft analysis with the selected planar face's normal as the pull"),
+     ""},
 };
 // clang-format on
 
@@ -155,11 +170,15 @@ constexpr ContextEntry kContextMenu[] = {
     {"view.bottom", kNothing, 0, kStandardViews, false},
     {"view.iso", kNothing, 0, kStandardViews, false},
     {"view.toggleProjection", kNothing, 0, nullptr, false},
+    {"view.section.toggle", kNothing, 0, nullptr, false}, // T-023
+    {"view.draft.toggle", kNothing, 0, nullptr, false},
     {"view.showAllBodies", kNothing, 0, nullptr, true},
     {"file.open", kNothing, 1, nullptr, false},
     {"file.import", kNothing, 1, nullptr, false},
     {"view.fitSelection", kAnySelection, 2, nullptr, false},
     {"selection.selectBody", kElement, 2, nullptr, false},
+    {"view.section.fromFace", kFace, 2, nullptr, false}, // T-023
+    {"view.draft.fromFace", kFace, 2, nullptr, false},
     {"view.hideSelectedBodies", kAnySelection, 3, nullptr, false},
     {"view.isolateSelectedBodies", kAnySelection, 3, nullptr, false},
     {"view.showAllBodies", kAnySelection, 3, nullptr, true},
@@ -555,6 +574,9 @@ QString CommandCatalog::uiReason(const QString& id) const
         return {};
     }
     const int count = selection_ ? selection_->count() : 0;
+    if (SectionModel::handles(id)) { // T-023
+        return section_ ? section_->commandReason(id) : trc("There is no 3D view");
+    }
     if (id.startsWith(QLatin1String("view."))) {
         ViewportItem* v = viewport_ ? viewport_() : nullptr;
         if (v == nullptr) {
@@ -629,6 +651,8 @@ QVariantMap CommandCatalog::entry(const Command& c) const
         if (ViewportItem* v = viewport_ ? viewport_() : nullptr) {
             marked = v->perspective();
         }
+    } else if (section_ && SectionModel::handles(c.id)) {
+        marked = section_->commandMarked(c.id); // T-023
     }
     m.insert(QStringLiteral("marked"), marked);
     return m;
@@ -776,6 +800,9 @@ bool CommandCatalog::runUi(const QString& id)
             }
         }
         std::sort(bodies.begin(), bodies.end());
+    }
+    if (SectionModel::handles(id)) { // T-023
+        return section_ && section_->runCommand(id);
     }
     ViewportItem* v = viewport_ ? viewport_() : nullptr;
     if (id.startsWith(QLatin1String("view.")) && v == nullptr) {
@@ -955,6 +982,11 @@ bool CommandCatalog::eventFilter(QObject* watched, QEvent* event)
         break;
     }
     return QObject::eventFilter(watched, event);
+}
+
+void CommandCatalog::setSectionView(SectionModel* section)
+{
+    section_ = section;
 }
 
 void CommandCatalog::openPalette(const QString& text)

@@ -138,6 +138,16 @@ FocusScope {
             visible: Session.readOnly
         }
 
+        // T-023: section view and draft analysis (panels/Section.qml), opened from the top bar and the commands.
+        Section {
+            anchors.left: parent.left
+            anchors.top: selectionFilterBar.visible ? selectionFilterBar.bottom : parent.top
+            anchors.topMargin: selectionFilterBar.visible ? shell.gap : 0
+            width: Math.min(parent.width - 2 * Theme.spacingL, implicitWidth)
+            visible: SectionView.panelOpen && Session.hasDocument
+            onCloseRequested: SectionView.panelOpen = false
+        }
+
         // T-019: every running job; opened from the status bar's job slot.
         JobsPanel {
             anchors.left: parent.left
@@ -336,6 +346,17 @@ FocusScope {
                 Accessible.checkable: true
                 Accessible.checked: shell.rightPanelOpen
                 onClicked: shell.rightPanelOpen = !shell.rightPanelOpen
+            }
+            ToolButton { // T-023
+                objectName: "toggleSectionPanel"
+                iconName: "section"
+                checked: SectionView.panelOpen
+                enabled: Session.hasDocument
+                toolTipText: SectionView.panelOpen ? qsTr("Hide section and draft analysis")
+                                                   : qsTr("Section view and draft analysis")
+                Accessible.checkable: true
+                Accessible.checked: checked
+                onClicked: SectionView.panelOpen = !SectionView.panelOpen
             }
             Rectangle {
                 width: Theme.borderWidth

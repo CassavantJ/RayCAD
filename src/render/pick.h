@@ -13,6 +13,8 @@
 // an edge (vertexCode in ray_render/viewport.h).
 #pragma once
 
+#include "section.h"
+
 #include <ray/kernel.h>
 #include <ray/render.h>
 
@@ -54,7 +56,9 @@ struct MeshIndex {
 std::shared_ptr<const MeshIndex> buildMeshIndex(const kernel::Mesh&);
 
 // What the ID buffer stores per pixel.
-enum class IdKind : std::uint8_t { None = 0, Face = 1, Edge = 2, Segment = 3 };
+// Cap (T-023): a section cap, which belongs to its body but is no kernel element. It answers only PickFilter::Bodies
+// and hides the faces behind it.
+enum class IdKind : std::uint8_t { None = 0, Face = 1, Edge = 2, Segment = 3, Cap = 4 };
 struct IdPixel {
     ItemId item = 0;
     IdKind kind = IdKind::None;
@@ -92,6 +96,8 @@ struct PickView {
     double invViewProj[16] = {};
     bool yUpInNdc = true;
     std::vector<PickItem> items; // sorted by id
+    // T-023: vertices beyond the section plane (positive distance) are not pickable.
+    std::optional<PlaneEquation> section;
     const PickItem* item(ItemId) const;
     // World point at the centre of pixel (x, y) with ID-buffer depth `depth`.
     Vec3 unproject(int x, int y, double depth) const;

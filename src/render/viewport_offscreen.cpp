@@ -98,6 +98,9 @@ public:
         return i;
     }
     void setDevicePixelRatio(double r) override { front_->setDevicePixelRatio(r); }
+    std::optional<SectionPlane> section() const override { return front_->section(); }
+    void setDraftAnalysis(std::optional<DraftAnalysis> d) override { front_->setDraftAnalysis(d); }
+    std::optional<DraftAnalysis> draftAnalysis() const override { return front_->draftAnalysis(); }
 
     // ----- IViewport -----
     ItemId addMesh(std::shared_ptr<const kernel::Mesh> m, const Xform& x, MeshStyle s) override

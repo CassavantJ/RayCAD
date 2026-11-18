@@ -8,10 +8,12 @@
 //   T-016 backdrop: BackdropPass (backdrop_pass.h) samples `colour` (the resolved frame), downsamples and blurs it
 //          into a texture it owns, only when `colourRedrawn` (or it has no blur of the current image), and bumps a
 //          generation each time. It is always the LAST pass: SceneRenderer::addPass inserts before it.
-//   T-023 section: fills FrameBlock.misc.z / FrameBlock.section (see SceneRenderer::writeFrameBlock) and adds a
-//          cap pass; the face shaders then discard on the far side of the plane. A cap pass that draws into
-//          `colour` runs before the backdrop (addPass does that), so glass shows the caps; a frame that changes only
-//          the section must count as a redraw (colourRedrawn), or the blur keeps the old picture.
+//   T-023 section: SceneRenderer::writeFrameBlock fills FrameBlock.misc.z / section / analysis; every face, edge,
+//          line and ID shader discards beyond the plane. The caps (section.h) are drawn INSIDE the main pass, right
+//          after the opaque faces, because they need its depth-stencil buffer (and MSAA); so the backdrop blurs them
+//          with the rest. A section change marks the picture changed (colourRedrawn) and bumps sceneGeneration, so
+//          glass and the ID buffer follow. The pick pass draws the caps into the ID buffer from `capQuad` and
+//          `capped` (IdKind::Cap) with the same stencil technique.
 #pragma once
 
 #include "../viewport_frontend.h"
@@ -52,12 +54,21 @@ struct FrameContext {
     bool colourRedrawn = true; // false: the main pass was skipped, `colour` holds the last image
     std::vector<detail::PickRequest>* picks = nullptr; // pending picks; the pick pass takes them
     QRhiBuffer* lineCorners = nullptr;                 // quad template of the wide-line pipeline (wideline.vert)
+    // Added by T-023: the section cap quad (6 world-space positions, capVertexLayout) and the indices into `draws`
+    // of the bodies capped this frame; empty when nothing is capped.
+    QRhiBuffer* capQuad = nullptr;
+    std::span<const std::size_t> capped;
 };
 
 // Vertex layouts of the scene's buffers (GpuItem), for passes that draw them with their own shaders.
 QRhiVertexInputLayout meshVertexLayout();     // mesh.vert: position, normal, face id
 QRhiVertexInputLayout thinEdgeVertexLayout(); // line.vert: position, edge id
 QRhiVertexInputLayout wideLineVertexLayout(); // wideline.vert: corner (lineCorners), then per instance p0 p1 edge id
+QRhiVertexInputLayout capVertexLayout();      // cap.vert, pick_cap.vert: position (T-023)
+// Section cap pipeline state (T-023, section.h): step 1 marks the inside of a body in stencil bit 0 (no colour into
+// any of `colourTargets` attachments, no depth), step 2 draws the cap quad where it is marked and clears the mark.
+void setCapStencilMarking(QRhiGraphicsPipeline& p, int colourTargets);
+void setCapStencilFill(QRhiGraphicsPipeline& p);
 
 class IFramePass {
 public:

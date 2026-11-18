@@ -137,6 +137,8 @@ std::vector<VertexCandidate> vertexCandidates(const PickView& view, const IdWind
                 continue;
             const MeshIndex::Vertex& vertex = index.vertices[std::size_t(v)];
             const Vec3 world = transformPoint(item->xform, vertex.pos);
+            if (view.section && view.section->distance(world) > 0)
+                continue; // cut away (T-023)
             const std::optional<Vec2> screen = view.project(world);
             if (!screen || !vertexVisible(win, itemId, vertex, *screen))
                 continue;
@@ -282,7 +284,7 @@ IdWindow decodeIdWindow(int x0, int y0, int width, int height, const std::uint8_
             IdPixel& p = win.pixels[std::size_t(y) * std::size_t(win.width) + std::size_t(x)];
             const std::uint32_t idPlusOne = le24(ids + src);
             const std::uint8_t kind = ids[src + 3];
-            if (idPlusOne == 0 || kind == 0 || kind > std::uint8_t(IdKind::Segment))
+            if (idPlusOne == 0 || kind == 0 || kind > std::uint8_t(IdKind::Cap))
                 continue;
             p.kind = IdKind(kind);
             p.index = idPlusOne - 1;
@@ -394,8 +396,8 @@ std::optional<PickHit> resolvePick(const PickView& view, const IdWindow& win, in
     for (int py = y - span; py <= y + span; ++py) {
         for (int px = x - span; px <= x + span; ++px) {
             const IdPixel* p = win.at(px, py);
-            if (!p || p->kind == IdKind::None)
-                continue;
+            if (!p || p->kind == IdKind::None || p->kind == IdKind::Cap)
+                continue; // a cap is only ever its body (below)
             const double d2 = double(px - x) * (px - x) + double(py - y) * (py - y);
             if (p->kind == IdKind::Face) {
                 if (d2 <= kFaceUnderEdgePx * kFaceUnderEdgePx && better(face, d2, *p))
@@ -410,7 +412,7 @@ std::optional<PickHit> resolvePick(const PickView& view, const IdWindow& win, in
     }
     // A face needs the cursor pixel, unless that pixel is an edge line drawn over it.
     const IdPixel* centre = win.at(x, y);
-    if (face.pixel && face.d2 > 0 && !(centre && centre->kind != IdKind::None))
+    if (face.pixel && face.d2 > 0 && !(centre && centre->kind != IdKind::None && centre->kind != IdKind::Cap))
         face = Candidate{};
 
     std::optional<VertexCandidate> vertex;
@@ -521,7 +523,7 @@ std::vector<PickHit> resolvePickRect(const PickView& view, const IdWindow& win, 
                 continue;
             if (p->kind == IdKind::Face && wants(mask, PickFilter::Faces))
                 keep(Key{p->item, SubKind::Face, p->index}, p, px, py);
-            if (p->kind != IdKind::Face && wants(mask, PickFilter::Edges))
+            if ((p->kind == IdKind::Edge || p->kind == IdKind::Segment) && wants(mask, PickFilter::Edges))
                 keep(Key{p->item, SubKind::Edge, p->index}, p, px, py);
             if (wants(mask, PickFilter::Bodies))
                 keep(Key{p->item, SubKind::Solid, 0}, p, px, py);

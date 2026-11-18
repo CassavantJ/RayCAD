@@ -9,6 +9,7 @@ layout(location = 3) in vec4 edgeId;
 layout(location = 0) out float v_across;   // pixels from the centre line
 layout(location = 1) out float v_along;    // pixels from the segment start
 layout(location = 2) out vec4 v_edgeId;
+layout(location = 3) out float v_section; // T-023: signed distance to the section plane
 
 #include "frame.glsl"
 
@@ -23,8 +24,10 @@ vec4 clipNear(vec4 a, vec4 b)
 
 void main()
 {
-    vec4 c0 = frame.viewProj * (item.model * vec4(p0, 1.0));
-    vec4 c1 = frame.viewProj * (item.model * vec4(p1, 1.0));
+    vec4 w0 = item.model * vec4(p0, 1.0);
+    vec4 w1 = item.model * vec4(p1, 1.0);
+    vec4 c0 = frame.viewProj * w0;
+    vec4 c1 = frame.viewProj * w1;
     vec4 a = clipNear(c0, c1);
     vec4 b = clipNear(c1, c0);
     vec2 halfSize = 0.5 * frame.viewport.xy;
@@ -45,5 +48,6 @@ void main()
     v_across = corner.y * halfWidth;
     v_along = corner.x < 0.5 ? -extend : len + extend;
     v_edgeId = edgeId;
+    v_section = sectionDistance(corner.x < 0.5 ? w0.xyz : w1.xyz);
     gl_Position = pos;
 }

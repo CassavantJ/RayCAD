@@ -41,6 +41,7 @@
 namespace ray::ui {
 
 class SceneController;
+class SectionModel;
 class SelectionModel;
 class ShortcutManager;
 class ViewportItem;
@@ -77,6 +78,8 @@ public:
     // drag distance, not on a popup, emits contextMenuRequested. Right drags (pan, orbit) are left alone.
     void attachWindow(QQuickWindow* window);
     void setShortcuts(ShortcutManager* shortcuts) { shortcuts_ = shortcuts; }
+    // T-023: view.section.* and view.draft.* run on the section view (section_model.h).
+    void setSectionView(SectionModel* section);
     ShortcutManager* shortcuts() const { return shortcuts_; }
     AppContext* context() const { return context_; }
 
@@ -151,6 +154,7 @@ private:
     QPointer<SelectionModel> selection_;
     ViewportProvider viewport_;
     ShortcutManager* shortcuts_ = nullptr;
+    QPointer<SectionModel> section_; // T-023
     QPointer<QQuickWindow> window_;
     bool rightDown_ = false;
     QPointF rightAt_;

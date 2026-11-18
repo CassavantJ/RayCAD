@@ -49,6 +49,15 @@ void sanitize(MeshStyle& style)
     c.a = 1.0f; // MeshStyle::opacity is what applies
 }
 
+// `v` scaled to unit length; nullopt for a zero, tiny or non-finite vector.
+std::optional<Vec3> unitVector(Vec3 v)
+{
+    const double len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (!std::isfinite(len) || len < 1e-12)
+        return std::nullopt;
+    return Vec3{v.x / len, v.y / len, v.z / len};
+}
+
 Box3 emptyBox()
 {
     constexpr double inf = std::numeric_limits<double>::infinity();
@@ -351,12 +360,50 @@ Camera ViewportFrontend::camera() const
 
 void ViewportFrontend::setSection(std::optional<SectionPlane> section)
 {
-    // Stored for T-023, which clips and caps; T-014 draws the whole model.
-    static std::once_flag once;
-    if (section)
-        notImplemented(once, "IViewport::setSection");
+    // T-023: the renderer clips faces, edges, lines and the ID buffer at the plane and caps closed bodies. Only
+    // uniforms change, so dragging the plane re-uploads nothing; the picture and the ID buffer must be drawn again.
+    if (section) {
+        const std::optional<Vec3> n = unitVector(section->normal);
+        const Vec3& o = section->origin;
+        if (!n || !std::isfinite(o.x) || !std::isfinite(o.y) || !std::isfinite(o.z))
+            section.reset();
+        else
+            section->normal = *n;
+    }
+    const auto same = [](const std::optional<SectionPlane>& a, const std::optional<SectionPlane>& b) {
+        if (a.has_value() != b.has_value())
+            return false;
+        return !a || (a->origin.x == b->origin.x && a->origin.y == b->origin.y && a->origin.z == b->origin.z &&
+                      a->normal.x == b->normal.x && a->normal.y == b->normal.y && a->normal.z == b->normal.z &&
+                      a->cap == b->cap);
+    };
+    if (same(section, state_.section))
+        return;
     state_.section = section;
-    changed(false, false);
+    changed(true, false); // what the picking ID buffer holds changes with it
+}
+
+void ViewportFrontend::setDraftAnalysis(std::optional<DraftAnalysis> draft)
+{
+    if (draft) {
+        const std::optional<Vec3> p = unitVector(draft->pull);
+        if (!p || !std::isfinite(draft->thresholdDeg)) {
+            draft.reset();
+        } else {
+            draft->pull = *p;
+            draft->thresholdDeg = std::clamp(draft->thresholdDeg, 0.0, 89.0);
+        }
+    }
+    const auto same = [](const std::optional<DraftAnalysis>& a, const std::optional<DraftAnalysis>& b) {
+        if (a.has_value() != b.has_value())
+            return false;
+        return !a || (a->pull.x == b->pull.x && a->pull.y == b->pull.y && a->pull.z == b->pull.z &&
+                      a->thresholdDeg == b->thresholdDeg);
+    };
+    if (same(draft, state_.draft))
+        return;
+    state_.draft = draft;
+    changed(false, false); // colours only: the ID buffer stays valid
 }
 
 void ViewportFrontend::setTheme(std::shared_ptr<const Theme> theme)
@@ -367,8 +414,11 @@ void ViewportFrontend::setTheme(std::shared_ptr<const Theme> theme)
 
 void ViewportFrontend::setPreset(const TierPreset& preset)
 {
+    // Section caps (T-023) depend on the preset and are in the picking ID buffer.
+    const bool capsChanged =
+        preset.sectionCaps != state_.preset.sectionCaps || preset.transparency != state_.preset.transparency;
     state_.preset = preset;
-    changed(false, false);
+    changed(capsChanged && state_.section.has_value(), false);
 }
 
 void ViewportFrontend::pick(int x, int y, std::uint8_t filterMask, std::function<void(std::optional<PickHit>)> done)
@@ -490,6 +540,7 @@ FrameSnapshot ViewportFrontend::takeSnapshot()
     snap.preset = state_.preset;
     snap.devicePixelRatio = state_.devicePixelRatio;
     snap.section = state_.section;
+    snap.draft = state_.draft;
     snap.selected = state_.selected;
     snap.hover = state_.hover;
     snap.backdropEnabled = state_.backdropEnabled;

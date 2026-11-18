@@ -51,6 +51,7 @@ set(RAY_UI_QML_FILES
     qml/panels/ModelTree.qml
     qml/panels/SelectionInfo.qml
     qml/panels/JobsPanel.qml
+    qml/panels/Section.qml
     qml/dialogs/DialogBase.qml
     qml/dialogs/UnsavedChangesDialog.qml
     qml/dialogs/RecoveryDialog.qml
@@ -108,6 +109,8 @@ qt_add_qml_module(ray_ui
         palette_model.cpp
         shortcuts.h
         shortcuts.cpp
+        section_model.h
+        section_model.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick

@@ -23,6 +23,8 @@ add_library(ray_render STATIC
     backdrop.cpp
     highlight.h
     highlight.cpp
+    section.h
+    section.cpp
     rhi/pick_pass.h
     rhi/pick_pass.cpp
     rhi/backdrop_pass.h
@@ -57,9 +59,12 @@ qt_add_shaders(ray_render "ray_render_shaders"
         shaders/line.frag
         shaders/wideline.vert
         shaders/wideline.frag
+        shaders/cap.vert
+        shaders/cap.frag
         shaders/pick_mesh.vert
         shaders/pick_line.vert
         shaders/pick_wideline.vert
+        shaders/pick_cap.vert
         shaders/pick.frag
         shaders/backdrop.vert
         shaders/backdrop_down.frag

@@ -23,7 +23,7 @@ constexpr float kFaceSlopeDepthBias = 1.5f;
 constexpr int kVertexMarginPx = 4;
 
 struct Shaders {
-    QShader meshVs, lineVs, wideVs, fs;
+    QShader meshVs, lineVs, wideVs, capVs, fs;
     bool ok = false;
 };
 
@@ -34,6 +34,7 @@ const Shaders& shaders()
         out.meshVs = loadShader("pick_mesh.vert");
         out.lineVs = loadShader("pick_line.vert");
         out.wideVs = loadShader("pick_wideline.vert");
+        out.capVs = loadShader("pick_cap.vert"); // T-023
         out.fs = loadShader("pick.frag");
         out.ok = out.meshVs.isValid() && out.lineVs.isValid() && out.wideVs.isValid() && out.fs.isValid();
         return out;
@@ -140,6 +141,8 @@ void PickPass::releaseResources()
     faces_.reset();
     thinEdges_.reset();
     segments_.reset();
+    capStencil_.reset();
+    capFill_.reset();
     rt_.reset();
     rp_.reset();
     depthBuffer_.reset();
@@ -211,6 +214,8 @@ bool PickPass::ensurePipelines(const FrameContext& ctx)
     faces_.reset();
     thinEdges_.reset();
     segments_.reset();
+    capStencil_.reset();
+    capFill_.reset();
     const Shaders& sh = shaders();
     if (!sh.ok || !ctx.bindings || rhi_->resourceLimit(QRhi::MaxColorAttachments) < 3)
         return false;
@@ -241,6 +246,39 @@ bool PickPass::ensurePipelines(const FrameContext& ctx)
     thinEdges_ = make(sh.lineVs, thinEdgeVertexLayout(), P::Lines, P::LessOrEqual, false, false);
     if (rhi_->isFeatureSupported(QRhi::Instancing))
         segments_ = make(sh.wideVs, wideLineVertexLayout(), P::Triangles, P::LessOrEqual, false, false);
+    // T-023: section caps, as in the main pass (section.h), so a cap hides what lies behind it here too.
+    if (sh.capVs.isValid()) {
+        const auto finish = [&](Owned<QRhiGraphicsPipeline>& p) {
+            p->setSampleCount(1);
+            p->setShaderResourceBindings(ctx.bindings);
+            p->setRenderPassDescriptor(rp_.get());
+            if (!p->create())
+                p.reset();
+        };
+        capStencil_ = own(counter_, rhi_->newGraphicsPipeline());
+        capStencil_->setShaderStages({{QRhiShaderStage::Vertex, sh.meshVs}, {QRhiShaderStage::Fragment, sh.fs}});
+        capStencil_->setVertexInputLayout(meshVertexLayout());
+        capStencil_->setTopology(P::Triangles);
+        setCapStencilMarking(*capStencil_, 3);
+        finish(capStencil_);
+        capFill_ = own(counter_, rhi_->newGraphicsPipeline());
+        capFill_->setShaderStages({{QRhiShaderStage::Vertex, sh.capVs}, {QRhiShaderStage::Fragment, sh.fs}});
+        capFill_->setVertexInputLayout(capVertexLayout());
+        capFill_->setTopology(P::Triangles);
+        capFill_->setDepthTest(true);
+        capFill_->setDepthWrite(true);
+        capFill_->setDepthOp(P::Less);
+        capFill_->setCullMode(P::None);
+        capFill_->setTargetBlends({P::TargetBlend(), P::TargetBlend(), P::TargetBlend()});
+        capFill_->setDepthBias(kFaceDepthBias);
+        capFill_->setSlopeScaledDepthBias(kFaceSlopeDepthBias);
+        setCapStencilFill(*capFill_);
+        finish(capFill_);
+        if (!capStencil_ || !capFill_) {
+            capStencil_.reset();
+            capFill_.reset();
+        }
+    }
     return faces_ && thinEdges_;
 }
 
@@ -263,6 +301,23 @@ void PickPass::drawIds(const FrameContext& ctx)
         const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
         cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
         cb->drawIndexed(d.gpu->indexCount);
+    }
+    // T-023: the caps of the capped bodies (IdKind::Cap).
+    if (capStencil_ && capFill_ && ctx.capQuad) {
+        const QRhiCommandBuffer::VertexInput quadInput(ctx.capQuad, 0);
+        for (const std::size_t index : ctx.capped) {
+            if (index >= ctx.draws.size())
+                continue;
+            const DrawItem& d = ctx.draws[index];
+            use(capStencil_.get(), d.itemUniformOffset);
+            const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
+            cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
+            cb->drawIndexed(d.gpu->indexCount);
+            use(capFill_.get(), d.itemUniformOffset);
+            cb->setStencilRef(0);
+            cb->setVertexInput(0, 1, &quadInput);
+            cb->draw(6);
+        }
     }
     for (const DrawItem& d : ctx.draws) {
         if (d.item->kind == detail::ItemKind::Lines) {
@@ -287,6 +342,8 @@ std::shared_ptr<const detail::PickView> PickPass::makeView(const FrameContext& c
     view->width = ctx.pixelSize.width();
     view->height = ctx.pixelSize.height();
     view->yUpInNdc = ctx.rhi->isYUpInNDC();
+    if (ctx.snapshot && ctx.snapshot->section)
+        view->section = detail::planeEquation(*ctx.snapshot->section);
     const QMatrix4x4 vp = ctx.projection * ctx.view;
     const float* m = vp.constData();
     for (int i = 0; i < 16; ++i)
