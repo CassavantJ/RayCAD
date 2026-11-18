@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RayCAD theme",
+  "description": "A RayCAD colour theme (PLAN.md 6.5). Every render::Token needs a colour. Colours are sRGB hex, #RRGGBB or #RRGGBBAA with alpha last. loadTheme also checks contrast, which a schema cannot express: text tokens 4.5:1 against PanelBg and on glass over any backdrop, thin-line tokens 3:1 against ViewportBgTop and ViewportBgBottom.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "id",
+    "title",
+    "dark",
+    "colors",
+    "metrics",
+    "fonts"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "format": {
+      "const": 1,
+      "description": "Version of this file format."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dark": {
+      "type": "boolean"
+    },
+    "colors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "WindowBg",
+        "PanelBg",
+        "PanelBgGlassTint",
+        "PanelBorder",
+        "PanelHighlightTop",
+        "TextPrimary",
+        "TextSecondary",
+        "TextDisabled",
+        "Accent",
+        "AccentThinLine",
+        "AccentText",
+        "Selection",
+        "SelectionFill",
+        "Hover",
+        "Error",
+        "Warning",
+        "Success",
+        "ViewportBgTop",
+        "ViewportBgBottom",
+        "ModelFace",
+        "ModelEdge",
+        "ModelSilhouette",
+        "FixtureFace",
+        "StockFace",
+        "StockCutFace",
+        "GridMajor",
+        "GridMinor",
+        "AxisX",
+        "AxisY",
+        "AxisZ",
+        "SketchGeometry",
+        "SketchConstruction",
+        "SketchConstrained",
+        "SketchConflict",
+        "PathCut",
+        "PathRapid",
+        "PathPlunge",
+        "PathRamp",
+        "PathLead",
+        "PathLink",
+        "PathSelected",
+        "PathStale",
+        "SimGouge",
+        "SimLeftover",
+        "SimCollision",
+        "GcodeText",
+        "GcodeComment",
+        "GcodeGWord",
+        "GcodeMWord",
+        "GcodeAxis",
+        "GcodeFeedSpeed",
+        "GcodeLineNumber",
+        "GcodeCurrentLine"
+      ],
+      "properties": {
+        "WindowBg": {
+          "$ref": "#/$defs/colour"
+        },
+        "PanelBg": {
+          "$ref": "#/$defs/colour"
+        },
+        "PanelBgGlassTint": {
+          "$ref": "#/$defs/colour"
+        },
+        "PanelBorder": {
+          "$ref": "#/$defs/colour"
+        },
+        "PanelHighlightTop": {
+          "$ref": "#/$defs/colour"
+        },
+        "TextPrimary": {
+          "$ref": "#/$defs/colour"
+        },
+        "TextSecondary": {
+          "$ref": "#/$defs/colour"
+        },
+        "TextDisabled": {
+          "$ref": "#/$defs/colour"
+        },
+        "Accent": {
+          "$ref": "#/$defs/colour"
+        },
+        "AccentThinLine": {
+          "$ref": "#/$defs/colour"
+        },
+        "AccentText": {
+          "$ref": "#/$defs/colour"
+        },
+        "Selection": {
+          "$ref": "#/$defs/colour"
+        },
+        "SelectionFill": {
+          "$ref": "#/$defs/colour"
+        },
+        "Hover": {
+          "$ref": "#/$defs/colour"
+        },
+        "Error": {
+          "$ref": "#/$defs/colour"
+        },
+        "Warning": {
+          "$ref": "#/$defs/colour"
+        },
+        "Success": {
+          "$ref": "#/$defs/colour"
+        },
+        "ViewportBgTop": {
+          "$ref": "#/$defs/colour"
+        },
+        "ViewportBgBottom": {
+          "$ref": "#/$defs/colour"
+        },
+        "ModelFace": {
+          "$ref": "#/$defs/colour"
+        },
+        "ModelEdge": {
+          "$ref": "#/$defs/colour"
+        },
+        "ModelSilhouette": {
+          "$ref": "#/$defs/colour"
+        },
+        "FixtureFace": {
+          "$ref": "#/$defs/colour"
+        },
+        "StockFace": {
+          "$ref": "#/$defs/colour"
+        },
+        "StockCutFace": {
+          "$ref": "#/$defs/colour"
+        },
+        "GridMajor": {
+          "$ref": "#/$defs/colour"
+        },
+        "GridMinor": {
+          "$ref": "#/$defs/colour"
+        },
+        "AxisX": {
+          "$ref": "#/$defs/colour"
+        },
+        "AxisY": {
+          "$ref": "#/$defs/colour"
+        },
+        "AxisZ": {
+          "$ref": "#/$defs/colour"
+        },
+        "SketchGeometry": {
+          "$ref": "#/$defs/colour"
+        },
+        "SketchConstruction": {
+          "$ref": "#/$defs/colour"
+        },
+        "SketchConstrained": {
+          "$ref": "#/$defs/colour"
+        },
+        "SketchConflict": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathCut": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathRapid": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathPlunge": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathRamp": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathLead": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathLink": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathSelected": {
+          "$ref": "#/$defs/colour"
+        },
+        "PathStale": {
+          "$ref": "#/$defs/colour"
+        },
+        "SimGouge": {
+          "$ref": "#/$defs/colour"
+        },
+        "SimLeftover": {
+          "$ref": "#/$defs/colour"
+        },
+        "SimCollision": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeText": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeComment": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeGWord": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeMWord": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeAxis": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeFeedSpeed": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeLineNumber": {
+          "$ref": "#/$defs/colour"
+        },
+        "GcodeCurrentLine": {
+          "$ref": "#/$defs/colour"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Sizes in device-independent pixels, e.g. font.ui.px, radius.panel, spacing.m, blur.radius.",
+      "required": [
+        "font.ui.px",
+        "font.mono.px",
+        "radius.panel",
+        "radius.control"
+      ],
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "description": "Font family per role; ui and mono are required.",
+      "required": [
+        "ui",
+        "mono"
+      ],
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "colour": {
+      "type": "string",
+      "pattern": "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+    }
+  }
+}

@@ -16,13 +16,21 @@ namespace ray::sim { struct Backplot; }
 namespace ray::render {
 
 // ---------- Hardware detection and tiers ----------
+// Unknown means detection could not tell; chooseTier treats an Unknown GPU as Low.
+enum class GpuType : std::uint8_t { Unknown, Integrated, Discrete, Software };
+// Every field has an "unknown" value: "" for strings, 0 for numbers, GpuType::Unknown, false for computeShaders.
 struct HardwareInfo {
     std::string gpuVendor, gpuName, driverVersion, graphicsApi;   // "Direct3D 11", "Metal", "OpenGL 4.6"
-    bool discreteGpu; std::uint64_t vramBytes, ramBytes; int physicalCores;
-    bool computeShaders; int maxTextureSize; bool softwareRasterizer;
+    GpuType gpuType = GpuType::Unknown;                            // Software: WARP, llvmpipe, SwiftShader
+    std::uint64_t vramBytes = 0, ramBytes = 0; int physicalCores = 0;   // vramBytes: dedicated video memory
+    bool computeShaders = false; int maxTextureSize = 0;
+    bool discreteGpu() const { return gpuType == GpuType::Discrete; }
+    bool softwareRasterizer() const { return gpuType == GpuType::Software; }
 };
-// After the first window exists; cached in settings with the driver version. On Windows discreteGpu and vramBytes
-// come from DXGI: QRhi reports device type Unknown and no VRAM for real adapters (spike S1).
+// Never fails and needs no window and no GPU; may take up to a few hundred ms (it creates a throw-away device on
+// Windows). Cached in settings with the driver version. On Windows gpuType, vramBytes and driverVersion come from
+// DXGI and D3D11: QRhi reports device type Unknown and no VRAM for real adapters (spike S1). Linux reads
+// /sys/class/drm, macOS sysctl; what they cannot see is reported as unknown (details: src/render/tier_detect.cpp).
 HardwareInfo detectHardware();
 
 enum class Tier { Low, Medium, High };
@@ -40,7 +48,8 @@ struct TierPreset {
     bool gpuSimulation;                       // High only, v2
     int workerThreads;                        // 0 = physical cores - 1
 };
-Tier chooseTier(const HardwareInfo&);                 // rules in PLAN.md 6.1
+Tier chooseTier(const HardwareInfo&);                 // rules in PLAN.md 6.1; unknown GPU type gives Low, other
+                                                      // unknown values never give High
 TierPreset presetFor(Tier);
 // The user may override the tier and any individual field; overrides persist in user settings, not in documents.
 
@@ -66,10 +75,13 @@ struct Theme {
     std::map<std::string, double> metrics;            // "radius.panel", "radius.control", "font.ui.px", "blur.radius", ...
     std::map<std::string, std::string> fonts;         // "ui" -> "Inter", "mono" -> "JetBrains Mono"
 };
-// Themes are JSON files in resources/themes/. Loading validates: every token present; text tokens meet
-// 4.5:1 contrast against PanelBg and against the worst-case glass backdrop; thin-line tokens meet 3:1 against ViewportBg.
-Result<Theme> loadTheme(const std::string& jsonPath);
-double contrastRatio(Color fg, Color bg);
+// The JSON key of a token in a theme file: its enumerator name, e.g. "PanelBg". Empty for Token::Count.
+std::string_view tokenName(Token);
+// Themes are JSON files in resources/themes/ (schemas/theme.schema.json). Loading validates: every token present;
+// text tokens meet 4.5:1 contrast against PanelBg and against the worst-case glass backdrop; thin-line tokens meet
+// 3:1 against ViewportBgTop and ViewportBgBottom. A failure is FormatError naming the offending token.
+Result<Theme> loadTheme(const std::string& jsonPath);   // UTF-8 path
+double contrastRatio(Color fg, Color bg);             // WCAG 2 ratio; fg alpha is blended over bg, bg is taken opaque
 
 // ---------- Scene ----------
 using ItemId = std::uint32_t;
