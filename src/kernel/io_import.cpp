@@ -38,6 +38,9 @@
 #include <IGESControl_Writer.hxx>
 #include <IGESData_GlobalSection.hxx>
 #include <IGESData_IGESModel.hxx>
+#include <Interface_Check.hxx>
+#include <Interface_InterfaceModel.hxx>
+#include <Interface_ReportEntity.hxx>
 #include <NCollection_DataMap.hxx>
 #include <NCollection_Sequence.hxx>
 #include <Quantity_Color.hxx>
@@ -47,6 +50,8 @@
 #include <STEPControl_Writer.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <ShapeProcess.hxx>
+#include <StepGeom_GeometricRepresentationItem.hxx>
+#include <StepShape_TopologicalRepresentationItem.hxx>
 #include <TCollection_AsciiString.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <TCollection_HAsciiString.hxx>
@@ -76,7 +81,9 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
 #include <utility>
@@ -490,6 +497,69 @@ std::string readTail(const std::filesystem::path& path, std::size_t bytes, bool&
     return tail;
 }
 
+// The number of entities of a loaded model that OCCT's translators would trip over. Such a file is rejected
+// before the transfer, the same way on every platform: the translators dereference what the reader left empty
+// without a null check, which on Windows runGuarded turns into a KernelFailure (a structured exception) but on
+// Linux and macOS kills the process.
+//
+// STEP: entities with a required entity reference the reader had to leave empty. Matched by the reader's
+// untranslated messages, as OCCT 8.0.1's StepData_StepReaderData::ReadEntity writes them:
+//   - in any entity, a reference to an entity the file does not define ("Unresolved reference"): a damaged or cut
+//     line drops its entity;
+//   - in a geometric or topological item (point, curve, surface, vertex, edge, loop, face, shell, solid), also a
+//     reference to an entity of the wrong or an unknown type, a value where a reference must be, or a missing
+//     parameter. A LINE whose VECTOR is damaged this way crashes in StepToGeom::MakeVectorWithMagnitude.
+// Valid files from real exporters have such fails outside the geometry (styles, units and PMI entities that refer to
+// AP242 types OCCT does not know, '*' for a derived unit), and other load fails (a wrong parameter count, a bad
+// number) anywhere; those are harmless, so they are not counted.
+//
+// IGES: OCCT's IGES entity readers leave a member null or unallocated when one of its parameters cannot be read (an
+// IGESSolid_Face whose loop count is unreadable has no loop array, and IGESToBRep then crashes in
+// IGESSolid_Face::NbLoops), and record a fail on that entity. Their messages come from a translatable message file,
+// so every entity with a load fail counts.
+int damagedEntities(const occ::handle<Interface_InterfaceModel>& model, Format format)
+{
+    if (model.IsNull())
+        return 0;
+    constexpr std::string_view kAnywhere[] = {"Unresolved reference"};
+    constexpr std::string_view kInGeometry[] = {"Unresolved reference", "Entity has illegal type", "not an Entity",
+                                                ") absent"};
+    int broken = 0;
+    const int count = model->NbEntities();
+    for (int i = 1; i <= count; ++i) {
+        if (!model->IsReportEntity(i))
+            continue;
+        const occ::handle<Interface_ReportEntity> report = model->ReportEntity(i);
+        if (report.IsNull() || report->Check().IsNull())
+            continue;
+        const occ::handle<Interface_Check>& check = report->Check();
+        if (!check->HasFailed())
+            continue;
+        bool found = format == Format::Iges;
+        if (!found) {
+            // Annotation items (StepVisual_DraughtingCallout, tessellated PMI) are geometric representation items
+            // too, but the shape transfer never translates them: only StepGeom_ and StepShape_ classes count.
+            const occ::handle<Standard_Transient>& entity = model->Value(i);
+            const std::string_view typeName = entity.IsNull() ? std::string_view() : entity->DynamicType()->Name();
+            const bool geometry = !entity.IsNull() &&
+                                  (entity->IsKind(STANDARD_TYPE(StepGeom_GeometricRepresentationItem)) ||
+                                   entity->IsKind(STANDARD_TYPE(StepShape_TopologicalRepresentationItem))) &&
+                                  (typeName.starts_with("StepGeom_") || typeName.starts_with("StepShape_"));
+            const std::span<const std::string_view> patterns = geometry ? std::span<const std::string_view>(kInGeometry)
+                                                                        : std::span<const std::string_view>(kAnywhere);
+            for (int f = 1; f <= check->NbFails() && !found; ++f) {
+                const char* original = check->CFail(f, false);
+                const std::string_view text = original != nullptr ? std::string_view(original) : std::string_view();
+                for (const std::string_view pattern : patterns)
+                    found = found || text.find(pattern) != std::string_view::npos;
+            }
+        }
+        if (found)
+            ++broken;
+    }
+    return broken;
+}
+
 // ---------- The import ----------
 
 ShapeProcess::OperationsFlags noShapeProcessing()
@@ -559,6 +629,12 @@ Result<Transferred> transferStep(IoTask& task, const std::filesystem::path& path
         if (!stepTailComplete(buffer.tail()))
             return tl::unexpected(failure(
                 ErrorCode::FormatError, "The STEP file is incomplete: it does not end with END-ISO-10303-21.", where));
+        if (const int broken = damagedEntities(reader.ChangeReader().Model(), Format::Step); broken > 0)
+            return tl::unexpected(failure(ErrorCode::FormatError,
+                                          "The STEP file is damaged: " + std::to_string(broken) +
+                                              (broken == 1 ? " entity refers" : " entities refer") +
+                                              " to data that is missing or of the wrong type.",
+                                          where));
         task.report(kLoadEnd, kStageTransfer);
 
         out.units = stepUnits(reader.ChangeReader(), warnings);
@@ -627,6 +703,12 @@ Result<Transferred> transferIges(IoTask& task, const std::filesystem::path& path
         if (status != IFSelect_RetDone)
             return tl::unexpected(
                 failure(ErrorCode::FormatError, "This is not an IGES file, or it is damaged.", where));
+        if (const int broken = damagedEntities(reader.Model(), Format::Iges); broken > 0)
+            return tl::unexpected(failure(ErrorCode::FormatError,
+                                          "The IGES file is damaged: " + std::to_string(broken) +
+                                              (broken == 1 ? " entity has" : " entities have") +
+                                              " data that cannot be read.",
+                                          where));
         task.report(kLoadEnd, kStageTransfer);
 
         out.units = igesUnits(reader.IGESModel());

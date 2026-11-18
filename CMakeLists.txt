@@ -49,11 +49,36 @@ if(RAY_SANITIZE)
     endif()
     add_compile_options(-fsanitize=${RAY_SANITIZE} -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
     add_link_options(-fsanitize=${RAY_SANITIZE})
+    # Single checks turned off for code in single third-party headers; the file says which and why. A compile-time
+    # list rather than a runtime suppression file: UBSan cannot suppress checks built as non-recoverable.
+    if(RAY_SANITIZE MATCHES "undefined" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options("-fsanitize-ignorelist=${CMAKE_SOURCE_DIR}/cmake/ubsan_ignorelist.txt")
+    endif()
 endif()
 
 # Where the DLLs of the vcpkg packages are, for tests on Windows. The OCCT toolkits are delay-loaded, and the
 # vcpkg toolchain only copies DLLs an executable imports eagerly, so they are not next to the executables.
 set(RAY_VCPKG_BIN_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}$<$<CONFIG:Debug>:/debug>/bin")
+
+# ---------- Packages of a different vcpkg tree ----------
+# find_package() caches <Package>_DIR. When a build folder is reconfigured with another VCPKG_INSTALLED_DIR or
+# triplet (the linux-clang-tsan preset moved to its own tree and triplet with an instrumented oneTBB), the cached
+# paths would keep the old tree's packages: the TSan build then linked the uninstrumented libtbb and reported false
+# races inside oneTBB's headers. Cached package folders from another vcpkg tree are therefore forgotten here, so
+# they are found again in the current one.
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    set(_ray_vcpkg_tree "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/")
+    get_cmake_property(_ray_cache_vars CACHE_VARIABLES)
+    foreach(_var IN LISTS _ray_cache_vars)
+        if(_var MATCHES "_DIR$" AND "${${_var}}" MATCHES "/vcpkg_installed[^/]*/")
+            string(FIND "${${_var}}/" "${_ray_vcpkg_tree}" _at)
+            if(NOT _at EQUAL 0)
+                message(STATUS "Forgetting ${_var}=${${_var}}: not in ${_ray_vcpkg_tree}")
+                unset(${_var} CACHE)
+            endif()
+        endif()
+    endforeach()
+endif()
 
 # ---------- Shared pieces ----------
 find_package(tl-expected CONFIG REQUIRED)

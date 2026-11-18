@@ -107,8 +107,10 @@ Status breakLock(const std::string& docPath);
 namespace os {
 
 enum class CreateOutcome { Created, Exists, Retry };
-// Create-new. Retry: the name is still being deleted by its previous owner (Windows delete-pending).
-Result<CreateOutcome> createLockFile(const std::string& path, OwnedLock::HeldPtr& out);
+// Create-new, with `content` written and flushed before the file can be judged by anyone else (POSIX: before it
+// appears under its name, with the owner's flock already held). Retry: try again in a moment (Windows: the name is
+// still being deleted by its previous owner; POSIX without hard links: a reader held the new file's flock).
+Result<CreateOutcome> createLockFile(const std::string& path, std::string_view content, OwnedLock::HeldPtr& out);
 // Rewrites the file from offset 0 and flushes it to the server.
 Status writeHeld(OwnedLock::Held& held, std::string_view bytes);
 // Deletes the file through the handle (so a successor's lock file is never deleted), then closes it.
@@ -125,7 +127,9 @@ Result<LockFileView> readLockFile(const std::string& path);
 // Falls back to the local clock if the folder is not writable.
 std::int64_t serverNowMs(const std::string& path);
 // Opens the lock file and, if `mayBreak` accepts what it read through that same handle, renames exactly that file
-// away (never a successor's) and deletes it. Missing file: success. `mayBreak` returns an error to refuse.
+// away (never a successor's) and deletes it. Missing file: success. `mayBreak` returns an error to refuse. A lock
+// whose owner still has the file open is refused without asking `mayBreak` (ErrorCode::Locked), on both platforms.
+// Of several processes breaking the same file, exactly one breaks it.
 Status breakLockFile(const std::string& path, const std::function<Status(const LockFileView&)>& mayBreak);
 
 // Moves `from` to `to`, failing if `to` exists.

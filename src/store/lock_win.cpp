@@ -97,7 +97,7 @@ void markForDelete(HANDLE h) noexcept
 
 } // namespace
 
-Result<CreateOutcome> createLockFile(const std::string& path, OwnedLock::HeldPtr& out)
+Result<CreateOutcome> createLockFile(const std::string& path, std::string_view content, OwnedLock::HeldPtr& out)
 {
     const HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ, nullptr,
                                  CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -111,8 +111,15 @@ Result<CreateOutcome> createLockFile(const std::string& path, OwnedLock::HeldPtr
         }
         return fail(ErrorCode::IoError, "Cannot create the lock file beside the document", winError("CreateFileW", e));
     }
-    out.reset(new OwnedLock::Held);
-    out->handle = h;
+    OwnedLock::HeldPtr held(new OwnedLock::Held);
+    held->handle = h;
+    // The handle exists from the moment the file does, so a reader that catches the file still empty knows its owner
+    // is alive and waits (lock.cpp).
+    if (auto st = writeHeld(*held, content); !st) {
+        deleteHeld(std::move(held));
+        return tl::unexpected<Error>(st.error());
+    }
+    out = std::move(held);
     return CreateOutcome::Created;
 }
 

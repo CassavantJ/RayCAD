@@ -1,0 +1,14 @@
+# UndefinedBehaviorSanitizer ignore list (Clang -fsanitize-ignorelist), used by RAY_SANITIZE builds that include
+# "undefined" (preset linux-clang-asan). Each entry turns off one check for code defined in one third-party header;
+# everything else, including RayCAD's own code, keeps every check and still halts on the first error.
+#
+# [alignment] NCollection_TListNode.hxx (OpenCASCADE 8.0.1)
+#   NCollection_TListNode<T>::delNode casts a list node to its derived type to destroy its value. The nodes of OCCT's
+#   own lists come from NCollection_IncAllocator, whose AllocateOptimal (and Allocate, which calls it) bump-allocates
+#   exactly the bytes asked for, with no rounding, so a node that follows an odd-sized block is only 4-byte aligned.
+#   The node itself is intact (next pointer and value as written); x86-64 and arm64 load it fine. UBSan sees it only
+#   because delNode is an inline template: our instrumented copy, instantiated by any of our translation units that
+#   destroys an NCollection_List<int>, interposes the copy libTKernel exports, so OCCT's internal lists are destroyed
+#   by our code. This is OpenCASCADE's allocator design, not corruption in RayCAD.
+[alignment]
+src:*/opencascade/NCollection_TListNode.hxx

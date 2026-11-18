@@ -20,6 +20,8 @@
 //   - The stream uses the classic locale. BinTools writes numbers in a fixed binary encoding and orders
 //     everything by first use in a walk of the shape (sub-shapes before the shapes that contain them), so no
 //     pointer, address, hash order, time stamp or thread count reaches the bytes.
+//   - The payload is written from the shape as a read gives it back (canonicalPayload below), because reading
+//     rebuilds some values (placement Y directions, normalised directions, location matrices) bit-differently.
 // Hence serialize(deserialize(b)) == b for every b that serialize() produced, and contentHash() is BLAKE3 of
 // these bytes. Bytes may still differ across operating systems where OCCT computed the geometry differently
 // in the last bits (PLAN.md section 8).
@@ -97,19 +99,19 @@ std::string writePayload(const TopoDS_Shape& shape)
     return os.str();
 }
 
-Result<Shape> readPayload(std::span<const std::byte> payload, std::string_view where)
+// Reads a payload back into an OCCT shape. May throw (OCCT); run it under the guard.
+Result<TopoDS_Shape> readOcct(std::string_view text, std::string_view where)
 {
     auto damaged = [&](const char* what) {
         return tl::unexpected(
             detail::makeError(ErrorCode::FormatError, std::string("The BREP data is damaged: ") + what + ".", where));
     };
 
-    std::string text(reinterpret_cast<const char*>(payload.data()), payload.size());
     const std::string expectedHeader = '\n' + std::string(kBinToolsVersionLine) + '\n';
     if (text.compare(0, expectedHeader.size(), expectedHeader) != 0)
         return damaged("unexpected BinTools header");
 
-    std::istringstream is(text, std::ios::in | std::ios::binary);
+    std::istringstream is(std::string(text), std::ios::in | std::ios::binary);
     is.imbue(std::locale::classic());
 
     BinTools_ShapeSet set;
@@ -133,7 +135,32 @@ Result<Shape> readPayload(std::span<const std::byte> payload, std::string_view w
     TopoDS_Shape root = set.Shape(count - index + 1);
     root.Orientation(static_cast<TopAbs_Orientation>(orientation));
     root.Location(set.Locations().Location(location), false);
-    return detail::wrap(root);
+    return root;
+}
+
+Result<Shape> readPayload(std::span<const std::byte> payload, std::string_view where)
+{
+    Result<TopoDS_Shape> root =
+        readOcct(std::string_view(reinterpret_cast<const char*>(payload.data()), payload.size()), where);
+    if (!root)
+        return tl::unexpected(std::move(root.error()));
+    return detail::wrap(*root);
+}
+
+// The canonical payload of a shape: written, read back and written again. Reading does not give back every value
+// bit for bit: it rebuilds what the stream does not hold independently (the Y direction of a placement is
+// recomputed as N x X, a direction is normalised, a location's matrix is set from its 3x4 values), so for a shape
+// whose geometry was computed some other way (a transformed copy of an assembly instance, a boolean result) the
+// first read changes a few bits, -0.0 for +0.0 for example. Written from what a read gives, the bytes are already
+// in that form, and reading them again changes nothing. So serialize(deserialize(b)) == b holds from the first
+// serialisation on. The price is one extra read and write per serialisation.
+std::string canonicalPayload(const TopoDS_Shape& shape)
+{
+    const std::string first = writePayload(shape);
+    const Result<TopoDS_Shape> back = readOcct(first, "kernel::serialize");
+    if (!back)
+        throw std::runtime_error("reading back the BREP stream failed: " + back.error().message);
+    return writePayload(*back);
 }
 
 void putU64(std::byte* out, std::uint64_t value)
@@ -191,7 +218,7 @@ std::vector<std::byte> serializeOcct(const TopoDS_Shape& shape) noexcept
     const bool ok = runGuarded(
         [](void* raw) {
             auto& ctx = *static_cast<Context*>(raw);
-            const std::string payload = writePayload(*ctx.shape);
+            const std::string payload = canonicalPayload(*ctx.shape);
             *ctx.out = sealPayload(std::as_bytes(std::span<const char>(payload.data(), payload.size())));
         },
         &context, message);

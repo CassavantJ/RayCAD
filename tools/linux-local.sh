@@ -43,11 +43,29 @@ export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software
 
 echo "== configure $preset"
 cmake --preset "$preset"
+# Every requested configuration is built and tested even if an earlier one failed; the exit code says whether any did.
+summary=()
+failed=0
 for c in "${configs[@]}"; do
   if cmake --list-presets=build | grep -q "\"$preset-$c\""; then b="$preset-$c"; else b="$preset"; fi
   echo "== build $b"
-  cmake --build --preset "$b"
+  if ! cmake --build --preset "$b"; then
+    summary+=("$b: build FAILED")
+    failed=1
+    continue
+  fi
   echo "== test $b"
-  ctest --preset "$b"
+  if ctest --preset "$b"; then
+    summary+=("$b: tests passed")
+  else
+    summary+=("$b: tests FAILED")
+    failed=1
+  fi
 done
+echo "== linux-local summary"
+for line in "${summary[@]}"; do echo "   $line"; done
+if [ "$failed" -ne 0 ]; then
+  echo "== linux-local: FAILED"
+  exit 1
+fi
 echo "== linux-local: all done"

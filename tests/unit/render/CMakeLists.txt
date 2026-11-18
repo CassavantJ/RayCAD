@@ -17,6 +17,8 @@ target_compile_definitions(ray_render_tests PRIVATE
     RAY_THEME_SCHEMA="${CMAKE_SOURCE_DIR}/schemas/theme.schema.json"
     RAY_RENDER_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference")
 ray_add_test(ray_render_tests)
+# About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s.
+set_tests_properties(ray_render_tests PROPERTIES TIMEOUT 900)
 # ray_render links Qt (Core and Gui), so the test needs the Qt DLL folder on Windows, and the vcpkg folder for the
 # delay-loaded OCCT toolkits of ray_kernel.
 ray_test_runtime_path(ray_render_tests QT)
