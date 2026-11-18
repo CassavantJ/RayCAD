@@ -2,6 +2,7 @@
 #include "commands.h"
 
 #include "../document_impl.h"
+#include "../features/import_feature.h"
 
 #include <exception>
 #include <new>
@@ -59,7 +60,7 @@ Status registerBuiltinCommands(CommandRegistry& registry)
                 return added;
             }
         }
-        return {};
+        return registry.add(features::makeImportCommandHandler()); // document.import (task T-010)
     } catch (...) {
         return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while registering the built-in commands", {}});
     }

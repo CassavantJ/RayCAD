@@ -117,11 +117,21 @@ public:
     virtual std::vector<naming::TopoRef> references(const Feature&) const = 0;
     virtual Result<FeatureOutput> rebuild(const Feature&, RebuildContext&) const = 0;
 };
+// Filled once at start-up, then shared read-only (the rebuilder reads it from workers without a lock).
 class FeatureRegistry {
 public:
+    // A null type, an empty name or a name that is already registered is ignored and logged: the first wins.
     void add(std::unique_ptr<IFeatureType>);
-    const IFeatureType* find(std::string_view typeName) const;
+    const IFeatureType* find(std::string_view typeName) const;   // null if unknown
+    std::vector<std::string> typeNames() const;                  // sorted
+private:
+    std::map<std::string, std::unique_ptr<IFeatureType>, std::less<>> types_;
 };
+// Registers the built-in feature types: "import" (PLAN.md 3.2; see "The import feature" below).
+// InvalidArgument if one of their names is registered already.
+Status registerBuiltinFeatureTypes(FeatureRegistry&);
+// A registry holding just the built-in feature types; null only when memory runs out.
+std::shared_ptr<const FeatureRegistry> builtinFeatureRegistry();
 
 // ---------- Rebuild ----------
 enum class FeatureStatus { Ok, Warning, Failed, Suppressed, NotBuilt };
@@ -141,6 +151,49 @@ public:
     // misses the cache. A failed feature stops that body's chain; later features report NotBuilt.
     virtual Result<BuildResultPtr> rebuild(DocStatePtr, JobContext&) = 0;
 };
+
+// ---------- Content-addressed objects the rebuild reads (PLAN.md 3.5, 4.1) ----------
+// Imported geometry is source data: an import feature names the BREP object (kernel::serialize bytes) of each of
+// its bodies by hash in its props, and RebuildContext::blob reads it through this interface. The store satisfies
+// it with its object table (doc never links store); a document not saved yet uses an ObjectPool.
+class IObjectSource {
+public:
+    virtual ~IObjectSource() = default;
+    // The bytes stored under `hash` (BLAKE3-256 of the bytes): NotFound when absent. Thread-safe.
+    virtual Result<std::vector<std::byte>> object(const Hash256& hash) const = 0;
+};
+// A thread-safe in-memory object set: objects of a document that is not saved yet, or waiting for the next save.
+class ObjectPool : public IObjectSource {
+public:
+    virtual Result<Hash256> put(std::span<const std::byte> bytes) = 0;   // idempotent; returns BLAKE3 of the bytes
+    virtual bool has(const Hash256&) const = 0;
+    virtual std::vector<Hash256> hashes() const = 0;                     // sorted
+};
+std::shared_ptr<ObjectPool> makeObjectPool();
+// Looks each object up in `sources` in order (e.g. new objects in a pool, then the saved file). Null entries are
+// skipped. NotFound if no source has it; another error from a source is returned as it is.
+std::shared_ptr<IObjectSource> makeObjectChain(std::vector<std::shared_ptr<const IObjectSource>> sources);
+
+// ---------- The rebuilder ----------
+// Features run in history order, one at a time, inside the calling job; a feature may fan out over `jobs`
+// (the import feature reads its bodies in parallel through IJobSystem::parallelChunks), so the output never
+// depends on the worker count. Each feature's result is cached in memory under the hash of (type, id, props,
+// parameter values) together with the revisions of the bodies it read through RebuildContext (shapeOf, mapOf,
+// resolver), so an unchanged feature reports cacheHit and editing feature N recomputes N and only the later
+// features that read a body N wrote. Failures and cancelled work are not cached.
+// Failure: a feature that fails reports Failed with the reason. The bodies it affects (those it read, and those it
+// read or wrote when it last built; all bodies if it never built) keep the output of the last feature that built
+// them, and later features that read such a body (or, after a failure, a body that does not exist) report NotBuilt
+// until a later feature writes the body afresh. A BodyUpdate with a null shape deletes the body.
+// rebuild() returns Cancelled when the token is cancelled (checked between features and inside them), and
+// InvalidArgument for a null state. It never throws, and may be called from several jobs at once.
+// `jobs` must outlive the rebuilder; `objects` may be null (no stored objects).
+struct RebuilderOptions {
+    std::size_t cacheEntries = 4096;   // feature results kept; the least recently used go first
+};
+std::shared_ptr<IRebuilder> makeRebuilder(IJobSystem& jobs, std::shared_ptr<const FeatureRegistry> types,
+                                          std::shared_ptr<const IObjectSource> objects = {},
+                                          RebuilderOptions options = {});
 
 // ---------- Commands and undo ----------
 // Every user-visible change, including AI and script actions, is one Command (differentiator 4).
@@ -173,6 +226,140 @@ public:
     virtual int subscribe(Listener) = 0;                      // called on the UI thread
     virtual void unsubscribe(int) = 0;
 };
+
+// ---------- Command handler registry ----------
+// Filled once at start-up, then shared read-only.
+class CommandRegistry {
+public:
+    CommandRegistry();
+    ~CommandRegistry();
+    CommandRegistry(const CommandRegistry&) = delete;
+    CommandRegistry& operator=(const CommandRegistry&) = delete;
+    // InvalidArgument if the handler is null, its name is empty or the name is already registered.
+    Status add(std::unique_ptr<ICommandHandler> handler);
+    const ICommandHandler* find(std::string_view name) const;   // null if unknown
+    std::vector<std::string> names() const;                     // sorted
+private:
+    std::map<std::string, std::unique_ptr<ICommandHandler>, std::less<>> handlers_;
+};
+// Registers feature.add, feature.edit, feature.remove, feature.reorder, feature.suppress, param.set, body.set and
+// document.import. Their argument objects are described by argsSchemaJson().
+Status registerBuiltinCommands(CommandRegistry&);
+// A registry holding just the built-in commands; null only when memory runs out.
+std::shared_ptr<const CommandRegistry> builtinCommandRegistry();
+
+// ---------- JSON form of commands (recovery journal, scripts) ----------
+// A command is the canonical JSON object  {"args":{...},"label":"...","name":"feature.add","schema":1}
+// with the arguments embedded as a JSON object (not as a string). A command log is a JSON array of these, in
+// execution order. Reading rejects missing or mistyped keys, unknown keys and a newer "schema" (FormatTooNew).
+// commandToJson fails with InvalidArgument if argsJson is not a JSON object.
+Result<std::string> commandToJson(const Command&);
+Result<Command> commandFromJson(std::string_view json);   // argsJson comes back canonical
+Result<std::string> commandLogToJson(const std::vector<Command>&);
+Result<std::vector<Command>> commandLogFromJson(std::string_view json);
+
+// ---------- The document ----------
+// Undo: every executed command pushes one entry holding the command (with canonical arguments) and the snapshots
+// before and after it; undo and redo are pointer swaps. History is unlimited; a new command clears redo. A
+// command that fails changes nothing. Commands are pure functions of (snapshot, canonical arguments).
+// Threads: execute, undo, redo, the preview, rebuild and subscribe calls are made on the UI thread (PLAN.md 7);
+// the const queries may be called from any thread. Listeners never run inside those calls: they are posted
+// through the IUiDispatcher. Notifications that run after the document is destroyed do nothing.
+// Rebuild (a document made with a rebuilder): creating the document and every change of state() (execute, undo,
+// redo) schedules a rebuild of the new state() as a job and cancels the rebuild of the previous one. When a
+// rebuild of the snapshot that is still state() finishes, build() and builtState() switch to it and listeners are
+// called again with (state(), build()). So every listener is called once per change (with the build of that
+// moment, which may lag) and once per published build. Without a rebuilder build() stays null.
+// Previews: beginPreview(command) applies the command to the current snapshot off to the side and rebuilds that
+// snapshot as a job; it never changes state(), the stacks, dirty(), build() or the document listeners. A second
+// beginPreview replaces the first; cancelPreview, execute, undo and redo end it (and cancel its rebuild).
+class Document : public IDocument {
+public:
+    // The preview snapshot, or null when no preview is active or the previewed command failed.
+    virtual DocStatePtr previewState() const = 0;
+    // Why the active preview's command failed; nullopt when there is no preview or it succeeded.
+    virtual std::optional<Error> previewError() const = 0;
+    // The finished rebuild of previewState(); null until it finishes, or when the preview rebuild failed.
+    virtual BuildResultPtr previewBuild() const = 0;
+    // Called on the UI thread when the rebuild of the active preview finishes: (previewState(), previewBuild()).
+    using PreviewListener = std::function<void(DocStatePtr, BuildResultPtr)>;
+    virtual int subscribePreview(PreviewListener) = 0;   // 0 if the listener is empty
+    virtual void unsubscribePreview(int) = 0;
+
+    // The snapshot build() was made from; null while build() is null.
+    virtual DocStatePtr builtState() const = 0;
+    // True from a change of state() until its rebuild finished, failed or was cancelled.
+    virtual bool rebuildPending() const = 0;
+    // Why the last rebuild of state() did not finish (Cancelled after cancelRebuild, or an internal failure);
+    // nullopt when it finished or is still running. Failed features are reported in build(), not here.
+    virtual std::optional<Error> buildError() const = 0;
+    virtual void cancelRebuild() = 0;     // Esc: cancels the rebuild of state(); build() stays as it was
+    virtual void scheduleRebuild() = 0;   // rebuilds state() again, e.g. after a missing source file came back
+
+    virtual std::size_t undoCount() const = 0;
+    virtual std::size_t redoCount() const = 0;
+    // The command the next undo() or redo() would revert or repeat (its label is for the undo menu).
+    virtual std::optional<Command> undoCommand() const = 0;
+    virtual std::optional<Command> redoCommand() const = 0;
+
+    // dirty() is true while state() is not the snapshot that was current at the last markClean() (or at creation).
+    // The store calls this after a save.
+    virtual void markClean() = 0;
+};
+
+// `dispatcher` must outlive the document and queue posted functions, never run them inside post() (core.h).
+// A null `registry` means builtinCommandRegistry(); a null `initial` means an empty DocState. Null only when
+// memory runs out. This form has no rebuilder: build() stays null.
+std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, std::shared_ptr<const CommandRegistry> registry = {},
+                                       DocStatePtr initial = {});
+// A document that rebuilds through `rebuilder` on `jobs` (both must outlive it; a null rebuilder means none).
+std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, IJobSystem& jobs, std::shared_ptr<IRebuilder> rebuilder,
+                                       std::shared_ptr<const CommandRegistry> registry = {}, DocStatePtr initial = {});
+
+// ---------- The import feature (type "import", PLAN.md 3.2, 3.5) ----------
+// Props (canonical JSON; unknown keys are ignored by the rebuild):
+//   {"sourceFile": "<UTF-8 path as given>", "format": "step" | "iges", "fileHash": "<BLAKE3 of the file, 64 hex>",
+//    "options": {"heal": "none" | "reader" | "full", "sew": true, "sewTolerance": 0.001},   (optional; defaults)
+//    "role": "part" | "fixture",                                                          (optional; "part")
+//    "sourceUnits": "inch" | "metric",                                                    (optional; informational)
+//    "bodies": [{"id": "<uuid>", "name": "...", "color": [r, g, b, a], "blob": "<BREP object hash>"}],  (optional)
+//    "warnings": ["..."]}                                                                 (optional)
+// With "bodies" the stored BREP objects are the source of truth: the rebuild reads them through
+// RebuildContext::blob and never needs the file. If an object is missing, it re-imports the file (its hash must
+// equal fileHash and it must give the same number of bodies) and warns where the geometry differs from the
+// stored copy. Without "bodies" it imports the file on every cache miss, with body ids importedBodyId(feature, i).
+// Every body is named with naming::nameImported(feature id, shape). The stored warnings are reported again.
+//
+// How an import enters a document (UI thread, after a worker ran prepareImport):
+//   1. prepareImport(request, ctx) on a worker: hashes and imports the file, serialises every body;
+//   2. put PreparedImport::objects into the document's object pool (and into the store when saving);
+//   3. IDocument::execute(PreparedImport::command): a "document.import" command that adds the feature and a Body
+//      (name, colour and role from the file) for each imported body, as one undo step.
+// "document.import" args: {"id": "<feature uuid>", "name": "...", "props": {import props}, "index"?: n}.
+enum class ImportFormat { Step, Iges };
+struct ImportRequest {
+    FeatureId feature;                    // id of the new feature, made by the caller so a replay is identical
+    std::string name;                     // feature name; empty means "Import <file name>"
+    std::string path;                     // UTF-8
+    std::optional<ImportFormat> format;   // nullopt: from the extension (.step .stp .p21 / .iges .igs, any case)
+    kernel::ImportOptions options;
+    Body::Role role = Body::Role::Part;   // Part or Fixture
+    std::optional<std::size_t> index;     // position in the feature list; nullopt appends
+};
+struct PreparedImport {
+    Command command;                                                 // "document.import"
+    std::vector<std::pair<Hash256, std::vector<std::byte>>> objects; // the BREP object of every body, by hash
+};
+// Worker only (seconds for a large file). Errors: NotFound / IoError for the file, FormatError and
+// KernelFailure from the kernel, InvalidArgument for a bad request, Cancelled.
+Result<PreparedImport> prepareImport(const ImportRequest&, JobContext&);
+// The id of body `index` of an import feature whose props list no bodies (a version 4 UUID derived by hashing).
+BodyId importedBodyId(const FeatureId& importFeature, std::size_t index);
+// BLAKE3 of a file's bytes, as stored in "fileHash". Checks cancellation every MiB.
+Result<Hash256> hashFile(const std::string& utf8Path, JobContext&);
+// Every object the state's features name (the BREP objects of import features), sorted and unique: what a save
+// must write as source objects, and what compaction must keep.
+std::vector<Hash256> referencedObjects(const DocState&);
 
 // Canonical JSON: UTF-8, keys sorted, no insignificant whitespace, doubles printed with the
 // shortest round-trip representation, -0 written as 0. All hashing of JSON uses this form.

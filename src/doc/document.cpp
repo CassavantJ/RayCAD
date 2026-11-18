@@ -1,4 +1,11 @@
-// The document: current snapshot, unlimited undo and redo, previews and change notifications (document_impl.h).
+// The document: current snapshot, unlimited undo and redo, previews, rebuild scheduling and change notifications
+// (<ray/document.h>, "The document").
+//
+// Rebuild jobs: every change of state() cancels the running rebuild and submits one for the new snapshot, tagged
+// with a generation number. Its continuation runs on the UI thread (JobHandle::then) and publishes the result only
+// if no newer rebuild was scheduled since; a superseded result is dropped (its finished features stay in the
+// rebuilder's cache). The preview rebuild works the same way with its own generation. Continuations hold the
+// document's shared state weakly, so a job that finishes after the document is gone does nothing.
 #include "document_impl.h"
 
 #include <exception>
@@ -24,19 +31,31 @@ struct Preview {
     Command command;
     DocStatePtr state;          // null if the command failed
     std::optional<Error> error; // set if the command failed
+    BuildResultPtr build;       // the finished rebuild of `state`
+    JobHandle<BuildResultPtr> job;
+    std::uint64_t generation = 0;
 };
 
-// Everything the document owns that a posted notification may still read after the document is gone.
+// Everything the document owns that a posted notification or a job continuation may still read after the document
+// is gone.
 struct Shared {
     mutable std::mutex mutex;
     DocStatePtr current;
     DocStatePtr clean;
-    BuildResultPtr build; // the rebuilder (T-010) sets this; null until then
     std::vector<UndoEntry> undo;
     std::vector<UndoEntry> redo;
     std::optional<Preview> preview;
+    std::uint64_t previewGeneration = 0;
     std::map<int, std::shared_ptr<const IDocument::Listener>> listeners;
+    std::map<int, std::shared_ptr<const Document::PreviewListener>> previewListeners;
     int nextListener = 1;
+
+    BuildResultPtr build;            // latest published build
+    DocStatePtr builtState;          // the snapshot `build` was made from
+    std::optional<Error> buildError; // why the last rebuild of `current` did not finish
+    DocStatePtr building;            // the snapshot being rebuilt; null when no rebuild is pending
+    JobHandle<BuildResultPtr> buildJob;
+    std::uint64_t buildGeneration = 0;
 };
 
 // Runs the handler on the canonical arguments; never throws.
@@ -66,14 +85,180 @@ Result<DocStatePtr> applyCommand(const CommandRegistry& registry, const Command&
     return after;
 }
 
+// Caller holds the mutex.
+template <class Map>
+std::vector<int> idsOf(const Map& listeners)
+{
+    std::vector<int> ids;
+    ids.reserve(listeners.size());
+    for (const auto& entry : listeners) {
+        ids.push_back(entry.first);
+    }
+    return ids;
+}
+
+// Posts one notification. It calls, once each, the document listeners that were subscribed at the time of the
+// change (`ids`) and still are when it runs, with `state` and the build published at that moment.
+void notify(IUiDispatcher& dispatcher, const std::shared_ptr<Shared>& s, DocStatePtr state, std::vector<int> ids)
+{
+    if (ids.empty()) {
+        return;
+    }
+    try {
+        std::weak_ptr<Shared> weak = s;
+        dispatcher.post([weak, state = std::move(state), ids = std::move(ids)]() {
+            const std::shared_ptr<Shared> shared = weak.lock();
+            if (!shared) {
+                return; // the document is gone
+            }
+            for (const int id : ids) {
+                std::shared_ptr<const IDocument::Listener> listener;
+                BuildResultPtr build;
+                {
+                    std::lock_guard<std::mutex> lock(shared->mutex);
+                    const auto it = shared->listeners.find(id);
+                    if (it == shared->listeners.end()) {
+                        continue; // unsubscribed in the meantime
+                    }
+                    listener = it->second;
+                    build = shared->build;
+                }
+                try {
+                    (*listener)(state, build);
+                } catch (...) {
+                    log(LogLevel::Error, "doc", "A document change listener threw an exception; it was ignored");
+                }
+            }
+        });
+    } catch (...) {
+        log(LogLevel::Error, "doc", "Could not post a document change notification: out of memory");
+    }
+}
+
+// The same for the preview listeners, with the preview snapshot and its build.
+void notifyPreview(IUiDispatcher& dispatcher, const std::shared_ptr<Shared>& s, DocStatePtr state, BuildResultPtr build,
+                   std::vector<int> ids)
+{
+    if (ids.empty()) {
+        return;
+    }
+    try {
+        std::weak_ptr<Shared> weak = s;
+        dispatcher.post([weak, state = std::move(state), build = std::move(build), ids = std::move(ids)]() {
+            const std::shared_ptr<Shared> shared = weak.lock();
+            if (!shared) {
+                return;
+            }
+            for (const int id : ids) {
+                std::shared_ptr<const Document::PreviewListener> listener;
+                {
+                    std::lock_guard<std::mutex> lock(shared->mutex);
+                    const auto it = shared->previewListeners.find(id);
+                    if (it == shared->previewListeners.end()) {
+                        continue;
+                    }
+                    listener = it->second;
+                }
+                try {
+                    (*listener)(state, build);
+                } catch (...) {
+                    log(LogLevel::Error, "doc", "A preview listener threw an exception; it was ignored");
+                }
+            }
+        });
+    } catch (...) {
+        log(LogLevel::Error, "doc", "Could not post a preview notification: out of memory");
+    }
+}
+
+// UI thread: the rebuild of generation `generation` (of `state`) finished.
+void finishBuild(IUiDispatcher& dispatcher, const std::weak_ptr<Shared>& weak, std::uint64_t generation,
+                 const DocStatePtr& state, Result<BuildResultPtr> result)
+{
+    const std::shared_ptr<Shared> shared = weak.lock();
+    if (!shared) {
+        return;
+    }
+    std::vector<int> ids;
+    {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        if (generation != shared->buildGeneration) {
+            return; // a newer rebuild was scheduled; this one was cancelled or is stale
+        }
+        shared->building.reset();
+        shared->buildJob = {};
+        if (!result || !*result) {
+            shared->buildError =
+                result ? Error{ErrorCode::Internal, "The rebuild returned no result", {}} : std::move(result.error());
+            if (shared->buildError->code != ErrorCode::Cancelled) {
+                log(LogLevel::Error, "doc", "The rebuild failed: " + shared->buildError->message);
+            }
+            return;
+        }
+        shared->build = std::move(*result);
+        shared->builtState = state;
+        shared->buildError.reset();
+        ids = idsOf(shared->listeners);
+    }
+    notify(dispatcher, shared, state, std::move(ids));
+}
+
+// UI thread: the preview rebuild of generation `generation` finished.
+void finishPreview(IUiDispatcher& dispatcher, const std::weak_ptr<Shared>& weak, std::uint64_t generation,
+                   Result<BuildResultPtr> result)
+{
+    const std::shared_ptr<Shared> shared = weak.lock();
+    if (!shared) {
+        return;
+    }
+    std::vector<int> ids;
+    DocStatePtr state;
+    BuildResultPtr build;
+    {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        if (!shared->preview || shared->preview->generation != generation) {
+            return; // the preview was replaced or ended
+        }
+        shared->preview->job = {};
+        if (!result || !*result) {
+            if (!result && result.error().code != ErrorCode::Cancelled) {
+                log(LogLevel::Warn, "doc", "The preview rebuild failed: " + result.error().message);
+            }
+            return;
+        }
+        shared->preview->build = std::move(*result);
+        state = shared->preview->state;
+        build = shared->preview->build;
+        ids = idsOf(shared->previewListeners);
+    }
+    notifyPreview(dispatcher, shared, std::move(state), std::move(build), std::move(ids));
+}
+
 class DocumentImpl final : public Document {
 public:
-    DocumentImpl(IUiDispatcher& dispatcher, std::shared_ptr<const CommandRegistry> registry, DocStatePtr initial)
-        : dispatcher_(dispatcher), registry_(std::move(registry)), s_(std::make_shared<Shared>())
+    DocumentImpl(IUiDispatcher& dispatcher, IJobSystem* jobs, std::shared_ptr<IRebuilder> rebuilder,
+                 std::shared_ptr<const CommandRegistry> registry, DocStatePtr initial)
+        : dispatcher_(dispatcher), jobs_(jobs), rebuilder_(jobs != nullptr ? std::move(rebuilder) : nullptr),
+          registry_(std::move(registry)), s_(std::make_shared<Shared>())
     {
         s_->current = initial;
         s_->clean = std::move(initial);
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        scheduleRebuildLocked();
     }
+
+    ~DocumentImpl() override
+    {
+        try {
+            std::lock_guard<std::mutex> lock(s_->mutex);
+            s_->buildJob.cancel();
+            dropPreviewLocked();
+        } catch (...) {
+        }
+    }
+
+    DocumentImpl(const DocumentImpl&) = delete;
+    DocumentImpl& operator=(const DocumentImpl&) = delete;
 
     DocStatePtr state() const override
     {
@@ -101,14 +286,15 @@ public:
                 }
                 after = std::move(*result);
                 // Everything that can fail happens before the first change, so a failure leaves no trace.
-                ids = listenerIds();
+                ids = idsOf(s_->listeners);
                 UndoEntry entry{Command{command.name, std::move(args), command.label}, s_->current, after};
                 s_->undo.push_back(std::move(entry));
                 s_->redo.clear();
                 s_->current = after;
-                s_->preview.reset();
+                dropPreviewLocked();
+                scheduleRebuildLocked();
             }
-            notify(after, std::move(ids));
+            notify(dispatcher_, s_, after, std::move(ids));
             return after;
         } catch (const std::bad_alloc&) {
             return failure(ErrorCode::Internal, command.name + ": out of memory");
@@ -136,8 +322,8 @@ public:
     {
         try {
             std::lock_guard<std::mutex> lock(s_->mutex);
-            s_->preview.reset();
-            Preview preview{command, nullptr, std::nullopt};
+            dropPreviewLocked();
+            Preview preview{command, nullptr, std::nullopt, nullptr, {}, ++s_->previewGeneration};
             std::string args;
             auto result = applyCommand(*registry_, command, s_->current, args);
             preview.command.argsJson = std::move(args);
@@ -146,10 +332,24 @@ public:
             } else {
                 preview.error = std::move(result.error());
             }
-            // A rebuild of preview.state off to the side starts here once the rebuilder exists (T-010).
             s_->preview = std::move(preview);
+            if (s_->preview->state && rebuilder_) {
+                const std::uint64_t generation = s_->preview->generation;
+                auto job = submitRebuild(s_->preview->state, "Preview");
+                s_->preview->job = job;
+                std::weak_ptr<Shared> weak = s_;
+                IUiDispatcher* dispatcher = &dispatcher_;
+                job.then([dispatcher, weak, generation](Result<BuildResultPtr> built) {
+                    finishPreview(*dispatcher, weak, generation, std::move(built));
+                });
+            }
         } catch (...) {
-            // Out of memory: no preview is shown. preview was reset above, so the old one is not left behind.
+            // Out of memory: no preview is shown. dropPreviewLocked() ran first, so the old one is not left behind.
+            try {
+                std::lock_guard<std::mutex> lock(s_->mutex);
+                dropPreviewLocked();
+            } catch (...) {
+            }
             log(LogLevel::Warn, "doc", "Could not start a preview: out of memory");
         }
     }
@@ -157,7 +357,7 @@ public:
     void cancelPreview() override
     {
         std::lock_guard<std::mutex> lock(s_->mutex);
-        s_->preview.reset();
+        dropPreviewLocked();
     }
 
     bool dirty() const override
@@ -204,6 +404,74 @@ public:
         }
     }
 
+    BuildResultPtr previewBuild() const override
+    {
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        return s_->preview ? s_->preview->build : nullptr;
+    }
+
+    int subscribePreview(PreviewListener listener) override
+    {
+        if (!listener) {
+            return 0;
+        }
+        try {
+            auto shared = std::make_shared<const PreviewListener>(std::move(listener));
+            std::lock_guard<std::mutex> lock(s_->mutex);
+            const int id = s_->nextListener++;
+            s_->previewListeners.emplace(id, std::move(shared));
+            return id;
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    void unsubscribePreview(int id) override
+    {
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        s_->previewListeners.erase(id);
+    }
+
+    DocStatePtr builtState() const override
+    {
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        return s_->builtState;
+    }
+
+    bool rebuildPending() const override
+    {
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        return s_->building != nullptr;
+    }
+
+    std::optional<Error> buildError() const override
+    {
+        try {
+            std::lock_guard<std::mutex> lock(s_->mutex);
+            return s_->buildError;
+        } catch (...) {
+            return Error{ErrorCode::Internal, "Out of memory", {}};
+        }
+    }
+
+    void cancelRebuild() override
+    {
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        if (s_->building) {
+            s_->buildJob.cancel(); // the continuation records Error{Cancelled}
+        }
+    }
+
+    void scheduleRebuild() override
+    {
+        try {
+            std::lock_guard<std::mutex> lock(s_->mutex);
+            scheduleRebuildLocked();
+        } catch (...) {
+            log(LogLevel::Error, "doc", "Could not schedule a rebuild: out of memory");
+        }
+    }
+
     std::size_t undoCount() const override
     {
         std::lock_guard<std::mutex> lock(s_->mutex);
@@ -226,15 +494,40 @@ public:
     }
 
 private:
-    // Caller holds the mutex.
-    std::vector<int> listenerIds() const
+    JobHandle<BuildResultPtr> submitRebuild(DocStatePtr state, const char* title)
     {
-        std::vector<int> ids;
-        ids.reserve(s_->listeners.size());
-        for (const auto& entry : s_->listeners) {
-            ids.push_back(entry.first);
+        std::shared_ptr<IRebuilder> rebuilder = rebuilder_;
+        return jobs_->submit<BuildResultPtr>(
+            JobInfo{title, JobPriority::Interactive, false},
+            [rebuilder, state = std::move(state)](JobContext& ctx) { return rebuilder->rebuild(state, ctx); });
+    }
+
+    // Caller holds the mutex. Cancels the running rebuild and schedules one of the current snapshot.
+    void scheduleRebuildLocked()
+    {
+        if (!rebuilder_) {
+            return;
         }
-        return ids;
+        s_->buildJob.cancel();
+        const std::uint64_t generation = ++s_->buildGeneration;
+        DocStatePtr state = s_->current;
+        s_->building = state;
+        s_->buildError.reset();
+        s_->buildJob = submitRebuild(state, "Rebuild");
+        std::weak_ptr<Shared> weak = s_;
+        IUiDispatcher* dispatcher = &dispatcher_;
+        s_->buildJob.then([dispatcher, weak, generation, state](Result<BuildResultPtr> built) {
+            finishBuild(*dispatcher, weak, generation, state, std::move(built));
+        });
+    }
+
+    // Caller holds the mutex.
+    void dropPreviewLocked()
+    {
+        if (s_->preview) {
+            s_->preview->job.cancel();
+            s_->preview.reset();
+        }
     }
 
     Status step(bool isUndo)
@@ -249,16 +542,17 @@ private:
                 if (from.empty()) {
                     return failure(ErrorCode::InvalidArgument, isUndo ? "Nothing to undo" : "Nothing to redo");
                 }
-                ids = listenerIds();
+                ids = idsOf(s_->listeners);
                 to.reserve(to.size() + 1); // the push_back below cannot fail after this
                 UndoEntry entry = std::move(from.back());
                 from.pop_back();
                 s_->current = isUndo ? entry.before : entry.after;
                 to.push_back(std::move(entry));
-                s_->preview.reset();
+                dropPreviewLocked();
                 now = s_->current;
+                scheduleRebuildLocked();
             }
-            notify(now, std::move(ids));
+            notify(dispatcher_, s_, now, std::move(ids));
             return {};
         } catch (...) {
             return failure(ErrorCode::Internal, isUndo ? "Undo failed: out of memory" : "Redo failed: out of memory");
@@ -279,53 +573,15 @@ private:
         }
     }
 
-    // Posts one notification for one change. It calls, once each, the listeners that were subscribed at the time of
-    // the change (`ids`) and still are when it runs.
-    void notify(DocStatePtr state, std::vector<int> ids)
-    {
-        if (ids.empty()) {
-            return;
-        }
-        try {
-            std::weak_ptr<Shared> weak = s_;
-            dispatcher_.post([weak, state = std::move(state), ids = std::move(ids)]() {
-                const std::shared_ptr<Shared> shared = weak.lock();
-                if (!shared) {
-                    return; // the document is gone
-                }
-                for (const int id : ids) {
-                    std::shared_ptr<const Listener> listener;
-                    BuildResultPtr build;
-                    {
-                        std::lock_guard<std::mutex> lock(shared->mutex);
-                        const auto it = shared->listeners.find(id);
-                        if (it == shared->listeners.end()) {
-                            continue; // unsubscribed in the meantime
-                        }
-                        listener = it->second;
-                        build = shared->build;
-                    }
-                    try {
-                        (*listener)(state, build);
-                    } catch (...) {
-                        log(LogLevel::Error, "doc", "A document change listener threw an exception; it was ignored");
-                    }
-                }
-            });
-        } catch (...) {
-            log(LogLevel::Error, "doc", "Could not post a document change notification: out of memory");
-        }
-    }
-
     IUiDispatcher& dispatcher_;
+    IJobSystem* jobs_;
+    std::shared_ptr<IRebuilder> rebuilder_; // null: no rebuilds
     std::shared_ptr<const CommandRegistry> registry_;
     std::shared_ptr<Shared> s_;
 };
 
-} // namespace
-
-std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, std::shared_ptr<const CommandRegistry> registry,
-                                       DocStatePtr initial)
+std::unique_ptr<Document> make(IUiDispatcher& dispatcher, IJobSystem* jobs, std::shared_ptr<IRebuilder> rebuilder,
+                               std::shared_ptr<const CommandRegistry> registry, DocStatePtr initial)
 {
     try {
         if (!registry) {
@@ -337,10 +593,26 @@ std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, std::shared_pt
         if (!initial) {
             initial = std::make_shared<const DocState>();
         }
-        return std::make_unique<DocumentImpl>(dispatcher, std::move(registry), std::move(initial));
+        return std::make_unique<DocumentImpl>(dispatcher, jobs, std::move(rebuilder), std::move(registry),
+                                              std::move(initial));
     } catch (...) {
         return nullptr;
     }
+}
+
+} // namespace
+
+std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, std::shared_ptr<const CommandRegistry> registry,
+                                       DocStatePtr initial)
+{
+    return make(dispatcher, nullptr, nullptr, std::move(registry), std::move(initial));
+}
+
+std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, IJobSystem& jobs,
+                                       std::shared_ptr<IRebuilder> rebuilder,
+                                       std::shared_ptr<const CommandRegistry> registry, DocStatePtr initial)
+{
+    return make(dispatcher, &jobs, std::move(rebuilder), std::move(registry), std::move(initial));
 }
 
 } // namespace ray::doc
