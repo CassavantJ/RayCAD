@@ -19,6 +19,8 @@ add_test(NAME ray_kernel_occt_smoke COMMAND ray_kernel_tests "[occt]")
 add_test(NAME ray_kernel_tests COMMAND ray_kernel_tests "~[occt]")
 ray_test_runtime_path(ray_kernel_occt_smoke)
 ray_test_runtime_path(ray_kernel_tests)
+# Import, meshing and concurrency tests are slow under ThreadSanitizer and on a loaded machine.
+set_tests_properties(ray_kernel_tests PROPERTIES TIMEOUT 900)
 
 # Imports one STEP or IGES file and prints what came out; tools/import_corpus.py runs it on every file of a
 # corpus folder, one child process per file, to count passes, failures, crashes and hangs.
