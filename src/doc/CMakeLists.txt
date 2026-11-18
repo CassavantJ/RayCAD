@@ -1,6 +1,11 @@
 # doc: Document snapshots, features, rebuild, commands, undo. Allowed dependencies: PLAN.md section 1.1.
 add_library(ray_doc STATIC
+    commands/args.cpp
+    commands/command_json.cpp
+    commands/model_commands.cpp
+    commands/registry.cpp
     doc_module.cpp
+    document.cpp
     expr.cpp
     json.cpp
     json_number.cpp
