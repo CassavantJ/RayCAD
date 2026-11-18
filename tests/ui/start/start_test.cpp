@@ -74,16 +74,24 @@ const QString kMidSize = QStringLiteral(RAY_CORPUS_DIR "/nist-pmi/nist_ctc_04_as
 constexpr int kOpenTimeoutMs = 180000;
 constexpr const char* kParamId = "6f1c1d4e-2b7a-4c39-9a51-0d2e8f3b7c11";
 
+// Whether the scene graph renders through a QRhi, asked of a real, shown window: QQuickWindow::graphicsApi() only
+// says what would be requested, and on the offscreen platform without OpenGL (Linux) Qt Quick falls back to its
+// software backend. Only the UI-thread stall measurement depends on it: the software backend rasterises every frame
+// on the UI thread, so it measures software rendering, not RayCAD. Every other test here runs on any scene graph.
 bool rhiSceneGraph()
 {
-    return QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi());
+    static const bool rhi = [] {
+        QQuickWindow probe;
+        probe.resize(64, 64);
+        probe.show();
+        if (!QTest::qWaitForWindowExposed(&probe))
+            return false;
+        (void)probe.grabWindow(); // initialises the scene graph
+        const QSGRendererInterface* renderer = probe.rendererInterface();
+        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
+    }();
+    return rhi;
 }
-
-#define REQUIRE_RHI()                                                                                                  \
-    do {                                                                                                               \
-        if (!rhiSceneGraph())                                                                                          \
-            SKIP("the scene graph has no QRhi (software backend): the viewport cannot render here");                   \
-    } while (false)
 
 // A crash-recovery source standing in for the app's journals (the dialog's rows, discard and the recover flow).
 // "Recovering" just opens the file.
@@ -387,7 +395,6 @@ TEST_CASE("the start screen and its recent files in the light theme", "[start][l
 
 TEST_CASE("opening a STEP file shows staged progress; Esc cancels it at once", "[open][progress]")
 {
-    REQUIRE_RHI();
     Window w("dark");
     Session& session = *w.session();
     (void)w.activate();
@@ -458,7 +465,6 @@ TEST_CASE("opening a STEP file shows staged progress; Esc cancels it at once", "
 
 TEST_CASE("dropping files opens them; further STEP files are imported into the first", "[drop]")
 {
-    REQUIRE_RHI();
     Window w("dark");
     bool accepted = true;
     dragAndDrop(w, {QUrl::fromLocalFile(QStringLiteral(RAY_CORPUS_DIR "/ezdxf/Minimal_DXF_AC1009.dxf"))}, &accepted);
@@ -488,7 +494,6 @@ TEST_CASE("dropping files opens them; further STEP files are imported into the f
 
 TEST_CASE("STEP, Save As .raycad, close, reopen from the recent list: same bodies and state hash", "[roundtrip]")
 {
-    REQUIRE_RHI();
     QTemporaryDir work;
     const QString step = QDir(work.path()).filePath(QStringLiteral("plate with hole.step"));
     REQUIRE(QFile::copy(kBoxHole, step));
@@ -531,7 +536,6 @@ TEST_CASE("STEP, Save As .raycad, close, reopen from the recent list: same bodie
 
 TEST_CASE("undo and redo of an import through the actions update the view and the tree", "[undo]")
 {
-    REQUIRE_RHI();
     Window w("dark");
     w.open(kBoxHole);
     REQUIRE(w.scene()->bodyCount() == 1);
@@ -591,7 +595,6 @@ TEST_CASE("undo and redo of an import through the actions update the view and th
 
 TEST_CASE("the dirty marker and the unsaved-changes prompt on close, open-over and quit", "[dirty][prompt]")
 {
-    REQUIRE_RHI();
     QTemporaryDir work;
     const QString raycad = QDir(work.path()).filePath(QStringLiteral("cover.raycad"));
     Window w("dark");
@@ -670,7 +673,6 @@ TEST_CASE("the dirty marker and the unsaved-changes prompt on close, open-over a
 
 TEST_CASE("a file another session has open opens read-only and says who holds it", "[lock]")
 {
-    REQUIRE_RHI();
     QTemporaryDir work;
     const QString raycad = QDir(work.path()).filePath(QStringLiteral("shared part.raycad"));
     Window w("dark");
@@ -713,7 +715,6 @@ TEST_CASE("a file another session has open opens read-only and says who holds it
 
 TEST_CASE("the recovery prompt lists pending recoveries; recover and discard go to the source", "[recovery][double]")
 {
-    REQUIRE_RHI();
     QTemporaryDir work;
     const QString raycad = QDir(work.path()).filePath(QStringLiteral("journalled.raycad"));
     {
@@ -777,7 +778,6 @@ TEST_CASE("the recovery prompt lists pending recoveries; recover and discard go 
 TEST_CASE("crash recovery end to end: a session that ended without saving is recovered at the next start",
           "[recovery][journal]")
 {
-    REQUIRE_RHI();
     QTemporaryDir data; // the per-user data folder both sessions share (journals live in <data>/recovery)
     QTemporaryDir work;
     const QString raycad = QDir(work.path()).filePath(QStringLiteral("journalled.raycad"));
@@ -838,7 +838,8 @@ TEST_CASE("crash recovery end to end: a session that ended without saving is rec
 }
 TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[stall]")
 {
-    REQUIRE_RHI();
+    if (!rhiSceneGraph())
+        SKIP("the scene graph has no QRhi (software backend): frames are rasterised on the UI thread here");
     Window w("dark");
     REQUIRE(QFileInfo::exists(kMidSize));
 
