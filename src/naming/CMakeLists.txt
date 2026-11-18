@@ -3,6 +3,7 @@ add_library(ray_naming STATIC
     naming_module.cpp
     naming_internal.h element_map.cpp fingerprint.cpp
     import_naming.h name_imported.cpp
-    resolver.h resolver.cpp)
+    resolver.h resolver.cpp
+    propagate.h propagate.cpp propagate_resolve.cpp)
 ray_module(ray_naming DETERMINISTIC)
 target_link_libraries(ray_naming PRIVATE ray_core ray_kernel)

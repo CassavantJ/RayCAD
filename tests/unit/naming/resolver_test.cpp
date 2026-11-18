@@ -265,18 +265,32 @@ TEST_CASE("Malformed and unresolvable references are Broken and never exceptions
     ref.kind = kernel::SubKind::Edge;
     expectBroken(ref); // the name is a face's
 
+    // Since T-081a these two are not Broken: a reference with several names was picked on a merged element.
     ref = good;
     ref.names.push_back(Hash256{});
     ref.families.push_back(Hash256{});
     ref.ambiguous.push_back(false);
-    expectBroken(ref); // part of the picked element is gone
+    {
+        // Part of the picked element is gone: what is left is returned as Split.
+        const Resolved r = resolver->resolve(ref);
+        CHECK(r.state == ResolveState::Split);
+        CHECK(r.elements == std::vector<kernel::SubId>{kernel::SubId{kernel::SubKind::Face, 2}});
+    }
 
     ref = good;
     const TopoRef otherFace = resolver->makeRef(kBody, kernel::SubId{kernel::SubKind::Face, 3});
     ref.names.push_back(otherFace.names[0]);
     ref.families.push_back(otherFace.families[0]);
     ref.ambiguous.push_back(false);
-    expectBroken(ref); // its names now lead to two elements
+    {
+        // Its names now lead to two elements (it came apart): both are returned as Split.
+        const Resolved r = resolver->resolve(ref);
+        CHECK(r.state == ResolveState::Split);
+        CHECK(r.elements == std::vector<kernel::SubId>{kernel::SubId{kernel::SubKind::Face, 2},
+                                                       kernel::SubId{kernel::SubKind::Face, 3}});
+    }
+    ref.ambiguous.back() = true;
+    expectBroken(ref); // ...unless one of the names needed an ordinal: then which sibling it was is not known
 
     // makeRef on something that is not there gives a reference that resolves Broken.
     TopoRef none{};
