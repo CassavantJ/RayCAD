@@ -2,8 +2,11 @@
 //
 // Every export runs on an I/O thread like the imports (io_internal.h), writes `<path>.partial` and renames it
 // over `path` only when complete, so a failed or cancelled export never leaves a broken file under the
-// requested name. Input Shapes are immutable and are never modified: STL meshes a private copy, under the
-// process-wide mesh lock (PLAN.md section 7 rule 3).
+// requested name. Input Shapes are immutable and are never modified (PLAN.md section 7 rule 1): every writer gets a
+// private copy (BRepBuilderAPI_Copy, geometry included). STEPControl_Writer::Transfer writes into the TShapes it is
+// given (measured on OCCT 8.0.1: it sets the Modified flag of faces, so another thread reading the shape races with
+// it); IGES is copied for the same reason; STL meshes its copy under the process-wide mesh lock (rule 3). A copy
+// costs far less than the transfer and the write that follow it.
 #include "io_occt.h"
 #include "shape_impl.h"
 
@@ -101,8 +104,12 @@ Status writeStep(IoTask& task, const std::filesystem::path& path, const std::vec
         const double from = kTransferEnd * static_cast<double>(i) / shapes.size();
         const double to = kTransferEnd * static_cast<double>(i + 1) / shapes.size();
         occ::handle<TaskIndicator> indicator = new TaskIndicator(task, from, to, kStageTransfer);
+        BRepBuilderAPI_Copy copy(detail::occt(shapes[i]), /*copyGeom=*/true, /*copyMesh=*/false);
+        if (!copy.IsDone())
+            return tl::unexpected(failure(ErrorCode::KernelFailure,
+                                          "Body " + std::to_string(i + 1) + " could not be prepared for STEP.", where));
         const IFSelect_ReturnStatus status =
-            writer.Transfer(detail::occt(shapes[i]), STEPControl_AsIs, params, true, indicator->Start());
+            writer.Transfer(copy.Shape(), STEPControl_AsIs, params, true, indicator->Start());
         if (task.stopRequested())
             return tl::unexpected(cancelled(where));
         if (status != IFSelect_RetDone)
@@ -148,7 +155,11 @@ Status writeIges(IoTask& task, const std::filesystem::path& path, const std::vec
         const double from = kTransferEnd * static_cast<double>(i) / shapes.size();
         const double to = kTransferEnd * static_cast<double>(i + 1) / shapes.size();
         occ::handle<TaskIndicator> indicator = new TaskIndicator(task, from, to, kStageTransfer);
-        const bool added = writer.AddShape(detail::occt(shapes[i]), indicator->Start());
+        BRepBuilderAPI_Copy copy(detail::occt(shapes[i]), /*copyGeom=*/true, /*copyMesh=*/false);
+        if (!copy.IsDone())
+            return tl::unexpected(failure(ErrorCode::KernelFailure,
+                                          "Body " + std::to_string(i + 1) + " could not be prepared for IGES.", where));
+        const bool added = writer.AddShape(copy.Shape(), indicator->Start());
         if (task.stopRequested())
             return tl::unexpected(cancelled(where));
         if (!added)

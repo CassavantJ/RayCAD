@@ -1,0 +1,2 @@
+# Serialised kernel shapes (kernel::serialize output) are binary.
+*.rbrep binary

@@ -5,7 +5,10 @@ add_library(ray_sketch STATIC
     solver_internal.h solver_system.h solver.cpp
     solver_translate.h solver_translate.cpp
     solver_iterate.h solver_iterate.cpp
-    solver_drag.h solver_drag.cpp)
+    solver_drag.h solver_drag.cpp
+    loops.h loops.cpp loops_curves.h loops_curves.cpp
+    infer.cpp
+    dxf.h dxf_read.cpp dxf_write.cpp)
 ray_module(ray_sketch DETERMINISTIC)
 target_link_libraries(ray_sketch PRIVATE ray_core ray_kernel)
 

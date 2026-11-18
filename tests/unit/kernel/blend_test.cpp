@@ -13,7 +13,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <regex>
 #include <string>
@@ -535,6 +538,55 @@ TEST_CASE("an invalid body from OCCT is refused, never returned", "[kernel][blen
     }
 }
 
+namespace {
+
+// A body written by kernel::serialize() into tests/unit/kernel/data.
+Shape loadBody(const char* name)
+{
+    const std::filesystem::path file = std::filesystem::path(RAY_KERNEL_TEST_DATA_DIR) / name;
+    std::ifstream in(file, std::ios::binary);
+    INFO(file.string());
+    REQUIRE(in.good());
+    const std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<std::byte> bytes(raw.size());
+    std::memcpy(bytes.data(), raw.data(), raw.size());
+    return take(deserialize(bytes));
+}
+
+// Fillets `edge` of `body` twice: OCCT must not fault (the Windows guard never fires; off Windows a fault would end
+// the process), and both calls give the same answer.
+void filletWithoutFault(const Shape& body, SubId edge, double radius)
+{
+    const std::uint64_t guardBefore = testing::structuredExceptions();
+    JobContext ctx;
+    auto first = fillet(body, {&edge, 1}, radius, ctx);
+    auto second = fillet(body, {&edge, 1}, radius, ctx);
+    CHECK(testing::structuredExceptions() == guardBefore);
+    REQUIRE(first.has_value() == second.has_value());
+    if (first) {
+        checkValid(*first);
+        CHECK(first->shape.contentHash() == second->shape.contentHash());
+    } else {
+        INFO(first.error().message);
+        CHECK(first.error().code == ErrorCode::KernelFailure);
+        CHECK(first.error().message == second.error().message);
+    }
+}
+
+} // namespace
+
+TEST_CASE("a trial blend that would crash OCCT's checker is refused, not checked", "[kernel][blend][errors]")
+{
+    // The body and pick of the naming random test (part 0, sequence 6: block_blind_holes_1 after a cut and a boss)
+    // whose fillet killed the process on Linux. One of the size search's trial results has a face whose pcurve OCCT
+    // cannot sample, and BRepCheck_Analyzer then read through a null pointer in BRepTopAdaptor_FClass2d. The
+    // structural pre-check (src/kernel/shape_check.cpp) must refuse that trial before BRepCheck sees it. (On Windows
+    // OCCT computes that trial a little differently and does not fault; the test must pass there too.)
+    const Shape body = loadBody("fillet_classifier_fault.rbrep");
+    REQUIRE(body.count(SubKind::Solid) == 1);
+    filletWithoutFault(body, SubId{SubKind::Edge, 14}, 0.56046961970619469);
+}
+
 TEST_CASE("a size equal to a face width gives a valid body or a clear failure", "[kernel][blend][errors]")
 {
     const Shape block = box({0, 0, 0}, {100, 60, 20});
@@ -904,6 +956,7 @@ TEST_CASE("8-thread fillet and chamfer stress over the synthetic corpus", "[kern
     REQUIRE(jobs.size() >= 500);
 
     // Reference, single-threaded.
+    const std::uint64_t guardBefore = testing::structuredExceptions();
     std::vector<std::vector<unsigned char>> reference(jobs.size());
     int succeeded = 0;
     double longest = 0.0;
@@ -939,4 +992,10 @@ TEST_CASE("8-thread fillet and chamfer stress over the synthetic corpus", "[kern
                                                  << (jobs[i].isFillet ? " fillet " : " chamfer ") << jobs[i].size);
             }
     CHECK(mismatches == 0);
+    // No OCCT call faulted: the structural pre-check (src/kernel/shape_check.cpp) refuses the trial results that
+    // made BRepCheck read through a null pointer, so the Windows structured-exception guard never has to catch one
+    // (a caught access violation may leave OCCT state corrupt; off Windows it would have killed the process).
+    const std::uint64_t guardFired = testing::structuredExceptions() - guardBefore;
+    WARN("structured exceptions caught during the blend stress: " << guardFired);
+    CHECK(guardFired == 0);
 }

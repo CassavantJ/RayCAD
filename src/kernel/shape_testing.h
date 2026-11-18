@@ -55,6 +55,18 @@ Result<Shape> reorderFaces(const Shape& solid, std::uint64_t seed);
 // For the canonical-serialisation test only; never call it on a shape another thread can see.
 Status meshAndShare(const Shape& shape);
 
+// What OCCT keeps on the shape's TShapes beyond its canonical bytes, one line per TShape in walk order: the
+// bookkeeping flags (Free, Modified, Checked, Orientable, Closed, Infinite, Convex, Locked), tolerances, the curve
+// representations of every edge in stored order (3D curve, pcurves and the surfaces they lie on, regularity,
+// polygons) and the triangulations of every face. Not canonical (it names surfaces by address): it changes when
+// only a cache or a flag changes, which serialize() deliberately ignores. For the immutability tests, which
+// require that no kernel call changes even that. Empty for a null shape.
+std::string rawState(const Shape& shape);
+
+// How many structured exceptions (access violations and the like inside OCCT) the kernel's guard has caught in
+// this process. Always 0 off Windows: there nothing catches them and the process dies.
+std::uint64_t structuredExceptions() noexcept;
+
 // ---------- Import / export tests (task T-005) ----------
 
 // Number of parts makeTestPart() builds.
