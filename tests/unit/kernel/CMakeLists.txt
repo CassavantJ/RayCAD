@@ -3,9 +3,10 @@
 add_executable(ray_kernel_tests
     occt_smoke_test.cpp
     shape_test.cpp
-    query_test.cpp)
+    query_test.cpp
+    mesh_test.cpp)
 target_link_libraries(ray_kernel_tests PRIVATE ray_kernel Catch2::Catch2WithMain)
-# occt_smoke.h and shape_testing.h are private to src/kernel; they include no OCCT header.
+# occt_smoke.h, shape_testing.h and mesh_testing.h are private to src/kernel; they include no OCCT header.
 target_include_directories(ray_kernel_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
 target_compile_definitions(ray_kernel_tests PRIVATE RAY_EXPECTED_OCCT_VERSION="8.0.1")
 set_property(TARGET ray_kernel_tests PROPERTY FOLDER "tests")
