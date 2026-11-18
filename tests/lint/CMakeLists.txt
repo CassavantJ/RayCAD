@@ -18,3 +18,9 @@ add_test(NAME lint_licences_selftest COMMAND Python3::Interpreter "${CMAKE_SOURC
 # The licence ledger is also checked against what vcpkg really installed for this build (transitive ports).
 add_test(NAME lint_licences_installed
     COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/lint_licences.py" --installed "${VCPKG_INSTALLED_DIR}")
+
+# The committed part of the test corpus matches its manifest (no network), and the corpus and golden tools work.
+add_test(NAME corpus_check COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/corpus_check.py")
+add_test(NAME corpus_check_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/corpus_check.py" --self-test)
+add_test(NAME corpus_fetch_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/corpus_fetch.py" --self-test)
+add_test(NAME update_golden_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/update_golden.py" --self-test)

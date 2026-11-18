@@ -11,3 +11,4 @@ vcpkg_installed/
 __pycache__/
 *.pyc
 .claude/
+tests/corpus/cache/
