@@ -105,6 +105,24 @@ constexpr UiCommand kUiCommands[] = {
     {"selection.copyCoordinates", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy Coordinates"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selection"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the selected vertex's X, Y and Z in mm"), ""},
+    // T-022: the measure tool (measure_model.h runs these and the measure.* actions on the selection).
+    {"measure.tool", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows the Measure panel and measures the selection"), "M"},
+    {"measure.pin", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Pin Measurement"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Keeps the current measurement shown while other things are selected"),
+     ""},
+    {"measure.clearPinned", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Clear Pinned Measurements"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Removes every pinned measurement"), ""},
+    {"measure.copyAll", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy All Measurements"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the current and the pinned measurements as text"), ""},
+    {"measure.minInternalCornerRadius", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Minimum Internal Corner Radius"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "The smallest internal corner radius: the largest cutter that fits"),
+     ""},
 };
 // clang-format on
 
@@ -166,6 +184,11 @@ constexpr ContextEntry kContextMenu[] = {
     {"selection.copyProperties", kFace | kEdge | kBody, 4, nullptr, false},
     {"selection.copyCoordinates", kVertex, 4, nullptr, false},
     {"selection.clear", kAnySelection, 4, nullptr, false},
+    // T-022
+    {"measure.tool", kAnySelection, 6, nullptr, false},
+    {"measure.radius", kFace | kEdge, 6, nullptr, true},
+    {"measure.massProperties", kBody, 6, nullptr, false},
+    {"measure.boundingBox", kBody, 6, nullptr, false},
     {"edit.undo", kAlways, 5, nullptr, false},
     {"edit.redo", kAlways, 5, nullptr, false},
 };
@@ -508,11 +531,33 @@ std::vector<Command> CommandCatalog::mostUsed(int limit) const
 
 bool CommandCatalog::needsForm(const Command& command) const
 {
-    return command.fromRegistry && palette::needsForm(command.schema);
+    return command.fromRegistry && handlerFor(command.id) == nullptr && palette::needsForm(command.schema);
+}
+
+void CommandCatalog::setUiHandler(const QString& prefix, UiHandler handler)
+{
+    if (handler.reason && handler.run) {
+        handlers_[prefix] = std::move(handler);
+    } else {
+        handlers_.erase(prefix);
+    }
+}
+
+const CommandCatalog::UiHandler* CommandCatalog::handlerFor(const QString& id) const
+{
+    for (const auto& [prefix, handler] : handlers_) {
+        if (id.startsWith(prefix)) {
+            return &handler;
+        }
+    }
+    return nullptr;
 }
 
 QString CommandCatalog::disabledReason(const Command& command) const
 {
+    if (const UiHandler* handler = handlerFor(command.id)) {
+        return handler->reason(command.id);
+    }
     if (!command.fromRegistry) {
         return uiReason(command.id);
     }
@@ -678,6 +723,9 @@ bool CommandCatalog::trigger(const QString& id)
         emit finished(id, false, message);
         return false;
     }
+    if (handlerFor(id) != nullptr) {
+        return run(id);
+    }
     // T-019: file actions that take a path (open, import, save as, export) use the native file dialogs, and close,
     // new and open go through the unsaved-changes prompt (Files::handleAction); the generated form is for the rest.
     if (c->fromRegistry && context_->handleAction(id, QStringLiteral("{}"))) {
@@ -708,6 +756,13 @@ bool CommandCatalog::run(const QString& id, const QString& argsJson)
         return false;
     }
     recordUse(id);
+    // T-022: a UI handler's command, or its registry action without arguments (it acts on the selection).
+    if (const UiHandler* handler = handlerFor(id);
+        handler != nullptr && (!c->fromRegistry || argsJson.isEmpty() || argsJson == QLatin1String("{}"))) {
+        const bool ok = handler->run(id);
+        emit finished(id, ok, QString());
+        return ok;
+    }
     if (!c->fromRegistry) {
         const bool ok = runUi(id);
         emit finished(id, ok, QString());

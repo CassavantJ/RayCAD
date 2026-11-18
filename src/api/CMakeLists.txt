@@ -3,7 +3,11 @@ add_library(ray_api STATIC
     api_module.cpp
     include/ray_api/viewer.h
     include/ray_api/recent_files.h
+    include/ray_api/measure.h
     viewer.cpp
+    measure.cpp
+    measure_actions.h
+    measure_actions.cpp
     app.cpp
     builtin_actions.cpp
     describe.cpp

@@ -1,7 +1,7 @@
 // Properties of the current selection (task T-020): the right panel's content. Type, and for a face its surface
 // type and area, for an edge its curve type, length and radius, for a vertex its coordinates, for a body its
 // volume, area and bounding box, all in millimetres. The values are worked out off the UI thread (Selection.info).
-// T-022 builds the real measure tools.
+// T-022: the Measure button opens the measure tools (panels/Measure.qml) for the selection.
 import QtQuick
 import RayCad.Ui
 
@@ -57,6 +57,16 @@ Item {
             visible: Selection.infoBusy
             secondary: true
             text: qsTr("Measuring…")
+        }
+
+        // T-022: distances, angles, units and pinned results are on the Measure tab.
+        Button {
+            objectName: "selectionInfoMeasure"
+            flat: true
+            iconName: "ruler"
+            text: qsTr("Measure")
+            toolTipText: qsTr("Measure the selection, or between two selected elements (M)")
+            onClicked: Commands.trigger("measure.tool")
         }
     }
 
