@@ -7,8 +7,14 @@ add_library(ray_doc STATIC
     doc_module.cpp
     document.cpp
     expr.cpp
+    features/import_command.cpp
+    features/import_feature.cpp
+    features/import_props.cpp
     json.cpp
     json_number.cpp
+    rebuild.cpp
+    rebuild_objects.cpp
+    rebuild_registry.cpp
     state.cpp
 )
 ray_module(ray_doc DETERMINISTIC)

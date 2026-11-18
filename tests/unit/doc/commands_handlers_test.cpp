@@ -52,12 +52,13 @@ void rejects(DocFixture& f, const std::string& name, const std::string& args, co
 
 } // namespace
 
-TEST_CASE("the built-in registry has the seven model commands with JSON Schemas", "[doc][commands]")
+TEST_CASE("the built-in registry has the seven model commands and document.import with JSON Schemas", "[doc][commands]")
 {
     const auto registry = builtinCommandRegistry();
     REQUIRE(registry != nullptr);
-    CHECK(registry->names() == std::vector<std::string>{"body.set", "feature.add", "feature.edit", "feature.remove",
-                                                        "feature.reorder", "feature.suppress", "param.set"});
+    CHECK(registry->names() == std::vector<std::string>{"body.set", "document.import", "feature.add", "feature.edit",
+                                                        "feature.remove", "feature.reorder", "feature.suppress",
+                                                        "param.set"});
     for (const std::string& name : registry->names()) {
         const ray::doc::ICommandHandler* handler = registry->find(name);
         REQUIRE(handler != nullptr);

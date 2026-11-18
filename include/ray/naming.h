@@ -125,4 +125,17 @@ public:
     virtual TopoRef makeRef(BodyId, kernel::SubId) const = 0;
 };
 
+// One body of the current build: its element map and the shape the map was made for.
+struct ResolverBody {
+    BodyId id;
+    ElementMap map;
+    kernel::Shape shape;
+};
+// A resolver over `bodies` (the document rebuilder makes one per feature). If two bodies share an id, the first
+// one listed is used. resolve() runs the stages of PLAN.md 3.3 in order: Exact (an ambiguous name also needs a
+// matching fingerprint), then lineage and family rules (Split, Merged) and Repaired, then Broken with the reason
+// in words. Nothing throws: an internal failure during resolve() is Broken. Null only when memory runs out.
+// Thread-safe for concurrent resolve() and makeRef() calls.
+std::unique_ptr<IResolver> makeResolver(std::vector<ResolverBody> bodies);
+
 } // namespace ray::naming
