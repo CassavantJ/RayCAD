@@ -8,7 +8,6 @@
 #include <TopExp.hxx>
 #include <gp_Ax2.hxx>
 
-#include <blake3.h>
 
 #include <cmath>
 
@@ -147,13 +146,9 @@ std::optional<SubId> subIdOf(const Shape& shape, const TopoDS_Shape& sub)
 
 Hash256 blake3(std::span<const std::byte> data) noexcept
 {
-    blake3_hasher hasher;
-    blake3_hasher_init(&hasher);
-    if (!data.empty())
-        blake3_hasher_update(&hasher, data.data(), data.size());
-    Hash256 out;
-    blake3_hasher_finalize(&hasher, out.bytes.data(), out.bytes.size());
-    return out;
+    Hasher hasher;
+    hasher.bytes(data);
+    return hasher.finish();
 }
 
 } // namespace detail

@@ -161,8 +161,7 @@ inline gp_Pnt toPnt(const Vec3& v) noexcept
 }
 
 // ---------- Hashing ----------
-// BLAKE3-256 of `data`.
-// TODO(T-002 merge): use ray::Hasher from core and drop the direct BLAKE3 dependency of src/kernel.
+// BLAKE3-256 of `data` (ray::Hasher).
 Hash256 blake3(std::span<const std::byte> data) noexcept;
 
 } // namespace detail
