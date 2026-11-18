@@ -68,6 +68,8 @@ struct RebuildContext {
     const std::map<std::string, double>& paramValues;
     const naming::IResolver& resolver;
     JobContext& job;
+    RebuildContext(const DocState& s, const std::map<std::string, double>& params, const naming::IResolver& r, JobContext& j)
+        : state(s), paramValues(params), resolver(r), job(j) {}
     // Fetch a body's shape and element map as of just before this feature.
     virtual Result<kernel::Shape> shapeOf(BodyId) const = 0;
     virtual const naming::ElementMap& mapOf(BodyId) const = 0;

@@ -16,7 +16,8 @@ permissions:
 
 concurrency:
   group: build-test-${{ github.ref }}
-  cancel-in-progress: true
+  # A run on main is allowed to finish so it can fill the dependency cache.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   QT_VERSION: "6.12.0"
@@ -58,6 +59,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja pkg-config autoconf automake libtool sevenzip
 
+      # Cheap and failure-prone, so it runs before the long steps.
+      # Qt comes from download.qt.io through tools/fetch_qt.py (aqtinstall cannot find Qt 6.12 for Windows).
+      - name: Restore Qt
+        id: qt-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qt
+          key: qt-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_qt.py') }}
+
+      - name: Install Qt
+        shell: bash
+        run: |
+          python=$(command -v python3 || command -v python)
+          "$python" tools/fetch_qt.py --out "$RUNNER_TEMP/qt" --version "$QT_VERSION" --module qtshadertools
+
       # vcpkg at the exact commit that vcpkg-configuration.json pins as the baseline.
       - name: Set up vcpkg
         shell: bash
@@ -89,24 +105,26 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ matrix.preset }}-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-${{ matrix.preset }}-${{ env.VCPKG_BASELINE }}-
-            vcpkg-${{ matrix.preset }}-
+            vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_BASELINE }}-
+            vcpkg-${{ matrix.triplet }}-
 
-      # Qt comes from download.qt.io through tools/fetch_qt.py (aqtinstall cannot find Qt 6.12 for Windows).
-      - name: Restore Qt
-        id: qt-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/qt
-          key: qt-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_qt.py') }}
-
-      - name: Install Qt
+      # Dependencies are built in their own step and cached straight away, so a failure later in the
+      # job never costs a second OpenCASCADE build.
+      - name: Build dependencies (vcpkg)
         shell: bash
         run: |
-          python=$(command -v python3 || command -v python)
-          "$python" tools/fetch_qt.py --out "$RUNNER_TEMP/qt" --version "$QT_VERSION" --module qtshadertools
+          root="$VCPKG_ROOT"
+          if [ "$RUNNER_OS" = "Windows" ]; then root=$(cygpath -u "$VCPKG_ROOT"); fi
+          "$root/vcpkg" install --triplet ${{ matrix.triplet }} --x-install-root=build/vcpkg_installed
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json') }}
 
       # fetch_qt.py exports QT_ROOT_DIR, which the CMake presets read.
       - name: Configure (Windows)
@@ -119,15 +137,6 @@ jobs:
       - name: Configure (Linux, macOS)
         if: runner.os != 'Windows'
         run: cmake --preset ${{ matrix.preset }}
-
-      # Saved right after configure, also when a later step fails, so a broken build does not cost a
-      # second OpenCASCADE build.
-      - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ matrix.preset }}-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json') }}
 
       - name: Build and test (Windows)
         if: runner.os == 'Windows'

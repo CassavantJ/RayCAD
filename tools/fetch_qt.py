@@ -129,7 +129,10 @@ def main() -> int:
                 dst.write_bytes(get(url))
                 if sha1(dst) != want:
                     raise SystemExit(f"SHA-1 mismatch: {arc}")
-                extract(extractors, dst, prefix)
+                # The ICU archive is flat (libicu*.so at its root); Qt looks for it next to its own libraries.
+                target = prefix / "lib" if arc.startswith("icu-") else prefix
+                target.mkdir(parents=True, exist_ok=True)
+                extract(extractors, dst, target)
                 dst.unlink()
         missing = wanted - found
         if missing:
