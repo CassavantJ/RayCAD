@@ -5,6 +5,7 @@
 #include <QtCore/QVariant>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -16,9 +17,34 @@ namespace {
 constexpr const char* kEngineKey = "_ray_ui_scene";
 constexpr double kEps = 1e-9;
 
-render::MeshStyle modelStyle()
+// Body colours (T-016). The importer gives every body a colour and uses this grey when the file has none
+// (src/kernel/io_import.cpp); it is a value to recognise, not one drawn: such bodies get the theme's ModelFace.
+constexpr float kImporterNoColourGrey = 0.75f;
+constexpr float kColourTolerance = 1e-3f;
+
+// Body colours are the file's values, which STEP and IGES store sRGB-encoded (the importer reads them back with
+// Quantity_TOC_sRGB); the viewport takes linear RGB.
+float srgbToLinear(float encoded)
 {
-    return render::MeshStyle{render::Token::ModelFace, render::Token::ModelEdge, 1.0f, true, false};
+    const float e = std::clamp(encoded, 0.0f, 1.0f);
+    return e <= 0.04045f ? e / 12.92f : std::pow((e + 0.055f) / 1.055f, 2.4f);
+}
+
+// Faces in the body's own colour when the file gave one, else in the theme's; edges and highlights always come
+// from the theme.
+render::MeshStyle modelStyle(const api::viewer::Body* body)
+{
+    render::MeshStyle style{render::Token::ModelFace, render::Token::ModelEdge, 1.0f, true, false};
+    if (body == nullptr)
+        return style;
+    const std::array<float, 4>& c = body->color;
+    const bool finite = std::isfinite(c[0]) && std::isfinite(c[1]) && std::isfinite(c[2]);
+    const bool noColour = std::abs(c[0] - kImporterNoColourGrey) < kColourTolerance &&
+                          std::abs(c[1] - kImporterNoColourGrey) < kColourTolerance &&
+                          std::abs(c[2] - kImporterNoColourGrey) < kColourTolerance;
+    if (finite && !noColour)
+        style.faceColor = render::Color{srgbToLinear(c[0]), srgbToLinear(c[1]), srgbToLinear(c[2]), 1.0f};
+    return style;
 }
 
 struct BoxBuilder {
@@ -509,7 +535,7 @@ void SceneController::pushToViewport(int index)
     if (!slot.mesh)
         return;
     if (slot.item == 0) {
-        slot.item = viewport_->addMesh(slot.mesh, Xform::identity(), modelStyle());
+        slot.item = viewport_->addMesh(slot.mesh, Xform::identity(), modelStyle(body(index)));
         if (slot.item != 0 && !slot.visible)
             viewport_->setVisible(slot.item, false);
     } else {

@@ -120,6 +120,16 @@ public:
     void recordUse(const QString& id);
     int useCount(const QString& id) const;
 
+    // Commands that act on UI state the catalog does not own (T-022: the measure tool runs measure.* on the current
+    // selection). For ids starting with `prefix`, `reason` says why one cannot run now ("" when it can) and `run` runs
+    // it; registry actions with that prefix go to `run` instead of the argument form when they get no arguments.
+    // An empty handler removes it.
+    struct UiHandler {
+        std::function<QString(const QString& id)> reason;
+        std::function<bool(const QString& id)> run;
+    };
+    void setUiHandler(const QString& prefix, UiHandler handler);
+
 signals:
     void commandsChanged();
     void paletteRequested(const QString& text);
@@ -147,6 +157,7 @@ private:
     void sessionChanged();
     QString shortcutText(const QString& id) const;
     QVariantMap entry(const Command& command) const;
+    const UiHandler* handlerFor(const QString& id) const;
 
     QPointer<AppContext> context_;
     QPointer<SceneController> scene_;
@@ -159,6 +170,7 @@ private:
     int revision_ = 0;
     mutable bool usageLoaded_ = false;
     mutable std::map<QString, Usage> usage_;
+    std::map<QString, UiHandler> handlers_; // by id prefix
 };
 
 } // namespace ray::ui

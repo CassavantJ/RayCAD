@@ -3,7 +3,10 @@
 // edges in their own line buffer, faces pushed back with a depth bias so their edges stay visible.
 #include "scene_renderer.h"
 
+#include "backdrop_pass.h"
 #include "pick_pass.h"
+
+#include "../highlight.h"
 
 #include "../tier_internal.h"
 
@@ -193,11 +196,24 @@ SceneRenderer::SceneRenderer()
     auto pick = std::make_unique<PickPass>(counter_);
     pick_ = pick.get();
     passes_.push_back(std::move(pick));
+    auto backdrop = std::make_unique<BackdropPass>(counter_);
+    backdrop_ = backdrop.get();
+    passes_.push_back(std::move(backdrop));
 }
 
 std::uint64_t SceneRenderer::pickBufferRenders() const
 {
     return pick_ ? pick_->idRenders() : 0;
+}
+
+std::uint64_t SceneRenderer::backdropBlurs() const
+{
+    return backdrop_ ? backdrop_->blurs() : 0;
+}
+
+IViewport::Backdrop SceneRenderer::backdrop() const
+{
+    return backdrop_ ? backdrop_->backdrop() : IViewport::Backdrop{nullptr, 0, 0, false, 0};
 }
 
 SceneRenderer::~SceneRenderer()
@@ -253,8 +269,11 @@ void SceneRenderer::setSinks(std::shared_ptr<detail::Outbox> outbox, std::shared
 
 void SceneRenderer::addPass(std::unique_ptr<IFramePass> pass)
 {
-    if (pass)
-        passes_.push_back(std::move(pass));
+    if (!pass)
+        return;
+    const auto last = std::find_if(passes_.begin(), passes_.end(),
+                                   [&](const std::unique_ptr<IFramePass>& p) { return p.get() == backdrop_; });
+    passes_.insert(last, std::move(pass));
 }
 
 bool SceneRenderer::busy() const
@@ -816,7 +835,8 @@ void SceneRenderer::prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& t
     }
 
     // Colours come from the theme: Selection / Hover for lines and markers, SelectionFill's colour (selection) or
-    // Hover's colour (hover) at SelectionFill's opacity for faces.
+    // Hover's colour (hover) at SelectionFill's opacity for faces. On a body drawn in its own colour (T-016) they
+    // are strengthened so that they stay visible on any colour (highlight.h).
     const double dpr = snap_.devicePixelRatio;
     const double thin = metric(theme, kMetricThinLine, kDefaultThinLinePx);
     const double line = metric(theme, kMetricHighlightLine, thin * kHighlightLineScale);
@@ -831,9 +851,15 @@ void SceneRenderer::prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& t
         const QMatrix4x4 model = toMatrix(item.xform);
         copyMatrix(block.model, model);
         copyMatrix(block.normalMatrix, model.inverted().transposed());
-        toFloat4(g.hover ? theme.colors[std::size_t(Token::Hover)] : fill, block.faceColor);
-        block.faceColor[3] = std::clamp(fill.a, 0.0f, 1.0f);
-        toFloat4(theme.colors[std::size_t(g.hover ? Token::Hover : Token::Selection)], block.edgeColor);
+        const Color themeBody = theme.colors[std::size_t(item.style.face)];
+        const Color lineColour = theme.colors[std::size_t(g.hover ? Token::Hover : Token::Selection)];
+        const Color fillColour = g.hover ? theme.colors[std::size_t(Token::Hover)] : fill;
+        const detail::HighlightPaint paint =
+            detail::highlightPaint(lineColour, fillColour, fill.a, item.style.faceColor.value_or(themeBody), themeBody,
+                                   item.kind == detail::ItemKind::Mesh && item.style.faceColor.has_value());
+        toFloat4(paint.fill, block.faceColor);
+        block.faceColor[3] = paint.fillAlpha;
+        toFloat4(paint.line, block.edgeColor);
         block.edgeColor[3] = 1.0f;
         block.line[0] = float(line * dpr);
         block.line[2] = 1.0f; // anti-aliased
@@ -1025,7 +1051,12 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
             const QMatrix4x4 model = toMatrix(d.item->xform);
             copyMatrix(block.model, model);
             copyMatrix(block.normalMatrix, model.inverted().transposed());
-            toFloat4(theme->colors[static_cast<std::size_t>(d.item->style.face)], block.faceColor);
+            // A face colour from data (T-016: imported body colours) replaces the face token.
+            const MeshStyle& style = d.item->style;
+            toFloat4(style.faceColor && d.item->kind == detail::ItemKind::Mesh
+                         ? *style.faceColor
+                         : theme->colors[static_cast<std::size_t>(style.face)],
+                     block.faceColor);
             toFloat4(theme->colors[static_cast<std::size_t>(d.item->style.edge)], block.edgeColor);
             block.faceColor[3] = snap_.preset.transparency ? std::clamp(d.item->style.opacity, 0.0f, 1.0f) : 1.0f;
             block.edgeColor[3] = 1.0f;
@@ -1174,6 +1205,8 @@ void SceneRenderer::frameDone(QRhiCommandBuffer* cb, double wallMs)
             stats_.gpuMs = gpu * 1000.0;
     }
     std::erase_if(captures_, [](const std::unique_ptr<Capture>& c) { return c->finished.load(); });
+    if (backdrop_)
+        backdrop_->frameDone(); // textures it replaced before this frame are no longer referenced
     publishStats(wallMs > 0 && lastDrew_ ? wallMs : stats_.cpuMs);
 }
 
@@ -1200,7 +1233,11 @@ void SceneRenderer::publishStats(double cpuMs)
     }
     info.framesRendered = frames_;
     info.pickBufferRenders = pickBufferRenders();
+    info.backdropBlurs = backdropBlurs();
     info.liveRhiResources = counter_.live.load();
+    // The UI thread learns size, orientation and generation; the handle itself stays on this thread (render.h).
+    status_->backdrop = backdrop();
+    status_->backdrop.rhiTexture = nullptr;
 }
 
 } // namespace ray::render::rhi

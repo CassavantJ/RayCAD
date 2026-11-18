@@ -157,6 +157,8 @@ std::vector<KeyDef> makeKeys()
         Value::boolean(true));
     add("panels.properties.width", "Properties panel width",
         "Width of the properties panel; unset uses the theme's width", integerRange(100, 4000), Value());
+    add("panels.properties.tab", "Right panel tab", "The tab the right panel shows: properties or measure",
+        stringEnum({"properties", "measure"}), Value::string("properties"));
     return k;
 }
 

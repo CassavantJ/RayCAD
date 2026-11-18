@@ -11,7 +11,8 @@
 //   commandHost       T-021: CommandHost.qml, the palette and the shortcut settings (Loaders); ContextMenu.qml over
 //                     viewportArea and the model tree opens the right-click menus.
 //   leftPanel         "Model": ModelTree.qml in leftPanelContent.
-//   rightPanel        "Properties": SelectionInfo.qml in rightPanelContent (T-022 adds the measure tools).
+//   rightPanel        "Properties": SelectionInfo.qml in rightPanelContent; T-022: a second tab, the Measure panel
+//                     (panels/Measure.qml), and the measurement labels over the view (panels/MeasureOverlay.qml).
 //   statusBar         status text (AppContext.statusText) and jobSlot (the foreground job of Session.jobs, T-019).
 //   fileDialogs       the native file dialogs, the unsaved-changes prompt and crash recovery (dialogs/, T-019).
 //   workspace.<n>     one Loader per workspace, created the first time that workspace is shown.
@@ -28,10 +29,17 @@ FocusScope {
     property bool leftPanelOpen: AppSettings.panelOpen("model")
     property bool rightPanelOpen: AppSettings.panelOpen("properties")
     property bool jobsPanelOpen: false
+    // T-022: the right panel's tab: 0 properties, 1 measure (T-024: restored and saved like the panels).
+    property int rightTab: AppSettings.value("panels.properties.tab") === "measure" ? 1 : 0
     property real leftPanelWidth: AppSettings.panelWidth("model", Theme.sidePanelWidth)
     property real rightPanelWidth: AppSettings.panelWidth("properties", Theme.sidePanelWidth)
     onLeftPanelOpenChanged: AppSettings.setPanelOpen("model", leftPanelOpen)
     onRightPanelOpenChanged: AppSettings.setPanelOpen("properties", rightPanelOpen)
+    onRightTabChanged: {
+        const tab = rightTab === 1 ? "measure" : "properties"
+        if (AppSettings.value("panels.properties.tab") !== tab)
+            AppSettings.set("panels.properties.tab", tab)
+    }
     readonly property real gap: Theme.panelGap
 
     readonly property alias viewportHost: viewportHost
@@ -96,6 +104,26 @@ FocusScope {
             // viewportHost fills the shell, so viewportArea's geometry is already in this item's coordinates.
             frameRect: Qt.rect(viewportArea.x, viewportArea.y, viewportArea.width, viewportArea.height)
         }
+        // T-022: measurement labels over the model (same geometry as the view item).
+        MeasureOverlay {
+            anchors.fill: parent
+            view: viewport.view
+            visible: Scene.bodyCount > 0
+        }
+    }
+
+    // T-022: the M key and the measure commands show the Measure tab; it draws its witness while shown.
+    Connections {
+        target: MeasureTool
+        function onShowRequested() {
+            shell.rightPanelOpen = true
+            shell.rightTab = 1
+        }
+    }
+    Binding {
+        target: MeasureTool
+        property: "active"
+        value: shell.rightPanelOpen && shell.rightTab === 1
     }
 
     Item {
@@ -592,8 +620,8 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            title: qsTr("Properties")
-            iconName: "sliders"
+            title: shell.rightTab === 1 ? qsTr("Measure") : qsTr("Properties")
+            iconName: shell.rightTab === 1 ? "ruler" : "sliders"
 
             ToolButton {
                 objectName: "rightPanelClose"
@@ -611,8 +639,39 @@ FocusScope {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
 
+            // T-022: Properties | Measure.
+            TabBar {
+                id: rightTabs
+                objectName: "rightPanelTabs"
+                anchors.top: parent.top
+                anchors.topMargin: Theme.spacingS
+                anchors.horizontalCenter: parent.horizontalCenter
+                currentIndex: shell.rightTab
+                onCurrentIndexChanged: shell.rightTab = currentIndex
+                Accessible.name: qsTr("Properties or measure")
+
+                TabButton {
+                    objectName: "rightTab.properties"
+                    text: qsTr("Properties")
+                }
+                TabButton {
+                    objectName: "rightTab.measure"
+                    text: qsTr("Measure")
+                }
+            }
             SelectionInfo {
-                anchors.fill: parent
+                anchors.top: rightTabs.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: shell.rightTab === 0
+            }
+            Measure {
+                anchors.top: rightTabs.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                visible: shell.rightTab === 1
             }
         }
     }

@@ -9,7 +9,10 @@
 //   decimals   from the user settings: units.decimalsInch or units.decimalsMetric, by system.
 //
 // QML: `text: Units.revision >= 0 ? Units.formatLength(mm) : ""` re-evaluates when the format changes.
-// C++ (the measure tools, T-022): connect to changed() and read format().
+// C++: connect to changed() and read format(). The measure tools (MeasureTool, T-022) do exactly that and keep no
+// unit state of their own: the Measure panel, its labels over the view, the selection read-out (SelectionInfo.qml)
+// and the status bar's toggle all show this one format; the Measure panel's in/mm buttons and
+// MeasureTool.setUnits() switch it here.
 #pragma once
 
 #include <ray/api.h> // UnitSystem, UnitFormat (core.h through the api: src/ui may name only api and render)

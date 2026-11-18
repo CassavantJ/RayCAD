@@ -12,6 +12,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QTimer>
 
+#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -135,8 +136,42 @@ public:
         front_->captureImage(w, h, std::move(cb));
     }
     FrameStats lastFrameStats() const override { return front_->lastFrameStats(); }
-    Backdrop blurredBackdropTexture() override { return front_->blurredBackdropTexture(); }
+    // This viewport's UI thread is its render thread, so the handle itself is handed out (render.h).
+    Backdrop blurredBackdropTexture() override { return renderer_->backdrop(); }
     void setBackdropEnabled(bool on) override { front_->setBackdropEnabled(on); }
+
+    Result<Image> readBackdrop() override
+    {
+        const Backdrop b = renderer_->backdrop();
+        auto* texture = static_cast<QRhiTexture*>(b.rhiTexture);
+        if (!texture)
+            return tl::unexpected(Error{ErrorCode::NotFound, "The glass backdrop is disabled or not drawn yet", {}});
+        QRhi* rhi = device_.rhi.get();
+        QRhiCommandBuffer* cb = nullptr;
+        if (rhi->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess || !cb)
+            return tl::unexpected(Error{ErrorCode::Internal, "Could not begin an offscreen frame", {}});
+        QRhiReadbackResult result;
+        QRhiResourceUpdateBatch* u = rhi->nextResourceUpdateBatch();
+        u->readBackTexture(QRhiReadbackDescription(texture), &result);
+        cb->resourceUpdate(u);
+        if (rhi->endOffscreenFrame() != QRhi::FrameOpSuccess)
+            return tl::unexpected(Error{ErrorCode::Internal, "Could not submit an offscreen frame", {}});
+        // endOffscreenFrame waited for the GPU: the data is here.
+        Image image;
+        image.width = result.pixelSize.width();
+        image.height = result.pixelSize.height();
+        const std::size_t row = std::size_t(image.width) * 4;
+        if (image.width != b.width || image.height != b.height ||
+            std::size_t(result.data.size()) < row * std::size_t(image.height))
+            return tl::unexpected(Error{ErrorCode::Internal, "The glass backdrop read-back is incomplete", {}});
+        image.rgba.resize(row * std::size_t(image.height));
+        const auto* src = reinterpret_cast<const std::uint8_t*>(result.data.constData());
+        for (int y = 0; y < image.height; ++y) {
+            const int from = b.yUp ? image.height - 1 - y : y;
+            std::memcpy(&image.rgba[std::size_t(y) * row], src + std::size_t(from) * row, row);
+        }
+        return image;
+    }
 
 private:
     // One queued frame at most; it runs from the event loop.

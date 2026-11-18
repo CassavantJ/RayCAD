@@ -5,6 +5,8 @@
 //   - a corrupt settings file falls back to the defaults with a message; the session works; the bad file is kept
 //   - new documents default to inch; changing the default changes the next new document only
 //   - the selection read-out switches units live (the quick toggle) and follows the decimals setting
+//   - the measure panel (T-022), its labels over the view and the selection read-out show one unit format and switch
+//     together from the status bar, the Settings panel, the measure panel's buttons and MeasureTool.setUnits
 //   - changing the tier and a per-option override applies to the viewport without a restart (sample count, smooth
 //     edges, mesh tolerance)
 //   - the settings panel opens from Ctrl+, the view options menu and the palette; it shows the detected hardware and
@@ -17,6 +19,7 @@
 #include "app_host.h"
 #include "app_options.h"
 #include "files.h"
+#include "measure_model.h"
 #include "palette_commands.h"
 #include "scene_controller.h"
 #include "selection_model.h"
@@ -29,6 +32,7 @@
 
 #include <ray/api.h>
 #include <ray_api/settings.h>
+#include <ray_api/viewer.h>
 
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
@@ -40,6 +44,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 #include <QtGui/QScreen>
+#include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtQuick/QSGRendererInterface>
@@ -49,6 +54,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -61,6 +67,8 @@ using ray::ui::AppHost;
 namespace {
 
 const QString kBoxHole = QStringLiteral(RAY_KERNEL_TEST_DATA_DIR "/box_hole.step");
+// plate_thru_holes_1 (tools/corpus_gen): a 120 x 80 x 10 mm plate, 6.6 mm holes at x = 30, 60, 90, y = 80/3, 160/3.
+const QString kPlate = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/plate_thru_holes_1.stp");
 constexpr int kOpenTimeoutMs = 180000;
 
 bool rhiSceneGraph()
@@ -116,18 +124,19 @@ struct Window {
         }
         return nullptr;
     }
-    std::vector<QQuickItem*> findAll(const QString& objectName) const
+    // `hiddenToo`: also items in a part of the window that is not shown (the right panel's other tab).
+    std::vector<QQuickItem*> findAll(const QString& objectName, bool hiddenToo = false) const
     {
         std::vector<QQuickItem*> out;
-        collect(window()->contentItem(), objectName, out);
+        collect(window()->contentItem(), objectName, hiddenToo, out);
         return out;
     }
-    static void collect(QQuickItem* item, const QString& objectName, std::vector<QQuickItem*>& out)
+    static void collect(QQuickItem* item, const QString& objectName, bool hiddenToo, std::vector<QQuickItem*>& out)
     {
-        if (item->objectName() == objectName && item->isVisible())
+        if (item->objectName() == objectName && (hiddenToo || item->isVisible()))
             out.push_back(item);
         for (QQuickItem* child : item->childItems())
-            collect(child, objectName, out);
+            collect(child, objectName, hiddenToo, out);
     }
     QObject* findObject(const QString& objectName) const { return findObjectIn(window()->contentItem(), objectName); }
     static QObject* findObjectIn(QQuickItem* item, const QString& objectName)
@@ -210,6 +219,52 @@ struct Window {
         REQUIRE(QTest::qWaitFor([&] { return !panelOpen(); }, 3000));
     }
 
+    // ---- measuring (T-022) ----
+    ui::MeasureModel* measure() const
+    {
+        auto* m = host->engine()->singletonInstance<ui::MeasureModel*>(QStringLiteral("RayCad.Ui"),
+                                                                       QStringLiteral("MeasureTool"));
+        REQUIRE(m != nullptr);
+        return m;
+    }
+    int rightTab() const { return find(QStringLiteral("shell"))->property("rightTab").toInt(); }
+    QString panelValue(const QString& key) const
+    {
+        QQuickItem* row = find(QStringLiteral("measureValue.") + key);
+        QQuickItem* text = row ? findItem(row, QStringLiteral("measureValueText")) : nullptr;
+        return text != nullptr ? text->property("text").toString() : QString();
+    }
+    QStringList labelTexts() const
+    {
+        QStringList out;
+        for (const QVariant& l : measure()->labels())
+            out << l.toMap().value(QStringLiteral("text")).toString();
+        return out;
+    }
+    // The cylindrical face of body 0 whose axis passes through (x, y).
+    std::uint32_t holeAt(double x, double y) const
+    {
+        const api::viewer::Body* body = host->scene()->body(0);
+        REQUIRE(body != nullptr);
+        JobContext ctx;
+        for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face); ++i) {
+            auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Face, i}, ctx);
+            REQUIRE(info);
+            if (info->surface && info->surface->type == kernel::SurfaceType::Cylinder &&
+                std::hypot(info->surface->centroid.x - x, info->surface->centroid.y - y) < 1e-6)
+                return i;
+        }
+        FAIL("no hole at " << x << ", " << y);
+        return 0;
+    }
+    void selectFaces(std::uint32_t a, std::uint32_t b) const
+    {
+        const render::ItemId item = host->scene()->itemForBody(0);
+        host->selection()->applyClick(render::PickHit{item, kernel::SubKind::Face, a, Vec3{}, 0}, Qt::NoModifier);
+        host->selection()->applyClick(render::PickHit{item, kernel::SubKind::Face, b, Vec3{}, 0}, Qt::ControlModifier);
+        REQUIRE(host->selection()->count() == 2);
+    }
+
     void shot(const QString& name) const
     {
         const QString dir = qEnvironmentVariable("RAY_T024_SHOTS");
@@ -233,10 +288,10 @@ bool near(const QRect& a, const QRect& b, int tolerance = 2)
            std::abs(a.width() - b.width()) <= tolerance && std::abs(a.height() - b.height()) <= tolerance;
 }
 
-QStringList readOutValues(const Window& w)
+QStringList readOutValues(const Window& w, bool hiddenToo = false)
 {
     QStringList out;
-    for (QQuickItem* item : w.findAll(QStringLiteral("selectionInfoValue")))
+    for (QQuickItem* item : w.findAll(QStringLiteral("selectionInfoValue"), hiddenToo))
         out << item->property("text").toString();
     return out;
 }
@@ -490,10 +545,24 @@ TEST_CASE("changing the tier and a per-option override applies to the viewport w
     REQUIRE(w.settings()->set(QStringLiteral("graphics.meshChordTolMm"), 0.03));
     CHECK(w.host->scene()->preset().meshChordTolMm == 0.03);
     REQUIRE(QTest::qWaitFor([&] { return w.settled(); }, kOpenTimeoutMs)); // refined again at the new tolerance
-    // Glass follows the tier until it is set.
+    // Glass follows the tier until it is set, and with it the real blurred backdrop (T-016) is on or off.
     CHECK(w.context()->glass());
+    REQUIRE(QTest::qWaitFor([&] { return w.host->viewport()->backdropUsers() > 0; }, 3000));
     REQUIRE(w.settings()->set(QStringLiteral("graphics.tier"), QStringLiteral("medium")));
     CHECK_FALSE(w.context()->glass());
+    REQUIRE(QTest::qWaitFor([&] { return w.host->viewport()->backdropUsers() == 0; }, 3000));
+    REQUIRE(w.settings()->set(QStringLiteral("appearance.glass"), true)); // explicit: over the tier's default
+    CHECK(w.context()->glass());
+    REQUIRE(QTest::qWaitFor([&] { return w.host->viewport()->backdropUsers() > 0; }, 3000));
+    REQUIRE(w.settings()->reset(QStringLiteral("appearance.glass")));
+    CHECK_FALSE(w.context()->glass());
+    // Section caps (used by the section view, T-023): an override reaches the preset and its reset the tier value.
+    CHECK(w.host->scene()->preset().sectionCaps); // Medium has them
+    REQUIRE(w.settings()->set(QStringLiteral("graphics.sectionCaps"), false));
+    CHECK_FALSE(w.host->scene()->preset().sectionCaps);
+    CHECK_FALSE(w.settings()->effectivePreset().value(QStringLiteral("graphics.sectionCaps")).toBool());
+    REQUIRE(w.settings()->reset(QStringLiteral("graphics.sectionCaps")));
+    CHECK(w.host->scene()->preset().sectionCaps);
     w.checkNoWarnings();
 }
 
@@ -640,6 +709,94 @@ TEST_CASE("explainTier agrees with chooseTier", "[ui][settings]")
                                                                  : QStringLiteral("High");
         CHECK(why.reason.startsWith(start));
     }
+}
+
+TEST_CASE("the measure panel, its labels over the view and the selection read-out switch units together",
+          "[ui][settings][measure]")
+{
+    REQUIRE_RHI();
+    QTemporaryDir user;
+    Window w(user.path());
+    w.open(kPlate);
+    ui::MeasureModel* m = w.measure();
+    REQUIRE(w.host->commands()->trigger(QStringLiteral("measure.tool")));
+    REQUIRE(QTest::qWaitFor([&] { return w.rightTab() == 1 && m->active(); }, 3000));
+    // Two holes 30 mm apart (radius 3.3 mm): the read-out shows the last one's radius.
+    w.selectFaces(w.holeAt(30, 80.0 / 3.0), w.holeAt(60, 80.0 / 3.0));
+    REQUIRE(QTest::qWaitFor([&] { return !m->busy() && !w.host->selection()->pending() && m->hasResult(); }, 20000));
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->selection()->infoBusy() && !w.host->selection()->info().isEmpty(); },
+                            20000));
+    QQuickItem* toggle = w.find(QStringLiteral("unitsToggle"));
+    REQUIRE(toggle != nullptr);
+
+    // Everything that shows a length: the panel, the label over the view, the selection read-out, the status bar.
+    const auto showing = [&](const QString& distance, const QString& radius, const QString& label) {
+        return QTest::qWaitFor(
+            [&] {
+                w.grab();
+                const QStringList readOut = readOutValues(w, true);
+                return w.panelValue(QStringLiteral("centerDistance")) == distance &&
+                       w.labelTexts().contains(distance) && readOut.contains(radius) &&
+                       std::none_of(readOut.begin(), readOut.end(),
+                                    [&](const QString& v) {
+                                        return v.endsWith(label == QStringLiteral("in") ? QStringLiteral(" mm")
+                                                                                        : QStringLiteral(" in"));
+                                    }) &&
+                       toggle->property("text").toString() == label &&
+                       w.units()->format().system ==
+                           (label == QStringLiteral("in") ? UnitSystem::Inch : UnitSystem::Metric);
+            },
+            3000);
+    };
+    const auto describe = [&] {
+        UNSCOPED_INFO("panel " << w.panelValue(QStringLiteral("centerDistance")).toStdString() << " | labels "
+                               << w.labelTexts().join(QStringLiteral(", ")).toStdString() << " | read-out "
+                               << readOutValues(w, true).join(QStringLiteral(", ")).toStdString() << " | status "
+                               << toggle->property("text").toString().toStdString());
+    };
+    // A new document: inch, 4 decimals.
+    describe();
+    REQUIRE(showing(QStringLiteral("1.1811 in"), QStringLiteral("0.1299 in"), QStringLiteral("in")));
+
+    // 1. The status bar's toggle.
+    REQUIRE(QMetaObject::invokeMethod(toggle, "clicked"));
+    describe();
+    REQUIRE(showing(QStringLiteral("30.000 mm"), QStringLiteral("3.300 mm"), QStringLiteral("mm")));
+    CHECK_FALSE(m->busy()); // re-formatted, not measured again
+    REQUIRE(QMetaObject::invokeMethod(toggle, "clicked"));
+    REQUIRE(showing(QStringLiteral("1.1811 in"), QStringLiteral("0.1299 in"), QStringLiteral("in")));
+
+    // 2. The Settings panel: the display units of this document, and the decimals.
+    w.openPanel("general");
+    QQuickItem* mmButton = w.find(QStringLiteral("displayUnits.metric"));
+    REQUIRE(mmButton != nullptr);
+    REQUIRE(QMetaObject::invokeMethod(mmButton, "clicked"));
+    describe();
+    REQUIRE(showing(QStringLiteral("30.000 mm"), QStringLiteral("3.300 mm"), QStringLiteral("mm")));
+    REQUIRE(w.settings()->set(QStringLiteral("units.decimalsMetric"), 1));
+    REQUIRE(showing(QStringLiteral("30.0 mm"), QStringLiteral("3.3 mm"), QStringLiteral("mm")));
+    QQuickItem* inchButton = w.find(QStringLiteral("displayUnits.inch"));
+    REQUIRE(QMetaObject::invokeMethod(inchButton, "clicked"));
+    REQUIRE(w.settings()->set(QStringLiteral("units.decimalsInch"), 2));
+    describe();
+    REQUIRE(showing(QStringLiteral("1.18 in"), QStringLiteral("0.13 in"), QStringLiteral("in")));
+    w.closePanel();
+
+    // 3. The Measure panel's own in/mm buttons drive the same switch.
+    QQuickItem* measureMm = w.find(QStringLiteral("measureUnits.mm"));
+    REQUIRE(measureMm != nullptr);
+    REQUIRE(QMetaObject::invokeMethod(measureMm, "clicked"));
+    REQUIRE(showing(QStringLiteral("30.0 mm"), QStringLiteral("3.3 mm"), QStringLiteral("mm")));
+    CHECK(w.find(QStringLiteral("measureUnits"))->property("currentIndex").toInt() == 1);
+    // ...and MeasureTool's setter (scripts, tests) as well.
+    m->setUnits(QStringLiteral("inch"));
+    REQUIRE(showing(QStringLiteral("1.18 in"), QStringLiteral("0.13 in"), QStringLiteral("in")));
+    CHECK(w.find(QStringLiteral("measureUnits"))->property("currentIndex").toInt() == 0);
+    // The document itself never changed: switching is display only.
+    CHECK(w.app()->active()->document->state()->settings.units == UnitSystem::Inch);
+    // The right panel's tab is saved with the panels.
+    CHECK(w.settings()->value(QStringLiteral("panels.properties.tab")).toString() == QStringLiteral("measure"));
+    w.checkNoWarnings();
 }
 
 TEST_CASE("screenshots of every settings section in both themes", "[.screenshots][screenshots]")

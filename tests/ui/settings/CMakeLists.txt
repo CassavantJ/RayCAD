@@ -1,4 +1,5 @@
-# Settings, units and tier override (task T-024): Catch2 driving real Qt Quick windows with the real application
+# Settings, units and tier override (task T-024), and the one source of display units the measure tools (T-022)
+# share with the selection read-out: Catch2 driving real Qt Quick windows with the real application
 # session. Every window loads its settings from a temporary user data folder (and RAYCAD_USER_DATA_DIR points at a
 # temporary folder too), so the real user profile is never read or written. Tests that need the viewport to draw skip
 # where the scene graph has no QRhi.
@@ -13,6 +14,7 @@ target_link_libraries(ray_ui_settings_tests PRIVATE ray_ui ray_render ray_api Qt
 target_include_directories(ray_ui_settings_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 target_compile_definitions(ray_ui_settings_tests PRIVATE
     RAY_KERNEL_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data"
+    RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
     RAY_RAYCAD_EXE="$<TARGET_FILE:raycad>")
 add_dependencies(ray_ui_settings_tests raycad)
 set_property(TARGET ray_ui_settings_tests PROPERTY FOLDER "tests")

@@ -1,5 +1,6 @@
 #include "viewport_item.h"
 
+#include "app_context.h"
 #include "scene_controller.h"
 #include "selection_model.h"
 #include "theme_object.h"
@@ -15,7 +16,11 @@
 #include <QtGui/QStyleHints>
 #include <QtGui/QWheelEvent>
 #include <QtQuick/QQuickWindow>
+#include <QtQuick/QSGGeometryNode>
+#include <QtQuick/QSGNode>
 #include <QtQuick/QSGRendererInterface>
+#include <QtQuick/QSGTexture>
+#include <QtQuick/QSGTextureMaterial>
 
 #include <algorithm>
 #include <cmath>
@@ -56,7 +61,11 @@ Box3 unitBox()
 // ---------- render thread ----------
 class ViewportRenderer final : public QQuickRhiItemRenderer {
 public:
-    ~ViewportRenderer() override { renderer_.releaseResources(); }
+    ~ViewportRenderer() override
+    {
+        publish(nullptr); // before anything is freed: glass panels stop sampling (T-016)
+        renderer_.releaseResources();
+    }
 
 protected:
     void initialize(QRhiCommandBuffer*) override { renderer_.initialize(rhi(), colorTexture()); }
@@ -65,15 +74,181 @@ protected:
         auto* view = static_cast<ViewportItem*>(item);
         if (view->front_)
             renderer_.synchronize(*view->front_);
+        if (view->backdropLink_ != link_) {
+            publish(nullptr);
+            link_ = view->backdropLink_;
+        }
     }
     void render(QRhiCommandBuffer* cb) override
     {
-        if (renderer_.render(cb))
+        const bool more = renderer_.render(cb);
+        // The blur of this frame, for the glass panels' nodes, which the scene graph prepares next (T-016).
+        const render::IViewport::Backdrop b = renderer_.backdrop();
+        publish(&b);
+        if (more)
             update(); // a read-back waits for the GPU: one more frame soon
     }
 
 private:
+    void publish(const render::IViewport::Backdrop* b)
+    {
+        if (!link_)
+            return;
+        std::lock_guard lock(link_->mutex);
+        link_->texture = b ? static_cast<QRhiTexture*>(b->rhiTexture) : nullptr;
+        link_->size = link_->texture ? QSize(b->width, b->height) : QSize();
+        link_->yUp = b && b->yUp;
+        link_->generation = b ? b->generation : 0;
+    }
+
     render::HostedViewportRenderer renderer_;
+    std::shared_ptr<BackdropLink> link_;
+};
+
+// A QRhiTexture shown in the scene graph WITHOUT owning it (T-016): the viewport's renderer owns the backdrop.
+// QQuickWindow::createTextureFromRhiTexture would take ownership (render.h).
+class BorrowedTexture final : public QSGTexture {
+public:
+    void set(QRhiTexture* texture, QSize size)
+    {
+        texture_ = texture;
+        size_ = size;
+    }
+    qint64 comparisonKey() const override { return qint64(reinterpret_cast<quintptr>(texture_)); }
+    QRhiTexture* rhiTexture() const override { return texture_; }
+    QSize textureSize() const override { return size_; }
+    bool hasAlphaChannel() const override { return false; }
+    bool hasMipmaps() const override { return false; }
+
+private:
+    QRhiTexture* texture_ = nullptr;
+    QSize size_;
+};
+
+// GlassBackdrop's node: preprocess() fetches the current backdrop from the link right before the scene graph
+// draws; without one, its subtree is blocked (opacity 0), so nothing samples a missing texture.
+class GlassBackdropNode final : public QSGNode {
+public:
+    GlassBackdropNode()
+    {
+        setFlag(UsePreprocess);
+        texture_.setFiltering(QSGTexture::Linear);
+        texture_.setHorizontalWrapMode(QSGTexture::ClampToEdge);
+        texture_.setVerticalWrapMode(QSGTexture::ClampToEdge);
+        material_.setTexture(&texture_);
+        material_.setFiltering(QSGTexture::Linear);
+        material_.setHorizontalWrapMode(QSGTexture::ClampToEdge);
+        material_.setVerticalWrapMode(QSGTexture::ClampToEdge);
+        geometry_.setDrawingMode(QSGGeometry::DrawTriangles);
+        shape_.setGeometry(&geometry_);
+        shape_.setMaterial(&material_);
+        shape_.setOpaqueMaterial(&opaqueMaterial_);
+        opaqueMaterial_.setTexture(&texture_);
+        opaqueMaterial_.setFiltering(QSGTexture::Linear);
+        opaqueMaterial_.setHorizontalWrapMode(QSGTexture::ClampToEdge);
+        opaqueMaterial_.setVerticalWrapMode(QSGTexture::ClampToEdge);
+        opacity_.setOpacity(0);
+        opacity_.appendChildNode(&shape_);
+        appendChildNode(&opacity_);
+        // The children are members: they must not be deleted by the parent.
+        opacity_.setFlag(OwnedByParent, false);
+        shape_.setFlag(OwnedByParent, false);
+    }
+    ~GlassBackdropNode() override
+    {
+        opacity_.removeChildNode(&shape_);
+        removeChildNode(&opacity_);
+    }
+
+    // Sync phase (UI thread blocked): what to draw.
+    void setShape(QSizeF size, qreal radius, QRectF uv, std::shared_ptr<BackdropLink> link)
+    {
+        if (size != size_ || radius != radius_ || uv != uv_) {
+            size_ = size;
+            radius_ = radius;
+            uv_ = uv;
+            shapeDirty_ = true;
+        }
+        link_ = std::move(link);
+    }
+
+    void preprocess() override
+    {
+        QRhiTexture* texture = nullptr;
+        QSize size;
+        bool yUp = false;
+        if (link_) {
+            std::lock_guard lock(link_->mutex);
+            texture = link_->texture;
+            size = link_->size;
+            yUp = link_->yUp;
+        }
+        if (texture != texture_.rhiTexture() || size != texture_.textureSize()) {
+            texture_.set(texture, size);
+            shape_.markDirty(DirtyMaterial);
+        }
+        if (yUp != yUp_ || shapeDirty_) {
+            yUp_ = yUp;
+            build();
+        }
+        const qreal opacity = texture != nullptr && size_.width() > 0 && size_.height() > 0 ? 1.0 : 0.0;
+        if (opacity != opacity_.opacity())
+            opacity_.setOpacity(opacity); // 0 blocks the subtree
+    }
+
+private:
+    // A rounded rectangle as a triangle fan around its centre, inset half a pixel so its hard edge stays under the
+    // panel's anti-aliased outline; texture coordinates follow the panel's place in the viewport.
+    void build()
+    {
+        shapeDirty_ = false;
+        constexpr int kArc = 8; // segments per corner
+        constexpr qreal kInset = 0.5;
+        const qreal w = std::max<qreal>(0, size_.width() - 2 * kInset);
+        const qreal h = std::max<qreal>(0, size_.height() - 2 * kInset);
+        const qreal r = std::clamp<qreal>(radius_ - kInset, 0, std::min(w, h) / 2);
+        const int ring = 4 * (kArc + 1);
+        geometry_.allocate(ring + 1, ring * 3);
+        auto* v = geometry_.vertexDataAsTexturedPoint2D();
+        const auto put = [&](int i, qreal x, qreal y) {
+            const qreal px = kInset + x, py = kInset + y;
+            const qreal u = uv_.left() + px / std::max<qreal>(size_.width(), 1) * uv_.width();
+            qreal t = uv_.top() + py / std::max<qreal>(size_.height(), 1) * uv_.height();
+            if (yUp_)
+                t = 1 - t;
+            v[i].set(float(px), float(py), float(u), float(t));
+        };
+        put(0, w / 2, h / 2);
+        const qreal centres[4][2] = {{w - r, r}, {w - r, h - r}, {r, h - r}, {r, r}};
+        constexpr qreal kPi = 3.14159265358979323846;
+        int i = 1;
+        for (int c = 0; c < 4; ++c) {
+            for (int k = 0; k <= kArc; ++k, ++i) {
+                const qreal a = (c - 1) * kPi / 2 + k * (kPi / 2) / kArc; // clockwise from the top right
+                put(i, centres[c][0] + r * std::cos(a), centres[c][1] + r * std::sin(a));
+            }
+        }
+        quint16* idx = geometry_.indexDataAsUShort();
+        for (int k = 0; k < ring; ++k) {
+            idx[k * 3] = 0;
+            idx[k * 3 + 1] = quint16(1 + k);
+            idx[k * 3 + 2] = quint16(1 + (k + 1) % ring);
+        }
+        shape_.markDirty(DirtyGeometry);
+    }
+
+    std::shared_ptr<BackdropLink> link_;
+    BorrowedTexture texture_;
+    QSGTextureMaterial material_;
+    QSGOpaqueTextureMaterial opaqueMaterial_;
+    QSGGeometry geometry_{QSGGeometry::defaultAttributes_TexturedPoint2D(), 0, 0, QSGGeometry::UnsignedShortType};
+    QSGGeometryNode shape_;
+    QSGOpacityNode opacity_;
+    QSizeF size_;
+    qreal radius_ = 0;
+    QRectF uv_;
+    bool yUp_ = false;
+    bool shapeDirty_ = true;
 };
 
 // ---------- UI thread ----------
@@ -86,6 +261,8 @@ ViewportItem::ViewportItem(QQuickItem* parent) : QQuickRhiItem(parent)
     setAcceptHoverEvents(true);
     setFlag(ItemAcceptsInputMethod, false);
     rhiAvailable_ = QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi());
+    // Told when an ancestor moves or resizes it, so glass panels can map onto it again (T-016).
+    setFlag(ItemObservesViewport);
     front_ = render::makeHostedViewport([this] { update(); });
     animTimer_.setInterval(kTickMs);
     animTimer_.setTimerType(Qt::PreciseTimer);
@@ -94,6 +271,8 @@ ViewportItem::ViewportItem(QQuickItem* parent) : QQuickRhiItem(parent)
 
 ViewportItem::~ViewportItem()
 {
+    if (backdropContext_ && backdropContext_->backdropSource() == this)
+        backdropContext_->setBackdropSource(nullptr);
     if (scene_)
         scene_->detachViewport(front_.get());
 }
@@ -101,6 +280,37 @@ ViewportItem::~ViewportItem()
 QQuickRhiItemRenderer* ViewportItem::createRenderer()
 {
     return new ViewportRenderer;
+}
+
+void ViewportItem::componentComplete()
+{
+    QQuickRhiItem::componentComplete();
+    // The backdrop glass panels sample (T-016). Without QRhi there is none: panels keep their tint.
+    QQmlEngine* engine = qmlEngine(this);
+    if (engine == nullptr || !rhiAvailable_)
+        return;
+    if (auto* context = engine->singletonInstance<AppContext*>("RayCad.Ui", "AppContext")) {
+        backdropContext_ = context;
+        context->setBackdropSource(this);
+    }
+}
+
+void ViewportItem::geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry)
+{
+    QQuickRhiItem::geometryChange(newGeometry, oldGeometry);
+    emit scenePlacementChanged();
+}
+
+void ViewportItem::addBackdropUser()
+{
+    if (++backdropUsers_ == 1)
+        front_->setBackdropEnabled(true);
+}
+
+void ViewportItem::removeBackdropUser()
+{
+    if (backdropUsers_ > 0 && --backdropUsers_ == 0)
+        front_->setBackdropEnabled(false);
 }
 
 void ViewportItem::setScene(SceneController* scene)
@@ -765,6 +975,115 @@ void ViewportItem::itemChange(ItemChange change, const ItemChangeData& value)
     QQuickRhiItem::itemChange(change, value);
     if (change == ItemSceneChange || change == ItemDevicePixelRatioHasChanged)
         updateDevicePixelRatio();
+    if (change == ItemTransformHasChanged || change == ItemSceneChange)
+        emit scenePlacementChanged();
+}
+
+// ---------- GlassBackdrop (T-016) ----------
+GlassBackdrop::GlassBackdrop(QQuickItem* parent) : QQuickItem(parent)
+{
+    setFlag(ItemHasContents);
+    setFlag(ItemObservesViewport); // ItemTransformHasChanged when an ancestor moves it
+}
+
+GlassBackdrop::~GlassBackdrop()
+{
+    if (registered_ && view_)
+        view_->removeBackdropUser();
+}
+
+void GlassBackdrop::setSource(QObject* source)
+{
+    auto* view = qobject_cast<ViewportItem*>(source);
+    if (view == view_)
+        return;
+    if (registered_ && view_)
+        view_->removeBackdropUser();
+    if (registered_) {
+        registered_ = false;
+        emit samplingChanged();
+    }
+    for (const auto& c : viewConnections_)
+        disconnect(c);
+    viewConnections_.clear();
+    view_ = view;
+    if (view_) {
+        viewConnections_ << connect(view_, &ViewportItem::scenePlacementChanged, this, [this] { update(); });
+        viewConnections_ << connect(view_, &QQuickItem::windowChanged, this, &GlassBackdrop::updateRegistration);
+        viewConnections_ << connect(view_, &QObject::destroyed, this, [this] {
+            // Its count died with it.
+            if (registered_) {
+                registered_ = false;
+                emit samplingChanged();
+            }
+            update();
+        });
+    }
+    updateRegistration();
+    update();
+    emit sourceChanged();
+}
+
+void GlassBackdrop::setRadius(qreal radius)
+{
+    if (qFuzzyCompare(radius, radius_))
+        return;
+    radius_ = radius;
+    update();
+    emit radiusChanged();
+}
+
+void GlassBackdrop::updateRegistration()
+{
+    const bool want = view_ && isVisible() && window() != nullptr && view_->window() == window();
+    if (want == registered_)
+        return;
+    registered_ = want;
+    if (want)
+        view_->addBackdropUser();
+    else if (view_)
+        view_->removeBackdropUser();
+    update();
+    emit samplingChanged();
+}
+
+void GlassBackdrop::itemChange(ItemChange change, const ItemChangeData& value)
+{
+    QQuickItem::itemChange(change, value);
+    if (change == ItemVisibleHasChanged || change == ItemSceneChange)
+        updateRegistration();
+    if (change == ItemTransformHasChanged || change == ItemDevicePixelRatioHasChanged)
+        update();
+}
+
+void GlassBackdrop::geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry)
+{
+    QQuickItem::geometryChange(newGeometry, oldGeometry);
+    update();
+}
+
+QRectF GlassBackdrop::sourceRect() const
+{
+    if (!registered_ || !view_ || view_->width() <= 0 || view_->height() <= 0)
+        return {};
+    const QRectF r = view_->mapRectFromItem(this, QRectF(0, 0, width(), height()));
+    return QRectF(r.x() / view_->width(), r.y() / view_->height(), r.width() / view_->width(),
+                  r.height() / view_->height());
+}
+
+QSGNode* GlassBackdrop::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
+{
+    // Sync phase: the UI thread is blocked, so both items' geometry can be read here.
+    const QRectF uv = sourceRect();
+    if (uv.isEmpty() || width() <= 0 || height() <= 0) {
+        delete old;
+        return nullptr;
+    }
+    auto* node = static_cast<GlassBackdropNode*>(old);
+    if (node == nullptr)
+        node = new GlassBackdropNode;
+    node->setShape(QSizeF(width(), height()), radius_, uv, view_->backdropLink());
+    return node;
 }
 
 void ViewportItem::updateDevicePixelRatio()

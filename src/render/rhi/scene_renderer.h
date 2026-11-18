@@ -31,6 +31,7 @@ struct GpuItem {
 };
 
 class PickPass;
+class BackdropPass;
 
 class SceneRenderer {
 public:
@@ -59,12 +60,15 @@ public:
     bool busy() const;
 
     void releaseResources();
+    // Later passes run in the order added, before the backdrop pass, which stays last: it blurs the final image.
     void addPass(std::unique_ptr<IFramePass> pass);
 
     ResourceCounter& counter() { return counter_; }
     std::int64_t liveResources() const { return counter_.live.load(); }
     std::uint64_t framesRendered() const { return frames_; }
     std::uint64_t pickBufferRenders() const; // ID renders of the picking pass (T-015)
+    std::uint64_t backdropBlurs() const;     // blur sequences of the backdrop pass (T-016)
+    IViewport::Backdrop backdrop() const;    // the current blur (T-016); see BackdropPass
 
 private:
     struct PipelineSet;
@@ -116,6 +120,7 @@ private:
 
     // T-015: picking pass (owned by passes_), highlights, and frames that only pick (main pass skipped).
     PickPass* pick_ = nullptr;
+    BackdropPass* backdrop_ = nullptr; // T-016, owned by passes_, always the last one
     std::vector<HighlightGroup> highlights_;
     std::vector<ItemId> highlightWide_; // sorted
     Owned<QRhiBuffer> markers_;         // vertex markers, wide-line instances

@@ -64,4 +64,9 @@ std::int64_t HostedViewportRenderer::liveResources() const
     return renderer_->liveResources();
 }
 
+IViewport::Backdrop HostedViewportRenderer::backdrop() const
+{
+    return renderer_->backdrop();
+}
+
 } // namespace ray::render

@@ -64,7 +64,7 @@ struct FrameSnapshot {
     std::optional<SectionPlane> section; // T-023
     std::vector<PickHit> selected;       // T-015
     std::optional<PickHit> hover;        // T-015
-    bool backdropEnabled = false;        // T-016
+    bool backdropEnabled = false;        // T-016: rhi/backdrop_pass.h blurs the frame
     // Bumped by any change to items, transforms, visibility (sceneGeneration) or the camera (cameraGeneration);
     // T-015 re-renders its ID buffer only when one of them moved.
     std::uint64_t sceneGeneration = 0;
@@ -97,6 +97,7 @@ struct SharedStatus {
     mutable std::mutex mutex;
     IViewport::FrameStats stats{0, 0, 0, 0};
     ViewportInfo info;
+    IViewport::Backdrop backdrop{nullptr, 0, 0, false, 0}; // T-016: the latest blur; rhiTexture is always null here
 };
 
 class ViewportFrontend final : public IRenderViewport {

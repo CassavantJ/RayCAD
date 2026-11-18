@@ -33,6 +33,22 @@ void grow(Box3& box, double x, double y, double z)
     box.max.z = std::max(box.max.z, z);
 }
 
+// A face colour from data is clamped to 0..1; one that is not a number is dropped (the face token is used).
+void sanitize(MeshStyle& style)
+{
+    if (!style.faceColor)
+        return;
+    Color& c = *style.faceColor;
+    if (!std::isfinite(c.r) || !std::isfinite(c.g) || !std::isfinite(c.b)) {
+        style.faceColor.reset();
+        return;
+    }
+    c.r = std::clamp(c.r, 0.0f, 1.0f);
+    c.g = std::clamp(c.g, 0.0f, 1.0f);
+    c.b = std::clamp(c.b, 0.0f, 1.0f);
+    c.a = 1.0f; // MeshStyle::opacity is what applies
+}
+
 Box3 emptyBox()
 {
     constexpr double inf = std::numeric_limits<double>::infinity();
@@ -208,6 +224,7 @@ ItemId ViewportFrontend::addMesh(std::shared_ptr<const kernel::Mesh> mesh, const
     item.localBounds = meshBounds(*mesh);
     item.mesh = std::move(mesh);
     item.xform = xf;
+    sanitize(style);
     item.style = style;
     item.geometryGeneration = nextGeometryGeneration_++;
     const ItemId id = item.id;
@@ -291,6 +308,7 @@ void ViewportFrontend::setTransform(ItemId id, const Xform& xf)
 
 void ViewportFrontend::setStyle(ItemId id, MeshStyle style)
 {
+    sanitize(style);
     if (SceneItem* item = find(id); item && style.face < Token::Count && style.edge < Token::Count) {
         // Whether edges are drawn changes what the picking ID buffer holds, so a style change counts as a scene change.
         item->style = style;
@@ -415,16 +433,22 @@ IViewport::FrameStats ViewportFrontend::lastFrameStats() const
 
 IViewport::Backdrop ViewportFrontend::blurredBackdropTexture()
 {
-    // T-016 renders the shared blur. Until then there is no texture; panels fall back to flat.
-    static std::once_flag once;
-    notImplemented(once, "IViewport::blurredBackdropTexture");
-    return Backdrop{nullptr, 0, 0, false, 0};
+    // The UI thread gets the description only; the handle is the render thread's (render.h, viewport_rhi.h).
+    std::lock_guard lock(status_->mutex);
+    Backdrop b = status_->backdrop;
+    b.rhiTexture = nullptr;
+    return b;
 }
 
 void ViewportFrontend::setBackdropEnabled(bool on)
 {
+    if (on == state_.backdropEnabled)
+        return;
     state_.backdropEnabled = on;
-    changed(false, false);
+    // The picture is the same: the next frame blurs the image the viewport already holds (or drops the blur), it
+    // does not draw the scene again.
+    if (requestUpdate_)
+        requestUpdate_();
 }
 
 std::optional<Box3> ViewportFrontend::sceneBounds() const

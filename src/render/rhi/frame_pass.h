@@ -5,10 +5,13 @@
 //          an id fragment shader (mesh.vert already passes the face id; line.vert and wideline.vert the edge id;
 //          ItemBlock.ids.x holds the item id), then reads back a small rectangle and posts the answer through the
 //          Outbox. It reuses the vertex buffers, the uniform buffer and the shader resource bindings below.
-//   T-016 backdrop: an IFramePass that samples `colour` (the resolved frame), downsamples and blurs it into a
-//          texture it owns, and bumps a generation only when the frame changed.
+//   T-016 backdrop: BackdropPass (backdrop_pass.h) samples `colour` (the resolved frame), downsamples and blurs it
+//          into a texture it owns, only when `colourRedrawn` (or it has no blur of the current image), and bumps a
+//          generation each time. It is always the LAST pass: SceneRenderer::addPass inserts before it.
 //   T-023 section: fills FrameBlock.misc.z / FrameBlock.section (see SceneRenderer::writeFrameBlock) and adds a
-//          cap pass; the face shaders then discard on the far side of the plane.
+//          cap pass; the face shaders then discard on the far side of the plane. A cap pass that draws into
+//          `colour` runs before the backdrop (addPass does that), so glass shows the caps; a frame that changes only
+//          the section must count as a redraw (colourRedrawn), or the blur keeps the old picture.
 #pragma once
 
 #include "../viewport_frontend.h"

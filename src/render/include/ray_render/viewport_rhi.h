@@ -66,6 +66,14 @@ public:
     bool busy() const;                  // read-backs or later passes still wait for the GPU
     std::int64_t liveResources() const; // QRhi resources owned now (leak checks)
 
+    // The glass backdrop (task T-016), render thread only: rhiTexture is the QRhiTexture* the last render() blurred
+    // into (null while the backdrop is disabled or not drawn yet). See IViewport::blurredBackdropTexture for the
+    // ownership and orientation rules. A replaced texture is kept alive until the frame after the one that
+    // replaced it (it is freed at the next render() or frameSubmitted()), so scene graph nodes that still point at
+    // it while that frame is recorded never see a freed texture. Qt Quick hosts read this right after render(),
+    // where Qt Quick's own nodes are prepared next (see src/ui/viewport_item.h).
+    IViewport::Backdrop backdrop() const;
+
 private:
     std::unique_ptr<rhi::SceneRenderer> renderer_;
 };
