@@ -5,11 +5,16 @@
   "description": "Open-source desktop CAD/CAM",
   "license": "LGPL-2.1-or-later",
   "dependencies": [
+    "blake3",
     "boost-graph",
     "boost-math",
     "catch2",
     {
       "name": "opencascade",
+      "default-features": false
+    },
+    {
+      "name": "tbb",
       "default-features": false
     },
     "tl-expected"
