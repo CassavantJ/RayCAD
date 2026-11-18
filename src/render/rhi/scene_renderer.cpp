@@ -3,6 +3,8 @@
 // edges in their own line buffer, faces pushed back with a depth bias so their edges stay visible.
 #include "scene_renderer.h"
 
+#include "pick_pass.h"
+
 #include "../tier_internal.h"
 
 #include <QtCore/QByteArray>
@@ -52,6 +54,12 @@ constexpr const char* kMetricThinLine = "line.thin.px";
 constexpr double kDefaultThinLinePx = 1.5;
 constexpr const char* kMetricDash = "line.dash.px";
 constexpr double kDefaultDashPx = 8.0;
+// Highlight sizes (T-015). Without the metric, a highlighted edge is this many thin lines wide, and a vertex marker
+// this many highlighted edges.
+constexpr const char* kMetricHighlightLine = "line.highlight.px";
+constexpr double kHighlightLineScale = 2.0;
+constexpr const char* kMetricVertexMarker = "point.highlight.px";
+constexpr double kVertexMarkerScale = 2.5;
 
 QRhiGraphicsPipeline::TargetBlend alphaBlend()
 {
@@ -113,11 +121,53 @@ const Shaders& shaders()
 
 } // namespace
 
+QRhiVertexInputLayout meshVertexLayout()
+{
+    QRhiVertexInputLayout mesh;
+    mesh.setBindings({QRhiVertexInputBinding(kMeshStride)});
+    mesh.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, 0),
+                        QRhiVertexInputAttribute(0, 1, QRhiVertexInputAttribute::Float3, 12),
+                        QRhiVertexInputAttribute(0, 2, QRhiVertexInputAttribute::UNormByte4, 24)});
+    return mesh;
+}
+
+QRhiVertexInputLayout thinEdgeVertexLayout()
+{
+    QRhiVertexInputLayout thin;
+    thin.setBindings({QRhiVertexInputBinding(kThinStride)});
+    thin.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, 0),
+                        QRhiVertexInputAttribute(0, 1, QRhiVertexInputAttribute::UNormByte4, 12)});
+    return thin;
+}
+
+QRhiVertexInputLayout wideLineVertexLayout()
+{
+    QRhiVertexInputLayout wide;
+    wide.setBindings({QRhiVertexInputBinding(2 * sizeof(float)),
+                      QRhiVertexInputBinding(kWideStride, QRhiVertexInputBinding::PerInstance)});
+    wide.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float2, 0),
+                        QRhiVertexInputAttribute(1, 1, QRhiVertexInputAttribute::Float3, 0),
+                        QRhiVertexInputAttribute(1, 2, QRhiVertexInputAttribute::Float3, 12),
+                        QRhiVertexInputAttribute(1, 3, QRhiVertexInputAttribute::UNormByte4, 24)});
+    return wide;
+}
+
 struct SceneRenderer::PipelineSet {
     Owned<QRhiRenderPassDescriptor> rp;
     int samples = 1;
     Owned<QRhiGraphicsPipeline> background, meshOpaque, meshBlend, lineThin, lineWide;
+    Owned<QRhiGraphicsPipeline> highlightFaces; // T-015: mesh shaders, blended, on the faces' own depth
     bool ok = false;
+};
+
+// One item's highlighted elements in one style (T-015).
+struct SceneRenderer::HighlightGroup {
+    std::size_t draw = 0; // index into draws_
+    bool hover = false;
+    std::vector<PickHit> hits;
+    quint32 blockOffset = 0;       // ItemBlock with the highlight colours and edge width
+    quint32 markerBlockOffset = 0; // ItemBlock with the vertex marker size
+    quint32 firstMarker = 0, markerCount = 0;
 };
 
 struct SceneRenderer::Target {
@@ -138,7 +188,17 @@ struct SceneRenderer::Capture {
     std::atomic<bool> finished{false};
 };
 
-SceneRenderer::SceneRenderer() = default;
+SceneRenderer::SceneRenderer()
+{
+    auto pick = std::make_unique<PickPass>(counter_);
+    pick_ = pick.get();
+    passes_.push_back(std::move(pick));
+}
+
+std::uint64_t SceneRenderer::pickBufferRenders() const
+{
+    return pick_ ? pick_->idRenders() : 0;
+}
 
 SceneRenderer::~SceneRenderer()
 {
@@ -168,13 +228,20 @@ void SceneRenderer::setTarget(QRhiTexture* colour)
 
 void SceneRenderer::setSnapshot(detail::FrameSnapshot&& snapshot)
 {
-    // Captures not yet drawn stay queued.
+    // Captures and picks not yet answered stay queued; a picture change not yet drawn stays pending.
     std::vector<detail::CaptureRequest> pending = std::move(snap_.captures);
+    std::vector<detail::PickRequest> pendingPicks = std::move(snap_.picks);
+    needRedraw_ = needRedraw_ || snapshot.redraw;
     snap_ = std::move(snapshot);
     if (!pending.empty()) {
         pending.insert(pending.end(), std::make_move_iterator(snap_.captures.begin()),
                        std::make_move_iterator(snap_.captures.end()));
         snap_.captures = std::move(pending);
+    }
+    if (!pendingPicks.empty()) {
+        pendingPicks.insert(pendingPicks.end(), std::make_move_iterator(snap_.picks.begin()),
+                            std::make_move_iterator(snap_.picks.end()));
+        snap_.picks = std::move(pendingPicks);
     }
 }
 
@@ -219,6 +286,10 @@ void SceneRenderer::releaseResources()
     pipelineSets_.clear();
     gpu_.clear();
     draws_.clear();
+    highlights_.clear();
+    markers_.reset();
+    markerCapacity_ = 0;
+    needRedraw_ = true;
     bindings_.reset();
     uniforms_.reset();
     uniformCapacity_ = 0;
@@ -290,24 +361,9 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
     background.setBindings({QRhiVertexInputBinding(2 * sizeof(float))});
     background.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float2, 0)});
 
-    QRhiVertexInputLayout mesh;
-    mesh.setBindings({QRhiVertexInputBinding(kMeshStride)});
-    mesh.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, 0),
-                        QRhiVertexInputAttribute(0, 1, QRhiVertexInputAttribute::Float3, 12),
-                        QRhiVertexInputAttribute(0, 2, QRhiVertexInputAttribute::UNormByte4, 24)});
-
-    QRhiVertexInputLayout thin;
-    thin.setBindings({QRhiVertexInputBinding(kThinStride)});
-    thin.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, 0),
-                        QRhiVertexInputAttribute(0, 1, QRhiVertexInputAttribute::UNormByte4, 12)});
-
-    QRhiVertexInputLayout wide;
-    wide.setBindings({QRhiVertexInputBinding(2 * sizeof(float)),
-                      QRhiVertexInputBinding(kWideStride, QRhiVertexInputBinding::PerInstance)});
-    wide.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float2, 0),
-                        QRhiVertexInputAttribute(1, 1, QRhiVertexInputAttribute::Float3, 0),
-                        QRhiVertexInputAttribute(1, 2, QRhiVertexInputAttribute::Float3, 12),
-                        QRhiVertexInputAttribute(1, 3, QRhiVertexInputAttribute::UNormByte4, 24)});
+    const QRhiVertexInputLayout mesh = meshVertexLayout();
+    const QRhiVertexInputLayout thin = thinEdgeVertexLayout();
+    const QRhiVertexInputLayout wide = wideLineVertexLayout();
 
     using P = QRhiGraphicsPipeline;
     set->background =
@@ -317,6 +373,8 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
     set->lineThin = make(sh.lineVs, sh.lineFs, thin, P::Lines, true, false, P::LessOrEqual, false, false);
     if (rhi_->isFeatureSupported(QRhi::Instancing))
         set->lineWide = make(sh.wideVs, sh.wideFs, wide, P::Triangles, true, false, P::LessOrEqual, true, false);
+    // Same shaders and depth bias as the faces, so a highlight lands on exactly their depth and passes LessOrEqual.
+    set->highlightFaces = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, false, P::LessOrEqual, true, true);
     set->ok = set->background && set->meshOpaque && set->meshBlend && set->lineThin;
     pipelineSets_.push_back(std::move(set));
     return pipelineSets_.back().get();
@@ -382,6 +440,7 @@ void SceneRenderer::uploadItem(const detail::SceneItem& item, GpuItem& gpu, bool
         return;
     }
     const kernel::Mesh& mesh = *item.mesh;
+    gpu.index = detail::buildMeshIndex(mesh); // picking and highlights (T-015)
     const std::size_t vertexCount = mesh.positions.size() / 3;
     if (!mesh.indices.empty() && vertexCount > 0) {
         // Face id per vertex. The kernel gives every face its own vertices, so each vertex belongs to one face.
@@ -493,7 +552,8 @@ void SceneRenderer::syncItems(QRhiResourceUpdateBatch* u)
         if (!item.visible)
             continue; // uploaded when it becomes visible
         GpuItem& gpu = gpu_[item.id];
-        const bool wantWide = item.kind == detail::ItemKind::Lines || (smoothEdges_ && item.style.showEdges);
+        const bool wantWide = item.kind == detail::ItemKind::Lines || (smoothEdges_ && item.style.showEdges) ||
+                              std::binary_search(highlightWide_.begin(), highlightWide_.end(), item.id);
         if (gpu.generation != item.geometryGeneration) {
             gpu = GpuItem{};
             uploadItem(item, gpu, wantWide, u);
@@ -654,8 +714,198 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
         if (d.item->kind == detail::ItemKind::Mesh && isBlended(d))
             drawFaces(d, set.meshBlend.get());
     }
+    // 4. selection, then hover (T-015)
+    drawHighlights(cb, set, viewport, frameOffset, drawCalls);
     stats_.triangles = triangles;
     stats_.drawCalls = drawCalls;
+}
+
+void SceneRenderer::collectHighlightItems()
+{
+    highlightWide_.clear();
+    const auto needsWide = [](const PickHit& h) {
+        return h.kind == kernel::SubKind::Edge || h.kind == kernel::SubKind::Solid;
+    };
+    for (const PickHit& h : snap_.selected) {
+        if (needsWide(h))
+            highlightWide_.push_back(h.item);
+    }
+    if (snap_.hover && needsWide(*snap_.hover))
+        highlightWide_.push_back(snap_.hover->item);
+    std::sort(highlightWide_.begin(), highlightWide_.end());
+    highlightWide_.erase(std::unique(highlightWide_.begin(), highlightWide_.end()), highlightWide_.end());
+}
+
+void SceneRenderer::prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& theme, quint32 base, quint32 slot)
+{
+    highlights_.clear();
+    if (snap_.selected.empty() && !snap_.hover)
+        return;
+    std::map<ItemId, std::size_t> drawOf;
+    for (std::size_t i = 0; i < draws_.size(); ++i)
+        drawOf.emplace(draws_[i].item->id, i);
+    std::map<ItemId, std::vector<PickHit>> selected;
+    for (const PickHit& h : snap_.selected) {
+        if (drawOf.count(h.item))
+            selected[h.item].push_back(h);
+    }
+    const auto group = [&](ItemId id, bool hover, std::vector<PickHit> hits) {
+        HighlightGroup g;
+        g.draw = drawOf[id];
+        g.hover = hover;
+        g.hits = std::move(hits);
+        highlights_.push_back(std::move(g));
+    };
+    for (auto& [id, hits] : selected)
+        group(id, false, std::move(hits));
+    if (snap_.hover && drawOf.count(snap_.hover->item))
+        group(snap_.hover->item, true, {*snap_.hover});
+
+    // Vertex markers: one zero-length wide-line instance per highlighted vertex.
+    QByteArray markers;
+    std::uint32_t markerCount = 0;
+    for (HighlightGroup& g : highlights_) {
+        g.firstMarker = markerCount;
+        const detail::MeshIndex* index = draws_[g.draw].gpu->index.get();
+        for (const PickHit& h : g.hits) {
+            if (h.kind != kernel::SubKind::Vertex || !index)
+                continue;
+            const detail::MeshIndex::Vertex* v = index->vertexOfCode(h.subIndex);
+            if (!v)
+                continue;
+            char entry[kWideStride];
+            putFloats(entry, v->pos, 3);
+            putFloats(entry + 12, v->pos, 3);
+            putU32(entry + 24, 0);
+            markers.append(entry, kWideStride);
+            ++markerCount;
+        }
+        g.markerCount = markerCount - g.firstMarker;
+    }
+    if (markerCount > 0) {
+        const quint32 bytes = markerCount * kWideStride;
+        if (!markers_ || markerCapacity_ < bytes) {
+            markerCapacity_ = std::max<quint32>(bytes, 64 * kWideStride);
+            markers_ = own(counter_, rhi_->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, markerCapacity_));
+            if (!markers_->create()) {
+                markers_.reset();
+                markerCapacity_ = 0;
+            }
+        }
+        if (markers_)
+            u->updateDynamicBuffer(markers_.get(), 0, bytes, markers.constData());
+    }
+
+    // Colours come from the theme: Selection / Hover for lines and markers, SelectionFill's colour (selection) or
+    // Hover's colour (hover) at SelectionFill's opacity for faces.
+    const double dpr = snap_.devicePixelRatio;
+    const double thin = metric(theme, kMetricThinLine, kDefaultThinLinePx);
+    const double line = metric(theme, kMetricHighlightLine, thin * kHighlightLineScale);
+    const double marker = metric(theme, kMetricVertexMarker, line * kVertexMarkerScale);
+    const Color fill = theme.colors[std::size_t(Token::SelectionFill)];
+    for (std::size_t k = 0; k < highlights_.size(); ++k) {
+        HighlightGroup& g = highlights_[k];
+        g.blockOffset = base + quint32(2 * k) * slot;
+        g.markerBlockOffset = g.blockOffset + slot;
+        const detail::SceneItem& item = *draws_[g.draw].item;
+        ItemBlock block{};
+        const QMatrix4x4 model = toMatrix(item.xform);
+        copyMatrix(block.model, model);
+        copyMatrix(block.normalMatrix, model.inverted().transposed());
+        toFloat4(g.hover ? theme.colors[std::size_t(Token::Hover)] : fill, block.faceColor);
+        block.faceColor[3] = std::clamp(fill.a, 0.0f, 1.0f);
+        toFloat4(theme.colors[std::size_t(g.hover ? Token::Hover : Token::Selection)], block.edgeColor);
+        block.edgeColor[3] = 1.0f;
+        block.line[0] = float(line * dpr);
+        block.line[2] = 1.0f; // anti-aliased
+        block.ids[0] = float(item.id);
+        u->updateDynamicBuffer(uniforms_.get(), g.blockOffset, sizeof(block), &block);
+        block.line[0] = float(marker * dpr);
+        u->updateDynamicBuffer(uniforms_.get(), g.markerBlockOffset, sizeof(block), &block);
+    }
+}
+
+void SceneRenderer::drawHighlights(QRhiCommandBuffer* cb, PipelineSet& set, const QRhiViewport& viewport,
+                                   quint32 frameOffset, std::uint64_t& drawCalls)
+{
+    const auto use = [&](QRhiGraphicsPipeline* pipeline, quint32 itemOffset) {
+        cb->setGraphicsPipeline(pipeline);
+        cb->setViewport(viewport);
+        const QRhiCommandBuffer::DynamicOffset offsets[2] = {{0, frameOffset}, {1, itemOffset}};
+        cb->setShaderResources(bindings_.get(), 2, offsets);
+    };
+    for (const HighlightGroup& g : highlights_) {
+        const DrawItem& d = draws_[g.draw];
+        const GpuItem& gpu = *d.gpu;
+        const detail::MeshIndex* index = gpu.index.get();
+        const kernel::Mesh* mesh = d.item->kind == detail::ItemKind::Mesh ? d.item->mesh.get() : nullptr;
+
+        // Faces: the face's index range, or every triangle for a body.
+        if (set.highlightFaces && gpu.indices && gpu.indexCount > 0) {
+            bool bound = false;
+            for (const PickHit& h : g.hits) {
+                std::uint32_t first = 0, count = 0;
+                if (h.kind == kernel::SubKind::Solid) {
+                    count = gpu.indexCount;
+                } else if (h.kind == kernel::SubKind::Face && index && mesh) {
+                    const std::int32_t pos = index->facePosition(h.subIndex);
+                    if (pos >= 0) {
+                        first = mesh->faces[std::size_t(pos)].firstIndex;
+                        count = mesh->faces[std::size_t(pos)].indexCount;
+                    }
+                }
+                if (count == 0)
+                    continue;
+                if (!bound) {
+                    use(set.highlightFaces.get(), g.blockOffset);
+                    const QRhiCommandBuffer::VertexInput vin(gpu.vertices.get(), 0);
+                    cb->setVertexInput(0, 1, &vin, gpu.indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
+                    bound = true;
+                }
+                cb->drawIndexed(count, 1, first);
+                ++drawCalls;
+            }
+        }
+        if (!set.lineWide)
+            continue;
+        // Edges: the edge's segments as wide lines, or all of them for a body.
+        if (gpu.wideEdges && gpu.segmentCount > 0) {
+            for (const PickHit& h : g.hits) {
+                std::uint32_t first = 0, count = 0;
+                if (h.kind == kernel::SubKind::Solid) {
+                    count = gpu.segmentCount;
+                } else if (h.kind == kernel::SubKind::Edge && !mesh) {
+                    if (h.subIndex < gpu.segmentCount) { // a segment of an addLines item
+                        first = h.subIndex;
+                        count = 1;
+                    }
+                } else if (h.kind == kernel::SubKind::Edge && index) {
+                    const std::int32_t pos = index->edgePosition(h.subIndex);
+                    if (pos >= 0) {
+                        first = index->edgeFirstSegment[std::size_t(pos)];
+                        count = index->edgeSegmentCount[std::size_t(pos)];
+                    }
+                }
+                if (count == 0 || first + count > gpu.segmentCount)
+                    continue;
+                use(set.lineWide.get(), g.blockOffset);
+                const QRhiCommandBuffer::VertexInput ins[2] = {{corners_.get(), 0},
+                                                               {gpu.wideEdges.get(), first * kWideStride}};
+                cb->setVertexInput(0, 2, ins);
+                cb->draw(6, count);
+                ++drawCalls;
+            }
+        }
+        // Vertices: square markers.
+        if (g.markerCount > 0 && markers_) {
+            use(set.lineWide.get(), g.markerBlockOffset);
+            const QRhiCommandBuffer::VertexInput ins[2] = {{corners_.get(), 0},
+                                                           {markers_.get(), g.firstMarker * kWideStride}};
+            cb->setVertexInput(0, 2, ins);
+            cb->draw(6, g.markerCount);
+            ++drawCalls;
+        }
+    }
 }
 
 bool SceneRenderer::render(QRhiCommandBuffer* cb)
@@ -685,7 +935,14 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
     const quint32 itemSlot = quint32(rhi_->ubufAligned(int(itemBlockSize_)));
     const quint32 frameSlots = 1 + quint32(requests.size());
     const quint32 maxItems = quint32(snap_.items.size());
-    if (!ensureUniformCapacity(frameSlots * frameSlot + std::max<quint32>(1, maxItems) * itemSlot)) {
+    // Two ItemBlocks per highlight group: one per item with a selection, one for the hover.
+    std::vector<ItemId> selectedItems;
+    for (const PickHit& h : snap_.selected)
+        selectedItems.push_back(h.item);
+    std::sort(selectedItems.begin(), selectedItems.end());
+    selectedItems.erase(std::unique(selectedItems.begin(), selectedItems.end()), selectedItems.end());
+    const quint32 highlightSlots = 2 * (quint32(selectedItems.size()) + (snap_.hover ? 1u : 0u));
+    if (!ensureUniformCapacity(frameSlots * frameSlot + (std::max<quint32>(1, maxItems) + highlightSlots) * itemSlot)) {
         u->release();
         return busy();
     }
@@ -694,6 +951,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
     const bool smooth = snap_.preset.smoothEdges && rhi_->isFeatureSupported(QRhi::Instancing);
     const QSize size = colour_->pixelSize();
     if (!main_ || targetDirty_ || main_->size != size || main_->samples != samples) {
+        needRedraw_ = true; // a new target holds no image yet
         main_ = std::make_unique<Target>();
         if (!buildTarget(*main_, colour_, size, samples)) {
             main_.reset();
@@ -719,6 +977,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         }
     }
 
+    collectHighlightItems();
     syncItems(u);
 
     QMatrix4x4 view, projection;
@@ -774,6 +1033,9 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
             std::stable_sort(draws_.begin(), draws_.end(),
                              [&](const DrawItem& a, const DrawItem& b) { return depthOf(a) < depthOf(b); });
         }
+        prepareHighlights(u, *theme, itemBase + quint32(draws_.size()) * itemSlot, itemSlot);
+    } else {
+        highlights_.clear();
     }
 
     // Capture targets and their FrameBlocks, written in the same batch as the main pass.
@@ -826,13 +1088,20 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         captures_.push_back(std::move(capture));
     }
 
-    // Main pass.
-    cb->beginPass(main_->rt.get(), QColor(Qt::transparent), {1.0f, 0}, u);
-    if (theme && set.ok)
-        drawScene(cb, set, size, 0);
-    else
-        stats_.triangles = stats_.drawCalls = 0;
-    cb->endPass();
+    // Main pass. A frame that only answers picks keeps the image drawn last (T-015): the colour texture still holds
+    // it, so only the resource updates are recorded.
+    const bool drawMain = needRedraw_;
+    if (drawMain) {
+        cb->beginPass(main_->rt.get(), QColor(Qt::transparent), {1.0f, 0}, u);
+        if (theme && set.ok)
+            drawScene(cb, set, size, 0);
+        else
+            stats_.triangles = stats_.drawCalls = 0;
+        cb->endPass();
+        needRedraw_ = false;
+    } else {
+        cb->resourceUpdate(u);
+    }
     const IViewport::FrameStats mainStats = stats_;
 
     // Captures: the same scene at the requested size, then a read-back.
@@ -864,24 +1133,29 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         ctx.sceneGeneration = snap_.sceneGeneration;
         ctx.cameraGeneration = snap_.cameraGeneration;
         ctx.outbox = outbox_.get();
+        ctx.colourRedrawn = drawMain;
+        ctx.picks = &snap_.picks;
+        ctx.lineCorners = corners_.get();
         for (auto& pass : passes_)
             pass->record(ctx);
     }
 
     ++frames_;
-    publishStats(double(timer.nsecsElapsed()) * 1e-6);
+    // Frame statistics describe the last frame that drew the picture, not a pick-only frame.
+    lastDrew_ = drawMain;
+    publishStats(drawMain ? double(timer.nsecsElapsed()) * 1e-6 : stats_.cpuMs);
     return busy();
 }
 
 void SceneRenderer::frameDone(QRhiCommandBuffer* cb, double wallMs)
 {
-    if (cb) {
+    if (cb && lastDrew_) {
         const double gpu = cb->lastCompletedGpuTime();
         if (gpu > 0)
             stats_.gpuMs = gpu * 1000.0;
     }
     std::erase_if(captures_, [](const std::unique_ptr<Capture>& c) { return c->finished.load(); });
-    publishStats(wallMs > 0 ? wallMs : stats_.cpuMs);
+    publishStats(wallMs > 0 && lastDrew_ ? wallMs : stats_.cpuMs);
 }
 
 void SceneRenderer::publishStats(double cpuMs)
@@ -906,6 +1180,7 @@ void SceneRenderer::publishStats(double cpuMs)
         info.height = main_->size.height();
     }
     info.framesRendered = frames_;
+    info.pickBufferRenders = pickBufferRenders();
     info.liveRhiResources = counter_.live.load();
 }
 

@@ -14,8 +14,12 @@
 //                and calls r.releaseResources() from its destructor. The item keeps sampleCount 1 and its default
 //                colour format: the renderer brings its own MSAA and depth buffers and resolves into
 //                colorTexture(); the item's own render target is not used.
-// Results that come back from the GPU (captureImage, later picks) reach the UI thread through queued calls on an
-// object owned by `front`, so they are dropped safely if the item is destroyed first.
+// Results that come back from the GPU (captureImage, pick, pickRect) reach the UI thread through queued calls on an
+// object owned by `front`, so they are dropped safely if the item is destroyed first. A pick needs a frame: it calls
+// the callback, and render() answers it (reading back the cached ID buffer, drawn again only when the camera or
+// scene changed); while the answer is in flight render() returns true. A frame that only answers picks does not draw
+// into colorTexture() again, so the item must keep the texture's previous contents (QQuickRhiItem does). Pick
+// coordinates are the item's logical pixels; setDevicePixelRatio must follow the window.
 #pragma once
 
 #include "viewport.h"

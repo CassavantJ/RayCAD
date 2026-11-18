@@ -7,6 +7,7 @@
 #include "frame_pass.h"
 #include "rhi_util.h"
 
+#include "../pick.h"
 #include "../viewport_frontend.h"
 
 #include <QtCore/QElapsedTimer>
@@ -26,7 +27,10 @@ struct GpuItem {
     Owned<QRhiBuffer> thinEdges; // mesh: line list, position + edge id (16 bytes per vertex)
     Owned<QRhiBuffer> wideEdges; // mesh edges or line items: one instance per segment, p0 p1 edge id (28 bytes)
     std::uint32_t indexCount = 0, thinEdgeVertexCount = 0, segmentCount = 0;
+    std::shared_ptr<const detail::MeshIndex> index; // mesh items: face, edge and vertex lookups (T-015)
 };
+
+class PickPass;
 
 class SceneRenderer {
 public:
@@ -60,11 +64,13 @@ public:
     ResourceCounter& counter() { return counter_; }
     std::int64_t liveResources() const { return counter_.live.load(); }
     std::uint64_t framesRendered() const { return frames_; }
+    std::uint64_t pickBufferRenders() const; // ID renders of the picking pass (T-015)
 
 private:
     struct PipelineSet;
     struct Target;
     struct Capture;
+    struct HighlightGroup;
 
     void ensureStatic();
     PipelineSet* pipelinesFor(Target& target);
@@ -78,6 +84,12 @@ private:
     void drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize size, quint32 frameOffset);
     int effectiveSamples(int wanted) const;
     void publishStats(double cpuMs);
+    // Hover and selection (T-015): the items whose edges need the wide-line buffer, and the highlight draw list with
+    // its ItemBlocks (from `base` on) and vertex markers.
+    void collectHighlightItems();
+    void prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& theme, quint32 base, quint32 slot);
+    void drawHighlights(QRhiCommandBuffer* cb, PipelineSet& set, const QRhiViewport& viewport, quint32 frameOffset,
+                        std::uint64_t& drawCalls);
 
     QRhi* rhi_ = nullptr;
     ResourceCounter counter_;
@@ -101,6 +113,14 @@ private:
     quint32 uniformCapacity_ = 0;
     Owned<QRhiShaderResourceBindings> bindings_;
     quint32 frameBlockSize_ = 0, itemBlockSize_ = 0;
+
+    // T-015: picking pass (owned by passes_), highlights, and frames that only pick (main pass skipped).
+    PickPass* pick_ = nullptr;
+    std::vector<HighlightGroup> highlights_;
+    std::vector<ItemId> highlightWide_; // sorted
+    Owned<QRhiBuffer> markers_;         // vertex markers, wide-line instances
+    quint32 markerCapacity_ = 0;
+    bool needRedraw_ = true, lastDrew_ = true;
 
     bool smoothEdges_ = false;
     int samples_ = 1;

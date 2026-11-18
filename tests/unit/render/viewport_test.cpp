@@ -451,16 +451,9 @@ TEST_CASE("captureImage works at any size and rejects bad sizes", "[render][view
 
 TEST_CASE("functions of later tasks are clear stubs", "[render][viewport][stubs]")
 {
+    // (pick, pickRect and setHighlight are implemented by T-015: tests/unit/render/pick_test.cpp.)
     auto vp = viewportOrSkip(64, 48);
     vp->setTheme(theme("graphite-dark"));
-    std::optional<std::optional<PickHit>> hit;
-    vp->pick(10, 10, std::uint8_t(PickFilter::Faces), [&hit](std::optional<PickHit> h) { hit = h; });
-    CHECK(!hit.has_value()); // asynchronous, like the real one
-    std::optional<std::vector<PickHit>> hits;
-    vp->pickRect(0, 0, 10, 10, std::uint8_t(PickFilter::Faces), [&hits](std::vector<PickHit> h) { hits = h; });
-    REQUIRE(processEventsUntil([&] { return hit.has_value() && hits.has_value(); }, 5000));
-    CHECK(!hit->has_value());
-    CHECK(hits->empty());
     const IViewport::Backdrop backdrop = vp->blurredBackdropTexture();
     CHECK(backdrop.rhiTexture == nullptr);
     vp->setBackdropEnabled(true);
@@ -468,6 +461,5 @@ TEST_CASE("functions of later tasks are clear stubs", "[render][viewport][stubs]
     const std::vector<Vec2> profile{{0, 0}, {5, 0}, {5, 20}};
     CHECK(vp->addToolGlyph(profile, Token::Accent) == 0);
     vp->setSection(SectionPlane{Vec3{0, 0, 0}, Vec3{0, 0, 1}, true});
-    vp->setHighlight({}, std::nullopt);
     REQUIRE(vp->renderNow().has_value());
 }

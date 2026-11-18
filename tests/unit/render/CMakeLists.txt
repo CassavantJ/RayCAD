@@ -7,7 +7,8 @@ add_executable(ray_render_tests
     viewport_testing.h
     viewport_scenes.h
     viewport_test.cpp
-    viewport_reference_test.cpp)
+    viewport_reference_test.cpp
+    pick_test.cpp)
 # Test meshes come from ray::kernel, including the builders in src/kernel/shape_testing.h.
 target_link_libraries(ray_render_tests PRIVATE ray_render ray_kernel Catch2::Catch2WithMain)
 target_include_directories(ray_render_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/render" "${CMAKE_SOURCE_DIR}/src/kernel")

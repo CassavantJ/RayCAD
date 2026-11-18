@@ -27,7 +27,35 @@ struct ViewportInfo {
     int width = 0, height = 0;     // render target in pixels
     std::uint64_t framesRendered = 0;
     std::int64_t liveRhiResources = 0; // QRhi resources this viewport's renderer currently owns (leak checks)
+    // Times the picking ID buffer was drawn. Picks reuse it until the camera or the scene changes (task T-015).
+    std::uint64_t pickBufferRenders = 0;
 };
+
+// ---------- Picking (task T-015) ----------
+// pick and pickRect take LOGICAL pixels, origin top-left (what Qt Quick's input events give); the renderer scales
+// them by setDevicePixelRatio. The edge and vertex tolerance is kPickTolerancePx logical pixels. Inside it the most
+// specific kind the filter enables wins: vertex > edge > face > body. A face or body needs the cursor pixel itself.
+// Hits: Face and Edge carry the kernel index (FaceRange::face, EdgeRange::edge); an addLines item answers as Edge
+// with the segment index; Bodies answers kind Solid, subIndex 0. `point` is the world point under the pixel, read
+// from the ID buffer's depth (a vertex hit gives the vertex itself). moveIndex is 0 until backplots exist.
+// Every visible item is pickable, see-through ones included.
+constexpr int kPickTolerancePx = 6;
+// Vertex hits: kernel::Mesh has no vertex ids, so a Vertex PickHit's subIndex names one END of an edge polyline:
+// vertexCode(edge, lastEnd) with the edge's kernel index and whether it is the polyline's last point. Of all the edge
+// ends that meet at a vertex the smallest code is used, so a vertex always has the same code. The kernel vertex is
+// kernel::adjacent(shape, {Edge, vertexEdge(code)}, Vertex), the one at `point`.
+constexpr std::uint32_t vertexCode(std::uint32_t edgeIndex, bool lastEnd)
+{
+    return edgeIndex * 2 + (lastEnd ? 1u : 0u);
+}
+constexpr std::uint32_t vertexEdge(std::uint32_t code)
+{
+    return code / 2;
+}
+constexpr bool vertexIsLastEnd(std::uint32_t code)
+{
+    return (code & 1u) != 0;
+}
 
 // IViewport plus the queries every host needs. Same threading rule: UI thread only.
 class IRenderViewport : public IViewport {
