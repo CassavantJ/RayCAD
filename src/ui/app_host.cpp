@@ -2,9 +2,11 @@
 
 #include "app_context.h"
 #include "dev_open.h"
+#include "palette_commands.h"
 #include "scene_controller.h"
 #include "scene_jobs.h"
 #include "selection_model.h"
+#include "shortcuts.h"
 #include "theme_object.h"
 #include "viewport_item.h"
 
@@ -34,6 +36,11 @@ AppHost::AppHost(const AppOptions& options, QString cacheDir, QObject* parent)
     scene_ = std::make_unique<SceneController>([this] { return jobs(); }, context_.get());
     selection_ = std::make_unique<SelectionModel>(scene_.get());
     devOpen_ = std::make_unique<DevOpen>(scene_.get(), context_.get());
+    // T-021: commands and shortcuts. Cheap: nothing is read until the first key press or the palette needs it.
+    commands_ =
+        std::make_unique<CommandCatalog>(context_.get(), scene_.get(), selection_.get(), [this] { return viewport(); });
+    shortcuts_ = std::make_unique<ShortcutManager>(commands_.get());
+    commands_->setShortcuts(shortcuts_.get());
     if (!theme_->loadErrors().isEmpty()) {
         optionError_ = theme_->loadErrors().join(QLatin1Char('\n'));
     }
@@ -56,6 +63,8 @@ AppHost::~AppHost()
 {
     // The window belongs to the engine; destroy both before the singletons they reference.
     engine_.reset();
+    shortcuts_.reset();
+    commands_.reset();
     // Then the viewer's objects (their jobs are cancelled), then the job system, which waits for running jobs.
     devOpen_.reset();
     selection_.reset();
@@ -126,6 +135,8 @@ bool AppHost::load()
     SceneController::provideFor(engine_.get(), scene_.get());
     SelectionModel::provideFor(engine_.get(), selection_.get());
     DevOpen::provideFor(engine_.get(), devOpen_.get());
+    CommandCatalog::provideFor(engine_.get(), commands_.get());
+    ShortcutManager::provideFor(engine_.get(), shortcuts_.get());
     connect(engine_.get(), &QQmlEngine::warnings, this, [this](const QList<QQmlError>& list) {
         for (const QQmlError& e : list) {
             warnings_ << e.toString();
@@ -143,6 +154,8 @@ bool AppHost::load()
         }
         return false;
     }
+    shortcuts_->attach(window_);
+    commands_->attachWindow(window_);
 
     // Before the window is exposed for the first time (Main.qml starts hidden).
     QQuickGraphicsConfiguration config = window_->graphicsConfiguration();

@@ -4,8 +4,11 @@
 //   viewportArea      the part of the viewport no panel covers: overlays go here. T-020: the view cube with its
 //                     buttons and the axis triad (ViewCube.qml), the selection filter (SelectionFilterBar.qml) and
 //                     messageBanner. T-019 replaces emptyState with the start screen.
-//   topBar            brand, workspace tabs (AppContext.workspace), command search (T-021), view toggles; the view
-//                     options menu also picks the projection and the navigation preset.
+//   topBar            brand, workspace tabs (AppContext.workspace), command search (T-021: opens the command
+//                     palette), view toggles; the view options menu also picks the projection and the navigation
+//                     preset, and opens the palette and the keyboard shortcut settings.
+//   commandHost       T-021: CommandHost.qml, the palette and the shortcut settings (Loaders); ContextMenu.qml over
+//                     viewportArea and the model tree opens the right-click menus.
 //   leftPanel         "Model": ModelTree.qml in leftPanelContent.
 //   rightPanel        "Properties": SelectionInfo.qml in rightPanelContent (T-022 adds the measure tools).
 //   statusBar         status text (AppContext.statusText) and jobSlot (AppContext.setJob, T-019).
@@ -35,6 +38,7 @@ FocusScope {
 
     // The command search field took focus or the user pressed Enter in it (T-021 opens the palette).
     signal commandSearchRequested(string text)
+    onCommandSearchRequested: text => commandHost.openPalette(text)
 
     function clampPanelWidth(w) {
         return Math.round(Math.max(Theme.sidePanelMinWidth, Math.min(Theme.sidePanelMaxWidth, width / 3, w)))
@@ -95,6 +99,12 @@ FocusScope {
                     sourceComponent: Item {}
                 }
             }
+        }
+
+        // T-021: right-click (press and release without dragging) opens the context menu.
+        ContextMenu {
+            objectName: "viewportContextMenu"
+            anchors.fill: parent
         }
 
         Column {
@@ -296,7 +306,15 @@ FocusScope {
             iconName: "search"
             placeholderText: qsTr("Search commands")
             Accessible.name: qsTr("Search commands")
-            onActiveFocusChanged: if (activeFocus) shell.commandSearchRequested(text)
+            // T-021: Tab passes through the field; typing in it, a click or Enter opens the palette.
+            onActiveFocusChanged: if (activeFocus) Qt.callLater(() => {
+                // focusReason is up to date only after the focus change has been delivered.
+                if (activeFocus && focusReason !== Qt.TabFocusReason && focusReason !== Qt.BacktabFocusReason)
+                    shell.commandSearchRequested(text)
+            })
+            onTextEdited: if (text !== "") shell.commandSearchRequested(text)
+            // After the press: the field takes the focus on press itself, which would take it back from the palette.
+            onPressed: Qt.callLater(() => shell.commandSearchRequested(text))
             onAccepted: shell.commandSearchRequested(text)
             Keys.onEscapePressed: {
                 text = ""
@@ -402,6 +420,20 @@ FocusScope {
                         onTriggered: shell.rightPanelOpen = !shell.rightPanelOpen
                     }
                     MenuSeparator {}
+                    // T-021
+                    MenuItem {
+                        objectName: "openCommandPalette"
+                        text: qsTr("Command palette")
+                        shortcutText: Shortcuts.revision >= 0 ? Shortcuts.shortcutText("ui.commandPalette") : ""
+                        onTriggered: Commands.openPalette()
+                    }
+                    MenuItem {
+                        objectName: "openShortcutSettings"
+                        text: qsTr("Keyboard shortcuts…")
+                        shortcutText: Shortcuts.revision >= 0 ? Shortcuts.shortcutText("ui.keyboardShortcuts") : ""
+                        onTriggered: Commands.openShortcutSettings()
+                    }
+                    MenuSeparator {}
                     MenuItem {
                         text: qsTr("Perspective projection")
                         marked: viewport.view.perspective
@@ -493,7 +525,14 @@ FocusScope {
             anchors.bottom: parent.bottom
 
             ModelTree {
+                id: modelTree
                 anchors.fill: parent
+            }
+            // T-021: right-click in the tree (on a body row: selects it first).
+            ContextMenu {
+                objectName: "treeContextMenu"
+                anchors.fill: parent
+                treeRoot: modelTree
             }
         }
     }
@@ -652,5 +691,12 @@ FocusScope {
                 text: qsTr("Version %1").arg(AppContext.version)
             }
         }
+    }
+
+    // T-021: the command palette and the shortcut settings panel, created on first use.
+    CommandHost {
+        id: commandHost
+        view: viewport.view
+        searchField: commandSearch
     }
 }

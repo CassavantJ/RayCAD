@@ -18,6 +18,8 @@ AppOptions parseOptions(const QStringList& arguments)
             options.smoke = true;
         } else if (arg == QLatin1String("--bench-start") || arg == QLatin1String("--bench-startup")) {
             options.benchStart = true;
+        } else if (arg == QLatin1String("--dev-session")) {
+            options.session = true; // hidden developer option (T-021), not in usageText()
         } else if (arg == QLatin1String("--gallery")) {
             options.gallery = true;
         } else if (arg == QLatin1String("--version")) {
