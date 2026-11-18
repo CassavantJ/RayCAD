@@ -1,7 +1,7 @@
 # Configure, build and test on Windows, Linux and macOS (Apple Silicon), Debug and Release.
 #
 # vcpkg binaries are cached with actions/cache on vcpkg's file-based binary cache folder (the old x-gha
-# backend is gone). No secret is needed. Qt comes from prebuilt binaries (install-qt-action, cached).
+# backend is gone). No secret is needed. Qt comes from prebuilt binaries (tools/fetch_qt.py, cached).
 # The first run on each OS builds OpenCASCADE from source and is slow; later runs restore it.
 # Actions are pinned to commit SHAs; the comment gives the release tag.
 name: build-test
@@ -52,11 +52,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             ninja-build pkg-config autoconf automake libtool curl zip unzip tar \
             libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxmu-dev \
-            libxkbcommon-dev libvulkan-dev
+            libxkbcommon-dev libvulkan-dev libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 p7zip-full
 
       - name: Install system packages (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja pkg-config autoconf automake libtool
+        run: brew install ninja pkg-config autoconf automake libtool sevenzip
 
       # vcpkg at the exact commit that vcpkg-configuration.json pins as the baseline.
       - name: Set up vcpkg
@@ -94,14 +94,21 @@ jobs:
             vcpkg-${{ matrix.preset }}-${{ env.VCPKG_BASELINE }}-
             vcpkg-${{ matrix.preset }}-
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
+      # Qt comes from download.qt.io through tools/fetch_qt.py (aqtinstall cannot find Qt 6.12 for Windows).
+      - name: Restore Qt
+        id: qt-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          version: ${{ env.QT_VERSION }}
-          arch: ${{ matrix.qt_arch }}
-          cache: true
+          path: ${{ runner.temp }}/qt
+          key: qt-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_qt.py') }}
 
-      # install-qt-action exports QT_ROOT_DIR, which the CMake presets read.
+      - name: Install Qt
+        shell: bash
+        run: |
+          python=$(command -v python3 || command -v python)
+          "$python" tools/fetch_qt.py --out "$RUNNER_TEMP/qt" --version "$QT_VERSION" --module qtshadertools
+
+      # fetch_qt.py exports QT_ROOT_DIR, which the CMake presets read.
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: cmd

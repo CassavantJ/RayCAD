@@ -8,7 +8,10 @@
     "boost-graph",
     "boost-math",
     "catch2",
-    "opencascade",
+    {
+      "name": "opencascade",
+      "default-features": false
+    },
     "tl-expected"
   ],
   "overrides": [

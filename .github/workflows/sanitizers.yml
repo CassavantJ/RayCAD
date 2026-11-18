@@ -31,7 +31,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang ninja-build pkg-config autoconf automake libtool curl zip unzip tar \
             libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxmu-dev \
-            libxkbcommon-dev libvulkan-dev
+            libxkbcommon-dev libvulkan-dev libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 p7zip-full
 
       # vcpkg at the exact commit that vcpkg-configuration.json pins as the baseline.
       - name: Set up vcpkg
@@ -59,12 +59,19 @@ jobs:
             vcpkg-linux-clang-asan-${{ env.VCPKG_BASELINE }}-
             vcpkg-linux-clang-asan-
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
+      # Qt comes from download.qt.io through tools/fetch_qt.py (aqtinstall cannot find Qt 6.12 for Windows).
+      - name: Restore Qt
+        id: qt-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          version: ${{ env.QT_VERSION }}
-          arch: linux_gcc_64
-          cache: true
+          path: ${{ runner.temp }}/qt
+          key: qt-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_qt.py') }}
+
+      - name: Install Qt
+        shell: bash
+        run: |
+          python=$(command -v python3 || command -v python)
+          "$python" tools/fetch_qt.py --out "$RUNNER_TEMP/qt" --version "$QT_VERSION" --module qtshadertools
 
       - name: Configure
         run: cmake --preset linux-clang-asan
