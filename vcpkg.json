@@ -9,6 +9,7 @@
     "boost-graph",
     "boost-math",
     "catch2",
+    "eigen3",
     {
       "name": "opencascade",
       "default-features": false

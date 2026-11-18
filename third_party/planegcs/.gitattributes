@@ -1,0 +1,4 @@
+# Vendored upstream files are kept byte for byte as FreeCAD ships them (LICENSE has CRLF line endings), so
+# sync_upstream.py can compare them with the upstream git blobs.
+src/** -text
+LICENSE -text
