@@ -7,22 +7,27 @@ add_executable(ray_kernel_tests
     mesh_test.cpp
     io_test.cpp
     sweep_test.cpp
-    boolean_test.cpp)
+    boolean_test.cpp
+    blend_test.cpp)
 target_link_libraries(ray_kernel_tests PRIVATE ray_kernel Catch2::Catch2WithMain)
 # occt_smoke.h, shape_testing.h, mesh_testing.h and io_internal.h are private to src/kernel; no OCCT header.
 target_include_directories(ray_kernel_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
 target_compile_definitions(ray_kernel_tests PRIVATE RAY_EXPECTED_OCCT_VERSION="8.0.1"
-    RAY_KERNEL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+    RAY_KERNEL_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
 set_property(TARGET ray_kernel_tests PROPERTY FOLDER "tests")
 
 # The smoke test needs a process in which no OCCT DLL has been loaded yet, and Catch2 runs test cases in
 # random order, so it runs in a process of its own ([occt] tag) and everything else in another.
 add_test(NAME ray_kernel_occt_smoke COMMAND ray_kernel_tests "[occt]")
-add_test(NAME ray_kernel_tests COMMAND ray_kernel_tests "~[occt]")
+add_test(NAME ray_kernel_tests COMMAND ray_kernel_tests "~[occt]~[stress]")
+# The 8-thread blend stress over the corpus (task T-095) in a process of its own, with its own timeout.
+add_test(NAME ray_kernel_blend_stress COMMAND ray_kernel_tests "[stress]")
 ray_test_runtime_path(ray_kernel_occt_smoke)
 ray_test_runtime_path(ray_kernel_tests)
+ray_test_runtime_path(ray_kernel_blend_stress)
 # Import, meshing and concurrency tests are slow under ThreadSanitizer and on a loaded machine.
-set_tests_properties(ray_kernel_tests PROPERTIES TIMEOUT 900)
+set_tests_properties(ray_kernel_tests ray_kernel_blend_stress PROPERTIES TIMEOUT 900)
 
 # Imports one STEP or IGES file and prints what came out; tools/import_corpus.py runs it on every file of a
 # corpus folder, one child process per file, to count passes, failures, crashes and hangs.
