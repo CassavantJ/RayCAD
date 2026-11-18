@@ -550,7 +550,8 @@ TEST_CASE("the section panel fits small windows and a face seen through the cut 
 {
     REQUIRE_RHI();
     Window w("dark", false);
-    w.window()->resize(900, 440);
+    // The window's minimum height is 560 (Main.qml); asking for less only makes Qt warn and clamp.
+    w.window()->resize(900, 560);
     REQUIRE(QTest::qWaitFor([&] { return std::abs(w.window()->width() - 900) < 1; }, 5000));
     w.open(kBoxHole);
     SectionModel* s = w.section();
