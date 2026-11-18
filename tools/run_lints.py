@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Runs every RayCAD lint on the tree, then every lint's self-test. Exit code 1 if anything fails.
+"""Runs every RayCAD lint on the tree (including the corpus manifest check), then every self-test, including those of
+the corpus fetcher and the golden-file updater. Exit code 1 if anything fails.
 
 Usage: run_lints.py [--installed DIR] [--format]
   --installed DIR   also check the licence ledger against a vcpkg_installed folder (transitive ports)
@@ -11,7 +12,9 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LINTS = ["lint_includes", "lint_cmake_deps", "lint_dmath", "lint_colours", "lint_licences"]
+LINTS = ["lint_includes", "lint_cmake_deps", "lint_dmath", "lint_colours", "lint_licences", "corpus_check"]
+# Tools that have nothing to check on the tree by themselves, only a self-test.
+SELF_TESTS = ["corpus_fetch", "update_golden"]
 
 
 def main():
@@ -21,7 +24,7 @@ def main():
     args = parser.parse_args()
 
     runs = [[name + ".py"] for name in LINTS]
-    runs += [[name + ".py", "--self-test"] for name in LINTS]
+    runs += [[name + ".py", "--self-test"] for name in LINTS + SELF_TESTS]
     if args.installed:
         runs.append(["lint_licences.py", "--installed", args.installed])
     if args.format:

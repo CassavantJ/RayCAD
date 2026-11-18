@@ -10,3 +10,4 @@ CMakeUserPresets.json
 vcpkg_installed/
 __pycache__/
 *.pyc
+tests/corpus/cache/

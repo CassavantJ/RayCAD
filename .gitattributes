@@ -8,3 +8,6 @@
 *.raycad binary
 # Spike code is throwaway and is kept byte for byte as it was written.
 spikes/** -text !eol
+# Corpus files and goldens are compared by hash and byte for byte: never convert their line endings.
+tests/corpus/files/** -text
+tests/golden/** -text
