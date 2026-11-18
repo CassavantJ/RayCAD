@@ -1,8 +1,8 @@
-// The viewport item, navigation, selection, model tree and developer open path (task T-020), on real Qt Quick
-// windows with the platform's default scene graph (Direct3D 11 on Windows), so the RHI item really renders.
+// The viewport item, navigation, selection and model tree (task T-020), on real Qt Quick windows with the
+// platform's default scene graph (Direct3D 11 on Windows), so the RHI item really renders.
 //
-//   - a STEP file opens through DevOpen, shows in the view and in the tree; a face picked by pixel reads back its
-//     SubId and a TopoRef that resolves Exact to the same face; the properties read-out fills in
+//   - a STEP file opens through the session (Files, T-019), shows in the view and in the tree; a face picked by
+//     pixel reads back its SubId and a TopoRef that resolves Exact to the same face; the properties read-out fills in
 //   - orbit, pan, zoom-to-cursor (the point under the cursor stays within 2 px), fit, the standard views, the
 //     projection toggle, the view cube and the keyboard change the camera as expected
 //   - the navigation presets are selectable and map the buttons differently
@@ -15,9 +15,10 @@
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
-#include "dev_open.h"
+#include "files.h"
 #include "scene_controller.h"
 #include "selection_model.h"
+#include "session.h"
 #include "theme_object.h"
 #include "viewport_item.h"
 #include "viewport_navigation.h"
@@ -94,9 +95,10 @@ bool rhiSceneGraph()
             SKIP("the scene graph has no QRhi (software backend): the viewport cannot render here");                   \
     } while (false)
 
-// One application window with the viewer, its own cache folder and the developer open path on.
+// One application window with the viewer, its own cache and user data folders and a session.
 struct Window {
     QTemporaryDir cache;
+    QTemporaryDir userData;
     std::unique_ptr<AppHost> host;
 
     explicit Window(const char* theme = "dark", QSize size = QSize(1440, 900))
@@ -108,10 +110,11 @@ struct Window {
         host = std::make_unique<AppHost>(options, cache.path());
         REQUIRE(host->optionError().isEmpty());
         REQUIRE(host->load());
-        host->enableDevOpen();
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
         REQUIRE(view() != nullptr);
+        REQUIRE(host->startSession(userData.path().toStdString()));
+        host->files()->setUseNativeDialogs(false);
         view()->setAnimationsEnabled(false);
         // A fixed tier, so the test does not depend on this machine's GPU (and skips hardware detection).
         scene()->setPreset(render::presetFor(render::Tier::Medium));
@@ -146,13 +149,13 @@ struct Window {
 
     bool settled() const
     {
-        return !host->devOpen()->busy() && scene()->ready() && !scene()->refining() && !view()->animating();
+        return !host->files()->busy() && scene()->ready() && !scene()->refining() && !view()->animating();
     }
 
     // Opens a file and waits until it is shown at the tier tolerance.
     void open(const QString& path)
     {
-        REQUIRE(host->devOpen()->open(path));
+        REQUIRE(host->files()->open(path));
         REQUIRE(QTest::qWaitFor([&] { return settled(); }, kOpenTimeoutMs));
         grab();
     }
@@ -351,10 +354,10 @@ TEST_CASE("a STEP file opens, shows, and a face picked by pixel has a SubId and 
 {
     REQUIRE_RHI();
     Window w("dark");
-    CHECK(w.find("emptyState")->isVisible());
+    CHECK(w.find("startScreen")->isVisible());
     CHECK(w.find("openButton")->isEnabled());
     w.open(kBoxHole);
-    CHECK_FALSE(w.find("emptyState")->isVisible());
+    CHECK_FALSE(w.find("startScreen")->isVisible());
     REQUIRE(w.scene()->bodyCount() == 1);
     CHECK(w.scene()->meshIsFine(0));
 
@@ -987,7 +990,7 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; i
     });
     clock.start();
     tick.start();
-    REQUIRE(w.host->devOpen()->open(kMidSize));
+    REQUIRE(w.host->files()->open(kMidSize));
     REQUIRE(QTest::qWaitFor([&] { return w.settled(); }, kOpenTimeoutMs));
     // A few frames after the meshes arrived (uploads happen on the render thread).
     QTest::qWait(300);
@@ -1014,30 +1017,32 @@ TEST_CASE("Esc abandons an import at once; a failed open shows a message; a drop
     AppContext& context = *w.context();
 
     // Esc while importing: the job slot clears at once and the result is dropped.
-    REQUIRE(w.host->devOpen()->open(kMidSize));
-    CHECK(context.jobActive());
+    REQUIRE(w.host->files()->open(kMidSize));
+    CHECK(w.host->session()->jobActive());
     QElapsedTimer t;
     t.start();
     w.view()->forceActiveFocus();
     QTest::keyClick(w.window(), Qt::Key_Escape);
     CHECK(t.elapsed() < 100);
-    CHECK_FALSE(context.jobActive());
-    CHECK_FALSE(w.host->devOpen()->busy());
+    CHECK_FALSE(w.host->session()->jobActive());
+    CHECK_FALSE(w.host->files()->busy());
     QTest::qWait(3000);
     CHECK(w.scene()->bodyCount() == 0);
-    CHECK(w.find("emptyState")->isVisible());
+    CHECK(w.find("startScreen")->isVisible());
 
     // A file that is not STEP: a message, no crash.
-    REQUIRE(w.host->devOpen()->open(kGarbage));
-    REQUIRE(QTest::qWaitFor([&] { return !w.host->devOpen()->busy(); }, 30000));
+    REQUIRE(w.host->files()->open(kGarbage));
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->files()->busy(); }, 30000));
     CHECK_FALSE(context.message().isEmpty());
     CHECK(context.messageIsError());
     CHECK(w.find("messageBanner")->isVisible());
     REQUIRE(QMetaObject::invokeMethod(w.find("messageClose"), "clicked"));
     CHECK(context.message().isEmpty());
-    CHECK_FALSE(w.host->devOpen()->open(QStringLiteral(RAY_KERNEL_TEST_DATA_DIR "/no_such_file.step")));
+    // A file that is not there: the open starts, and the API's error shows in the banner.
+    REQUIRE(w.host->files()->open(QStringLiteral(RAY_KERNEL_TEST_DATA_DIR "/no_such_file.step")));
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->files()->busy(); }, 30000));
     CHECK_FALSE(context.message().isEmpty());
-    CHECK_FALSE(w.host->devOpen()->open(QStringLiteral(RAY_CORPUS_DIR "/ezdxf/Minimal_DXF_AC1009.dxf")));
+    CHECK_FALSE(w.host->files()->open(QStringLiteral(RAY_CORPUS_DIR "/ezdxf/Minimal_DXF_AC1009.dxf")));
     context.dismissMessage();
 
     // Drag and drop onto the window.
@@ -1050,7 +1055,7 @@ TEST_CASE("Esc abandons an import at once; a failed open shows a message; a drop
     QDropEvent drop(QPointF(at), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
     QGuiApplication::sendEvent(w.window(), &drop);
     REQUIRE(QTest::qWaitFor([&] { return w.settled() && w.scene()->bodyCount() == 1; }, kOpenTimeoutMs));
-    CHECK(w.scene()->sourceName() == QStringLiteral("box_hole.step"));
+    CHECK(w.scene()->sourceName() == QStringLiteral("box_hole"));
     w.checkNoWarnings();
 }
 

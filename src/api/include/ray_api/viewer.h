@@ -7,8 +7,8 @@
 // is meant to run on a worker. Not one of the contract headers in include/ray/.
 //
 // Seams for later tasks:
-//   - T-019 replaces importModel (called by src/ui/dev_open) with IApp::open; bodiesFromDocument then turns the
-//     document's build into the same Body list.
+//   - T-019 replaced the UI's use of importModel with IApp::open; bodiesFromDocument turns the document's build
+//     into the Body list. importModel stays for tests and tools that want a file's bodies without a document.
 //   - T-022 builds the real measure tools; describeElement is the simple read-out of T-020.
 #pragma once
 
@@ -34,7 +34,7 @@ struct Body {
     bool visible = true;
 };
 
-// ---------- Opening a file without a document (developer path until T-019) ----------
+// ---------- Opening a file without a document (tests and tools) ----------
 // True for .step, .stp, .igs and .iges (any case).
 bool isImportable(std::string_view path);
 struct ImportedModel {

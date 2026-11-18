@@ -40,6 +40,8 @@ add_subdirectory(lint)
 add_subdirectory(apps)
 add_subdirectory(ui/controls)
 add_subdirectory(ui/viewport)
+add_subdirectory(ui/start)
+add_subdirectory(ui/palette)
 # (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
 # ---------- Sanitizer run options for every test ----------
@@ -89,4 +91,3 @@ endif()
 if(RAY_SANITIZE MATCHES "thread")
     ray_sanitizer_test_options("${CMAKE_CURRENT_SOURCE_DIR}" TSAN_OPTIONS "ignore_noninstrumented_modules=1")
 endif()
-add_subdirectory(ui/palette)

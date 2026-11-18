@@ -9,7 +9,8 @@ Window {
     visible: false
     minimumWidth: Theme.controlHeight * 32
     minimumHeight: Theme.controlHeight * 20
-    title: AppContext.page === "gallery" ? qsTr("RayCAD controls gallery") : qsTr("RayCAD")
+    // The document name, its dirty marker and read-only state (Session, T-019).
+    title: AppContext.page === "gallery" ? qsTr("RayCAD controls gallery") : Session.windowTitle
     color: Theme.windowBg
 
     Loader {

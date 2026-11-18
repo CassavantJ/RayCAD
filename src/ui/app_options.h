@@ -20,12 +20,9 @@ struct AppOptions {
     std::optional<bool> glass;       // unset = default (flat until T-024 reads the tier preset)
     QString screenshot;              // PNG path; empty = none
     QSize size;                      // window size in logical pixels; invalid = default
-    QStringList files;               // files to open (T-020: the first STEP/IGES file, through DevOpen)
+    QStringList files;               // files to open (Files::openPaths, once the session has started)
     std::optional<QPointF> selectAt; // --select-at X,Y: click-select there (window coordinates) before a screenshot
-    // --dev-session (hidden, T-021 developer option until T-019 wires the real session): run with an api::makeApp
-    // session, so the command palette lists the registry's actions. (Qt itself takes -session and --session.)
-    bool session = false;
-    QString error; // a usage error; non-empty means "print and exit 1"
+    QString error;                   // a usage error; non-empty means "print and exit 1"
 };
 
 AppOptions parseOptions(const QStringList& arguments); // arguments()[0] is the program and is skipped

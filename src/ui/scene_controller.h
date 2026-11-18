@@ -1,9 +1,9 @@
 // The `Scene` QML singleton (task T-020): the set of bodies the viewport shows, their display meshes, and the
 // model tree.
 //
-// ONE entry point feeds it: setBodies(). Today the developer file opener (dev_open.h) calls it with the bodies of
-// an imported STEP/IGES file; T-017/T-019 feed it from doc::IDocument through syncFromDocument(), which turns a
-// build result into the same body list (api::viewer::bodiesFromDocument) and also lists the features in the tree.
+// ONE entry point feeds it: setBodies(). The session (session.h, T-019) feeds it from the active document through
+// syncFromDocument(), which turns a build result into the body list (api::viewer::bodiesFromDocument) and also
+// lists the features in the tree.
 //
 // Meshing never runs on the UI thread. Each new body set is meshed coarse first (0.2 mm / 20 degrees, PLAN.md 9)
 // on the job system and shown as soon as that finishes, then refined in the background to the tier preset's

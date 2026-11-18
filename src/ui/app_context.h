@@ -2,14 +2,17 @@
 //
 // It wraps an api::IApp* that MAY BE NULL (no session: the shell still starts and is fully usable for layout and
 // theme work). Actions go through invoke(), which does nothing and returns false without a session.
-// Later tasks extend it: T-019 drives the job slot (setJob / clearJob, jobCancelRequested), T-020 sets
-// backdropSource, T-021 lists and invokes actions, T-024 persists glass and the theme mode.
+// Later tasks extend it: T-020 sets backdropSource and reports display meshing through the job slot (setJob /
+// clearJob, jobCancelRequested; T-019's Session merges it into the jobs list), T-019 routes file actions through
+// the action handler, T-021 lists and invokes actions, T-024 persists glass and the theme mode.
 #pragma once
 
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 #include <QtCore/QString>
 #include <QtQml/QQmlEngine>
+
+#include <functional>
 
 namespace ray::api {
 class IApp;
@@ -44,8 +47,6 @@ class AppContext : public QObject {
     // T-020: a dismissible message over the viewport (errors opening a file, and the like). Empty: none shown.
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     Q_PROPERTY(bool messageIsError READ messageIsError NOTIFY messageChanged)
-    // T-020: files can be opened without a session (the developer path, src/ui/dev_open.h, until T-019).
-    Q_PROPERTY(bool canOpenFiles READ canOpenFiles NOTIFY canOpenFilesChanged)
 
 public:
     // Deliberately not default-constructible: QML must get the instance through create() (see provideFor).
@@ -83,12 +84,19 @@ public:
     bool messageIsError() const { return messageIsError_; }
     Q_INVOKABLE void showMessage(const QString& text, bool isError = false);
     Q_INVOKABLE void dismissMessage();
-    bool canOpenFiles() const { return canOpenFiles_ || app_ != nullptr; }
-    void setCanOpenFiles(bool on);
 
     // Runs an action as Caller::User through IActionRegistry. False when there is no session (nothing runs).
-    // The result arrives later; T-019 shows long-running ones in the job slot.
+    // The result arrives later: long-running actions show in the jobs list (Session), and a failure shows its
+    // message in the banner. T-019: the action handler sees every call first; file actions that need a dialog or
+    // the unsaved-changes prompt (Files::handleAction) are handled there and never reach the registry directly.
     Q_INVOKABLE bool invoke(const QString& actionId, const QString& argsJson = QStringLiteral("{}"));
+    using ActionHandler = std::function<bool(const QString& actionId, const QString& argsJson)>;
+    void setActionHandler(ActionHandler handler) { actionHandler_ = std::move(handler); }
+    // The handler alone (the command palette runs registry actions itself): true if it took the action.
+    bool handleAction(const QString& actionId, const QString& argsJson)
+    {
+        return app_ != nullptr && actionHandler_ && actionHandler_(actionId, argsJson);
+    }
     // The user pressed Cancel in the job slot (or Esc, T-019).
     Q_INVOKABLE void cancelJob();
 
@@ -101,7 +109,6 @@ signals:
     void jobChanged();
     void jobCancelRequested();
     void messageChanged();
-    void canOpenFilesChanged();
 
 private:
     api::IApp* app_ = nullptr;
@@ -116,7 +123,7 @@ private:
     bool screenshotMode_ = false;
     QString message_;
     bool messageIsError_ = false;
-    bool canOpenFiles_ = false;
+    ActionHandler actionHandler_;
 };
 
 } // namespace ray::ui

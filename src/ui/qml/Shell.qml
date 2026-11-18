@@ -3,19 +3,20 @@
 //   viewportHost      fills the window, under everything: Viewport.qml (T-020), which also takes dropped files.
 //   viewportArea      the part of the viewport no panel covers: overlays go here. T-020: the view cube with its
 //                     buttons and the axis triad (ViewCube.qml), the selection filter (SelectionFilterBar.qml) and
-//                     messageBanner. T-019 replaces emptyState with the start screen.
-//   topBar            brand, workspace tabs (AppContext.workspace), command search (T-021: opens the command
-//                     palette), view toggles; the view options menu also picks the projection and the navigation
-//                     preset, and opens the palette and the keyboard shortcut settings.
+//                     messageBanner. T-019: StartScreen.qml while no document is open, the read-only notice and
+//                     the jobs panel (panels/JobsPanel.qml).
+//   topBar            brand, the File menu (T-019), workspace tabs (AppContext.workspace), command search (T-021:
+//                     opens the command palette), view toggles; the view options menu also picks the projection and
+//                     the navigation preset, and opens the palette and the keyboard shortcut settings.
 //   commandHost       T-021: CommandHost.qml, the palette and the shortcut settings (Loaders); ContextMenu.qml over
 //                     viewportArea and the model tree opens the right-click menus.
 //   leftPanel         "Model": ModelTree.qml in leftPanelContent.
 //   rightPanel        "Properties": SelectionInfo.qml in rightPanelContent (T-022 adds the measure tools).
-//   statusBar         status text (AppContext.statusText) and jobSlot (AppContext.setJob, T-019).
+//   statusBar         status text (AppContext.statusText) and jobSlot (the foreground job of Session.jobs, T-019).
+//   fileDialogs       the native file dialogs, the unsaved-changes prompt and crash recovery (dialogs/, T-019).
 //   workspace.<n>     one Loader per workspace, created the first time that workspace is shown.
 // Only what this first screen shows is created at start; menus and tooltips are created on first use.
 import QtQuick
-import QtQuick.Dialogs
 import QtQuick.Shapes
 import RayCad.Ui
 
@@ -25,6 +26,7 @@ FocusScope {
 
     property bool leftPanelOpen: true
     property bool rightPanelOpen: true
+    property bool jobsPanelOpen: false
     property real leftPanelWidth: Theme.sidePanelWidth
     property real rightPanelWidth: Theme.sidePanelWidth
     readonly property real gap: Theme.panelGap
@@ -50,10 +52,9 @@ FocusScope {
         menu.popup(viewOptions, viewOptions.width - menu.width, viewOptions.height + Theme.spacingXs)
     }
 
-    // Opens a STEP or IGES file without a session (T-020's developer path; T-019 replaces it with IApp::open).
-    function openFileDialog() {
-        fileDialogLoader.active = true
-        fileDialogLoader.item.open()
+    function openFileMenu() {
+        fileMenuLoader.active = true
+        fileMenuLoader.item.menu.popup(fileMenuButton, 0, fileMenuButton.height + Theme.spacingXs)
     }
 
     // ---------- Viewport (full window, under every panel) ----------
@@ -107,68 +108,44 @@ FocusScope {
             anchors.fill: parent
         }
 
-        Column {
-            id: emptyState
-            objectName: "emptyState"
-            anchors.centerIn: parent
-            width: Math.min(parent.width - 2 * Theme.spacingL, Theme.controlHeight * 14)
-            spacing: Theme.spacingS
-            visible: parent.height > implicitHeight && Scene.bodyCount === 0
-
-            Icon {
-                anchors.horizontalCenter: parent.horizontalCenter
-                name: "cube"
-                size: Theme.controlHeight * 1.5
-                color: Theme.textSecondary
-            }
-            Label {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                font: Theme.titleFont
-                text: qsTr("No document open")
-            }
-            Label {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                secondary: true
-                wrapMode: Text.Wrap
-                text: qsTr("Open a STEP or RayCAD file, or start a new part.")
-            }
-            Item {
-                width: 1
-                height: Theme.spacingS
-            }
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Theme.spacingS
-
-                Button {
-                    objectName: "openButton"
-                    primary: true
-                    text: DevOpen.busy ? qsTr("Opening…") : qsTr("Open…")
-                    enabled: AppContext.canOpenFiles && !DevOpen.busy
-                    onClicked: AppContext.hasSession ? AppContext.invoke("file.open") : shell.openFileDialog()
-                }
-                Button {
-                    objectName: "newPartButton"
-                    text: qsTr("New part")
-                    iconName: "plus"
-                    enabled: AppContext.hasSession
-                    onClicked: AppContext.invoke("file.new")
-                }
-            }
+        // T-019: recent files, New part and Open while no document is open.
+        StartScreen {
+            id: startScreen
+            anchors.fill: parent
+            visible: !Session.hasDocument
         }
 
         // The view cube, the view buttons and the axis triad (T-020).
         ViewCube {
             anchors.fill: parent
             view: viewport.view
+            visible: Session.hasDocument || !AppContext.hasSession
         }
 
         SelectionFilterBar {
+            id: selectionFilterBar
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             visible: Scene.bodyCount > 0
+        }
+
+        // T-019: someone else holds the document's write lock.
+        ReadOnlyNotice {
+            anchors.top: selectionFilterBar.visible ? selectionFilterBar.bottom : parent.top
+            anchors.topMargin: selectionFilterBar.visible ? shell.gap : 0
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 2 * Theme.spacingL, implicitWidth)
+            visible: Session.readOnly
+        }
+
+        // T-019: every running job; opened from the status bar's job slot.
+        JobsPanel {
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            width: Math.min(parent.width - 2 * Theme.spacingL, implicitWidth)
+            height: Math.min(parent.height / 2, implicitHeight)
+            visible: shell.jobsPanelOpen && Session.jobCount > 0
+            onCloseRequested: shell.jobsPanelOpen = false
         }
 
         // A dismissible message (a file that could not be opened, ...): AppContext.showMessage.
@@ -273,11 +250,24 @@ FocusScope {
             }
         }
 
+        // T-019: the File menu (dialogs/FileMenu.qml), created on first use.
+        ToolButton {
+            id: fileMenuButton
+            objectName: "fileMenuButton"
+            anchors.left: brand.right
+            anchors.leftMargin: Theme.spacingM
+            anchors.verticalCenter: parent.verticalCenter
+            text: qsTr("File")
+            enabled: AppContext.hasSession
+            toolTipText: qsTr("New, open, save, import and export")
+            onClicked: shell.openFileMenu()
+        }
+
         TabBar {
             id: workspaceTabs
             objectName: "workspaceTabs"
-            anchors.left: brand.right
-            anchors.leftMargin: Theme.spacingL
+            anchors.left: fileMenuButton.right
+            anchors.leftMargin: Theme.spacingM
             anchors.verticalCenter: parent.verticalCenter
             currentIndex: AppContext.workspace
             onCurrentIndexChanged: AppContext.workspace = currentIndex
@@ -464,27 +454,22 @@ FocusScope {
         }
     }
 
-    // The native file dialog of the developer open path, created on first use.
     Loader {
-        id: fileDialogLoader
+        id: fileMenuLoader
         active: false
         sourceComponent: Component {
-            FileDialog {
-                objectName: "openFileDialog"
-                title: qsTr("Open a STEP or IGES file")
-                nameFilters: DevOpen.nameFilters
-                fileMode: FileDialog.OpenFile
-                onAccepted: DevOpen.openUrl(selectedFile)
-            }
+            FileMenu {}
         }
     }
 
-    // Esc cancels the running job wherever the focus is (only while one runs, so text fields keep their Esc).
+    // Esc cancels the foreground job wherever the focus is (only while one runs, so text fields keep their Esc,
+    // and not under a dialog, whose Esc is Cancel).
     Shortcut {
         sequence: "Esc"
-        enabled: AppContext.jobActive
-        onActivated: AppContext.cancelJob()
+        enabled: Session.jobActive && !fileDialogs.modalShown
+        onActivated: Session.cancelForegroundJob()
     }
+
 
     // ---------- Side panels ----------
     PanelBase {
@@ -642,7 +627,7 @@ FocusScope {
         Row {
             id: jobSlot
             objectName: "jobSlot"
-            visible: AppContext.jobActive
+            visible: Session.jobActive
             anchors.left: statusLeft.right
             anchors.leftMargin: Theme.spacingL
             anchors.verticalCenter: parent.verticalCenter
@@ -652,23 +637,32 @@ FocusScope {
                 objectName: "jobTitle"
                 anchors.verticalCenter: parent.verticalCenter
                 secondary: true
-                text: AppContext.jobTitle
+                text: Session.jobTitle
             }
             ProgressBar {
                 objectName: "jobProgress"
                 anchors.verticalCenter: parent.verticalCenter
                 width: Theme.controlHeight * 5
-                indeterminate: AppContext.jobProgress < 0
-                value: Math.max(0, AppContext.jobProgress)
-                Accessible.name: AppContext.jobTitle
+                indeterminate: Session.jobProgress < 0
+                value: Math.max(0, Session.jobProgress)
+                Accessible.name: Session.jobTitle
             }
             ToolButton {
                 objectName: "jobCancel"
                 anchors.verticalCenter: parent.verticalCenter
                 compact: true
                 iconName: "close"
-                toolTipText: qsTr("Cancel")
-                onClicked: AppContext.cancelJob()
+                toolTipText: qsTr("Cancel (Esc)")
+                onClicked: Session.cancelForegroundJob()
+            }
+            ToolButton {
+                objectName: "jobsToggle"
+                anchors.verticalCenter: parent.verticalCenter
+                compact: true
+                iconName: shell.jobsPanelOpen ? "chevron-down" : "chevron-up"
+                text: Session.jobCount > 1 ? String(Session.jobCount) : ""
+                toolTipText: shell.jobsPanelOpen ? qsTr("Hide the jobs") : qsTr("Show every running job")
+                onClicked: shell.jobsPanelOpen = !shell.jobsPanelOpen
             }
         }
 
@@ -698,5 +692,12 @@ FocusScope {
         id: commandHost
         view: viewport.view
         searchField: commandSearch
+    }
+
+    // T-019: file dialogs, the unsaved-changes prompt and crash recovery, over everything.
+    FileDialogs {
+        id: fileDialogs
+        anchors.fill: parent
+        z: 10
     }
 }

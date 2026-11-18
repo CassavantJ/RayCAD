@@ -25,6 +25,11 @@ T.ProgressBar {
             color: Theme.accentThinLine
             width: control.indeterminate ? parent.width / 3 : control.position * parent.width
 
+            // Back at the start when a job's progress becomes known (the animation leaves x wherever it stopped).
+            Binding on x {
+                when: !control.indeterminate
+                value: 0
+            }
             NumberAnimation on x {
                 running: control.indeterminate && control.visible
                 from: -bar.width

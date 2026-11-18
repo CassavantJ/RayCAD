@@ -158,6 +158,24 @@ void RecentFiles::add(const std::string& path)
     store();
 }
 
+bool RecentFiles::remove(const std::string& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string key = pathKey(path);
+    const auto before = items_.size();
+    items_.erase(
+        std::remove_if(items_.begin(), items_.end(), [&](const IApp::RecentFile& f) { return pathKey(f.path) == key; }),
+        items_.end());
+    if (items_.size() == before) {
+        return false;
+    }
+    store();
+    return true;
+}
+
 void RecentFiles::load()
 {
     std::ifstream in(toFsPath(file_), std::ios::binary);

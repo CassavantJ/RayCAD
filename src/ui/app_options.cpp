@@ -18,8 +18,6 @@ AppOptions parseOptions(const QStringList& arguments)
             options.smoke = true;
         } else if (arg == QLatin1String("--bench-start") || arg == QLatin1String("--bench-startup")) {
             options.benchStart = true;
-        } else if (arg == QLatin1String("--dev-session")) {
-            options.session = true; // hidden developer option (T-021), not in usageText()
         } else if (arg == QLatin1String("--gallery")) {
             options.gallery = true;
         } else if (arg == QLatin1String("--version")) {
@@ -64,7 +62,7 @@ AppOptions parseOptions(const QStringList& arguments)
         } else if (arg.startsWith(QLatin1String("--"))) {
             options.error = QStringLiteral("unknown option %1").arg(arg);
         } else {
-            // A file to open (T-020 opens STEP and IGES files through DevOpen; T-019 takes over with IApp::open).
+            // A file to open through the session (Files::openPaths).
             options.files << arg;
         }
     }
@@ -73,7 +71,7 @@ AppOptions parseOptions(const QStringList& arguments)
 
 QString usageText()
 {
-    return QStringLiteral("Usage: raycad [options] [file.step|file.stp|file.igs|file.iges]\n"
+    return QStringLiteral("Usage: raycad [options] [file.raycad|file.step|file.stp|file.igs|file.iges ...]\n"
                           "  --theme <name>      system (default), dark, light, or a theme id such as graphite-dark\n"
                           "  --glass on|off      glass or flat panels\n"
                           "  --gallery           show the controls gallery instead of the shell\n"

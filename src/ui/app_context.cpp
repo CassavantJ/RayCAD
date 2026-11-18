@@ -36,7 +36,6 @@ void AppContext::setApp(api::IApp* app)
     }
     app_ = app;
     emit sessionChanged();
-    emit canOpenFilesChanged();
 }
 
 void AppContext::setGlass(bool on)
@@ -116,15 +115,6 @@ void AppContext::dismissMessage()
     emit messageChanged();
 }
 
-void AppContext::setCanOpenFiles(bool on)
-{
-    if (on == canOpenFiles_) {
-        return;
-    }
-    canOpenFiles_ = on;
-    emit canOpenFilesChanged();
-}
-
 QString AppContext::version() const
 {
     return QStringLiteral(RAY_VERSION_STRING);
@@ -135,11 +125,21 @@ bool AppContext::invoke(const QString& actionId, const QString& argsJson)
     if (app_ == nullptr) {
         return false;
     }
+    if (actionHandler_ && actionHandler_(actionId, argsJson)) {
+        return true;
+    }
     const QByteArray id = actionId.toUtf8();
     const QByteArray args = argsJson.toUtf8();
     auto job = app_->actions().invoke(std::string_view(id.constData(), static_cast<std::size_t>(id.size())),
                                       std::string_view(args.constData(), static_cast<std::size_t>(args.size())),
                                       api::Caller::User);
+    // Errors show in the banner with the API's message; a cancelled job is not an error.
+    QPointer<AppContext> self(this);
+    job.then([self](Result<api::ActionResult> result) {
+        if (self && !result && result.error().code != ErrorCode::Cancelled) {
+            self->showMessage(QString::fromStdString(result.error().message), true);
+        }
+    });
     return job.valid();
 }
 

@@ -5,11 +5,12 @@
 // command of the UI itself (view.fitAll, selection.clear, ui.commandPalette, ...: kUiCommands in the .cpp) for which
 // no action exists. When the registry has an action with a view command's id, the action wins.
 //
-// Running (run / trigger): registry actions go through IActionRegistry::invoke as Caller::User; results and errors
-// are shown in the shell's message banner (AppContext::showMessage) and long-running ones in the status bar's job
-// slot (AppContext::setJob, Esc or Cancel cancels them). A command that cannot run now says why (disabledReason): no
-// session, no document open, the document is read-only, nothing selected, nothing to undo. trigger() asks for the
-// argument form (formRequested) when the action has required arguments.
+// Running (run / trigger): file actions go to Files first (AppContext::handleAction, T-019: native dialogs for a
+// path, the unsaved-changes prompt); other registry actions go through IActionRegistry::invoke as Caller::User, with
+// results and errors in the shell's message banner (AppContext::showMessage). Long-running ones are IApp jobs, shown
+// and cancelled through the jobs panel and the status bar's slot (Session). A command that cannot run now says why
+// (disabledReason): no session, no document open, the document is read-only, nothing selected, nothing to undo.
+// trigger() asks for the argument form (formRequested) when the action has required arguments.
 //
 // Context menus (contextEntries): which commands apply to the current selection comes from kContextMenu in the .cpp,
 // a table keyed by command id with the selection kinds each entry applies to (nothing selected, face, edge, vertex,
@@ -137,6 +138,7 @@ private:
         qint64 lastMs = 0;
     };
     bool runUi(const QString& id);
+    void finishLater(const QString& id); // `finished` for a command Files ran, posted
     QString uiReason(const QString& id) const;
     void loadUsage() const;
     void saveUsage() const;
@@ -153,10 +155,6 @@ private:
     bool rightDown_ = false;
     QPointF rightAt_;
     int revision_ = 0;
-    // The long-running action shown in the job slot.
-    JobHandle<api::ActionResult> running_;
-    std::uint64_t runningSerial_ = 0;
-    std::uint64_t nextSerial_ = 1;
     mutable bool usageLoaded_ = false;
     mutable std::map<QString, Usage> usage_;
 };

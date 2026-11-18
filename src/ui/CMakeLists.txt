@@ -1,7 +1,7 @@
 # ui: the Qt Quick application. Qt is allowed here and in src/render only.
 # GuiPrivate: ray_render links it, and the static QML plugin walks ray_render's dependencies, so it must be found here
 # too. The QML imports QtQuick.Templates (controls are styled from scratch, no Qt Quick Controls style is loaded)
-# QtQuick.Shapes (icons, the view cube) and QtQuick.Dialogs (the native file dialog of T-020's open path); they load
+# QtQuick.Shapes (icons, the view cube) and QtQuick.Dialogs (the native open, save and export dialogs); they load
 # from the Qt installation at run time.
 find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui GuiPrivate Qml Quick)
 qt_standard_project_setup(REQUIRES 6.8)
@@ -19,6 +19,8 @@ add_library(ray_ui STATIC
     app_host.h
     app_host.cpp
     scene_jobs.h
+    session_recovery.h
+    session_recovery.cpp
     viewport_navigation.h
     viewport_navigation.cpp
     palette_schema.h
@@ -31,12 +33,13 @@ target_link_libraries(ray_ui PRIVATE ray_api ray_render Qt6::Core Qt6::Gui Qt6::
 # QML is compiled ahead of time by qmlcachegen, the default of qt_add_qml_module. qmltc is NOT used: it does
 # not build with Qt Quick Controls in Qt 6.12.0 (spike S2).
 # The C++ singletons Theme (theme_object.h), AppContext (app_context.h), Scene (scene_controller.h), Selection
-# (selection_model.h), DevOpen (dev_open.h), Commands (palette_commands.h) and Shortcuts (shortcuts.h), and the
-# ViewportItem (viewport_item.h) and PaletteModel (palette_model.h) types, are registered
+# (selection_model.h), Session (session.h), Files (files.h), Commands (palette_commands.h) and Shortcuts
+# (shortcuts.h), and the ViewportItem (viewport_item.h) and PaletteModel (palette_model.h) types, are registered
 # declaratively through QML_SINGLETON / QML_NAMED_ELEMENT in the headers listed under SOURCES.
 set(RAY_UI_QML_FILES
     qml/Main.qml
     qml/Shell.qml
+    qml/StartScreen.qml
     qml/Gallery.qml
     qml/Viewport.qml
     qml/ViewCube.qml
@@ -47,6 +50,13 @@ set(RAY_UI_QML_FILES
     qml/panels/PanelBase.qml
     qml/panels/ModelTree.qml
     qml/panels/SelectionInfo.qml
+    qml/panels/JobsPanel.qml
+    qml/dialogs/DialogBase.qml
+    qml/dialogs/UnsavedChangesDialog.qml
+    qml/dialogs/RecoveryDialog.qml
+    qml/dialogs/ReadOnlyNotice.qml
+    qml/dialogs/FileDialogs.qml
+    qml/dialogs/FileMenu.qml
     qml/panels/ShortcutSettings.qml
     qml/controls/icons.js
     qml/controls/Icon.qml
@@ -88,8 +98,10 @@ qt_add_qml_module(ray_ui
         scene_controller.cpp
         selection_model.h
         selection_model.cpp
-        dev_open.h
-        dev_open.cpp
+        session.h
+        session.cpp
+        files.h
+        files.cpp
         palette_commands.h
         palette_commands.cpp
         palette_model.h

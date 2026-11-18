@@ -7,6 +7,10 @@
 //   - The QML disk cache and the RHI pipeline cache live in a per-user cache folder from QStandardPaths, set
 //     explicitly before the engine and the window exist.
 //   - Nothing from the kernel runs before the first frame; the shell creates only what the first screen shows.
+//
+// The application session (T-019): startSession() makes the real one, ray::api::makeApp with this host's Qt
+// dispatcher and its one job system (the viewer shares it: one job system per process), and runs the start-up
+// crash-recovery check. runApp calls it right after the first frame. Tests may instead set a session of their own.
 #pragma once
 
 #include "app_options.h"
@@ -16,6 +20,8 @@
 #include <QtCore/QStringList>
 
 #include <memory>
+#include <optional>
+#include <string>
 
 class QQmlApplicationEngine;
 class QQuickWindow;
@@ -32,8 +38,10 @@ namespace ray::ui {
 
 class AppContext;
 class CommandCatalog;
-class DevOpen;
+class Files;
+class IRecoverySource;
 class SceneController;
+class Session;
 class SelectionModel;
 class ShortcutManager;
 class ThemeObject;
@@ -63,19 +71,30 @@ public:
     QStringList warnings() const { return warnings_; }
     QString cacheDir() const { return cacheDir_; }
 
-    // The application session; may be null (no session) and may be set later. Not owned.
+    // The application session; may be null (no session) and may be set later. Not owned. startSession() sets the
+    // one it makes.
     void setApp(api::IApp* app);
+    api::IApp* app() const { return app_; }
+    // Makes the real session (see above) unless one is set, then runs the start-up recovery check. `userDataDir`:
+    // AppOptions::userDataDir of the api (nullopt: $RAYCAD_USER_DATA_DIR, else the platform's per-user folder).
+    // False (and a message in the banner) if it could not be made.
+    bool startSession(std::optional<std::string> userDataDir = std::nullopt);
+    // The crash-recovery source for the start-up check; before startSession. Default: the session's own journals
+    // (IApp::pendingRecoveries / recover / discardRecovery). Tests set a double.
+    void setRecoverySource(std::unique_ptr<IRecoverySource> source);
 
-    // T-020: the viewer. Scene, Selection and DevOpen are QML singletons; viewport() is the window's ViewportItem
-    // (null before load()). Jobs come from the session (IApp::jobs) or, without one, from a job system owned here.
+    // T-020: the viewer. Scene and Selection are QML singletons; viewport() is the window's ViewportItem
+    // (null before load()). The viewer and the session share one job system, made on first use.
     SceneController* scene() const { return scene_.get(); }
     SelectionModel* selection() const { return selection_.get(); }
-    DevOpen* devOpen() const { return devOpen_.get(); }
     ViewportItem* viewport() const;
     IJobSystem* jobs();
-    // Lets the empty state's Open button, drag-and-drop and command-line files open STEP/IGES files without a
-    // session (the developer path until T-019). runApp turns it on; tests that need it do too.
-    void enableDevOpen(bool on = true);
+    // T-019: the `Session` and `Files` QML singletons.
+    Session* session() const { return session_.get(); }
+    Files* files() const { return files_.get(); }
+
+    // Closing the main window asks about unsaved changes first (Files::requestQuit).
+    bool eventFilter(QObject* watched, QEvent* event) override;
     // T-021: the Commands and Shortcuts singletons (palette_commands.h, shortcuts.h).
     CommandCatalog* commands() const { return commands_.get(); }
     ShortcutManager* shortcuts() const { return shortcuts_.get(); }
@@ -93,18 +112,23 @@ private:
     QStringList warnings_;
     api::IApp* app_ = nullptr;
     // Declared before engine_ so they outlive it: the engine holds them as singletons with C++ ownership.
-    // The dispatcher and the job system outlive the objects that hold job handles.
+    // The dispatcher and the job system outlive the objects that hold job handles, and the session outlives
+    // everything that observes it.
     std::unique_ptr<IUiDispatcher> dispatcher_;
     std::unique_ptr<IJobSystem> ownJobs_;
+    std::unique_ptr<api::IApp> ownApp_;
+    std::unique_ptr<IRecoverySource> recovery_;
     std::unique_ptr<ThemeObject> theme_;
     std::unique_ptr<AppContext> context_;
     std::unique_ptr<SceneController> scene_;
     std::unique_ptr<SelectionModel> selection_;
-    std::unique_ptr<DevOpen> devOpen_;
+    std::unique_ptr<Session> session_;
+    std::unique_ptr<Files> files_;
     std::unique_ptr<CommandCatalog> commands_;
     std::unique_ptr<ShortcutManager> shortcuts_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QQuickWindow* window_ = nullptr;
+    bool quitApproved_ = false;
 };
 
 } // namespace ray::ui

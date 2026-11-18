@@ -4,7 +4,7 @@
 //                     Scene's meshes, the Selection's highlight, the Theme's colours and the tier preset, all live.
 //   viewportFallback  a plain backdrop, shown only where the scene graph has no QRhi (QT_QUICK_BACKEND=software).
 //   selectionBox      the rubber band of a box selection.
-//   dropArea          drop a STEP or IGES file anywhere on the window to open it (DevOpen until T-019).
+//   dropArea          drop RayCAD, STEP or IGES files anywhere on the window to open them (Files, T-019).
 // Esc (with the view focused) cancels the running job, else the box, else clears the selection.
 import QtQuick
 import RayCad.Ui
@@ -47,8 +47,8 @@ Item {
         Accessible.name: qsTr("3D view")
 
         Keys.onEscapePressed: {
-            if (AppContext.jobActive)
-                AppContext.cancelJob()
+            if (Session.jobActive)
+                Session.cancelForegroundJob()
             else if (boxActive)
                 cancelBox()
             else
@@ -73,10 +73,10 @@ Item {
         objectName: "dropArea"
         anchors.fill: parent
         onEntered: drag => {
-            drag.accepted = drag.hasUrls && drag.urls.length > 0 && DevOpen.canOpen(drag.urls[0])
+            drag.accepted = drag.hasUrls && Files.canOpenAny(drag.urls)
         }
         onDropped: drop => {
-            if (drop.hasUrls && drop.urls.length > 0 && DevOpen.openUrl(drop.urls[0]))
+            if (drop.hasUrls && Files.openUrls(drop.urls))
                 drop.acceptProposedAction()
         }
     }

@@ -36,6 +36,8 @@ public:
     explicit RecentFiles(std::string dir);
     std::vector<IApp::RecentFile> list() const;
     void add(const std::string& path);
+    // Removes the entry for `path` (compared by pathKey); false if it is not listed.
+    bool remove(const std::string& path);
 
 private:
     void load();

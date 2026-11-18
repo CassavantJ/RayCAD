@@ -3,9 +3,8 @@
 #include "app_clock.h"
 #include "app_host.h"
 #include "app_options.h"
-#include "dev_open.h"
+#include "files.h"
 #include "scene_controller.h"
-#include "scene_jobs.h"
 #include "selection_model.h"
 #include "viewport_item.h"
 
@@ -80,25 +79,7 @@ int runApp(int argc, char** argv)
         return 0;
     }
 
-    // --dev-session (hidden developer option, T-021): an application session made here until T-019 provides one. The
-    // dispatcher and the app outlive the host, which holds the app as a plain pointer.
-    std::unique_ptr<QtUiDispatcher> sessionDispatcher;
-    std::unique_ptr<api::IApp> session;
-    if (options.session) {
-        sessionDispatcher = std::make_unique<QtUiDispatcher>();
-        api::AppOptions appOptions;
-        appOptions.dispatcher = sessionDispatcher.get();
-        session = api::makeApp(std::move(appOptions));
-        if (!session) {
-            std::fprintf(stderr, "raycad: the application session could not be created\n");
-            return kExitLoad;
-        }
-    }
-
     AppHost host(options);
-    if (session) {
-        host.setApp(session.get());
-    }
     if (!host.optionError().isEmpty()) {
         std::fprintf(stderr, "raycad: %s\n", qPrintable(host.optionError()));
         return kExitUsage;
@@ -109,12 +90,10 @@ int runApp(int argc, char** argv)
     }
     const double tQml = msSinceProcessStart();
     QQuickWindow* window = host.window();
-    // T-020: files open without a session through DevOpen (T-019 replaces it with IApp::open).
-    host.enableDevOpen();
-    const QString openFile = options.files.isEmpty() ? QString() : options.files.constFirst();
-    if (options.files.size() > 1) {
-        std::fprintf(stderr, "raycad: only the first file is opened (%s)\n", qPrintable(openFile));
-    }
+    // Files on the command line open once the session exists (after the first frame): the first one as the
+    // document, further STEP/IGES files imported into it.
+    const QStringList openFiles = options.files;
+    const bool openFile = !openFiles.isEmpty();
 
     const bool exitAfterFrame = options.smoke || options.benchStart || !options.screenshot.isEmpty();
     std::atomic<bool> seen{false};
@@ -144,8 +123,8 @@ int runApp(int argc, char** argv)
             SceneController* scene = host.scene();
             SelectionModel* selection = host.selection();
             ViewportItem* view = host.viewport();
-            const bool shown = !host.devOpen()->busy() && scene->ready() && !scene->refining() && view != nullptr &&
-                               !view->animating();
+            const bool shown =
+                !host.files()->busy() && scene->ready() && !scene->refining() && view != nullptr && !view->animating();
             if (started->elapsed() > kOpenTimeoutMs) {
                 std::fprintf(stderr, "raycad: the file was not shown within %d seconds\n", kOpenTimeoutMs / 1000);
                 poll->stop();
@@ -181,13 +160,35 @@ int runApp(int argc, char** argv)
             std::printf("raycad: smoke ok, first frame rendered (%s)\n", graphicsApiName(window));
         }
         std::fflush(stdout);
-        if (options.screenshot.isEmpty()) {
-            if (exitAfterFrame) {
-                QCoreApplication::exit(0);
-            }
+        if (options.smoke && options.screenshot.isEmpty()) {
+            QCoreApplication::exit(0);
             return;
         }
-        if (!openFile.isEmpty()) {
+        // The application session (T-019): nothing from the kernel before the first frame.
+        const double tSession0 = msSinceProcessStart();
+        const bool started = host.startSession();
+        if (options.benchStart) {
+            // Reported for PLAN.md 9 (the start screen fills in with the recent files once the session exists).
+            std::printf("raycad: bench-start session_ms=%.1f\n", msSinceProcessStart() - tSession0);
+            std::fflush(stdout);
+            if (options.screenshot.isEmpty()) {
+                QCoreApplication::exit(0);
+                return;
+            }
+        }
+        if (started && openFile) {
+            if (exitAfterFrame) {
+                QObject::connect(host.files(), &Files::openFailed, &app, [](const QString& message) {
+                    std::fprintf(stderr, "raycad: %s\n", qPrintable(message));
+                    QCoreApplication::exit(kExitLoad);
+                });
+            }
+            host.files()->openPaths(openFiles);
+        }
+        if (options.screenshot.isEmpty()) {
+            return;
+        }
+        if (openFile) {
             screenshotWhenShown();
             return;
         }
@@ -214,16 +215,6 @@ int runApp(int argc, char** argv)
     }
 
     host.show();
-    if (!openFile.isEmpty()) {
-        if (exitAfterFrame) {
-            QObject::connect(host.devOpen(), &DevOpen::failed, &app, [](const QString& message) {
-                std::fprintf(stderr, "raycad: %s\n", qPrintable(message));
-                QCoreApplication::exit(kExitLoad);
-            });
-        }
-        // After the window is up: the import runs on a worker, the first frame does not wait for it.
-        QTimer::singleShot(0, &app, [&] { host.devOpen()->open(openFile); });
-    }
     return QGuiApplication::exec();
 }
 

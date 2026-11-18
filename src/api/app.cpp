@@ -13,6 +13,8 @@
 // journal off for that document with a warning, and work goes on.
 #include "app_impl.h"
 
+#include <ray_api/recent_files.h>
+
 #include <algorithm>
 #include <exception>
 #include <new>
@@ -409,6 +411,15 @@ Status AppImpl::close(OpenDocument& od)
     }
     closeEntry(entry);
     return {};
+}
+
+bool AppImpl::forgetRecent(const std::string& path)
+{
+    if (!recent_ || !recent_->remove(path)) {
+        return false;
+    }
+    emit(AppEvent::Kind::RecentFilesChanged, {});
+    return true;
 }
 
 void AppImpl::setConfirmHook(ConfirmHook hook)
@@ -1148,6 +1159,12 @@ std::unique_ptr<HeadlessApp> makeHeadlessApp(AppOptions options)
         return nullptr;
     }
     return std::move(*app);
+}
+
+bool forgetRecentFile(IApp& app, const std::string& path)
+{
+    auto* impl = dynamic_cast<detail::AppImpl*>(&app);
+    return impl != nullptr && impl->forgetRecent(path);
 }
 
 std::unique_ptr<HeadlessApp> makeHeadlessApp(std::vector<std::string> libraryRoots, int workerThreads)

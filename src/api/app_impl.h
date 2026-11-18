@@ -178,6 +178,8 @@ public:
     // UI thread: close (the busy check is the caller's). `keepJournal`: leave the journal (and backing file) for
     // recovery at the next start instead of deleting it.
     void closeEntry(DocEntry* entry, bool keepJournal = false);
+    // UI thread (ray_api/recent_files.h): drops a path from the recent-files list and posts RecentFilesChanged.
+    bool forgetRecent(const std::string& path);
 
     // ---- Recovery journal (recovery.cpp) ----
     Result<OpenDocument*> recoverWork(const RecoveryInfo& info, JobContext& ctx); // on a worker

@@ -341,11 +341,6 @@ CommandCatalog::CommandCatalog(AppContext* context, SceneController* scene, Sele
 {
     if (context_) {
         connect(context_, &AppContext::sessionChanged, this, &CommandCatalog::sessionChanged);
-        connect(context_, &AppContext::jobCancelRequested, this, [this] {
-            if (running_.valid() && !running_.done()) {
-                running_.cancel();
-            }
-        });
     }
 }
 
@@ -683,6 +678,13 @@ bool CommandCatalog::trigger(const QString& id)
         emit finished(id, false, message);
         return false;
     }
+    // T-019: file actions that take a path (open, import, save as, export) use the native file dialogs, and close,
+    // new and open go through the unsaved-changes prompt (Files::handleAction); the generated form is for the rest.
+    if (c->fromRegistry && context_->handleAction(id, QStringLiteral("{}"))) {
+        recordUse(id);
+        finishLater(id);
+        return true;
+    }
     if (needsForm(*c)) {
         emit formRequested(id);
         return true;
@@ -711,6 +713,11 @@ bool CommandCatalog::run(const QString& id, const QString& argsJson)
         emit finished(id, ok, QString());
         return ok;
     }
+    // A file action with its arguments (a path from the form): Files runs it (prompt, replace, status, errors).
+    if (context_->handleAction(id, argsJson.isEmpty() ? QStringLiteral("{}") : argsJson)) {
+        finishLater(id);
+        return true;
+    }
     api::IApp* app = context_->app();
     const QByteArray idBytes = utf8(id);
     const QByteArray argBytes = utf8(argsJson.isEmpty() ? QStringLiteral("{}") : argsJson);
@@ -721,29 +728,13 @@ bool CommandCatalog::run(const QString& id, const QString& argsJson)
         emit finished(id, false, message);
         return false;
     }
-    const std::uint64_t serial = nextSerial_++;
+    // Long-running actions are IApp jobs: the jobs panel and the status bar's slot show them, and Esc or Cancel
+    // there cancels them (Session, T-019), so nothing here tracks them.
     const QString title = c->title;
-    const bool longRunning = c->longRunning;
     QPointer<CommandCatalog> self(this);
-    if (longRunning) {
-        running_ = job;
-        runningSerial_ = serial;
-        context_->setJob(title, -1);
-        job.onProgress([self, serial, title](double fraction, const std::string& stage) {
-            if (self && self->runningSerial_ == serial && self->context_) {
-                self->context_->setJob(stage.empty() ? title : QStringLiteral("%1: %2").arg(title, qs(stage)),
-                                       fraction);
-            }
-        });
-    }
-    job.then([self, id, title, serial, longRunning](Result<api::ActionResult> result) {
+    job.then([self, id, title](Result<api::ActionResult> result) {
         if (!self || !self->context_) {
             return;
-        }
-        if (longRunning && self->runningSerial_ == serial) {
-            self->running_ = {};
-            self->runningSerial_ = 0;
-            self->context_->clearJob();
         }
         QString message;
         if (result) {
@@ -759,6 +750,12 @@ bool CommandCatalog::run(const QString& id, const QString& argsJson)
         emit self->finished(id, result.has_value(), message);
     });
     return true;
+}
+
+void CommandCatalog::finishLater(const QString& id)
+{
+    // Like a registry action's result: after the call that started it returned.
+    QMetaObject::invokeMethod(this, [this, id] { emit finished(id, true, QString()); }, Qt::QueuedConnection);
 }
 
 bool CommandCatalog::runUi(const QString& id)

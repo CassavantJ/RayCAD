@@ -1,11 +1,13 @@
 #include "app_host.h"
 
 #include "app_context.h"
-#include "dev_open.h"
+#include "files.h"
 #include "palette_commands.h"
 #include "scene_controller.h"
 #include "scene_jobs.h"
 #include "selection_model.h"
+#include "session.h"
+#include "session_recovery.h"
 #include "shortcuts.h"
 #include "theme_object.h"
 #include "viewport_item.h"
@@ -14,7 +16,9 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
+#include <QtCore/QEvent>
 #include <QtCore/QStandardPaths>
+#include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QScreen>
 #include <QtQml/QQmlApplicationEngine>
@@ -35,7 +39,17 @@ AppHost::AppHost(const AppOptions& options, QString cacheDir, QObject* parent)
     // The viewer (T-020). Its job system is made on first use, so nothing heavy happens before the first frame.
     scene_ = std::make_unique<SceneController>([this] { return jobs(); }, context_.get());
     selection_ = std::make_unique<SelectionModel>(scene_.get());
-    devOpen_ = std::make_unique<DevOpen>(scene_.get(), context_.get());
+    // The session (T-019): observed by Session, driven by Files. Both work without one (start screen only).
+    session_ = std::make_unique<Session>(scene_.get(), context_.get());
+    files_ = std::make_unique<Files>(session_.get(), context_.get());
+    context_->setActionHandler(
+        [files = files_.get()](const QString& id, const QString& args) { return files->handleAction(id, args); });
+    connect(files_.get(), &Files::quitApproved, this, [this] {
+        quitApproved_ = true;
+        if (window_ != nullptr) {
+            window_->close();
+        }
+    });
     // T-021: commands and shortcuts. Cheap: nothing is read until the first key press or the palette needs it.
     commands_ =
         std::make_unique<CommandCatalog>(context_.get(), scene_.get(), selection_.get(), [this] { return viewport(); });
@@ -62,13 +76,23 @@ AppHost::AppHost(const AppOptions& options, QString cacheDir, QObject* parent)
 AppHost::~AppHost()
 {
     // The window belongs to the engine; destroy both before the singletons they reference.
+    if (window_ != nullptr) {
+        window_->removeEventFilter(this);
+    }
     engine_.reset();
+    window_ = nullptr;
+    // Then what observes the session, then the viewer's objects (their jobs are cancelled), then the session (it
+    // cancels and waits for its jobs and closes its documents), then the job system, which waits for the rest.
     shortcuts_.reset();
     commands_.reset();
-    // Then the viewer's objects (their jobs are cancelled), then the job system, which waits for running jobs.
-    devOpen_.reset();
+    context_->setActionHandler({});
+    files_.reset();
+    session_.reset();
+    context_->setApp(nullptr);
     selection_.reset();
     scene_.reset();
+    app_ = nullptr;
+    ownApp_.reset();
     ownJobs_.reset();
 }
 
@@ -79,6 +103,49 @@ IJobSystem* AppHost::jobs()
     if (!ownJobs_)
         ownJobs_ = api::viewer::makeViewerJobs(*dispatcher_);
     return ownJobs_.get();
+}
+
+bool AppHost::startSession(std::optional<std::string> userDataDir)
+{
+    if (app_ == nullptr) {
+        // One job system per process: the one the viewer uses (made now if nothing needed it yet).
+        if (!ownJobs_) {
+            ownJobs_ = api::viewer::makeViewerJobs(*dispatcher_);
+        }
+        api::AppOptions options;
+        options.dispatcher = dispatcher_.get();
+        options.jobs = ownJobs_.get();
+        options.userDataDir = std::move(userDataDir);
+        ownApp_ = api::makeApp(std::move(options));
+        if (!ownApp_) {
+            context_->showMessage(tr("The application session could not start; files cannot be opened."), true);
+            return false;
+        }
+        setApp(ownApp_.get());
+    }
+    if (!recovery_) {
+        recovery_ = makeAppRecoverySource(*app_);
+    }
+    session_->setRecoverySource(std::move(recovery_));
+    session_->checkRecovery();
+    return true;
+}
+
+void AppHost::setRecoverySource(std::unique_ptr<IRecoverySource> source)
+{
+    recovery_ = std::move(source);
+}
+
+bool AppHost::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == window_ && event->type() == QEvent::Close && !quitApproved_ && files_ &&
+        files_->hasUnsavedChanges()) {
+        // Ask first (Save / Discard / Cancel); Files::quitApproved closes the window again once answered.
+        event->ignore();
+        QTimer::singleShot(0, files_.get(), [files = files_.get()] { files->requestQuit(); });
+        return true;
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 ViewportItem* AppHost::viewport() const
@@ -96,11 +163,6 @@ ViewportItem* AppHost::viewport() const
         todo.insert(todo.end(), children.begin(), children.end());
     }
     return nullptr;
-}
-
-void AppHost::enableDevOpen(bool on)
-{
-    context_->setCanOpenFiles(on);
 }
 
 QString AppHost::cacheDirectory()
@@ -134,7 +196,8 @@ bool AppHost::load()
     AppContext::provideFor(engine_.get(), context_.get());
     SceneController::provideFor(engine_.get(), scene_.get());
     SelectionModel::provideFor(engine_.get(), selection_.get());
-    DevOpen::provideFor(engine_.get(), devOpen_.get());
+    Session::provideFor(engine_.get(), session_.get());
+    Files::provideFor(engine_.get(), files_.get());
     CommandCatalog::provideFor(engine_.get(), commands_.get());
     ShortcutManager::provideFor(engine_.get(), shortcuts_.get());
     connect(engine_.get(), &QQmlEngine::warnings, this, [this](const QList<QQmlError>& list) {
@@ -165,6 +228,7 @@ bool AppHost::load()
     // GPU timestamps for the viewport's IViewport::lastFrameStats (T-020).
     config.setTimestamps(true);
     window_->setGraphicsConfiguration(config);
+    window_->installEventFilter(this);
 
     QSize size = options_.size;
     if (!size.isValid()) {
@@ -189,8 +253,14 @@ void AppHost::show()
 
 void AppHost::setApp(api::IApp* app)
 {
+    if (app == app_) {
+        return;
+    }
+    // The scene's jobs belong to the job system of the session they came from.
+    scene_->cancelJobs(true);
     app_ = app;
     context_->setApp(app);
+    session_->setApp(app);
 }
 
 } // namespace ray::ui

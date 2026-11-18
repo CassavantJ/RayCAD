@@ -1,12 +1,12 @@
-# The viewport item, navigation, selection, model tree and the developer open path (task T-020): Catch2 driving real
-# Qt Quick windows. The viewport needs a scene graph with QRhi (Direct3D 11 on Windows by default); where there is
+# The viewport item, navigation, selection and model tree (task T-020; files open through the session, T-019):
+# Catch2 driving real Qt Quick windows. The viewport needs a scene graph with QRhi (Direct3D 11 on Windows by default); where there is
 # none (QT_QUICK_BACKEND=software on Linux CI) the tests that look at pixels or pick skip with a message.
 find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui Qml Quick Test)
 
 add_executable(ray_ui_viewport_tests viewport_test.cpp)
 target_link_libraries(ray_ui_viewport_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
                                                     Qt6::Test Catch2::Catch2)
-# The private headers of src/ui (AppHost, SceneController, SelectionModel, ViewportItem, DevOpen).
+# The private headers of src/ui (AppHost, SceneController, SelectionModel, ViewportItem, Files, Session).
 target_include_directories(ray_ui_viewport_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 target_compile_definitions(ray_ui_viewport_tests PRIVATE
     RAY_KERNEL_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data"

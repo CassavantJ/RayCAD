@@ -1,22 +1,24 @@
 // The command palette, keyboard shortcuts and context menus (task T-021), on real Qt Quick windows with an
-// application session (api::makeApp) whose user data folder is a temporary RAYCAD_USER_DATA_DIR.
+// application session (AppHost::startSession) whose user data folder is a temporary RAYCAD_USER_DATA_DIR.
 //
 //   - every registered action appears in the palette (found by its title); "sav" puts Save first
 //   - Enter runs the highlighted action; the argument form generated from the schema hands valid JSON to it
 //   - shortcuts are remappable, a conflict names the other action, the map survives an app restart
 //   - a shortcut does not fire while a text field has the focus
 //   - the context menu at the cursor lists the expected actions with nothing selected and with a face selected
-//   - nothing is created before first use; disabled commands say why; long-running ones use the job slot
+//   - nothing is created before first use; disabled commands say why; long-running ones use the jobs list
+//   - with a document open the file, edit and export commands enable; a read-only one disables Save (Save As hint);
+//     file commands that need a path use the native file dialog instead of the form (T-019)
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
-#include "dev_open.h"
+#include "files.h"
 #include "palette_commands.h"
 #include "palette_model.h"
 #include "palette_schema.h"
 #include "scene_controller.h"
-#include "scene_jobs.h"
 #include "selection_model.h"
+#include "session.h"
 #include "shortcuts.h"
 #include "theme_object.h"
 #include "viewport_item.h"
@@ -36,6 +38,7 @@
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtQuick/QSGRendererInterface>
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
 #include <catch2/catch_session.hpp>
@@ -134,11 +137,10 @@ void addTestActions(api::IApp& app, const std::shared_ptr<Calls>& calls)
                           }));
 }
 
-// One application window with a session. The user data folder is set through RAYCAD_USER_DATA_DIR.
+// One application window with the real session (AppHost::startSession, T-019). The user data folder is set through
+// RAYCAD_USER_DATA_DIR too.
 struct Window {
     QTemporaryDir cache;
-    std::unique_ptr<ui::QtUiDispatcher> dispatcher;
-    std::unique_ptr<api::IApp> app;
     std::unique_ptr<AppHost> host;
     std::shared_ptr<Calls> calls = std::make_shared<Calls>();
 
@@ -146,28 +148,22 @@ struct Window {
                     QSize size = QSize(1440, 900))
     {
         qputenv("RAYCAD_USER_DATA_DIR", QDir::toNativeSeparators(userData).toLocal8Bit());
-        if (session) {
-            dispatcher = std::make_unique<ui::QtUiDispatcher>();
-            api::AppOptions o;
-            o.dispatcher = dispatcher.get();
-            o.workerThreads = 2;
-            app = api::makeApp(std::move(o));
-            REQUIRE(app != nullptr);
-            REQUIRE(QDir::cleanPath(QString::fromStdString(app->userDataDir())) == QDir::cleanPath(userData));
-            addTestActions(*app, calls);
-        }
         ui::AppOptions options;
         options.theme = QString::fromLatin1(theme);
         options.glass = false;
         options.size = size;
         host = std::make_unique<AppHost>(options, cache.path());
         REQUIRE(host->optionError().isEmpty());
-        if (app)
-            host->setApp(app.get());
         REQUIRE(host->load());
-        host->enableDevOpen();
+        host->files()->setUseNativeDialogs(false);
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        if (session) {
+            // As runApp does: after the window is up.
+            REQUIRE(host->startSession(userData.toStdString()));
+            REQUIRE(QDir::cleanPath(QString::fromStdString(app()->userDataDir())) == QDir::cleanPath(userData));
+            addTestActions(*app(), calls);
+        }
         if (ui::ViewportItem* v = host->viewport()) {
             v->setAnimationsEnabled(false);
             v->forceActiveFocus();
@@ -175,13 +171,8 @@ struct Window {
         host->scene()->setPreset(render::presetFor(render::Tier::Medium));
         grab();
     }
-    ~Window()
-    {
-        host.reset();
-        app.reset();
-        dispatcher.reset();
-    }
 
+    api::IApp* app() const { return host->app(); }
     QQuickWindow* window() const { return host->window(); }
     CommandCatalog* commands() const { return host->commands(); }
     ShortcutManager* shortcuts() const { return host->shortcuts(); }
@@ -315,11 +306,11 @@ QPointF topFacePoint(const Window& w)
 
 void openPart(Window& w)
 {
-    REQUIRE(w.host->devOpen()->open(kBoxHole));
+    REQUIRE(w.host->files()->open(kBoxHole));
     REQUIRE(QTest::qWaitFor(
         [&] {
-            return !w.host->devOpen()->busy() && w.host->scene()->ready() && !w.host->scene()->refining() &&
-                   !w.host->viewport()->animating();
+            return !w.host->files()->busy() && w.host->session()->hasDocument() && w.host->scene()->ready() &&
+                   !w.host->scene()->refining() && !w.host->viewport()->animating();
         },
         kOpenTimeoutMs));
     w.grab();
@@ -419,7 +410,7 @@ TEST_CASE("every registered action appears in the palette; typing sav puts Save 
     Window w(data.path());
     w.openPalette();
     PaletteModel& model = *w.model();
-    const std::vector<api::ActionInfo> all = w.app->actions().all();
+    const std::vector<api::ActionInfo> all = w.app()->actions().all();
     REQUIRE(all.size() > 15);
     // An empty query lists everything.
     CHECK(model.count() >= static_cast<int>(all.size()));
@@ -577,29 +568,122 @@ TEST_CASE("commands that cannot run say why; long-running ones use the job slot"
 
     REQUIRE(commands.run(QStringLiteral("file.new")));
     REQUIRE(w.waitFinished(QStringLiteral("file.new")));
-    REQUIRE(w.app->active() != nullptr);
+    REQUIRE(w.app()->active() != nullptr);
     CHECK(reason("file.save").isEmpty());
     CHECK(reason("edit.undo") == QStringLiteral("There is nothing to undo"));
-    w.app->active()->readOnly = true;
+    w.app()->active()->readOnly = true;
     CHECK(reason("file.save").contains(QStringLiteral("read-only")));
     CHECK(reason("edit.undo").contains(QStringLiteral("read-only")));
     CHECK(reason("file.saveAs").isEmpty());
-    w.app->active()->readOnly = false;
+    w.app()->active()->readOnly = false;
 
-    // A long-running action shows in the job slot while it runs.
+    // A long-running action is an app job: the jobs list and the status bar's slot show it while it runs.
+    ui::Session& session = *w.host->session();
+    // (The new document's first rebuild may show briefly too: wait for the action's own job.)
+    auto slowShown = [&] {
+        return session.jobTitle().startsWith(QStringLiteral("Slow Test Job"));
+    };
     REQUIRE(commands.run(QStringLiteral("test.slow")));
-    CHECK(w.context()->jobActive());
-    CHECK(w.context()->jobTitle().startsWith(QStringLiteral("Slow Test Job")));
+    REQUIRE(QTest::qWaitFor(slowShown, 3000));
     REQUIRE(w.waitFinished(QStringLiteral("test.slow")));
-    CHECK_FALSE(w.context()->jobActive());
+    REQUIRE(QTest::qWaitFor([&] { return !session.jobActive(); }, 3000));
     CHECK(w.calls->count("test.slow") == 1);
-    // Cancel in the job slot cancels it.
+    // Cancel in the job slot (or Esc) cancels it.
     REQUIRE(commands.run(QStringLiteral("test.slow")));
-    w.context()->cancelJob();
+    REQUIRE(QTest::qWaitFor(slowShown, 3000));
+    session.cancelForegroundJob();
+    CHECK_FALSE(session.jobActive());
     REQUIRE(w.waitFinished(QStringLiteral("test.slow")));
-    CHECK_FALSE(w.context()->jobActive());
     CHECK(w.calls->count("test.slow") == 1);
     CHECK(w.context()->message().contains(QStringLiteral("cancelled")));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("file and edit commands follow the session's document; path commands use the file dialogs",
+          "[palette][session]")
+{
+    if (!QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi()))
+        SKIP("the scene graph has no QRhi (software backend): the part cannot be shown here");
+    QTemporaryDir data;
+    QTemporaryDir work;
+    Window w(data.path());
+    CommandCatalog& commands = *w.commands();
+    ui::Files& files = *w.host->files();
+    auto reason = [&](const char* id) {
+        return commands.info(QString::fromLatin1(id)).value("reason").toString();
+    };
+    const char* needDocument[] = {"file.save",       "file.saveAs",    "file.close", "file.exportStep",
+                                  "file.exportIges", "file.exportStl", "edit.undo",  "edit.redo"};
+    for (const char* id : needDocument) {
+        INFO(id);
+        CHECK(reason(id) == QStringLiteral("Open or create a document first"));
+    }
+    CHECK(reason("file.open").isEmpty());
+    CHECK(reason("file.import").isEmpty());
+
+    // Interactively, open asks for a file with the native dialog (not the palette's form), and its shortcut does
+    // it exactly once.
+    QSignalSpy openAsked(&files, &ui::Files::openDialogRequested);
+    QSignalSpy formAsked(&commands, &CommandCatalog::formRequested);
+    REQUIRE(commands.trigger(QStringLiteral("file.open")));
+    CHECK(openAsked.count() == 1);
+    CHECK(formAsked.count() == 0);
+    w.window()->requestActivate();
+    if (QTest::qWaitForWindowActive(w.window(), 3000)) {
+        w.host->viewport()->forceActiveFocus();
+        QTest::keyClick(w.window(), Qt::Key_O, Qt::ControlModifier);
+        QTest::qWait(100);
+        CHECK(openAsked.count() == 2);
+        // Ctrl+N makes exactly one new document.
+        QTest::keyClick(w.window(), Qt::Key_N, Qt::ControlModifier);
+        REQUIRE(QTest::qWaitFor([&] { return w.app()->active() != nullptr; }, 3000));
+        QTest::qWait(100);
+        CHECK(w.app()->documents().size() == 1);
+        CHECK_FALSE(files.promptVisible());
+        REQUIRE(w.app()->close(*w.app()->active()).has_value());
+        REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->hasDocument(); }, 3000));
+    } else {
+        WARN("the test window could not be made active: the shortcut part is skipped");
+    }
+
+    // A part open: the file, edit and export commands are available (undo: the import).
+    openPart(w);
+    for (const char* id : {"file.save", "file.saveAs", "file.close", "file.exportStep", "file.exportIges",
+                           "file.exportStl", "edit.undo"}) {
+        INFO(id);
+        CHECK(reason(id).isEmpty());
+    }
+    CHECK(reason("edit.redo") == QStringLiteral("There is nothing to redo"));
+    // Save of a never-saved document and the export commands ask for a file with the native dialog.
+    QSignalSpy saveAsAsked(&files, &ui::Files::saveAsDialogRequested);
+    QSignalSpy exportAsked(&files, &ui::Files::exportDialogRequested);
+    REQUIRE(commands.trigger(QStringLiteral("file.saveAs")));
+    REQUIRE(commands.trigger(QStringLiteral("file.exportStl")));
+    CHECK(saveAsAsked.count() == 1);
+    REQUIRE(exportAsked.count() == 1);
+    CHECK(exportAsked.at(0).at(0).toString() == QStringLiteral("stl"));
+    CHECK(formAsked.count() == 0);
+    // With a path from the generated form, Files runs it.
+    const QString saved = QDir(work.path()).filePath(QStringLiteral("palette part.raycad"));
+    REQUIRE(commands.run(QStringLiteral("file.saveAs"),
+                         QStringLiteral(R"({"path":"%1"})").arg(QDir::fromNativeSeparators(saved))));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->session()->documentPath() == saved && !w.host->session()->dirty(); },
+                            60000));
+    REQUIRE(w.app()->close(*w.app()->active()).has_value());
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->hasDocument(); }, 3000));
+
+    // Another session holds the file's write lock: it opens read-only; Save is disabled with the Save As hint.
+    store::OpenInfo info{};
+    auto other = store::IDocumentFile::open(saved.toStdString(), store::OpenMode::ReadWrite, &info);
+    REQUIRE(other.has_value());
+    REQUIRE(files.open(saved));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->session()->readOnly(); }, 60000));
+    CHECK(reason("file.save") == QStringLiteral("The document is read-only; use Save As"));
+    CHECK(reason("file.saveAs").isEmpty());
+    CHECK(reason("file.exportStep").isEmpty());
+    CHECK_FALSE(commands.trigger(QStringLiteral("file.save")));
+    CHECK(w.context()->message().contains(QStringLiteral("Save As")));
+    other->reset();
     w.checkNoWarnings();
 }
 
@@ -665,7 +749,7 @@ TEST_CASE("shortcuts are remappable, conflicts name the other action, the map pe
         CHECK(text.contains(QStringLiteral("New Document")));
         CHECK(shortcuts.sequence(QStringLiteral("test.ping")) == QStringLiteral("Ctrl+Alt+P"));
         // Recording did not run New Document.
-        CHECK(w.app->active() == nullptr);
+        CHECK(w.app()->active() == nullptr);
         REQUIRE(QMetaObject::invokeMethod(w.find(QStringLiteral("conflictReplace")), "clicked"));
         CHECK(shortcuts.sequence(QStringLiteral("test.ping")) == QStringLiteral("Ctrl+N"));
         CHECK(shortcuts.sequence(QStringLiteral("file.new")).isEmpty());
@@ -695,7 +779,7 @@ TEST_CASE("shortcuts are remappable, conflicts name the other action, the map pe
         CHECK(shortcuts.sequence(QStringLiteral("file.save")) == QStringLiteral("Ctrl+S"));
         QTest::keyClick(w.window(), Qt::Key_N, Qt::ControlModifier);
         REQUIRE(QTest::qWaitFor([&] { return w.calls->count("test.ping") == 1; }, 5000));
-        CHECK(w.app->active() == nullptr);
+        CHECK(w.app()->active() == nullptr);
 
         // Reset one, then all.
         QVariantMap r = shortcuts.reset(QStringLiteral("file.new"));
@@ -777,7 +861,9 @@ TEST_CASE("the context menu at the cursor lists the actions for the current sele
     CHECK(menuTexts(w, nothing) == nothing);
     CHECK(menuTexts(w, {"view.fitSelection", "selection.selectBody", "selection.clear"}).isEmpty());
     CHECK(w.shown(QStringLiteral("contextItem.file.open"))->isEnabled());
-    CHECK_FALSE(w.shown(QStringLiteral("contextItem.edit.undo"))->isEnabled()); // no document
+    // The part opened as a document with one import feature (T-019): undo is available, redo is not.
+    CHECK(w.shown(QStringLiteral("contextItem.edit.undo"))->isEnabled());
+    CHECK_FALSE(w.shown(QStringLiteral("contextItem.edit.redo"))->isEnabled());
     // At the cursor: the first entry starts just below and right of the click point.
     const QPointF first = w.find(QStringLiteral("contextItem.view.fitAll"))->mapToScene(QPointF(0, 0));
     INFO("click " << empty.x() << "," << empty.y() << " first item " << first.x() << "," << first.y());
