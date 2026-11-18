@@ -21,6 +21,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <mutex>
@@ -676,7 +677,15 @@ private:
 std::unique_ptr<IJobSystem> makeJobSystem(IUiDispatcher& dispatcher, int workerCount)
 {
     if (workerCount <= 0) {
+        // RAYCAD_WORKER_THREADS (a positive number) overrides "one per hardware thread", for shared or loaded
+        // machines and for sanitizer test runs (tests/CMakeLists.txt).
         workerCount = tbb::info::default_concurrency();
+        if (const char* env = std::getenv("RAYCAD_WORKER_THREADS"); env != nullptr) {
+            const int requested = std::atoi(env);
+            if (requested > 0 && requested <= 1024) {
+                workerCount = requested;
+            }
+        }
     }
     return std::make_unique<TbbJobSystem>(dispatcher, workerCount);
 }

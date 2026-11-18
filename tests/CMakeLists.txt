@@ -94,4 +94,22 @@ endif()
 # and in oneTBB is still checked, and the deliberate race of ray_core_jobs_tsan_selftest is still reported.
 if(RAY_SANITIZE MATCHES "thread")
     ray_sanitizer_test_options("${CMAKE_CURRENT_SOURCE_DIR}" TSAN_OPTIONS "ignore_noninstrumented_modules=1")
+    # The Qt Quick tests run the application, whose job system starts one oneTBB worker per hardware thread. Under
+    # TSan every atomic operation takes a TSan mutex, and with 32 workers spinning in oneTBB's sleep/wake protocol on
+    # a loaded machine the UI thread was starved inside such a mutex (ray_ui_start_tests hit its 900 s limit; it
+    # takes about 10 s otherwise). These tests get 4 workers (RAYCAD_WORKER_THREADS, read by makeJobSystem). Nothing
+    # is checked less.
+    function(ray_tsan_ui_workers dir)
+        if(dir MATCHES "/tests/ui/")
+            get_property(_tests DIRECTORY "${dir}" PROPERTY TESTS)
+            foreach(_test IN LISTS _tests)
+                set_property(TEST "${_test}" DIRECTORY "${dir}" APPEND PROPERTY ENVIRONMENT "RAYCAD_WORKER_THREADS=4")
+            endforeach()
+        endif()
+        get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+        foreach(_subdir IN LISTS _subdirs)
+            ray_tsan_ui_workers("${_subdir}")
+        endforeach()
+    endfunction()
+    ray_tsan_ui_workers("${CMAKE_CURRENT_SOURCE_DIR}")
 endif()

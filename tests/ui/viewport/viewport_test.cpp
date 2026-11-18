@@ -12,6 +12,7 @@
 //   - no UI-thread stall over 50 ms while a mid-size corpus file imports; no frame while idle for 1 s
 //   - Esc abandons an import at once; errors show as a message; dropping a file opens it
 //   - SceneController::syncFromDocument (the T-017/T-019 seam) lists features and bodies
+#include "../scene_graph_probe.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -71,29 +72,7 @@ const QString kMidSize = QStringLiteral(RAY_CORPUS_DIR "/nist-pmi/nist_ctc_04_as
 
 constexpr int kOpenTimeoutMs = 120000;
 
-// Asked of a real, shown window: QQuickWindow::graphicsApi() only says what would be requested, and where the
-// platform has no OpenGL (the offscreen platform on Linux) Qt Quick then falls back to its software backend, so a
-// viewport pick would never be answered.
-bool rhiSceneGraph()
-{
-    static const bool rhi = [] {
-        QQuickWindow probe;
-        probe.resize(64, 64);
-        probe.show();
-        if (!QTest::qWaitForWindowExposed(&probe))
-            return false;
-        (void)probe.grabWindow(); // initialises the scene graph
-        const QSGRendererInterface* renderer = probe.rendererInterface();
-        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
-    }();
-    return rhi;
-}
-
-#define REQUIRE_RHI()                                                                                                  \
-    do {                                                                                                               \
-        if (!rhiSceneGraph())                                                                                          \
-            SKIP("the scene graph has no QRhi (software backend): the viewport cannot render here");                   \
-    } while (false)
+using ray::uitest::rhiSceneGraph;
 
 // One application window with the viewer, its own cache and user data folders and a session.
 struct Window {
@@ -352,7 +331,7 @@ std::optional<std::pair<QPointF, render::PickHit>> findPickable(const Window& w,
 
 TEST_CASE("a STEP file opens, shows, and a face picked by pixel has a SubId and an exact TopoRef", "[e2e]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     CHECK(w.find("startScreen")->isVisible());
     CHECK(w.find("openButton")->isEnabled());
@@ -429,7 +408,7 @@ TEST_CASE("a STEP file opens, shows, and a face picked by pixel has a SubId and 
 
 TEST_CASE("orbit, pan, zoom to cursor, fit, standard views, projection, view cube and keyboard", "[navigation]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("light");
     w.open(kBoxHole);
     requireBoxInFrame(w);
@@ -620,7 +599,7 @@ TEST_CASE("orbit, pan, zoom to cursor, fit, standard views, projection, view cub
 
 TEST_CASE("navigation presets are selectable and map the buttons differently", "[navigation][presets]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     w.open(kBoxHole);
     ViewportItem* view = w.view();
@@ -694,7 +673,7 @@ TEST_CASE("navigation presets are selectable and map the buttons differently", "
 
 TEST_CASE("selection filters, modifiers, box select", "[selection]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     w.open(kBoxHole);
     SelectionModel& sel = *w.selection();
@@ -829,7 +808,7 @@ TEST_CASE("selection filters, modifiers, box select", "[selection]")
 
 TEST_CASE("tree to view and view to tree; visibility", "[tree]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("light");
     w.open(kAssembly);
     REQUIRE(w.scene()->bodyCount() >= 2);
@@ -902,7 +881,7 @@ TEST_CASE("tree to view and view to tree; visibility", "[tree]")
 
 TEST_CASE("a frame that only answers a pick leaves the image as it was", "[pick]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     w.open(kBoxHole);
     QTest::qWait(200);
@@ -972,7 +951,7 @@ TEST_CASE("a frame that only answers a pick leaves the image as it was", "[pick]
 
 TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; idle draws nothing", "[stall][idle]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     REQUIRE(QFileInfo::exists(kMidSize));
 
@@ -1012,7 +991,7 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; i
 
 TEST_CASE("Esc abandons an import at once; a failed open shows a message; a dropped file opens", "[open]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     AppContext& context = *w.context();
 
@@ -1061,7 +1040,7 @@ TEST_CASE("Esc abandons an import at once; a failed open shows a message; a drop
 
 TEST_CASE("syncFromDocument lists the document's features and bodies (the T-017/T-019 seam)", "[document]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     JobContext ctx;
     auto model = api::viewer::importModel(kBoxHole.toStdString(), ctx);

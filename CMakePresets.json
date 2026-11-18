@@ -38,11 +38,13 @@
     {
       "name": "linux-gcc",
       "displayName": "Linux, GCC",
+      "description": "Debug adds -fstack-protector-strong and -D_GLIBCXX_ASSERTIONS (bounds-checked standard containers). _FORTIFY_SOURCE needs optimisation, so it is not set for Debug; Ubuntu's GCC enables it for optimised builds by default.",
       "inherits": "base",
       "generator": "Ninja Multi-Config",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g -fstack-protector-strong -D_GLIBCXX_ASSERTIONS",
         "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic"
       }
     },

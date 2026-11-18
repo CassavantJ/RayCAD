@@ -15,6 +15,7 @@
 //   - warm start to the first frame with a populated settings file, against PLAN.md section 9
 //
 // Screenshots: set RAY_T024_SHOTS to a folder and run with "[screenshots]".
+#include "../scene_graph_probe.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -71,16 +72,7 @@ const QString kBoxHole = QStringLiteral(RAY_KERNEL_TEST_DATA_DIR "/box_hole.step
 const QString kPlate = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/plate_thru_holes_1.stp");
 constexpr int kOpenTimeoutMs = 180000;
 
-bool rhiSceneGraph()
-{
-    return QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi());
-}
-
-#define REQUIRE_RHI()                                                                                                  \
-    do {                                                                                                               \
-        if (!rhiSceneGraph())                                                                                          \
-            SKIP("the scene graph has no QRhi (software backend): the viewport cannot render here");                   \
-    } while (false)
+using ray::uitest::rhiSceneGraph;
 
 // One application window that loads its settings from `userData` the way runApp does (loadSettings before load).
 struct Window {
@@ -308,8 +300,17 @@ TEST_CASE("theme, glass, navigation, panels and window geometry are restored on 
     const QRect area = screen->availableGeometry();
     const QRect wanted(area.x() + 40, area.y() + 60, std::min(1100, area.width() - 80),
                        std::min(720, area.height() - 120));
+    // A screen too small for the window's minimum size away from the edges (the offscreen platform's fake 800x600
+    // screen on Linux) cannot show `wanted`: the window keeps its minimum size, so the geometry is not checked there.
+    bool checkGeometry = true;
     {
         Window w(user.path());
+        const QSize minimum = w.window()->minimumSize();
+        checkGeometry = wanted.width() >= minimum.width() && wanted.height() >= minimum.height();
+        if (!checkGeometry)
+            WARN("the screen (" << area.width() << "x" << area.height()
+                                << ") is too small for the window's minimum size (" << minimum.width() << "x"
+                                << minimum.height() << "): geometry restore is not checked");
         CHECK_FALSE(w.settings()->loadProblem().size() > 0);
         REQUIRE(w.settings()->set(QStringLiteral("appearance.theme"), QStringLiteral("light")));
         CHECK(w.host->theme()->mode() == QStringLiteral("light"));
@@ -322,8 +323,10 @@ TEST_CASE("theme, glass, navigation, panels and window geometry are restored on 
         REQUIRE(shell != nullptr);
         shell->setProperty("leftPanelOpen", false);
         CHECK_FALSE(w.settings()->panelOpen(QStringLiteral("model")));
-        w.window()->setGeometry(wanted);
-        REQUIRE(QTest::qWaitFor([&] { return near(w.window()->geometry(), wanted); }, 3000));
+        if (checkGeometry) {
+            w.window()->setGeometry(wanted);
+            REQUIRE(QTest::qWaitFor([&] { return near(w.window()->geometry(), wanted); }, 3000));
+        }
         w.checkNoWarnings();
         w.window()->close(); // saves the geometry
     }
@@ -345,7 +348,8 @@ TEST_CASE("theme, glass, navigation, panels and window geometry are restored on 
         CHECK_FALSE(w.find(QStringLiteral("leftPanel"))->isVisible());
         INFO("restored " << w.window()->geometry().x() << "," << w.window()->geometry().y() << " "
                          << w.window()->geometry().width() << "x" << w.window()->geometry().height());
-        CHECK(near(w.window()->geometry(), wanted));
+        if (checkGeometry)
+            CHECK(near(w.window()->geometry(), wanted));
         w.checkNoWarnings();
     }
     // The command line wins over the saved theme and glass, and does not overwrite them.
@@ -502,7 +506,7 @@ TEST_CASE("the selection read-out switches units live and follows the decimals s
 
 TEST_CASE("changing the tier and a per-option override applies to the viewport without a restart", "[ui][settings]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     QTemporaryDir user;
     Window w(user.path());
     w.open(kBoxHole);
@@ -714,7 +718,7 @@ TEST_CASE("explainTier agrees with chooseTier", "[ui][settings]")
 TEST_CASE("the measure panel, its labels over the view and the selection read-out switch units together",
           "[ui][settings][measure]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     QTemporaryDir user;
     Window w(user.path());
     w.open(kPlate);
@@ -801,7 +805,7 @@ TEST_CASE("the measure panel, its labels over the view and the selection read-ou
 
 TEST_CASE("screenshots of every settings section in both themes", "[.screenshots][screenshots]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     if (qEnvironmentVariable("RAY_T024_SHOTS").isEmpty())
         SKIP("set RAY_T024_SHOTS to a folder");
     for (const char* theme : {"dark", "light"}) {
