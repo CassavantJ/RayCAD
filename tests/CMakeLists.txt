@@ -42,6 +42,7 @@ add_subdirectory(ui/controls)
 add_subdirectory(ui/viewport)
 add_subdirectory(ui/start)
 add_subdirectory(ui/palette)
+add_subdirectory(ui/measure)
 # (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
 # ---------- Sanitizer run options for every test ----------
