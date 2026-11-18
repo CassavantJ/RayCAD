@@ -41,6 +41,11 @@ class AppContext : public QObject {
     Q_PROPERTY(QString version READ version CONSTANT)
     // True when the process was started to take a screenshot: pages open their demo popups.
     Q_PROPERTY(bool screenshotMode READ screenshotMode CONSTANT)
+    // T-020: a dismissible message over the viewport (errors opening a file, and the like). Empty: none shown.
+    Q_PROPERTY(QString message READ message NOTIFY messageChanged)
+    Q_PROPERTY(bool messageIsError READ messageIsError NOTIFY messageChanged)
+    // T-020: files can be opened without a session (the developer path, src/ui/dev_open.h, until T-019).
+    Q_PROPERTY(bool canOpenFiles READ canOpenFiles NOTIFY canOpenFilesChanged)
 
 public:
     // Deliberately not default-constructible: QML must get the instance through create() (see provideFor).
@@ -74,6 +79,12 @@ public:
     QString page() const { return page_; }
     QString version() const;
     bool screenshotMode() const { return screenshotMode_; }
+    QString message() const { return message_; }
+    bool messageIsError() const { return messageIsError_; }
+    Q_INVOKABLE void showMessage(const QString& text, bool isError = false);
+    Q_INVOKABLE void dismissMessage();
+    bool canOpenFiles() const { return canOpenFiles_ || app_ != nullptr; }
+    void setCanOpenFiles(bool on);
 
     // Runs an action as Caller::User through IActionRegistry. False when there is no session (nothing runs).
     // The result arrives later; T-019 shows long-running ones in the job slot.
@@ -89,6 +100,8 @@ signals:
     void statusTextChanged();
     void jobChanged();
     void jobCancelRequested();
+    void messageChanged();
+    void canOpenFilesChanged();
 
 private:
     api::IApp* app_ = nullptr;
@@ -101,6 +114,9 @@ private:
     qreal jobProgress_ = -1;
     QString page_ = QStringLiteral("shell");
     bool screenshotMode_ = false;
+    QString message_;
+    bool messageIsError_ = false;
+    bool canOpenFiles_ = false;
 };
 
 } // namespace ray::ui

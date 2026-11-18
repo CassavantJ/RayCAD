@@ -1,16 +1,18 @@
 // The application shell (PLAN.md 6.6): floating panels over a full-window viewport.
 //
-//   viewportHost      fills the window, under everything. T-020 puts Viewport.qml here in place of
-//                     viewportPlaceholder (remove the placeholder and axisTriad then).
-//   viewportArea      the part of the viewport no panel covers: overlays (view cube, start screen, hints) go here.
-//                     T-019 replaces emptyState with the start screen.
-//   topBar            brand, workspace tabs (AppContext.workspace), command search (T-021), view toggles.
-//   leftPanel         "Model": T-020 puts ModelTree.qml into leftPanelContent (replace leftPanelEmpty).
-//   rightPanel        "Properties": property editors go into rightPanelContent (replace rightPanelEmpty).
+//   viewportHost      fills the window, under everything: Viewport.qml (T-020), which also takes dropped files.
+//   viewportArea      the part of the viewport no panel covers: overlays go here. T-020: the view cube with its
+//                     buttons and the axis triad (ViewCube.qml), the selection filter (SelectionFilterBar.qml) and
+//                     messageBanner. T-019 replaces emptyState with the start screen.
+//   topBar            brand, workspace tabs (AppContext.workspace), command search (T-021), view toggles; the view
+//                     options menu also picks the projection and the navigation preset.
+//   leftPanel         "Model": ModelTree.qml in leftPanelContent.
+//   rightPanel        "Properties": SelectionInfo.qml in rightPanelContent (T-022 adds the measure tools).
 //   statusBar         status text (AppContext.statusText) and jobSlot (AppContext.setJob, T-019).
 //   workspace.<n>     one Loader per workspace, created the first time that workspace is shown.
 // Only what this first screen shows is created at start; menus and tooltips are created on first use.
 import QtQuick
+import QtQuick.Dialogs
 import QtQuick.Shapes
 import RayCad.Ui
 
@@ -44,26 +46,23 @@ FocusScope {
         menu.popup(viewOptions, viewOptions.width - menu.width, viewOptions.height + Theme.spacingXs)
     }
 
+    // Opens a STEP or IGES file without a session (T-020's developer path; T-019 replaces it with IApp::open).
+    function openFileDialog() {
+        fileDialogLoader.active = true
+        fileDialogLoader.item.open()
+    }
+
     // ---------- Viewport (full window, under every panel) ----------
     Item {
         id: viewportHost
         objectName: "viewportHost"
         anchors.fill: parent
 
-        Rectangle {
-            id: viewportPlaceholder
-            objectName: "viewportPlaceholder"
+        Viewport {
+            id: viewport
             anchors.fill: parent
-            gradient: Gradient {
-                GradientStop {
-                    position: 0
-                    color: Theme.viewportBgTop
-                }
-                GradientStop {
-                    position: 1
-                    color: Theme.viewportBgBottom
-                }
-            }
+            // viewportHost fills the shell, so viewportArea's geometry is already in this item's coordinates.
+            frameRect: Qt.rect(viewportArea.x, viewportArea.y, viewportArea.width, viewportArea.height)
         }
     }
 
@@ -104,7 +103,7 @@ FocusScope {
             anchors.centerIn: parent
             width: Math.min(parent.width - 2 * Theme.spacingL, Theme.controlHeight * 14)
             spacing: Theme.spacingS
-            visible: parent.height > implicitHeight
+            visible: parent.height > implicitHeight && Scene.bodyCount === 0
 
             Icon {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -136,9 +135,9 @@ FocusScope {
                 Button {
                     objectName: "openButton"
                     primary: true
-                    text: qsTr("Open…")
-                    enabled: AppContext.hasSession
-                    onClicked: AppContext.invoke("file.open")
+                    text: DevOpen.busy ? qsTr("Opening…") : qsTr("Open…")
+                    enabled: AppContext.canOpenFiles && !DevOpen.busy
+                    onClicked: AppContext.hasSession ? AppContext.invoke("file.open") : shell.openFileDialog()
                 }
                 Button {
                     objectName: "newPartButton"
@@ -150,80 +149,63 @@ FocusScope {
             }
         }
 
-        // Orientation hint until the view cube of T-020 exists.
-        Item {
-            id: axisTriad
-            objectName: "axisTriad"
-            visible: viewportPlaceholder.visible
-            width: Theme.controlHeight * 2
-            height: width
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            readonly property real cx: width / 2
-            readonly property real cy: height * 0.58
-            readonly property real len: width * 0.32
-            Accessible.ignored: true
+        // The view cube, the view buttons and the axis triad (T-020).
+        ViewCube {
+            anchors.fill: parent
+            view: viewport.view
+        }
 
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-                ShapePath {
-                    strokeColor: Theme.axisX
-                    strokeWidth: Theme.lineThinPx
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    startX: axisTriad.cx
-                    startY: axisTriad.cy
-                    PathLine {
-                        x: axisTriad.cx - axisTriad.len * 0.87
-                        y: axisTriad.cy + axisTriad.len * 0.5
-                    }
-                }
-                ShapePath {
-                    strokeColor: Theme.axisY
-                    strokeWidth: Theme.lineThinPx
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    startX: axisTriad.cx
-                    startY: axisTriad.cy
-                    PathLine {
-                        x: axisTriad.cx + axisTriad.len * 0.87
-                        y: axisTriad.cy + axisTriad.len * 0.5
-                    }
-                }
-                ShapePath {
-                    strokeColor: Theme.axisZ
-                    strokeWidth: Theme.lineThinPx
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    startX: axisTriad.cx
-                    startY: axisTriad.cy
-                    PathLine {
-                        x: axisTriad.cx
-                        y: axisTriad.cy - axisTriad.len
-                    }
-                }
+        SelectionFilterBar {
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: Scene.bodyCount > 0
+        }
+
+        // A dismissible message (a file that could not be opened, ...): AppContext.showMessage.
+        PanelBase {
+            id: messageBanner
+            objectName: "messageBanner"
+            visible: AppContext.message !== ""
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            width: Math.min(parent.width - 2 * Theme.spacingL, messageRow.implicitWidth + 2 * Theme.spacingS)
+            height: messageRow.implicitHeight + 2 * Theme.spacingXs
+
+            Rectangle {
+                width: Theme.focusRingWidth
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.margins: Theme.spacingXs
+                radius: width / 2
+                color: AppContext.messageIsError ? Theme.error : Theme.accent
             }
-            Text {
-                text: "X"
-                font: Theme.smallFont
-                color: Theme.axisX
-                x: axisTriad.cx - axisTriad.len * 0.87 - width - Theme.borderWidth
-                y: axisTriad.cy + axisTriad.len * 0.5 - height / 2
-            }
-            Text {
-                text: "Y"
-                font: Theme.smallFont
-                color: Theme.axisY
-                x: axisTriad.cx + axisTriad.len * 0.87 + Theme.borderWidth * 2
-                y: axisTriad.cy + axisTriad.len * 0.5 - height / 2
-            }
-            Text {
-                text: "Z"
-                font: Theme.smallFont
-                color: Theme.axisZ
-                x: axisTriad.cx - width / 2
-                y: axisTriad.cy - axisTriad.len - height
+            Row {
+                id: messageRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Theme.spacingS
+                anchors.rightMargin: Theme.spacingXs
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.spacingS
+
+                Label {
+                    objectName: "messageText"
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, messageBanner.parent.width - 2 * Theme.spacingL
+                                    - messageClose.width - 3 * Theme.spacingS)
+                    wrapMode: Text.Wrap
+                    text: AppContext.message
+                }
+                ToolButton {
+                    id: messageClose
+                    objectName: "messageClose"
+                    anchors.verticalCenter: parent.verticalCenter
+                    compact: true
+                    iconName: "close"
+                    toolTipText: qsTr("Dismiss")
+                    onClicked: AppContext.dismissMessage()
+                }
             }
         }
     }
@@ -419,9 +401,57 @@ FocusScope {
                         marked: shell.rightPanelOpen
                         onTriggered: shell.rightPanelOpen = !shell.rightPanelOpen
                     }
+                    MenuSeparator {}
+                    MenuItem {
+                        text: qsTr("Perspective projection")
+                        marked: viewport.view.perspective
+                        onTriggered: viewport.view.toggleProjection()
+                    }
+                    MenuSeparator {}
+                    // Navigation presets (T-020): mouse mappings, see viewport_navigation.cpp.
+                    MenuItem {
+                        objectName: "navigationPreset.0"
+                        text: qsTr("Mouse: %1").arg(viewport.view.navigationPresetNames[0])
+                        marked: viewport.view.navigationPreset === 0
+                        onTriggered: viewport.view.navigationPreset = 0
+                    }
+                    MenuItem {
+                        objectName: "navigationPreset.1"
+                        text: qsTr("Mouse: %1").arg(viewport.view.navigationPresetNames[1])
+                        marked: viewport.view.navigationPreset === 1
+                        onTriggered: viewport.view.navigationPreset = 1
+                    }
+                    MenuItem {
+                        objectName: "navigationPreset.2"
+                        text: qsTr("Mouse: %1").arg(viewport.view.navigationPresetNames[2])
+                        marked: viewport.view.navigationPreset === 2
+                        onTriggered: viewport.view.navigationPreset = 2
+                    }
                 }
             }
         }
+    }
+
+    // The native file dialog of the developer open path, created on first use.
+    Loader {
+        id: fileDialogLoader
+        active: false
+        sourceComponent: Component {
+            FileDialog {
+                objectName: "openFileDialog"
+                title: qsTr("Open a STEP or IGES file")
+                nameFilters: DevOpen.nameFilters
+                fileMode: FileDialog.OpenFile
+                onAccepted: DevOpen.openUrl(selectedFile)
+            }
+        }
+    }
+
+    // Esc cancels the running job wherever the focus is (only while one runs, so text fields keep their Esc).
+    Shortcut {
+        sequence: "Esc"
+        enabled: AppContext.jobActive
+        onActivated: AppContext.cancelJob()
     }
 
     // ---------- Side panels ----------
@@ -462,16 +492,8 @@ FocusScope {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
 
-            Label {
-                id: leftPanelEmpty
-                objectName: "leftPanelEmpty"
+            ModelTree {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingL
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                wrapMode: Text.Wrap
-                secondary: true
-                text: qsTr("Features and bodies of the open document appear here.")
             }
         }
     }
@@ -525,16 +547,8 @@ FocusScope {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
 
-            Label {
-                id: rightPanelEmpty
-                objectName: "rightPanelEmpty"
+            SelectionInfo {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingL
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                wrapMode: Text.Wrap
-                secondary: true
-                text: qsTr("Select a feature, face or operation to see its properties.")
             }
         }
     }

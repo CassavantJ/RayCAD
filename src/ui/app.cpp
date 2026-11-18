@@ -3,8 +3,13 @@
 #include "app_clock.h"
 #include "app_host.h"
 #include "app_options.h"
+#include "dev_open.h"
+#include "scene_controller.h"
+#include "selection_model.h"
+#include "viewport_item.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
@@ -14,6 +19,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <memory>
 
 namespace ray::ui {
 namespace {
@@ -46,6 +52,9 @@ constexpr int kExitScreenshot = 4;
 constexpr int kNoFrameTimeoutMs = 20000;
 // After the first frame: let delayed bindings, fonts and the second layout pass settle before grabbing.
 constexpr int kScreenshotSettleMs = 400;
+// --screenshot with a file: how long the import, meshing and refinement may take.
+constexpr int kOpenTimeoutMs = 180000;
+constexpr qint64 kSelectTimeoutMs = 3000;
 
 } // namespace
 
@@ -81,10 +90,69 @@ int runApp(int argc, char** argv)
     }
     const double tQml = msSinceProcessStart();
     QQuickWindow* window = host.window();
+    // T-020: files open without a session through DevOpen (T-019 replaces it with IApp::open).
+    host.enableDevOpen();
+    const QString openFile = options.files.isEmpty() ? QString() : options.files.constFirst();
+    if (options.files.size() > 1) {
+        std::fprintf(stderr, "raycad: only the first file is opened (%s)\n", qPrintable(openFile));
+    }
 
     const bool exitAfterFrame = options.smoke || options.benchStart || !options.screenshot.isEmpty();
     std::atomic<bool> seen{false};
     std::atomic<double> tFrame{0};
+    auto saveScreenshot = [&] {
+        const QImage image = window->grabWindow();
+        const QString path = QFileInfo(options.screenshot).absoluteFilePath();
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        if (image.isNull() || !image.save(path, "PNG")) {
+            std::fprintf(stderr, "raycad: could not save the screenshot to %s\n", qPrintable(path));
+            QCoreApplication::exit(kExitScreenshot);
+            return;
+        }
+        std::printf("raycad: screenshot %dx%d saved to %s\n", image.width(), image.height(), qPrintable(path));
+        std::fflush(stdout);
+        QCoreApplication::exit(0);
+    };
+    // With a file: wait until it is shown at the tier's tolerance, optionally select, then grab.
+    auto screenshotWhenShown = [&] {
+        auto* poll = new QTimer(&app);
+        auto started = std::make_shared<QElapsedTimer>();
+        started->start();
+        auto stage = std::make_shared<int>(0);
+        auto selectedAt = std::make_shared<qint64>(0);
+        poll->setInterval(100);
+        QObject::connect(poll, &QTimer::timeout, &app, [&, poll, started, stage, selectedAt] {
+            SceneController* scene = host.scene();
+            SelectionModel* selection = host.selection();
+            ViewportItem* view = host.viewport();
+            const bool shown = !host.devOpen()->busy() && scene->ready() && !scene->refining() && view != nullptr &&
+                               !view->animating();
+            if (started->elapsed() > kOpenTimeoutMs) {
+                std::fprintf(stderr, "raycad: the file was not shown within %d seconds\n", kOpenTimeoutMs / 1000);
+                poll->stop();
+                QCoreApplication::exit(kExitNoFrame);
+                return;
+            }
+            if (*stage == 0 && shown) {
+                *stage = 1;
+                *selectedAt = started->elapsed();
+                if (options.selectAt && view != nullptr) {
+                    const QPointF at = view->mapFromScene(*options.selectAt);
+                    view->selectAt(at.x(), at.y());
+                }
+                return;
+            }
+            // The pick is answered by a later frame: wait for it (or give up after a while: nothing was there).
+            const bool picked =
+                !options.selectAt || selection->count() > 0 || started->elapsed() - *selectedAt > kSelectTimeoutMs;
+            if (*stage == 1 && picked && !selection->pending() && !selection->infoBusy()) {
+                *stage = 2;
+                poll->stop();
+                QTimer::singleShot(kScreenshotSettleMs, window, saveScreenshot);
+            }
+        });
+        poll->start();
+    };
     auto onFirstFrame = [&] {
         if (options.benchStart) {
             std::printf("raycad: bench-start first_frame_ms=%.1f main_ms=%.1f app_ms=%.1f qml_ms=%.1f backend=%s\n",
@@ -100,19 +168,11 @@ int runApp(int argc, char** argv)
             }
             return;
         }
-        QTimer::singleShot(kScreenshotSettleMs, window, [&] {
-            const QImage image = window->grabWindow();
-            const QString path = QFileInfo(options.screenshot).absoluteFilePath();
-            QDir().mkpath(QFileInfo(path).absolutePath());
-            if (image.isNull() || !image.save(path, "PNG")) {
-                std::fprintf(stderr, "raycad: could not save the screenshot to %s\n", qPrintable(path));
-                QCoreApplication::exit(kExitScreenshot);
-                return;
-            }
-            std::printf("raycad: screenshot %dx%d saved to %s\n", image.width(), image.height(), qPrintable(path));
-            std::fflush(stdout);
-            QCoreApplication::exit(0);
-        });
+        if (!openFile.isEmpty()) {
+            screenshotWhenShown();
+            return;
+        }
+        QTimer::singleShot(kScreenshotSettleMs, window, saveScreenshot);
     };
     // frameSwapped comes from the render thread: take the time there, continue on the GUI thread.
     QObject::connect(
@@ -125,13 +185,26 @@ int runApp(int argc, char** argv)
         },
         Qt::DirectConnection);
     if (exitAfterFrame) {
-        QTimer::singleShot(kNoFrameTimeoutMs, &app, [] {
+        QTimer::singleShot(kNoFrameTimeoutMs, &app, [&] {
+            if (seen) {
+                return;
+            }
             std::fprintf(stderr, "raycad: no frame was rendered within 20 seconds\n");
             QCoreApplication::exit(kExitNoFrame);
         });
     }
 
     host.show();
+    if (!openFile.isEmpty()) {
+        if (exitAfterFrame) {
+            QObject::connect(host.devOpen(), &DevOpen::failed, &app, [](const QString& message) {
+                std::fprintf(stderr, "raycad: %s\n", qPrintable(message));
+                QCoreApplication::exit(kExitLoad);
+            });
+        }
+        // After the window is up: the import runs on a worker, the first frame does not wait for it.
+        QTimer::singleShot(0, &app, [&] { host.devOpen()->open(openFile); });
+    }
     return QGuiApplication::exec();
 }
 

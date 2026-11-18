@@ -1,7 +1,14 @@
 #include "app_host.h"
 
 #include "app_context.h"
+#include "dev_open.h"
+#include "scene_controller.h"
+#include "scene_jobs.h"
+#include "selection_model.h"
 #include "theme_object.h"
+#include "viewport_item.h"
+
+#include <ray_api/viewer.h>
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
@@ -10,16 +17,23 @@
 #include <QtGui/QScreen>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuick/QQuickGraphicsConfiguration>
+#include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 
 #include <algorithm>
+#include <vector>
 
 namespace ray::ui {
 
 AppHost::AppHost(const AppOptions& options, QString cacheDir, QObject* parent)
     : QObject(parent), options_(options), cacheDir_(cacheDir.isEmpty() ? cacheDirectory() : std::move(cacheDir)),
-      theme_(std::make_unique<ThemeObject>(QStringList())), context_(std::make_unique<AppContext>(nullptr))
+      dispatcher_(std::make_unique<QtUiDispatcher>()), theme_(std::make_unique<ThemeObject>(QStringList())),
+      context_(std::make_unique<AppContext>(nullptr))
 {
+    // The viewer (T-020). Its job system is made on first use, so nothing heavy happens before the first frame.
+    scene_ = std::make_unique<SceneController>([this] { return jobs(); }, context_.get());
+    selection_ = std::make_unique<SelectionModel>(scene_.get());
+    devOpen_ = std::make_unique<DevOpen>(scene_.get(), context_.get());
     if (!theme_->loadErrors().isEmpty()) {
         optionError_ = theme_->loadErrors().join(QLatin1Char('\n'));
     }
@@ -42,6 +56,42 @@ AppHost::~AppHost()
 {
     // The window belongs to the engine; destroy both before the singletons they reference.
     engine_.reset();
+    // Then the viewer's objects (their jobs are cancelled), then the job system, which waits for running jobs.
+    devOpen_.reset();
+    selection_.reset();
+    scene_.reset();
+    ownJobs_.reset();
+}
+
+IJobSystem* AppHost::jobs()
+{
+    if (app_ != nullptr)
+        return &app_->jobs();
+    if (!ownJobs_)
+        ownJobs_ = api::viewer::makeViewerJobs(*dispatcher_);
+    return ownJobs_.get();
+}
+
+ViewportItem* AppHost::viewport() const
+{
+    if (window_ == nullptr)
+        return nullptr;
+    // Items a Loader creates are not QObject children of the window's content: walk the visual tree.
+    std::vector<QQuickItem*> todo{window_->contentItem()};
+    while (!todo.empty()) {
+        QQuickItem* item = todo.back();
+        todo.pop_back();
+        if (auto* view = qobject_cast<ViewportItem*>(item))
+            return view;
+        const QList<QQuickItem*> children = item->childItems();
+        todo.insert(todo.end(), children.begin(), children.end());
+    }
+    return nullptr;
+}
+
+void AppHost::enableDevOpen(bool on)
+{
+    context_->setCanOpenFiles(on);
 }
 
 QString AppHost::cacheDirectory()
@@ -73,6 +123,9 @@ bool AppHost::load()
     engine_ = std::make_unique<QQmlApplicationEngine>();
     ThemeObject::provideFor(engine_.get(), theme_.get());
     AppContext::provideFor(engine_.get(), context_.get());
+    SceneController::provideFor(engine_.get(), scene_.get());
+    SelectionModel::provideFor(engine_.get(), selection_.get());
+    DevOpen::provideFor(engine_.get(), devOpen_.get());
     connect(engine_.get(), &QQmlEngine::warnings, this, [this](const QList<QQmlError>& list) {
         for (const QQmlError& e : list) {
             warnings_ << e.toString();
@@ -96,6 +149,8 @@ bool AppHost::load()
     const QString pipelineCache = QDir(cacheDir_).filePath(QStringLiteral("rhi-pipeline.bin"));
     config.setPipelineCacheSaveFile(pipelineCache);
     config.setPipelineCacheLoadFile(pipelineCache);
+    // GPU timestamps for the viewport's IViewport::lastFrameStats (T-020).
+    config.setTimestamps(true);
     window_->setGraphicsConfiguration(config);
 
     QSize size = options_.size;
@@ -121,6 +176,7 @@ void AppHost::show()
 
 void AppHost::setApp(api::IApp* app)
 {
+    app_ = app;
     context_->setApp(app);
 }
 

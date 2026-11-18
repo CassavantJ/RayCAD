@@ -48,22 +48,36 @@ AppOptions parseOptions(const QStringList& arguments)
             } else if (options.error.isEmpty()) {
                 options.error = QStringLiteral("--size takes WIDTHxHEIGHT, at least 320x240");
             }
+        } else if (arg == QLatin1String("--select-at")) {
+            const QStringList parts = value(i, arg).split(QLatin1Char(','));
+            bool okX = false;
+            bool okY = false;
+            const double x = parts.size() == 2 ? parts[0].toDouble(&okX) : 0;
+            const double y = parts.size() == 2 ? parts[1].toDouble(&okY) : 0;
+            if (okX && okY) {
+                options.selectAt = QPointF(x, y);
+            } else if (options.error.isEmpty()) {
+                options.error = QStringLiteral("--select-at takes X,Y in window coordinates");
+            }
         } else if (arg.startsWith(QLatin1String("--"))) {
             options.error = QStringLiteral("unknown option %1").arg(arg);
+        } else {
+            // A file to open (T-020 opens STEP and IGES files through DevOpen; T-019 takes over with IApp::open).
+            options.files << arg;
         }
-        // Anything else (a file to open) is for T-019.
     }
     return options;
 }
 
 QString usageText()
 {
-    return QStringLiteral("Usage: raycad [options]\n"
+    return QStringLiteral("Usage: raycad [options] [file.step|file.stp|file.igs|file.iges]\n"
                           "  --theme <name>      system (default), dark, light, or a theme id such as graphite-dark\n"
                           "  --glass on|off      glass or flat panels\n"
                           "  --gallery           show the controls gallery instead of the shell\n"
                           "  --size WxH          window size in logical pixels\n"
-                          "  --screenshot <png>  save the window after it settles, then exit\n"
+                          "  --screenshot <png>  save the window after it settles (and the file is shown), then exit\n"
+                          "  --select-at X,Y     before the screenshot, click-select at window point X,Y\n"
                           "  --smoke             exit 0 after the first rendered frame\n"
                           "  --bench-start       print the time from process creation to the first frame, then exit\n"
                           "  --version           print the version\n");

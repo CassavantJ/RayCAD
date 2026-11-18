@@ -5,11 +5,14 @@
 namespace ray::ui {
 
 // Runs the Qt Quick application and returns the process exit code.
+//   <file>              a STEP (.step, .stp) or IGES (.igs, .iges) file to open (T-020's developer path)
+//   --select-at X,Y     with --screenshot: click-select at window point X,Y once the file is shown
 //   --theme <name>      system (default: follow the OS light/dark setting), dark, light, or a theme id
 //   --glass on|off      glass or flat panels (same layout)
 //   --gallery           show the controls gallery instead of the shell
 //   --size WxH          window size in logical pixels
-//   --screenshot <png>  wait for the first frame, let it settle, save the window as PNG, exit 0
+//   --screenshot <png>  wait for the first frame (and, with a file, until it is shown and refined), let it settle,
+//                       save the window as PNG, exit 0
 //   --smoke             open the main window, wait for its first rendered frame, then exit with 0
 //   --bench-start       print the time from OS process creation to the first frame swapped, then exit 0
 //                       (also accepted as --bench-startup, the name PLAN.md section 9 uses)
