@@ -13,8 +13,8 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 
+#include <cstdlib>
 #include <cstring>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -29,10 +29,17 @@ int g_argc = 1;
 char g_arg0[] = "raycad";
 char* g_argv[] = {g_arg0, nullptr};
 
-std::unique_ptr<QGuiApplication>& application()
+// Destroyed at exit by destroyApplication. Exit handlers run in reverse order of registration, and the OpenGL
+// driver registers its own when it is loaded, after the application was created. A static destructor for the
+// application therefore ran after Mesa had shut llvmpipe down, and Qt's GL teardown then crashed (Qt offscreen
+// platform, Linux). So the handler is registered again once a driver was loaded (noteGraphicsDriverLoaded), which
+// makes it run before the driver's.
+QGuiApplication* g_application = nullptr;
+
+void destroyApplication()
 {
-    static std::unique_ptr<QGuiApplication> app;
-    return app;
+    delete g_application; // the second registration finds nothing left to do
+    g_application = nullptr;
 }
 
 std::mutex g_warningsMutex;
@@ -75,9 +82,19 @@ Status ensureQtRuntime()
     if (!qEnvironmentVariableIsSet("QT_RHI_LEAK_CHECK"))
         qputenv("QT_RHI_LEAK_CHECK", "1");
     g_previousHandler = qInstallMessageHandler(recordMessage);
-    application() = std::make_unique<QGuiApplication>(g_argc, g_argv);
+    g_application = new QGuiApplication(g_argc, g_argv);
+    std::atexit(destroyApplication);
     return {};
 }
+
+namespace detail {
+void noteGraphicsDriverLoaded()
+{
+    static std::once_flag once;
+    if (g_application)
+        std::call_once(once, [] { std::atexit(destroyApplication); });
+}
+} // namespace detail
 
 int processEventsFor(int ms)
 {

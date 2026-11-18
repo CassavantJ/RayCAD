@@ -1,0 +1,6 @@
+# ThreadSanitizer suppressions for ray_render_tests (linux-clang-tsan preset).
+# Mesa's llvmpipe (libgallium) is not instrumented: its worker threads synchronise in ways TSan cannot see, so
+# destroying an OpenGL context reports races on Mesa's own mutexes and condition variables. Nothing of ours is in
+# those reports. (called_from_lib is not used: ignoring only some of Mesa's lock calls overflowed TSan's deadlock
+# detector.)
+race:libgallium

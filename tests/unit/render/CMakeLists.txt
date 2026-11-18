@@ -20,3 +20,8 @@ ray_add_test(ray_render_tests)
 # ray_render links Qt (Core and Gui), so the test needs the Qt DLL folder on Windows, and the vcpkg folder for the
 # delay-loaded OCCT toolkits of ray_kernel.
 ray_test_runtime_path(ray_render_tests QT)
+# Under ThreadSanitizer, races inside Mesa's uninstrumented llvmpipe are suppressed (see tsan.supp).
+if(RAY_SANITIZE MATCHES "thread")
+    set_property(TEST ray_render_tests APPEND PROPERTY ENVIRONMENT
+        "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
+endif()
