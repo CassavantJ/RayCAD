@@ -33,11 +33,14 @@ add_subdirectory(unit/kernel)
 add_subdirectory(unit/doc)
 add_subdirectory(unit/naming)
 add_subdirectory(unit/store)
+add_subdirectory(unit/api)
 add_subdirectory(unit/render)
 add_subdirectory(unit/core_jobs)
 add_subdirectory(lint)
 add_subdirectory(apps)
 add_subdirectory(ui/controls)
+add_subdirectory(ui/viewport)
+# (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
 # ---------- Sanitizer run options for every test ----------
 # Adds `options` to the environment variable `var` (ASAN_OPTIONS, ...) of every test under `dir`. A test that sets

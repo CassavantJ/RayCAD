@@ -20,6 +20,10 @@
 class QQmlApplicationEngine;
 class QQuickWindow;
 
+namespace ray {
+class IJobSystem;
+class IUiDispatcher;
+} // namespace ray
 namespace ray::api {
 class IApp;
 }
@@ -27,7 +31,11 @@ class IApp;
 namespace ray::ui {
 
 class AppContext;
+class DevOpen;
+class SceneController;
+class SelectionModel;
 class ThemeObject;
+class ViewportItem;
 
 class AppHost : public QObject {
     Q_OBJECT
@@ -56,6 +64,17 @@ public:
     // The application session; may be null (no session) and may be set later. Not owned.
     void setApp(api::IApp* app);
 
+    // T-020: the viewer. Scene, Selection and DevOpen are QML singletons; viewport() is the window's ViewportItem
+    // (null before load()). Jobs come from the session (IApp::jobs) or, without one, from a job system owned here.
+    SceneController* scene() const { return scene_.get(); }
+    SelectionModel* selection() const { return selection_.get(); }
+    DevOpen* devOpen() const { return devOpen_.get(); }
+    ViewportItem* viewport() const;
+    IJobSystem* jobs();
+    // Lets the empty state's Open button, drag-and-drop and command-line files open STEP/IGES files without a
+    // session (the developer path until T-019). runApp turns it on; tests that need it do too.
+    void enableDevOpen(bool on = true);
+
     // <per-user cache location>/: QStandardPaths::CacheLocation for organisation and application "RayCAD".
     static QString cacheDirectory();
     // Sets the organisation and application names. Call before constructing QGuiApplication.
@@ -67,9 +86,16 @@ private:
     QString optionError_;
     QString error_;
     QStringList warnings_;
+    api::IApp* app_ = nullptr;
     // Declared before engine_ so they outlive it: the engine holds them as singletons with C++ ownership.
+    // The dispatcher and the job system outlive the objects that hold job handles.
+    std::unique_ptr<IUiDispatcher> dispatcher_;
+    std::unique_ptr<IJobSystem> ownJobs_;
     std::unique_ptr<ThemeObject> theme_;
     std::unique_ptr<AppContext> context_;
+    std::unique_ptr<SceneController> scene_;
+    std::unique_ptr<SelectionModel> selection_;
+    std::unique_ptr<DevOpen> devOpen_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QQuickWindow* window_ = nullptr;
 };

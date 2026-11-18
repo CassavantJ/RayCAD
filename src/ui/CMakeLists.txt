@@ -1,7 +1,8 @@
 # ui: the Qt Quick application. Qt is allowed here and in src/render only.
 # GuiPrivate: ray_render links it, and the static QML plugin walks ray_render's dependencies, so it must be found here
 # too. The QML imports QtQuick.Templates (controls are styled from scratch, no Qt Quick Controls style is loaded)
-# and QtQuick.Shapes (icons); they load from the Qt installation at run time.
+# QtQuick.Shapes (icons, the view cube) and QtQuick.Dialogs (the native file dialog of T-020's open path); they load
+# from the Qt installation at run time.
 find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui GuiPrivate Qml Quick)
 qt_standard_project_setup(REQUIRES 6.8)
 # tests/apps needs the Qt DLL folder on Windows and must not call find_package(Qt6) itself.
@@ -16,20 +17,30 @@ add_library(ray_ui STATIC
     app_options.h
     app_options.cpp
     app_host.h
-    app_host.cpp)
+    app_host.cpp
+    scene_jobs.h
+    viewport_navigation.h
+    viewport_navigation.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+# ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
 target_link_libraries(ray_ui PRIVATE ray_api ray_render Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
 
 # QML is compiled ahead of time by qmlcachegen, the default of qt_add_qml_module. qmltc is NOT used: it does
 # not build with Qt Quick Controls in Qt 6.12.0 (spike S2).
-# The C++ singletons Theme (theme_object.h) and AppContext (app_context.h) are registered declaratively through
-# QML_SINGLETON in the headers listed under SOURCES.
+# The C++ singletons Theme (theme_object.h), AppContext (app_context.h), Scene (scene_controller.h), Selection
+# (selection_model.h) and DevOpen (dev_open.h), and the ViewportItem type (viewport_item.h), are registered
+# declaratively through QML_SINGLETON / QML_NAMED_ELEMENT in the headers listed under SOURCES.
 set(RAY_UI_QML_FILES
     qml/Main.qml
     qml/Shell.qml
     qml/Gallery.qml
+    qml/Viewport.qml
+    qml/ViewCube.qml
+    qml/SelectionFilterBar.qml
     qml/panels/PanelBase.qml
+    qml/panels/ModelTree.qml
+    qml/panels/SelectionInfo.qml
     qml/controls/icons.js
     qml/controls/Icon.qml
     qml/controls/IconText.qml
@@ -64,11 +75,20 @@ qt_add_qml_module(ray_ui
         theme_object.cpp
         app_context.h
         app_context.cpp
+        viewport_item.h
+        viewport_item.cpp
+        scene_controller.h
+        scene_controller.cpp
+        selection_model.h
+        selection_model.cpp
+        dev_open.h
+        dev_open.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick
         QtQuick.Templates
-        QtQuick.Shapes)
+        QtQuick.Shapes
+        QtQuick.Dialogs)
 
 # The C++ that qmlcachegen generates from the QML is Qt's code, not ours: its warnings (MSVC C4702 "unreachable
 # code" inside Qt's inline headers) do not fail the build. Our own sources keep warnings as errors.
