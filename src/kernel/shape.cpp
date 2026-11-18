@@ -8,7 +8,6 @@
 #include <TopExp.hxx>
 #include <gp_Ax2.hxx>
 
-
 #include <cmath>
 
 namespace ray::kernel {

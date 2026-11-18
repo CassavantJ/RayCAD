@@ -28,9 +28,8 @@
 // welded vertex takes the position of its lowest node (face order, then node order), so the result is a
 // function of the triangulations alone.
 //
-// CANCELLATION AND PROGRESS: the job system (T-003) is not merged into this tree, so CancelToken::check() and
-// Progress::set() have no definitions yet. The call sites are marked TODO(T-003 merge). When it lands, a
-// Message_ProgressIndicator whose UserBreak() reads ctx.cancel goes into BRepMesh_IncrementalMesh::Perform.
+// CANCELLATION AND PROGRESS: ctx.cancel is checked before meshing and before extraction. TODO: pass a
+// Message_ProgressIndicator whose UserBreak() reads ctx.cancel into BRepMesh_IncrementalMesh::Perform.
 // A single slow face still cannot be interrupted (S3: up to 14 s at 0.01 mm); the caller abandons the job
 // (kernel.h contract).
 #include "mesh_testing.h"
@@ -160,8 +159,7 @@ Result<std::shared_ptr<BRepBuilderAPI_Copy>> meshedCopy(const TopoDS_Shape& orig
         // this setting is ours while the lock is held.
         const int previousTeam = pool->NbDefaultThreadsToLaunch();
         pool->SetNbDefaultThreadsToLaunch(team);
-        // TODO(T-003 merge): pass a Message_ProgressRange whose indicator reads ctx.cancel and reports to
-        // ctx.progress.
+        // TODO: pass a Message_ProgressRange whose indicator reads ctx.cancel and reports to ctx.progress.
         BRepMesh_IncrementalMesh mesher(copy, parameters);
         pool->SetNbDefaultThreadsToLaunch(previousTeam);
         return std::monostate{};
@@ -477,13 +475,15 @@ Result<Mesh> tessellate(const Shape& shape, const MeshOptions& options, JobConte
         return tl::unexpected(ok.error());
     if (auto ok = checkTolerances(options.chordTol, options.angleTol, where); !ok)
         return tl::unexpected(ok.error());
-    // TODO(T-003 merge): if (auto ok = ctx.cancel.check(); !ok) return tl::unexpected(ok.error());
-    static_cast<void>(ctx);
+    if (auto ok = ctx.cancel.check(); !ok)
+        return tl::unexpected(ok.error());
 
     auto copier = meshedCopy(detail::occt(shape), options.chordTol, options.angleTol, where);
     if (!copier)
         return tl::unexpected(copier.error());
-    // TODO(T-003 merge): check ctx.cancel again; ctx.progress.set(0.9, "Preparing the display mesh").
+    if (auto ok = ctx.cancel.check(); !ok)
+        return tl::unexpected(ok.error());
+    ctx.progress.set(0.9, "Preparing the display mesh");
     return detail::guarded(where, [&]() -> Result<Mesh> { return buildDisplayMesh(shape, **copier, options); });
 }
 
@@ -494,13 +494,15 @@ Result<TriSoup> triangulateExact(const Shape& shape, double chordTol, JobContext
         return tl::unexpected(ok.error());
     if (auto ok = checkTolerances(chordTol, kExactAngle, where); !ok)
         return tl::unexpected(ok.error());
-    // TODO(T-003 merge): if (auto ok = ctx.cancel.check(); !ok) return tl::unexpected(ok.error());
-    static_cast<void>(ctx);
+    if (auto ok = ctx.cancel.check(); !ok)
+        return tl::unexpected(ok.error());
 
     auto copier = meshedCopy(detail::occt(shape), chordTol, kExactAngle, where);
     if (!copier)
         return tl::unexpected(copier.error());
-    // TODO(T-003 merge): check ctx.cancel again; ctx.progress.set(0.9, "Welding the triangulation").
+    if (auto ok = ctx.cancel.check(); !ok)
+        return tl::unexpected(ok.error());
+    ctx.progress.set(0.9, "Welding the triangulation");
     return detail::guarded(where, [&]() -> Result<TriSoup> { return buildExactMesh(shape, **copier, where); });
 }
 
