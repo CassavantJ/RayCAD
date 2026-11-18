@@ -1,6 +1,7 @@
 // The spike S4 part with its 47 edit scenarios (task T-081a): every reference recorded on the baseline build,
-// resolved after each edit, judged by the oracle. Gate: zero wrong-element resolutions. Prints the per-scenario
-// table of spike S4 REPORT.md section 4.2.
+// resolved after each edit, judged by the oracle. Gates: zero wrong-element resolutions, none not judged, every
+// new-territory acceptance and congruence conflict reviewed, no injectivity violation, every mutant caught.
+// Prints the per-scenario table of spike S4 REPORT.md section 4.2 and every bucket (the log is the record).
 #include <catch2/catch_test_macros.hpp>
 
 #include "harness.h"
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <thread>
 
 using namespace ray;
@@ -19,7 +21,7 @@ namespace {
 
 struct ScenarioResult {
     Tally tally;
-    std::vector<std::string> wrongs;
+    JudgeLog log;
     std::vector<std::string> failed;
     int built = 0;
 };
@@ -37,7 +39,7 @@ TEST_CASE("S4 part: no reference resolves to a wrong element in the 47 edit scen
     const Script s0 = s4::makeScript(p0);
     FeatRefs picks;
     const Builder base = buildScript(s0, Mode::Author, picks);
-    const Owners ow0 = buildOwners(builtOnly(s0, base));
+    const auto ow0 = std::make_shared<const Owners>(buildOwners(builtOnly(s0, base)));
     REQUIRE(base.have());
     for (const std::string& f : base.failed())
         std::printf("baseline: FAILED %s\n", f.c_str());
@@ -45,7 +47,9 @@ TEST_CASE("S4 part: no reference resolves to a wrong element in the 47 edit scen
     auto samples0 = sampleShape(base.shape());
     REQUIRE(samples0.has_value());
     std::map<std::string, int> skipped;
-    const std::vector<Ref> refs = recordReferences(base, ow0, **samples0, &skipped);
+    const std::vector<Ref> refs = recordReferences(base, ow0, *samples0, &skipped);
+    std::printf("oracle: %s; baseline: %u faces without triangles\n", strictnessName().c_str(),
+                (*samples0)->unmeshedFaces);
     long nPick = 0;
     for (const auto& [f, v] : picks)
         nPick += static_cast<long>(v.size());
@@ -87,7 +91,8 @@ TEST_CASE("S4 part: no reference resolves to a wrong element in the 47 edit scen
                 out.failed.push_back("sampling failed: " + smp.error().message);
                 continue;
             }
-            judgeAll(refs, b, ow, **smp, **samples0, out.tally, out.wrongs, 40, sc.id);
+            out.log.maxWrongs = 40;
+            judgeAll(refs, b, ow, **smp, out.tally, out.log, "S4 " + sc.id);
         }
     };
     std::vector<std::thread> threads;
@@ -99,38 +104,49 @@ TEST_CASE("S4 part: no reference resolves to a wrong element in the 47 edit scen
     Tally total, plan;
     std::printf(
         "\n| scenario | built/failed | refs | Exact %% | Split %% | Merged %% | Repaired %% | Broken %% | gone / "
-        "missed | exists: E+S+M %% | WRONG | conflicts |\n|-|-|-|-|-|-|-|-|-|-|-|-|\n");
+        "missed | exists: E+S+M %% (bar 95) | WRONG | not judged | conflicts | accepted |\n"
+        "|-|-|-|-|-|-|-|-|-|-|-|-|-|-|\n");
     for (std::size_t i = 0; i < list.size(); ++i) {
         const Tally& t = results[i].tally;
         total.merge(t);
         if (s4::inPlanSet(list[i].id))
             plan.merge(t);
-        std::printf("| %s | %d/%zu | %ld | %s | %s | %s | %s | %s | %ld / %ld | %s | %ld | %ld |\n", list[i].id.c_str(),
-                    results[i].built, results[i].failed.size(), t.n, percent(t.state[0], t.n).c_str(),
-                    percent(t.state[1], t.n).c_str(), percent(t.state[2], t.n).c_str(),
-                    percent(t.state[3], t.n).c_str(), percent(t.state[4], t.n).c_str(),
-                    t.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
+        const bool below = t.existing > 0 && 100 * t.existingOk < 95 * t.existing;
+        std::printf("| %s | %d/%zu | %ld | %s | %s | %s | %s | %s | %ld / %ld | %s%s | %ld | %ld | %ld | %ld |\n",
+                    list[i].id.c_str(), results[i].built, results[i].failed.size(), t.n,
+                    percent(t.state[0], t.n).c_str(), percent(t.state[1], t.n).c_str(),
+                    percent(t.state[2], t.n).c_str(), percent(t.state[3], t.n).c_str(),
+                    percent(t.state[4], t.n).c_str(), t.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
                     t.verdict[static_cast<std::size_t>(Verdict::Missed)], percent(t.existingOk, t.existing).c_str(),
-                    t.wrong(), t.conflicts);
+                    below ? " BELOW" : "", t.wrong(), t.unjudged(), t.conflicts, t.accepted);
     }
     for (std::size_t i = 0; i < list.size(); ++i) {
         for (const std::string& f : results[i].failed)
             std::printf("  %s: feature failed: %s\n", list[i].id.c_str(), f.c_str());
-        for (const std::string& w : results[i].wrongs)
+        for (const std::string& w : results[i].log.wrongs)
             std::printf("  %s\n", w.c_str());
     }
-    std::printf("\nS4 total: %ld resolutions: Exact %s%%, Split %s%%, Merged %s%%, Repaired %s%%, Broken %s%% (really "
-                "gone %ld, missed %ld); WRONG %ld; oracle conflicts %ld; mutants caught %ld of %ld; accepted by the "
-                "new-territory rule %ld; not judged (no mesh) %ld\n",
-                total.n, percent(total.state[0], total.n).c_str(), percent(total.state[1], total.n).c_str(),
-                percent(total.state[2], total.n).c_str(), percent(total.state[3], total.n).c_str(),
-                percent(total.state[4], total.n).c_str(), total.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
-                total.verdict[static_cast<std::size_t>(Verdict::Missed)], total.wrong(), total.conflicts,
-                total.mutantsCaught, total.mutants, total.newTerritory, total.unjudged);
+    for (std::size_t i = 0; i < list.size(); ++i)
+        for (const std::string& n : results[i].log.notes)
+            std::printf("  %s\n", n.c_str());
+    // RAYCAD_NAMING_VERDICTS=<file>: one line per judged reference (to compare oracle settings).
+    if (const char* trace = std::getenv("RAYCAD_NAMING_VERDICTS"))
+        if (std::FILE* f = std::fopen(trace, "w")) {
+            for (const ScenarioResult& r : results)
+                for (const std::string& line : r.log.trace)
+                    std::fprintf(f, "%s\n", line.c_str());
+            std::fclose(f);
+        }
+    printTally("S4 total", total);
     std::printf("PLAN 3.3 set: %ld resolutions, Exact %s%%, WRONG %ld\n", plan.n,
                 percent(plan.state[0], plan.n).c_str(), plan.wrong());
-    CHECK(total.mutantsCaught == total.mutants);
+    CHECK(total.mutantsCaught() == total.mutantsMade());
     CHECK(total.repairedUsable == 0);
+    CHECK(total.selfCheckFailures == 0);
+    CHECK(total.injectivity == 0);
+    CHECK(total.unjudged() == 0);
+    CHECK(total.accepted == total.acceptedReviewed);
+    CHECK(total.conflicts == total.conflictsReviewed);
     // The no-op rebuild resolves everything Exact (determinism).
     if (list.front().id == "N00")
         CHECK(results[0].tally.state[0] == results[0].tally.n);

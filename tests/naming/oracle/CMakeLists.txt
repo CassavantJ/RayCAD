@@ -14,7 +14,8 @@ add_executable(ray_naming_oracle_tests
     acceptance_test.cpp)
 target_link_libraries(ray_naming_oracle_tests PRIVATE ray_naming_oracle ray_naming ray_kernel ray_core
     Catch2::Catch2WithMain)
-target_compile_definitions(ray_naming_oracle_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
+target_compile_definitions(ray_naming_oracle_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_ORACLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 set_property(TARGET ray_naming_oracle_tests PROPERTY FOLDER "tests")
 
 # The scripted acceptance scenarios (seconds).
@@ -24,7 +25,15 @@ ray_test_runtime_path(ray_naming_oracle_tests)
 add_test(NAME ray_naming_s4 COMMAND ray_naming_oracle_tests "[s4]")
 ray_test_runtime_path(ray_naming_s4)
 set_tests_properties(ray_naming_s4 PROPERTIES TIMEOUT 3600)
-# 1,000 randomised sequences on 20 corpus parts.
+# 1,000 judged randomised sequences on 20 corpus parts.
 add_test(NAME ray_naming_random COMMAND ray_naming_oracle_tests "[random]")
 ray_test_runtime_path(ray_naming_random)
 set_tests_properties(ray_naming_random PROPERTIES TIMEOUT 7200)
+# References replayed on the part read back in another session.
+add_test(NAME ray_naming_session COMMAND ray_naming_oracle_tests "[random-session]")
+ray_test_runtime_path(ray_naming_session)
+set_tests_properties(ray_naming_session PROPERTIES TIMEOUT 3600)
+# A holdout block of 200 sequences whose seeds were never run during development; reported separately.
+add_test(NAME ray_naming_random_holdout COMMAND ray_naming_oracle_tests "[random-holdout]")
+ray_test_runtime_path(ray_naming_random_holdout)
+set_tests_properties(ray_naming_random_holdout PROPERTIES TIMEOUT 7200)

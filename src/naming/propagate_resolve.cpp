@@ -199,6 +199,225 @@ bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, cons
     return false; // a vertex never contains another
 }
 
+// Does element `c` lie where the picked element was: same surface (or curve) type, radius and axis, and on the
+// picked element's carrier (the same plane, the same line overlapping the picked segment, the same circle)? Used
+// for the pieces of a Split (see piecesLieAsPicked): a separate curve on the same two faces (the exit loop of a
+// lengthened cross hole, the second circle where a plane meets a torus, the second breakout line of a hole) or a
+// face at another height after an un-merge is not a piece of what was picked. Planes, cylinders, cones, tori,
+// spheres, lines and circles are checked; anything else fails.
+bool onHintCarrier(const ElementMap& map, const kernel::Shape& shape, SubId c, const Fingerprint& hint)
+{
+    const Fingerprint fc = map.fingerprintOf(c);
+    if (fc.surface != hint.surface || std::llabs(fc.qRadius - hint.qRadius) > 10)
+        return false;
+    if (std::llabs(fc.qAxisX - hint.qAxisX) > 10 || std::llabs(fc.qAxisY - hint.qAxisY) > 10 ||
+        std::llabs(fc.qAxisZ - hint.qAxisZ) > 10)
+        return false;
+    const Vec3 p{q(hint.qCx), q(hint.qCy), q(hint.qCz)};
+    if (c.kind == SubKind::Face) {
+        const auto info = kernel::surfaceInfo(shape, c);
+        if (!info)
+            return false;
+        const double axisLength = norm(info->axis);
+        if (!(axisLength > 0.0))
+            return false;
+        const Vec3 axis{info->axis.x / axisLength, info->axis.y / axisLength, info->axis.z / axisLength};
+        const Vec3 d = sub(p, info->origin);
+        const double along = dot(d, axis);
+        const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};
+        // The piece must also lie near the picked element: the picked centroid within half the picked element's
+        // size of the piece's box (the lower part of a cross hole lengthened through a bore is on the same
+        // cylinder, far from what was picked).
+        const double half = 0.5 * std::sqrt(std::max(0.0, q(hint.qArea))); // qArea holds the area in mm^2
+        const bool near = insideBox(p, info->bounds, kContainTolerance + half);
+        switch (info->type) {
+        case kernel::SurfaceType::Plane:
+            return near && std::abs(along) <= kContainTolerance;
+        case kernel::SurfaceType::Cylinder:
+            return near && norm(radial) <= info->radius + kContainTolerance;
+        case kernel::SurfaceType::Cone:
+        case kernel::SurfaceType::Torus:
+        case kernel::SurfaceType::Sphere:
+            return near; // no closed-form test from a fingerprint
+        default:
+            return false;
+        }
+    }
+    if (c.kind == SubKind::Edge) {
+        const auto info = kernel::curveInfo(shape, c);
+        if (!info)
+            return false;
+        if (info->type == kernel::CurveType::Line) {
+            const Vec3 d = sub(info->end, info->start);
+            const double length = norm(d);
+            if (!(length > 0.0))
+                return false;
+            const Vec3 u{d.x / length, d.y / length, d.z / length};
+            const Vec3 w = sub(p, info->start);
+            const double t = dot(w, u);
+            const Vec3 off{w.x - t * u.x, w.y - t * u.y, w.z - t * u.z};
+            const double half = 0.5 * q(hint.qArea); // the picked segment runs from t - half to t + half
+            return norm(off) <= kContainTolerance && t + half >= -kContainTolerance &&
+                   t - half <= length + kContainTolerance;
+        }
+        if (info->type == kernel::CurveType::Circle) {
+            const double axisLength = norm(info->axis);
+            if (!(axisLength > 0.0))
+                return false;
+            const Vec3 axis{info->axis.x / axisLength, info->axis.y / axisLength, info->axis.z / axisLength};
+            const Vec3 d = sub(p, info->center);
+            const double along = dot(d, axis);
+            if (std::abs(along) > kContainTolerance)
+                return false;
+            // A whole circle was fingerprinted at its centre; an arc at the midpoint of its chord.
+            constexpr double kTwoPi = 6.283185307179586476925286766559;
+            const bool wasWhole = std::abs(q(hint.qArea) - kTwoPi * info->radius) <= 1e-3 * std::max(1.0, info->radius);
+            if (wasWhole)
+                return norm(d) <= kContainTolerance;
+            // An arc: no point of the picked arc is further than half its length from its chord's midpoint, so a
+            // piece of it has an end that near (the other arc where a plane meets a torus on the far side has not).
+            const double reach = 0.5 * q(hint.qArea) + kContainTolerance;
+            return norm(d) <= info->radius + kContainTolerance &&
+                   std::min(norm(sub(info->start, p)), norm(sub(info->end, p))) <= reach;
+        }
+        return false;
+    }
+    return false;
+}
+
+// Do two elements lie on one carrier: the same plane, the same cylinder (axis line and radius), the same line, the
+// same circle? Anything else is not compared and fails.
+bool sameCarrier(const kernel::Shape& shape, SubId a, SubId b)
+{
+    auto unitOf = [](const Vec3& v, Vec3& out) {
+        const double n = norm(v);
+        if (!(n > 0.0))
+            return false;
+        out = Vec3{v.x / n, v.y / n, v.z / n};
+        return true;
+    };
+    auto parallel = [](const Vec3& u, const Vec3& v) {
+        return std::abs(std::abs(dot(u, v)) - 1.0) <= 1e-9;
+    };
+    // Distance of p from the line through o along unit u.
+    auto offLine = [](const Vec3& p, const Vec3& o, const Vec3& u) {
+        const Vec3 w = sub(p, o);
+        const double t = dot(w, u);
+        return norm(Vec3{w.x - t * u.x, w.y - t * u.y, w.z - t * u.z});
+    };
+    if (a.kind == SubKind::Face && b.kind == SubKind::Face) {
+        const auto ia = kernel::surfaceInfo(shape, a);
+        const auto ib = kernel::surfaceInfo(shape, b);
+        Vec3 ua{}, ub{};
+        if (!ia || !ib || ia->type != ib->type || !unitOf(ia->axis, ua) || !unitOf(ib->axis, ub) || !parallel(ua, ub))
+            return false;
+        if (ia->type == kernel::SurfaceType::Plane)
+            return std::abs(dot(sub(ib->origin, ia->origin), ua)) <= kContainTolerance;
+        if (ia->type == kernel::SurfaceType::Cylinder)
+            return std::abs(ia->radius - ib->radius) <= kContainTolerance &&
+                   offLine(ib->origin, ia->origin, ua) <= kContainTolerance;
+        return false;
+    }
+    if (a.kind == SubKind::Edge && b.kind == SubKind::Edge) {
+        const auto ia = kernel::curveInfo(shape, a);
+        const auto ib = kernel::curveInfo(shape, b);
+        if (!ia || !ib || ia->type != ib->type)
+            return false;
+        Vec3 ua{}, ub{};
+        if (ia->type == kernel::CurveType::Line)
+            return unitOf(sub(ia->end, ia->start), ua) && unitOf(sub(ib->end, ib->start), ub) && parallel(ua, ub) &&
+                   offLine(ib->start, ia->start, ua) <= kContainTolerance;
+        if (ia->type == kernel::CurveType::Circle)
+            return unitOf(ia->axis, ua) && unitOf(ib->axis, ub) && parallel(ua, ub) &&
+                   std::abs(ia->radius - ib->radius) <= kContainTolerance &&
+                   norm(sub(ia->center, ib->center)) <= kContainTolerance;
+        return false;
+    }
+    return false;
+}
+
+// May `elements` be answered as the pieces of the picked element (a Split)? Together they must be no larger than the
+// picked element was (a split adds no territory). Then every piece must lie on the picked element's carrier
+// (onHintCarrier) or touch, through other pieces on the same carrier, one that does (a face split along an edge, an
+// edge split at a vertex). Failing that, the pieces may be the picked element moved and then cut apart (a hole moved
+// onto a groove breaks its rim into two arcs): they must all lie on one carrier. A separate element that only shares
+// the picked element's faces (the exit loop of a lengthened cross hole, the other breakout line of a hole, a piece
+// of the same face that a smaller cut brings back) fails, and the caller answers Broken.
+bool piecesLieAsPicked(const ElementMap& map, const kernel::Shape& shape, const std::vector<SubId>& elements,
+                       const Fingerprint& hint)
+{
+    if (elements.empty())
+        return false;
+    const std::size_t n = elements.size();
+    // Pieces of what was picked are together no larger than it was: a piece of the same face that a later edit
+    // brought back elsewhere (territory that was not part of the picked element) makes them larger.
+    if (elements.front().kind != SubKind::Vertex) {
+        double total = 0;
+        for (const SubId& s : elements)
+            total += q(map.fingerprintOf(s).qArea);
+        if (total > q(hint.qArea) * (1.0 + 1e-5) + kContainTolerance)
+            return false;
+    }
+    std::vector<char> ok(n, 0);
+    for (std::size_t i = 0; i < n; ++i)
+        ok[i] = onHintCarrier(map, shape, elements[i], hint) ? 1 : 0;
+    const SubKind via = elements.front().kind == SubKind::Face ? SubKind::Edge : SubKind::Vertex;
+    std::vector<std::vector<SubId>> boundary(n);
+    if (elements.front().kind != SubKind::Vertex)
+        for (std::size_t i = 0; i < n; ++i)
+            boundary[i] = kernel::adjacent(shape, elements[i], via);
+    auto touch = [&](std::size_t i, std::size_t j) {
+        for (const SubId& s : boundary[i])
+            if (std::binary_search(boundary[j].begin(), boundary[j].end(), s))
+                return true;
+        return false;
+    };
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; ok[i] == 0 && j < n; ++j)
+                if (ok[j] != 0 && touch(i, j) && sameCarrier(shape, elements[i], elements[j])) {
+                    ok[i] = 1;
+                    grew = true;
+                }
+    }
+    if (std::all_of(ok.begin(), ok.end(), [](char c) { return c != 0; }))
+        return true;
+    if (n < 2 || elements.front().kind == SubKind::Vertex)
+        return false;
+    for (std::size_t i = 1; i < n; ++i)
+        if (!sameCarrier(shape, elements.front(), elements[i]))
+            return false;
+    if (elements.front().kind == SubKind::Edge) {
+        // The pieces of one moved segment or arc lie within its length of each other: a piece further along the
+        // same line or circle is territory the picked element never had.
+        std::vector<Vec3> ends;
+        double radius = 0;
+        bool line = true;
+        for (const SubId& s : elements) {
+            const auto info = kernel::curveInfo(shape, s);
+            if (!info)
+                return false;
+            ends.push_back(info->start);
+            ends.push_back(info->end);
+            line = info->type == kernel::CurveType::Line;
+            radius = info->radius;
+        }
+        constexpr double kPi = 3.14159265358979323846;
+        const double length = q(hint.qArea);
+        // A chord of the picked arc is at most this long (half a circle or more: the diameter).
+        double reach = length;
+        if (!line)
+            reach =
+                radius > 0 && length / radius < kPi ? 2.0 * radius * dmath::sin(0.5 * length / radius) : 2.0 * radius;
+        for (std::size_t i = 0; i < ends.size(); ++i)
+            for (std::size_t j = i + 1; j < ends.size(); ++j)
+                if (norm(sub(ends[i], ends[j])) > reach + kContainTolerance)
+                    return false;
+    }
+    return true;
+}
+
 // Is `candidate` surrounded by exactly the faces the reference's neighbour names resolve to? Each neighbour name
 // must lead to a face around the candidate, and every face around it must be reached by one.
 bool surroundedAsPicked(const ElementMap& map, const kernel::Shape& shape, SubId candidate, const TopoRef& ref)
@@ -361,14 +580,18 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
             for (const Hash256& name : map.namesOf(elements.front()))
                 if (refNames.count(name) == 0) {
                     if (!surroundedLikePick(elements.front()))
-                        return broken("The picked edge was joined with another one that does not lie on the same "
-                                      "faces.");
+                        return broken("The picked element was joined with another one, and its neighbours are not "
+                                      "the ones it had.");
                     return make(ResolveState::Merged, std::move(elements));
                 }
             if (namesFound < ref.names.size())
-                return make(ResolveState::Split, std::move(elements));
+                // Part of a merged element is left and the rest has no name any more: whether the rest vanished
+                // or became something else is not known.
+                return broken("Part of the picked element no longer exists.");
             return std::nullopt; // the Exact stage's business
         }
+        if (!piecesLieAsPicked(map, shape, elements, ref.hint))
+            return broken("The picked element came apart, and not every piece lies where it was.");
         return make(ResolveState::Split, std::move(elements));
     }
 
@@ -398,8 +621,11 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 unusable = unusable || !neighboursStillAround(map, shape, s, ref);
             if (unusable)
                 continue;
-            if (wasAlone && members.size() > 1)
+            if (wasAlone && members.size() > 1) {
+                if (!piecesLieAsPicked(map, shape, elements, ref.hint))
+                    continue;
                 return make(ResolveState::Split, std::move(elements));
+            }
             if (!wasAlone && members.size() == 1 && ref.kind != SubKind::Vertex &&
                 canContain(map, shape, elements.front(), ref.hint) && surroundedLikePick(elements.front()))
                 return make(ResolveState::Merged, std::move(elements));

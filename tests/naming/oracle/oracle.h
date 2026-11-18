@@ -17,28 +17,54 @@
 // borders a face lying on each with that face's type and material side), a vertex by those of all its faces, each
 // with separators of its own if needed. After an edit the owners are recomputed from the features of the edited
 // script that built, and the elements of the new shape that fit the description are the expected answer E
-// (possibly empty, several, or "merged" when a matching element extends beyond the description). A second look
-// (reconsider, below) settles parts of the picked element's logical face that did not exist at pick time.
+// (possibly empty, several, or "merged" when a matching element extends beyond the description).
 //
-// WHAT IT CAN MISS (also in the T-081a report):
+// CONTINUATION. Matching the description is not enough: the logical element (the description without separators)
+// can have several separate parts after an edit (the exit loop of a lengthened cross hole, the second breakout line
+// of a hole, a piece on the far side of a cut). The picked element is mapped through the edit (each point moved with
+// its owners' carriers and projected onto their edited carriers, mapElement) and only the connected parts of the
+// logical element that overlap it continue the reference (expect). A reference whose continuation cannot be told is
+// counted ("no anchor") and any non-Broken answer to it is not judged; the tests gate that count.
+//
+// NEW TERRITORY. An answer that differs from E may still be right when the extra part did not exist at pick time
+// (a face that a suppressed cut no longer splits runs on into territory that was nothing). judgeAnswer accepts it
+// only when the picked element did not move, the answer holds every expected element, every extra element is
+// connected to an answered element that overlaps the mapped pick, and no extra part lies on any element of the
+// baseline or on a baseline sibling mapped through the edit. Every acceptance is reported; the tests fail unless it
+// is on the reviewed list tests/naming/oracle/accepted_territory.txt.
+//
+// WHAT IT CAN MISS (the tests print every bucket; their log is the record of a run):
 //  - It shares the script's idea of identity: "the same element" means the same sketch entity, cap, blended edge
 //    or imported face. An error both the naming code and the script make (for example two sketch lines swapping
 //    places) is invisible.
 //  - Which piece of a split logical face or edge is which is decided by separators. When the separating feature
-//    itself moves, a separator's verdict far from where it now cuts is not trusted (band rule), and parts that did
-//    not exist at pick time may be included in the answer or left out (the new-territory rule of reconsider()):
-//    an answer that differs from the expectation only in such parts is not counted as wrong.
+//    itself moves, a separator's verdict far from where it now cuts is not trusted (band rule; strict mode drops it).
 //  - Elements whose carriers coincide with another owner's (two logical faces on one plane with the same material
 //    side and overlapping extents) cannot be told apart; such faces are described by both owners ("merged") and
 //    judged as one. An owner covering under 2 % of a face when it was picked is not part of its description.
-//  - Weak references (seam-induced pieces, vertices on fewer than three faces) are checked only for membership of
-//    the logical element, not for which piece.
+//  - Weak references (no separator tells the pieces of the logical element apart: seam-induced pieces, the two
+//    pieces either side of a breakout, vertices on fewer than three faces) are judged by position: the expected
+//    pieces are those of the continuing parts that overlap the picked element mapped through the edit, or overlap
+//    no other baseline piece mapped likewise. Two pieces that both overlap the mapped pick cannot be told apart.
+//  - Overlap means 10 % of either element's samples within 0.05 mm of the other and away from its boundary
+//    (pieces that only touch do not overlap).
 //  - Sampling: a face counts as part of a region from 2 % of its area and as fully inside from 98 %; slivers below
 //    2 % are ignored. Edges count from 5 %, vertices from 50 %. Up to 5 % of an element's mesh nodes may lie off
-//    its carrier by up to ten times the tolerance (boolean edges are often less precise). A face the mesher leaves
-//    without triangles cannot be described; an answer on one is not judged (and counted).
+//    its carrier by up to ten times the tolerance (boolean edges are often less precise; strict mode: none). A face
+//    the mesher leaves without triangles is sampled on its edges and vertices.
+//  - The edit map is a shift of each owner's reference point followed by projection onto the edited carriers (an
+//    element whose own carriers did not change moves with the features bounding it, if they moved alike); a
+//    rotation of a feature is not modelled (the scripts make none). A point that does not settle within 0.01 mm of
+//    every carrier is dropped.
 //  - Only the carriers listed above. A blend between faces that are not plane/plane or plane/coaxial cylinder has
 //    no owner, so its faces cannot be described and are never used as references; scripts avoid them.
+//
+// STRICT MODE. RAYCAD_ORACLE_STRICT=<list> restores the spike's strictness for the loosenings kept since: "nodes"
+// (every node within tolerance), "band" (separators apply everywhere). The tests print which is active. Measured on
+// the T-081a review (verdicts per reference compared, RAYCAD_NAMING_VERDICTS): "nodes" changes 0 of 33,785 S4 and
+// 5 of 191,745 random verdicts (an existing element judged gone); "band" changes 0 S4 and 130 random verdicts (116
+// missed -> gone, 9 correct -> ghost: separators far from where they now cut drop continuations). A third loosening,
+// edge and vertex tolerance 2e-3 instead of 1e-3, changed no verdict and was withdrawn.
 #pragma once
 #include <ray/kernel.h>
 
@@ -113,9 +139,12 @@ struct FaceMesh {
     std::vector<Vec3> nodes;
     std::vector<std::array<std::uint32_t, 3>> triangles;
     std::vector<std::array<Vec3, 2>> triangleBoxes; // min, max
+    std::vector<std::array<Vec3, 2>> boundary;      // segments used by one triangle only
     Vec3 boxMin{}, boxMax{};
-    // Distance from p to the triangles, if it is at most `limit`; else a value above `limit`.
-    double distanceWithin(const Vec3& p, double limit) const;
+    void findBoundary();
+    // Distance from p to the triangles, if it is at most `limit`; else a value above `limit`. Not `exact`: any value
+    // up to limit / 4 may be returned once one is found (enough to say "near").
+    double distanceWithin(const Vec3& p, double limit, bool exact = false) const;
 };
 struct Carrier {
     enum class K { None, Plane, Cyl, Torus, Cone, Sphere, Mesh } k = K::None;
@@ -169,6 +198,7 @@ struct Owner {
 struct Owners {
     std::vector<Owner> v;
     std::map<std::string, int> ix;
+    std::map<std::string, Feature> sweeps; // the sweeps they come from, by id (mapElement: moved features)
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);
@@ -187,6 +217,7 @@ struct ElemSamples {
     std::vector<Vec3> nodes; // points that lie exactly on the element
     int type = -1;           // kernel::SurfaceType for faces, kernel::CurveType for edges, -1 for vertices
     Vec3 nrm{0, 0, 1};       // planar face: outward normal
+    bool sided = true;       // planar face: false when the sign of nrm is unknown (a face without triangles)
     int sigma = 0;           // cylindrical face: +1 boss, -1 hole
     Vec3 boxMin{}, boxMax{};
     std::shared_ptr<const FaceMesh> mesh; // face: its triangles
@@ -194,9 +225,14 @@ struct ElemSamples {
 struct Samples {
     std::array<std::vector<ElemSamples>, 3> e;                      // by SubKind (Vertex, Edge, Face)
     std::array<std::vector<std::vector<std::uint32_t>>, 2> facesOf; // [0] faces of each vertex, [1] of each edge
+    std::vector<std::vector<std::uint32_t>> verticesOf;             // vertices of each edge
+    std::uint32_t unmeshedFaces = 0; // faces without triangles, sampled on their edges (material side unknown)
     const std::vector<ElemSamples>& of(SubKind k) const { return e[static_cast<std::size_t>(k)]; }
 };
 Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape);
+
+// The strictness knobs in force (RAYCAD_ORACLE_STRICT), in words.
+std::string strictnessName();
 
 // ---------------------------------------------------------------- descriptions and verdicts
 // A separator: the piece lies on side `side` of the owner's carrier, wherever a point's projection onto the
@@ -223,8 +259,9 @@ struct TruthDesc {
     std::string cat;
 };
 struct TruthEval {
-    std::vector<std::uint32_t> elems; // sorted
-    bool merged = false;              // a matching element extends beyond the description
+    std::vector<std::uint32_t> elems;   // sorted
+    bool merged = false;                // a matching element extends beyond the description
+    std::vector<std::uint32_t> partial; // the elements that do (sorted)
 };
 TruthEval evalTruth(const TruthDesc& d, const Owners& owners, const Samples& samples);
 // For diagnosis: the description in words, and why element `x` does or does not fit it.
@@ -248,7 +285,9 @@ private:
 std::vector<std::pair<std::uint32_t, TruthDesc>> pickTarget(const Target& target, const Owners& owners,
                                                             const Samples& samples);
 
-enum class Verdict { Correct, BrokenGone, Missed, WrongOther, WrongIncomplete, WrongGhost, WrongSilentMerge };
+// Unjudged: a non-Broken answer to a reference whose continuation the oracle cannot tell (gated by the tests).
+enum class Verdict { Correct, BrokenGone, Missed, Unjudged, WrongOther, WrongIncomplete, WrongGhost, WrongSilentMerge };
+constexpr std::size_t kVerdicts = 8;
 const char* verdictName(Verdict v);
 inline bool isWrong(Verdict v)
 {
@@ -256,31 +295,78 @@ inline bool isWrong(Verdict v)
 }
 // The answer of a resolver, in the oracle's terms.
 enum class Answer { Exact, Split, Merged, Repaired, Broken };
-// `answer` with `elements` against the expected answer `te`. `congruent` (weak descriptions only) is the one
-// element congruent in place with the picked one, or -1.
-Verdict judge(Answer answer, std::vector<std::uint32_t> elements, const TruthEval& te, bool weak, long congruent);
-
-// NEW TERRITORY. A second look at a wrong verdict, for one situation the description cannot settle: a part of the
-// picked element's logical face (or edge) that did not exist when it was picked shows up after the edit (a piece
-// that a later cut had removed survives, or an edge that a cut had trimmed now runs on past it). Whether such a
-// part belongs to the reference is a matter of definition: a description with separators says no, one without
-// says yes. The same happens when a separator's band (see Sep) no longer reaches the continuation of a sibling
-// piece after an edit. The answer is accepted when (1) it includes every expected element that overlaps the picked
-// element (all expected elements if none does: the element moved), (2) every answered element that was not
-// expected lies on the picked element's own owners (the description without separators) and overlaps neither the
-// picked element nor any other element of the baseline, and (3) for an Exact answer on an element larger than the
-// description, the part outside it overlaps no other element of the baseline. Expected elements that do not
-// overlap the picked element may be left out. Anything else stays wrong: an answer missing what was picked, an
-// answer with an element of another logical face, with a part of another baseline element, or a ghost. Returns the
-// verdict to count; `newTerritory` is set when it changed the verdict. "Other element of the baseline" counts only one
-// that `survives` the edit (its own description still finds it; true when it has none) and, for faces, lies on
-// the same plane.
-Verdict reconsider(Verdict v, Answer answer, const std::vector<std::uint32_t>& elements, const TruthDesc& d,
-                   const TruthEval& expected, const Owners& owners, const Samples& now, const Samples& baseline,
-                   SubId picked, const std::function<bool(SubId)>& survives, bool& newTerritory);
+// `answer` with `elements` against the expected answer `te`, by set only (the first step of judgeAnswer).
+Verdict judge(Answer answer, std::vector<std::uint32_t> elements, const TruthEval& te);
 
 // Elements of `samples` whose nodes all lie within `tol` of the picked element's nodes and vice versa
 // (congruent in place). Independent of the description; a cross-check of it.
 std::vector<std::uint32_t> congruent(const ElemSamples& picked, SubKind kind, const Samples& samples, double tol);
+
+// ---------------------------------------------------------------- the full judge
+// What the oracle keeps of a reference from pick time.
+struct PickRecord {
+    SubId base;                              // the element picked
+    TruthDesc truth;                         // its description
+    std::shared_ptr<const Samples> baseline; // samples of the shape it was picked on
+    std::shared_ptr<const Owners> owners;    // owners of the script it was picked on
+    const ElemSamples& picked() const { return baseline->of(base.kind)[base.index]; }
+};
+
+// Element `e` of `baseline` moved through the edit: every point shifted with its owners' carriers (the largest
+// shift of the reference points of the owners it lies on) and projected onto their carriers in `after`. A point
+// inside the volume of a sweep that only moved moves with that sweep (the part of a hole wall inside a moved boss).
+// When its own carriers did not change, it moves with the features that bound it instead (the owners its vertices
+// lie on besides its own), if they all moved alike: a piece of an edge between two cuts moves with them. Points that
+// do not settle
+// on all its carriers are dropped; if under half the weight maps, the result has no samples. `moved` is set when a
+// carrier of the element or of one of its separators changed, or its bounding features moved.
+ElemSamples mapElement(const Samples& baseline, SubId e, const TruthDesc& d, const Owners& before, const Owners& after,
+                       bool& moved);
+
+// Share (by weight) of a's samples lying on element b (within 0.05 mm; 1e-3 mm for vertices).
+double shareOnElement(const ElemSamples& a, const ElemSamples& b, SubKind kind);
+
+// A sliver: a face or edge with no sample more than 0.02 mm inside it (a corner left by a cut). Which piece holds a
+// sliver cannot be told by position; judgeAnswer leaves slivers out of both the answer and the expectation (an
+// answer of slivers alone is wrong).
+bool isSliver(const ElemSamples& es, SubKind kind);
+
+// The connected components of `elems` (faces through shared edges, edges through shared vertices; a vertex is its
+// own): for each element, the index of its component.
+std::vector<int> componentsOf(const std::vector<std::uint32_t>& elems, SubKind kind, const Samples& samples);
+
+// The expectation for one reference on an edited shape, computed once; judgeAnswer then judges any answer.
+struct Expectation {
+    SubKind kind = SubKind::Face;
+    bool weak = false;
+    TruthEval strict;                   // elements fitting the description, separators included
+    std::vector<std::uint32_t> logical; // elements fitting it without separators (sorted; includes strict)
+    std::vector<int> component;         // per element of `logical`
+    std::vector<char> anchored;         // per element of `logical`: overlaps the mapped pick
+    std::vector<char> claimed;          // weak only, per element of `logical`: overlaps another baseline piece of the
+                                        // logical element, mapped through the edit (that piece's continuation)
+    int siblings = 0;                   // weak only: how many other pieces the logical element had at pick time
+    bool twins = false;                 // E is two or more vertices at one point (a boolean leaves coincident
+                                        // vertices): position cannot tell them apart, and any one is an Exact answer
+    ElemSamples mapped;                 // the picked element mapped through the edit
+    bool moved = false;
+    TruthEval expected;       // E: the strict elements in components that continue the pick
+    std::string noAnchor;     // why the continuation cannot be told (then E is not trusted)
+    long congruentIndex = -1; // the one element congruent in place with the pick, or -1
+    bool inLogical(std::uint32_t e) const;
+    bool isAnchored(std::uint32_t e) const;
+    bool isClaimed(std::uint32_t e) const;
+    int componentOf(std::uint32_t e) const; // -1 if not in `logical`
+};
+Expectation expect(const PickRecord& pick, const Owners& now, const Samples& samples);
+
+struct Judgement {
+    Verdict verdict = Verdict::Correct;
+    bool unjudged = false; // a non-Broken answer to a reference whose continuation cannot be told
+    std::string accepted;  // non-empty: accepted by the new-territory rule (why, in words)
+    bool twin = false;     // Exact on one of coincident vertices (Expectation::twins)
+};
+Judgement judgeAnswer(const Expectation& e, const PickRecord& pick, const Owners& now, const Samples& samples,
+                      Answer answer, std::vector<std::uint32_t> elements);
 
 } // namespace ray::naming_oracle

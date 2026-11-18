@@ -296,6 +296,35 @@ TEST_CASE("a fuse that unifies two faces gives Merged", "[naming][propagate]")
     CHECK(merged);
 }
 
+TEST_CASE("a merged face cut apart again is Split on its own plane, never answered with a face elsewhere",
+          "[naming][propagate]")
+{
+    // The boss flush with the block's front face: one front face holding two names.
+    const Body b0 = boolean(block(), kCut, kernel::BoolOp::Union, xy(10), rectangle(10, 0, 40, 30, 1, 1), 20);
+    const std::vector<SubId> merged = facesOnPlane(b0.shape, Vec3{0, 0, 0}, Vec3{0, 1, 0});
+    REQUIRE(merged.size() == 1);
+    REQUIRE(b0.map.namesOf(merged[0]).size() == 2);
+    const TopoRef ref = resolverFor(b0)->makeRef(kBody, merged[0]);
+    {
+        // A notch across the front face: two pieces, both on the picked plane.
+        const Body b1 = boolean(b0, kCut2, kernel::BoolOp::Cut, xy(30), rectangle(60, -5, 70, 10, 1, 1), -40);
+        const Resolved res = resolverFor(b1)->resolve(ref);
+        INFO(res.reason);
+        REQUIRE(res.state == ResolveState::Split);
+        CHECK(res.usable());
+        CHECK(res.elements == facesOnPlane(b1.shape, Vec3{0, 0, 0}, Vec3{0, 1, 0}));
+    }
+    {
+        // The boss brought 5 mm forward instead: its front face is no longer on the picked plane, and is not a
+        // piece of what was picked.
+        const Body b1 = boolean(block(), kCut, kernel::BoolOp::Union, xy(10), rectangle(10, -5, 40, 30, 1, 1), 20);
+        const Resolved res = resolverFor(b1)->resolve(ref);
+        INFO(res.reason);
+        CHECK(res.state == ResolveState::Broken);
+        CHECK_FALSE(res.usable());
+    }
+}
+
 TEST_CASE("a cut that removes a referenced face gives Broken", "[naming][propagate]")
 {
     const Body b0 = boolean(block(), kCut, kernel::BoolOp::Cut, xy(20), rectangle(20, 20, 40, 40, 1, 1), -5);

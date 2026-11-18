@@ -61,8 +61,8 @@ Hash256 loopTagParent(std::uint64_t loopTag);
 //     have is Merged; names found on several elements, or found only through "split" records that list the name
 //     as a parent, are Split (every piece). Broken instead when the pieces found are fewer than were issued (a
 //     piece was split again or removed, and the records of its own pieces are not kept), when a piece also came
-//     from names the reference does not stand for (it may hold none of what was picked), or when a name is held
-//     by several elements;
+//     from names the reference does not stand for (it may hold none of what was picked), when a name is held
+//     by several elements, or when only some of a merged element's names are found on one element;
 //  3. the family rule: a lost name that was issued alone, whose family now has all its members and more than one,
 //     is Split (every member); a lost sibling whose family has exactly one member again (pieces re-joined), or a
 //     lost piece whose split parents all lie whole on one element again, is Merged, but only after a geometric
@@ -71,6 +71,11 @@ Hash256 loopTagParent(std::uint64_t loopTag);
 //     one of them that still exists);
 //  4. Repaired: exactly one element matches the hint, and the faces around it are exactly the faces the
 //     reference's neighbour names resolve to.
+// Every Split (stage 2 or 3) must also pass a geometric check of its pieces against the hint: together no larger
+// than the picked element, and each on the picked element's carrier near where it was (or touching such a piece
+// on the same carrier), or all on one carrier within the picked element's length of each other (it moved, then
+// came apart); else Broken. A separate element on the same faces (a cross hole's exit loop, a hole's other
+// breakout line, a piece of the face that a smaller cut brings back) is not a piece.
 // Every edge or vertex answer must also pass onPickedFaces. nullopt means none applies (the caller reports
 // Broken). A name the reference holds that is ambiguous is never followed past the Exact stage (its element
 // could have been a sibling). Never throws.

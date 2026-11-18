@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <numeric>
+#include <optional>
 #include <set>
 
 namespace ray::naming_oracle {
@@ -112,6 +114,7 @@ std::shared_ptr<FaceMesh> faceMesh(const kernel::Mesh& mesh, const kernel::FaceR
     }
     for (std::size_t i = 0; i < out->nodes.size(); ++i)
         growBox(out->boxMin, out->boxMax, out->nodes[i], i == 0);
+    out->findBoundary();
     return out;
 }
 
@@ -279,7 +282,8 @@ bool typeMatches(const Carrier& c, const ElemSamples& es)
     const int t = es.type;
     switch (c.k) {
     case K::Plane:
-        return t == static_cast<int>(T::Plane) && (!c.oriented || dot(es.nrm, c.a) > 0.99);
+        return t == static_cast<int>(T::Plane) &&
+               (!c.oriented || (es.sided ? dot(es.nrm, c.a) : std::abs(dot(es.nrm, c.a))) > 0.99);
     case K::Cyl:
         return t == static_cast<int>(T::Cylinder) && (!c.oriented || es.sigma == 0 || es.sigma == c.sigma);
     case K::Torus:
@@ -296,6 +300,24 @@ bool typeMatches(const Carrier& c, const ElemSamples& es)
     return false;
 }
 
+// RAYCAD_ORACLE_STRICT (oracle.h, STRICT MODE).
+struct Strictness {
+    bool nodes = false, band = false;
+};
+const Strictness& strictness()
+{
+    static const Strictness s = [] {
+        Strictness out;
+        if (const char* v = std::getenv("RAYCAD_ORACLE_STRICT")) {
+            const std::string list(v);
+            out.nodes = list.find("nodes") != std::string::npos;
+            out.band = list.find("band") != std::string::npos;
+        }
+        return out;
+    }();
+    return s;
+}
+
 struct Tol {
     double node, sample, margin, thr;
 };
@@ -303,18 +325,21 @@ Tol tolFor(SubKind k)
 {
     if (k == SubKind::Face)
         return {1e-4, 0.06, 1e-4, 0.02};
+    // The spike's 1e-3 (a 2e-3 loosening changed no verdict in S4 or the random test, so it was withdrawn).
+    const double t = 1e-3;
     if (k == SubKind::Edge)
-        return {2e-3, 2e-3, 2e-3, 0.05};
-    return {2e-3, 2e-3, 2e-3, 0.5};
+        return {t, t, t, 0.05};
+    return {t, t, t, 0.5};
 }
 // Do the nodes of an element lie on the carrier? Every node within 10 x tol and at least 95 % within tol: nodes on
 // the boundary of a face are computed on its edges, and the edges of a boolean result may lie off the surfaces by
-// their (larger) tolerance.
+// their (larger) tolerance. Strict mode: every node within tol.
 bool nodesOn(const Carrier& c, const std::vector<Vec3>& nodes, double tol)
 {
+    const bool strict = strictness().nodes;
     std::size_t close = 0;
     for (const Vec3& p : nodes) {
-        if (!c.on(p, 10.0 * tol))
+        if (!c.on(p, strict ? tol : 10.0 * tol))
             return false;
         if (c.on(p, tol))
             ++close;
@@ -350,7 +375,38 @@ Vec3 projectOnto(const Carrier& c, const Vec3& p)
 
 bool inBand(const SepRef& s, const Vec3& p)
 {
-    return s.in == nullptr || !*s.in || (*s.in)(projectOnto(*s.c, p), kBandMargin);
+    return strictness().band || s.in == nullptr || !*s.in || (*s.in)(projectOnto(*s.c, p), kBandMargin);
+}
+
+// Nearest point of any analytic carrier (projectOnto covers the separator kinds only).
+Vec3 projectAny(const Carrier& c, const Vec3& p)
+{
+    using K = Carrier::K;
+    if (c.k == K::Plane || c.k == K::Cyl)
+        return projectOnto(c, p);
+    const Vec3 d = sub(p, c.p);
+    if (c.k == K::Sphere)
+        return norm(d) > 0 ? add(c.p, mul(unit(d), c.r)) : p;
+    if (c.k != K::Torus && c.k != K::Cone)
+        return p;
+    const double z = dot(d, c.a);
+    const Vec3 radial = sub(d, mul(c.a, z));
+    const double rho = norm(radial);
+    if (!(rho > 0))
+        return p;
+    const Vec3 u = mul(radial, 1.0 / rho);
+    if (c.k == K::Torus) {
+        const Vec3 ring = add(c.p, mul(u, c.r));
+        const Vec3 off = sub(p, ring);
+        return norm(off) > 0 ? add(ring, mul(unit(off), c.r2)) : p;
+    }
+    // Cone: the nearest point of the generator line through (q0, q1) and (q2, q3) in the (rho, z) half-plane.
+    const double dr = c.q[2] - c.q[0], dz = c.q[3] - c.q[1], len = std::hypot(dr, dz);
+    if (!(len > 0))
+        return p;
+    const double t = ((rho - c.q[0]) * dr + (z - c.q[1]) * dz) / (len * len);
+    const double r1 = c.q[0] + t * dr, z1 = c.q[1] + t * dz;
+    return add(add(c.p, mul(c.a, z1)), mul(u, r1));
 }
 
 bool sepsOk(const SepList& seps, const Vec3& p)
@@ -454,8 +510,33 @@ Vec3 unit(const Vec3& a)
     return n > 0 ? mul(a, 1.0 / n) : Vec3{0, 0, 1};
 }
 
+std::string strictnessName()
+{
+    const Strictness& s = strictness();
+    std::string out;
+    if (s.nodes)
+        out += " nodes";
+    if (s.band)
+        out += " band";
+    return out.empty() ? "default (95 % nodes / 10x, band rule)" : "strict:" + out;
+}
+
 // ---------------------------------------------------------------- carriers
-double FaceMesh::distanceWithin(const Vec3& p, double limit) const
+void FaceMesh::findBoundary()
+{
+    std::map<std::pair<std::uint32_t, std::uint32_t>, int> uses;
+    for (const auto& tri : triangles)
+        for (int k = 0; k < 3; ++k) {
+            const std::uint32_t a = tri[static_cast<std::size_t>(k)], b = tri[static_cast<std::size_t>((k + 1) % 3)];
+            ++uses[{std::min(a, b), std::max(a, b)}];
+        }
+    boundary.clear();
+    for (const auto& [seg, n] : uses)
+        if (n == 1)
+            boundary.push_back({nodes[seg.first], nodes[seg.second]});
+}
+
+double FaceMesh::distanceWithin(const Vec3& p, double limit, bool exact) const
 {
     if (triangles.empty() || outsideBox(p, boxMin, boxMax, limit))
         return limit + 1.0;
@@ -467,7 +548,7 @@ double FaceMesh::distanceWithin(const Vec3& p, double limit) const
         const double d = norm(sub(p, closestOnTriangle(p, nodes[tri[0]], nodes[tri[1]], nodes[tri[2]])));
         if (d < best) {
             best = d;
-            if (best <= limit * 0.25)
+            if (!exact && best <= limit * 0.25)
                 return best;
         }
     }
@@ -567,6 +648,7 @@ Owners buildOwners(const Script& script)
                 addOwner(std::move(o));
             }
         } else if (f.type == FType::Sweep) {
+            O.sweeps[f.id] = f;
             const Frame fr = f.frame;
             const double sg = f.op == BOp::Cut ? -1.0 : 1.0, D = f.dist;
             const bool cut = f.op == BOp::Cut, hole = f.role == "hole";
@@ -688,6 +770,7 @@ Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape)
     out->e[kVertex].resize(vertices);
     out->facesOf[0].resize(vertices);
     out->facesOf[1].resize(edges);
+    out->verticesOf.resize(edges);
 
     for (std::uint32_t i = 0; i < faces; ++i) {
         ElemSamples& es = out->e[kFace][i];
@@ -722,10 +805,16 @@ Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape)
                     }
                 }
         }
-        if (info->type == kernel::SurfaceType::Plane)
-            es.nrm = averageNormal(*mesh, range);
+        // The material side comes from the mesh normals. A face without triangles has none (the kernel's face
+        // query does not say on which side its surface's normal points): its plane normal is known up to sign
+        // (sided = false) and its cylinder side is unknown (sigma 0).
+        const bool meshed = !fm->triangles.empty();
+        if (info->type == kernel::SurfaceType::Plane) {
+            es.nrm = meshed ? averageNormal(*mesh, range) : unit(info->axis);
+            es.sided = meshed;
+        }
         if (info->type == kernel::SurfaceType::Cylinder)
-            es.sigma = cylinderSide(*mesh, range, info->origin, unit(info->axis));
+            es.sigma = meshed ? cylinderSide(*mesh, range, info->origin, unit(info->axis)) : 0;
     }
 
     for (std::uint32_t i = 0; i < edges; ++i) {
@@ -733,6 +822,8 @@ Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape)
         const SubId edge{SubKind::Edge, i};
         for (const SubId& f : kernel::adjacent(shape, edge, SubKind::Face))
             out->facesOf[1][i].push_back(f.index);
+        for (const SubId& v : kernel::adjacent(shape, edge, SubKind::Vertex))
+            out->verticesOf[i].push_back(v.index);
         const kernel::EdgeRange& range = mesh->edges[i];
         for (std::uint32_t k = 0; k < range.vertexCount; ++k)
             es.nodes.push_back(fromFloats(mesh->edgePositions, range.firstVertex + k));
@@ -794,6 +885,27 @@ Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape)
         es.pts = {*p};
         es.w = {1.0};
         es.boxMin = es.boxMax = *p;
+    }
+
+    // A face the mesher left without triangles: sampled on its boundary (the samples of its edges and its vertices).
+    // It has no mesh; nearness to it is nearness to these points (nearElement).
+    for (std::uint32_t i = 0; i < faces; ++i) {
+        ElemSamples& es = out->e[kFace][i];
+        if (!es.pts.empty())
+            continue;
+        ++out->unmeshedFaces;
+        es.nodes.clear();
+        es.mesh.reset();
+        for (const SubId& e : kernel::adjacent(shape, SubId{SubKind::Face, i}, SubKind::Edge)) {
+            const ElemSamples& edge = out->e[kEdge][e.index];
+            es.pts.insert(es.pts.end(), edge.pts.begin(), edge.pts.end());
+            es.w.insert(es.w.end(), edge.w.begin(), edge.w.end());
+            es.nodes.insert(es.nodes.end(), edge.nodes.begin(), edge.nodes.end());
+        }
+        for (const SubId& v : kernel::adjacent(shape, SubId{SubKind::Face, i}, SubKind::Vertex))
+            es.nodes.push_back(out->e[kVertex][v.index].nodes.front());
+        for (std::size_t k = 0; k < es.nodes.size(); ++k)
+            growBox(es.boxMin, es.boxMax, es.nodes[k], k == 0);
     }
     return std::shared_ptr<const Samples>(out);
 }
@@ -863,10 +975,10 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
                 bool found = false;
                 for (const std::uint32_t f : own)
                     for (const Owner* o : c.alts) {
-                        // (A face the mesher left without triangles cannot be checked, and is taken as fitting.)
+                        // (A face the mesher left without triangles is checked on its boundary samples.)
                         const ElemSamples& face = smp.of(SubKind::Face)[f];
-                        found = found || face.nodes.empty() ||
-                                (typeMatches(o->c, face) && nodesOn(o->c, face.nodes, tolFor(SubKind::Face).node));
+                        found =
+                            found || (typeMatches(o->c, face) && nodesOn(o->c, face.nodes, tolFor(SubKind::Face).node));
                     }
                 if (!found) {
                     carr = false;
@@ -900,8 +1012,10 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
         const double frac = W > 0 ? okw / W : 0;
         if (frac >= T.thr) {
             ev.elems.push_back(x);
-            if (frac < 0.98)
+            if (frac < 0.98) {
                 ev.merged = true;
+                ev.partial.push_back(x);
+            }
             if (masks != nullptr)
                 masks->emplace_back(x, std::move(mask));
         }
@@ -1087,7 +1201,17 @@ TruthDesc TruthBuilder::describe(SubId s) const
         }
         d.cons.push_back(c);
         if (!findSeps(d, s.index, d.cons[0].seps, owners_, samples_)) {
-            d.why = "not unique at baseline";
+            // No carrier separates it from the other pieces of its logical face (two pieces either side of a
+            // breakout): a weak description, judged by position (oracle.h).
+            d.cons[0].seps.clear();
+            const TruthEval ev = evalTruth(d, owners_, samples_);
+            if (std::find(ev.elems.begin(), ev.elems.end(), s.index) == ev.elems.end()) {
+                d.why = "not found at baseline";
+                return d;
+            }
+            d.weak = true;
+            d.cat += " (weak oracle)";
+            d.ok = true;
             return d;
         }
         const TruthEval ev = evalTruth(d, owners_, samples_);
@@ -1173,6 +1297,8 @@ const char* verdictName(Verdict v)
         return "broken and really gone";
     case Verdict::Missed:
         return "missed (broken but exists)";
+    case Verdict::Unjudged:
+        return "NOT JUDGED (continuation unknown)";
     case Verdict::WrongOther:
         return "WRONG different element";
     case Verdict::WrongIncomplete:
@@ -1185,23 +1311,15 @@ const char* verdictName(Verdict v)
     return "?";
 }
 
-Verdict judge(Answer answer, std::vector<std::uint32_t> X, const TruthEval& te, bool weak, long cong)
+Verdict judge(Answer answer, std::vector<std::uint32_t> X, const TruthEval& te)
 {
     std::sort(X.begin(), X.end());
     X.erase(std::unique(X.begin(), X.end()), X.end());
     const std::vector<std::uint32_t>& E = te.elems;
     if (answer == Answer::Broken)
         return E.empty() ? Verdict::BrokenGone : Verdict::Missed;
-    if (weak) {
-        if (E.empty())
-            return Verdict::WrongGhost;
-        if (!std::includes(E.begin(), E.end(), X.begin(), X.end()))
-            return Verdict::WrongOther;
-        if (cong >= 0 && (answer == Answer::Exact || answer == Answer::Repaired) &&
-            !(X.size() == 1 && static_cast<long>(X[0]) == cong))
-            return Verdict::WrongOther;
-        return Verdict::Correct;
-    }
+    if (X.empty())
+        return E.empty() ? Verdict::WrongGhost : Verdict::WrongOther;
     if (X == E) {
         if (answer == Answer::Exact && te.merged)
             return Verdict::WrongSilentMerge;
@@ -1255,13 +1373,20 @@ std::vector<std::uint32_t> congruent(const ElemSamples& picked, SubKind kind, co
 
 namespace {
 
-// Is p within tol of element es (its triangles, polyline or point)?
+// Is p within tol of element es (its triangles, polyline or point; for a face without triangles, its boundary
+// samples)?
 bool nearElement(const Vec3& p, const ElemSamples& es, SubKind kind, double tol)
 {
     if (es.nodes.empty() || outsideBox(p, es.boxMin, es.boxMax, tol))
         return false;
-    if (kind == SubKind::Face)
-        return es.mesh && es.mesh->distanceWithin(p, tol) <= tol;
+    if (kind == SubKind::Face) {
+        if (es.mesh && !es.mesh->triangles.empty())
+            return es.mesh->distanceWithin(p, tol) <= tol;
+        for (const Vec3& q : es.pts)
+            if (norm(sub(p, q)) <= tol)
+                return true;
+        return false;
+    }
     if (kind == SubKind::Edge) {
         for (std::size_t k = 1; k < es.nodes.size(); ++k)
             if (segmentDistance(p, es.nodes[k - 1], es.nodes[k]) <= tol)
@@ -1288,9 +1413,84 @@ double shareOn(const ElemSamples& a, const ElemSamples& b, SubKind kind)
     return all > 0 ? on / all : 0;
 }
 
+// How near a point of one element must be to another, for the mapped pick and siblings (all kinds: a mapped vertex
+// is a projection, not an exact point).
+constexpr double kAnchorTolerance = 0.05;
+
+// A mapped point may be off by up to a fifth of the anchor tolerance (mapElement): within this much of a boundary,
+// a point counts as beside the element.
+constexpr double kBesideMargin = 0.2 * kAnchorTolerance;
+
+// Is p within tol of element es, and not merely beside it? A point beyond an edge's end or beyond a face's boundary
+// is as near to that boundary as to the element; a point on the element is nearer to the element than to its
+// boundary. So a short piece next to the picked one (sharing a vertex or an edge) does not overlap it, however small
+// either is.
+// How much nearer p is to element es than to its boundary (large where es has no boundary). tol: how far p may be.
+double depthIn(const Vec3& p, const ElemSamples& es, SubKind kind, double tol)
+{
+    if (kind == SubKind::Edge && es.nodes.size() >= 2) {
+        if (norm(sub(es.nodes.front(), es.nodes.back())) <= 1e-9)
+            return 1e300; // closed: no boundary
+        double toEdge = 1e300;
+        for (std::size_t k = 1; k < es.nodes.size(); ++k)
+            toEdge = std::min(toEdge, segmentDistance(p, es.nodes[k - 1], es.nodes[k]));
+        return std::min(norm(sub(p, es.nodes.front())), norm(sub(p, es.nodes.back()))) - toEdge;
+    }
+    if (kind == SubKind::Face && es.mesh && !es.mesh->triangles.empty()) {
+        const double toFace = es.mesh->distanceWithin(p, tol, true);
+        double toBoundary = 1e300;
+        for (const auto& s : es.mesh->boundary)
+            toBoundary = std::min(toBoundary, segmentDistance(p, s[0], s[1]));
+        return toBoundary - toFace;
+    }
+    return 1e300;
+}
+
+// Within this much of a boundary a point counts as beside the element: a mapped point may be off by up to a fifth
+// of the anchor tolerance (mapElement), but never more than half the depth of the element's own deepest sample (a
+// sliver has hardly any interior).
+double besideMargin(const ElemSamples& es, SubKind kind)
+{
+    double deepest = 0;
+    for (const Vec3& p : es.pts) {
+        deepest = std::max(deepest, depthIn(p, es, kind, kAnchorTolerance));
+        if (deepest >= 2.0 * kBesideMargin)
+            break;
+    }
+    return std::min(kBesideMargin, 0.5 * deepest);
+}
+
+// No sample more than 2 x kBesideMargin inside it (a face 0.04 mm wide, an edge 0.04 mm long).
+bool sliver(const ElemSamples& es, SubKind kind)
+{
+    if (kind == SubKind::Vertex)
+        return false;
+    if (norm(sub(es.boxMax, es.boxMin)) <= 4.0 * kBesideMargin)
+        return true; // also a face without triangles that small
+    return besideMargin(es, kind) < kBesideMargin;
+}
+
+bool nearInterior(const Vec3& p, const ElemSamples& es, SubKind kind, double tol, double margin)
+{
+    return nearElement(p, es, kind, tol) && depthIn(p, es, kind, tol) > margin;
+}
+
+double interiorShare(const ElemSamples& a, const ElemSamples& b, SubKind kind)
+{
+    const double margin = besideMargin(b, kind);
+    double on = 0, all = 0;
+    for (std::size_t i = 0; i < a.pts.size(); ++i) {
+        all += a.w[i];
+        if (nearInterior(a.pts[i], b, kind, kAnchorTolerance, margin))
+            on += a.w[i];
+    }
+    return all > 0 ? on / all : 0;
+}
+
+// Do two elements share territory (10 % of either one's samples inside the other)?
 bool overlap(const ElemSamples& a, const ElemSamples& b, SubKind kind)
 {
-    return shareOn(a, b, kind) >= 0.1 || shareOn(b, a, kind) >= 0.1;
+    return interiorShare(a, b, kind) >= 0.1 || interiorShare(b, a, kind) >= 0.1;
 }
 
 // Could a point of a face of the new shape lie ON baseline face b? Faces that meet at an angle share only their
@@ -1301,100 +1501,619 @@ bool sameSheet(const ElemSamples& a, const ElemSamples& b, SubKind kind)
     return kind != SubKind::Face || a.type != plane || b.type != plane || std::abs(dot(a.nrm, b.nrm)) > 0.99;
 }
 
-// Does element `e` of the new shape overlap a baseline element of its kind, other than the picked one, that still
-// exists after the edit?
-bool overlapsOtherBaseline(const ElemSamples& e, SubKind kind, const Samples& baseline, std::uint32_t picked,
-                           const std::function<bool(SubId)>& survives)
+// Is b another surface than a (not merely another reference point on the same surface)?
+bool carrierChanged(const Carrier& a, const Carrier& b)
 {
-    const auto& B = baseline.of(kind);
-    for (std::uint32_t i = 0; i < B.size(); ++i)
-        if (i != picked && sameSheet(e, B[i], kind) && overlap(e, B[i], kind) && survives(SubId{kind, i}))
+    using K = Carrier::K;
+    constexpr double eps = 1e-9;
+    if (a.k != b.k)
+        return true;
+    if (!a.analytic())
+        return false; // an imported face's mesh carrier never moves
+    if (norm(sub(a.a, b.a)) > eps || a.sigma != b.sigma || std::abs(a.r - b.r) > eps || std::abs(a.r2 - b.r2) > eps)
+        return true;
+    const Vec3 d = sub(b.p, a.p);
+    switch (a.k) {
+    case K::Plane:
+        return std::abs(dot(d, a.a)) > eps;
+    case K::Cyl:
+        return norm(sub(d, mul(a.a, dot(d, a.a)))) > eps;
+    default:
+        break;
+    }
+    if (norm(d) > eps)
+        return true;
+    for (int i = 0; i < 4; ++i)
+        if (std::abs(a.q[i] - b.q[i]) > eps)
             return true;
     return false;
 }
 
+// How a changed carrier moved: the shift of its reference point (which moves with its feature, sideways too), less
+// the part along a cylinder's axis (which changes nothing). Zero for an unchanged carrier.
+Vec3 carrierShift(const Carrier& a, const Carrier& b)
+{
+    if (!a.analytic() || !b.analytic() || !carrierChanged(a, b))
+        return Vec3{0, 0, 0};
+    const Vec3 d = sub(b.p, a.p);
+    if (a.k == Carrier::K::Cyl)
+        return sub(d, mul(a.a, dot(d, a.a)));
+    return d;
+}
+
+// A sweep that only moved (same profile, depth and orientation, another origin): its shift, else nullopt.
+std::optional<Vec3> pureMove(const Feature& a, const Feature& b)
+{
+    auto same = [](const Vec3& x, const Vec3& y) {
+        return norm(sub(x, y)) <= 1e-12;
+    };
+    if (a.op != b.op || a.dist != b.dist || !same(a.frame.n, b.frame.n) || !same(a.frame.xd, b.frame.xd) ||
+        a.loops.size() != b.loops.size() || same(a.frame.o, b.frame.o))
+        return std::nullopt;
+    for (std::size_t i = 0; i < a.loops.size(); ++i) {
+        if (a.loops[i].ents.size() != b.loops[i].ents.size())
+            return std::nullopt;
+        for (std::size_t k = 0; k < a.loops[i].ents.size(); ++k) {
+            const Ent &x = a.loops[i].ents[k], &y = b.loops[i].ents[k];
+            if (x.k != y.k || x.x0 != y.x0 || x.y0 != y.y0 || x.x1 != y.x1 || x.y1 != y.y1 || x.cx != y.cx ||
+                x.cy != y.cy || x.r != y.r)
+                return std::nullopt;
+        }
+    }
+    return sub(b.frame.o, a.frame.o);
+}
+
+// Is p inside the volume sweep f swept, at least m from its boundary? (A point on the boundary lies on the sweep's
+// own faces, which move by their own carriers.)
+bool insideSweep(const Feature& f, const Vec3& p, double m)
+{
+    const Vec3 d = sub(p, f.frame.o);
+    const double u = dot(d, f.frame.xd), v = dot(d, f.frame.yd());
+    const double h = (f.op == BOp::Cut ? -1.0 : 1.0) * dot(d, f.frame.n);
+    if (h < m || h > f.dist - m)
+        return false;
+    for (const Loop& l : f.loops)
+        if (insideLoop(l, u, v) && distLoop(l, u, v) > m)
+            return true;
+    return false;
+}
+
+TruthDesc withoutSeparators(const TruthDesc& d)
+{
+    TruthDesc out = d;
+    out.seps.clear();
+    for (Constraint& c : out.cons)
+        c.seps.clear();
+    return out;
+}
+
+const char* answerName(Answer a)
+{
+    switch (a) {
+    case Answer::Exact:
+        return "Exact";
+    case Answer::Split:
+        return "Split";
+    case Answer::Merged:
+        return "Merged";
+    case Answer::Repaired:
+        return "Repaired";
+    case Answer::Broken:
+        return "Broken";
+    }
+    return "?";
+}
+
+std::string listOf(const std::vector<std::uint32_t>& v)
+{
+    std::string s = "{";
+    for (std::size_t i = 0; i < v.size(); ++i)
+        s += (i ? " " : "") + std::to_string(v[i]);
+    return s + "}";
+}
+
 } // namespace
 
-Verdict reconsider(Verdict v, Answer answer, const std::vector<std::uint32_t>& elements, const TruthDesc& d,
-                   const TruthEval& expected, const Owners& ow, const Samples& now, const Samples& baseline,
-                   SubId picked, const std::function<bool(SubId)>& survives, bool& newTerritory)
+ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& d, const Owners& before,
+                       const Owners& after, bool& moved)
 {
-    newTerritory = false;
-    if (d.weak || answer == Answer::Broken || expected.elems.empty() || elements.empty() ||
-        !(v == Verdict::WrongIncomplete || v == Verdict::WrongOther || v == Verdict::WrongSilentMerge))
-        return v;
-    const SubKind kind = d.kind;
-    const auto& N = now.of(kind);
-    const ElemSamples& P = baseline.of(kind)[picked.index];
-    // The description without separators: the picked element's own logical face or edge, every piece of it.
-    TruthDesc logical = d;
-    logical.seps.clear();
-    for (Constraint& c : logical.cons)
-        c.seps.clear();
-    const TruthEval L = evalTruth(logical, ow, now);
-    auto inL = [&](std::uint32_t e) {
-        return std::binary_search(L.elems.begin(), L.elems.end(), e);
+    const SubKind kind = element.kind;
+    const ElemSamples& es = baseline.of(kind)[element.index];
+    moved = false;
+    ElemSamples out;
+    // Own carriers changed?
+    bool ownChanged = false;
+    for (const Constraint& c : d.cons)
+        for (const auto& alt : c.alts) {
+            const Owner* o0 = before.get(alt);
+            const Owner* o1 = after.get(alt);
+            ownChanged = ownChanged || o0 == nullptr || o1 == nullptr || carrierChanged(o0->c, o1->c);
+        }
+    // The common shift of the bounding features (owners its vertices lie on, other than its own).
+    Vec3 bound{0, 0, 0};
+    if (!ownChanged && kind != SubKind::Vertex) {
+        std::set<std::string> own;
+        for (const Constraint& c : d.cons)
+            own.insert(c.alts.begin(), c.alts.end());
+        std::vector<std::uint32_t> vertices;
+        if (kind == SubKind::Edge) {
+            vertices = baseline.verticesOf[element.index];
+        } else {
+            for (std::uint32_t v = 0; v < baseline.facesOf[0].size(); ++v) {
+                const auto& fs = baseline.facesOf[0][v];
+                if (std::find(fs.begin(), fs.end(), element.index) != fs.end())
+                    vertices.push_back(v);
+            }
+        }
+        // Each vertex moves with the changed carriers it lies on (if they agree), or stays; the element moves only
+        // if all its vertices move alike (a piece between two cuts that both moved).
+        bool first = true, agree = true;
+        for (const std::uint32_t v : vertices) {
+            const Vec3 p = baseline.of(SubKind::Vertex)[v].nodes.front();
+            Vec3 at{0, 0, 0};
+            bool any = false;
+            for (const Owner& o : before.v) {
+                if (own.count(o.key) != 0 || !o.c.analytic() || !o.c.on(p, 1e-3) || !o.in(p, 1e-2))
+                    continue;
+                const Owner* o1 = after.get(o.key);
+                if (o1 == nullptr || !carrierChanged(o.c, o1->c))
+                    continue;
+                const Vec3 t = carrierShift(o.c, o1->c);
+                if (any && norm(sub(t, at)) > 1e-6)
+                    agree = false;
+                at = t;
+                any = true;
+            }
+            if (first)
+                bound = at;
+            else if (norm(sub(at, bound)) > 1e-6)
+                agree = false;
+            first = false;
+        }
+        if (!agree)
+            bound = Vec3{0, 0, 0};
+        if (norm(bound) > 1e-9)
+            moved = true;
+    }
+    out.type = es.type;
+    out.nrm = es.nrm;
+    out.sided = es.sided;
+    out.sigma = es.sigma;
+    auto check = [&](const std::string& key) {
+        const Owner* o0 = before.get(key);
+        const Owner* o1 = after.get(key);
+        if (o0 == nullptr || o1 == nullptr || carrierChanged(o0->c, o1->c))
+            moved = true;
     };
-    auto isNewTerritory = [&](std::uint32_t e) {
-        return inL(e) && !overlap(N[e], P, kind) &&
-               !overlapsOtherBaseline(N[e], kind, baseline, picked.index, survives);
+    for (const Sep& s : d.seps)
+        check(s.owner);
+    for (const Constraint& c : d.cons) {
+        for (const auto& alt : c.alts)
+            check(alt);
+        for (const Sep& s : c.seps)
+            check(s.owner);
+    }
+    // Sweeps that only moved: what lies in the volume one swept (the part of a hole wall inside a moved boss) moves
+    // with it.
+    std::vector<std::pair<const Feature*, Vec3>> movedSweeps;
+    for (const auto& [id, f] : before.sweeps) {
+        const auto it = after.sweeps.find(id);
+        if (it == after.sweeps.end())
+            continue;
+        if (const auto t = pureMove(f, it->second))
+            movedSweeps.push_back({&f, *t});
+    }
+    auto mapPoint = [&](const Vec3& p, Vec3& q) {
+        Vec3 shift{0, 0, 0};
+        double best = 0;
+        const Vec3* withSweep = nullptr;
+        for (const auto& [f, t] : movedSweeps)
+            if (insideSweep(*f, p, kAnchorTolerance)) {
+                withSweep = &t;
+                break;
+            }
+        std::vector<const Carrier*> onto;
+        for (const Constraint& c : d.cons) {
+            const Owner* o0 = nullptr;
+            const Owner* o1 = nullptr;
+            for (const auto& alt : c.alts) {
+                const Owner* b = before.get(alt);
+                if (b == nullptr || (c.alts.size() > 1 && !b->c.on(p, 0.1)))
+                    continue;
+                o0 = b;
+                o1 = after.get(alt);
+                break;
+            }
+            if (o0 == nullptr || o1 == nullptr)
+                return false;
+            if (o0->c.analytic() && o1->c.analytic()) {
+                const Vec3 t = carrierShift(o0->c, o1->c);
+                if (norm(t) > best) {
+                    best = norm(t);
+                    shift = t;
+                }
+                onto.push_back(&o1->c);
+            }
+        }
+        if (withSweep != nullptr)
+            moved = true;
+        q = add(p, withSweep != nullptr ? *withSweep : ownChanged ? shift : bound);
+        double worst = 0;
+        // Alternating projections; carriers that meet at a small angle (a blend and its tangent face) converge
+        // slowly. A point that settles within a fifth of the anchor tolerance of every carrier is used.
+        for (int it = 0; it < 200; ++it) {
+            for (const Carrier* c : onto)
+                q = projectAny(*c, q);
+            worst = 0;
+            for (const Carrier* c : onto)
+                worst = std::max(worst, std::abs(c->dist(q)));
+            if (worst <= 1e-7)
+                break;
+        }
+        return worst <= 0.2 * kAnchorTolerance;
     };
-    std::vector<std::uint32_t> X(elements);
-    std::sort(X.begin(), X.end());
-    X.erase(std::unique(X.begin(), X.end()), X.end());
-    const std::vector<std::uint32_t>& E = expected.elems;
-    // Every expected element that overlaps what was picked must be in the answer (all of E if none overlaps:
-    // the element moved).
-    std::vector<std::uint32_t> required;
-    for (const std::uint32_t e : E)
-        if (overlap(N[e], P, kind))
-            required.push_back(e);
-    if (required.empty())
-        required = E;
-    if (!std::includes(X.begin(), X.end(), required.begin(), required.end()))
-        return v;
-    // An answered element that was not expected must be new territory. An expected element that was not answered
-    // and does not overlap what was picked is either new territory or the continuation of another baseline
-    // element that the separators failed to exclude (a separator's band can miss it after an edit); leaving it out
-    // is not wrong.
+    double all = 0, mappedWeight = 0;
+    for (std::size_t i = 0; i < es.pts.size(); ++i) {
+        all += es.w[i];
+        Vec3 q{};
+        if (mapPoint(es.pts[i], q)) {
+            out.pts.push_back(q);
+            out.w.push_back(es.w[i]);
+            mappedWeight += es.w[i];
+        }
+    }
+    if (!(all > 0) || mappedWeight < 0.5 * all) {
+        out.pts.clear();
+        out.w.clear();
+        return out;
+    }
+    bool everyNode = true;
+    for (const Vec3& p : es.nodes) {
+        Vec3 q{};
+        if (mapPoint(p, q))
+            out.nodes.push_back(q);
+        else
+            everyNode = false;
+    }
+    if (kind == SubKind::Face && everyNode && es.mesh && !es.mesh->triangles.empty() &&
+        es.mesh->nodes.size() == out.nodes.size()) {
+        auto fm = std::make_shared<FaceMesh>();
+        fm->nodes = out.nodes;
+        fm->triangles = es.mesh->triangles;
+        for (const auto& tri : fm->triangles) {
+            Vec3 lo{}, hi{};
+            for (int k = 0; k < 3; ++k)
+                growBox(lo, hi, fm->nodes[tri[static_cast<std::size_t>(k)]], k == 0);
+            fm->triangleBoxes.push_back({lo, hi});
+        }
+        for (std::size_t i = 0; i < fm->nodes.size(); ++i)
+            growBox(fm->boxMin, fm->boxMax, fm->nodes[i], i == 0);
+        fm->findBoundary();
+        out.mesh = fm;
+    }
+    if (out.nodes.empty())
+        out.nodes = out.pts;
+    bool first = true;
+    for (const auto* v : {&out.nodes, &out.pts})
+        for (const Vec3& p : *v) {
+            growBox(out.boxMin, out.boxMax, p, first);
+            first = false;
+        }
+    return out;
+}
+
+double shareOnElement(const ElemSamples& a, const ElemSamples& b, SubKind kind)
+{
+    return shareOn(a, b, kind);
+}
+
+bool isSliver(const ElemSamples& es, SubKind kind)
+{
+    return sliver(es, kind);
+}
+
+std::vector<int> componentsOf(const std::vector<std::uint32_t>& elems, SubKind kind, const Samples& smp)
+{
+    std::vector<std::size_t> parent(elems.size());
+    std::iota(parent.begin(), parent.end(), std::size_t{0});
+    auto find = [&](std::size_t i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    };
+    auto unite = [&](std::size_t a, std::size_t b) {
+        a = find(a);
+        b = find(b);
+        if (a != b)
+            parent[std::max(a, b)] = std::min(a, b);
+    };
+    auto indexOf = [&](std::uint32_t e) -> long {
+        const auto it = std::lower_bound(elems.begin(), elems.end(), e);
+        return it != elems.end() && *it == e ? static_cast<long>(it - elems.begin()) : -1;
+    };
+    if (kind == SubKind::Face) {
+        for (const auto& faces : smp.facesOf[1]) {
+            long firstIn = -1;
+            for (const std::uint32_t f : faces) {
+                const long i = indexOf(f);
+                if (i < 0)
+                    continue;
+                if (firstIn < 0)
+                    firstIn = i;
+                else
+                    unite(static_cast<std::size_t>(firstIn), static_cast<std::size_t>(i));
+            }
+        }
+    } else if (kind == SubKind::Edge) {
+        std::map<std::uint32_t, std::size_t> firstAt;
+        for (std::size_t i = 0; i < elems.size(); ++i)
+            for (const std::uint32_t v : smp.verticesOf[elems[i]]) {
+                const auto [it, fresh] = firstAt.try_emplace(v, i);
+                if (!fresh)
+                    unite(it->second, i);
+            }
+    }
+    std::vector<int> out(elems.size(), -1);
+    std::map<std::size_t, int> ids;
+    for (std::size_t i = 0; i < elems.size(); ++i) {
+        const auto [it, fresh] = ids.try_emplace(find(i), static_cast<int>(ids.size()));
+        out[i] = it->second;
+    }
+    return out;
+}
+
+bool Expectation::inLogical(std::uint32_t e) const
+{
+    return std::binary_search(logical.begin(), logical.end(), e);
+}
+
+int Expectation::componentOf(std::uint32_t e) const
+{
+    const auto it = std::lower_bound(logical.begin(), logical.end(), e);
+    return it != logical.end() && *it == e ? component[static_cast<std::size_t>(it - logical.begin())] : -1;
+}
+
+bool Expectation::isAnchored(std::uint32_t e) const
+{
+    const auto it = std::lower_bound(logical.begin(), logical.end(), e);
+    return it != logical.end() && *it == e && anchored[static_cast<std::size_t>(it - logical.begin())] != 0;
+}
+
+bool Expectation::isClaimed(std::uint32_t e) const
+{
+    const auto it = std::lower_bound(logical.begin(), logical.end(), e);
+    return it != logical.end() && *it == e && !claimed.empty() &&
+           claimed[static_cast<std::size_t>(it - logical.begin())] != 0;
+}
+
+Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
+{
+    Expectation x;
+    const TruthDesc& d = pick.truth;
+    x.kind = d.kind;
+    x.weak = d.weak;
+    x.strict = evalTruth(d, now, smp);
+    const TruthEval L = evalTruth(withoutSeparators(d), now, smp);
+    std::set_union(L.elems.begin(), L.elems.end(), x.strict.elems.begin(), x.strict.elems.end(),
+                   std::back_inserter(x.logical));
+    x.component = componentsOf(x.logical, x.kind, smp);
+    x.mapped = mapElement(*pick.baseline, pick.base, d, *pick.owners, now, x.moved);
+    const auto& N = smp.of(x.kind);
+    x.anchored.resize(x.logical.size(), 0);
+    for (std::size_t i = 0; i < x.logical.size(); ++i)
+        x.anchored[i] = !x.mapped.pts.empty() && overlap(N[x.logical[i]], x.mapped, x.kind) ? 1 : 0;
+    if (x.weak) {
+        // The other pieces of the logical element at pick time, mapped through the edit: what overlaps one of
+        // them is that piece's continuation.
+        x.claimed.resize(x.logical.size(), 0);
+        for (const std::uint32_t s : evalTruth(withoutSeparators(d), *pick.owners, *pick.baseline).elems) {
+            if (s == pick.base.index)
+                continue;
+            ++x.siblings;
+            bool unused = false;
+            const ElemSamples sibling = mapElement(*pick.baseline, SubId{x.kind, s}, d, *pick.owners, now, unused);
+            if (sibling.pts.empty())
+                continue;
+            for (std::size_t i = 0; i < x.logical.size(); ++i)
+                if (x.claimed[i] == 0 && overlap(N[x.logical[i]], sibling, x.kind))
+                    x.claimed[i] = 1;
+        }
+    }
+    const auto cong = congruent(pick.picked(), x.kind, smp, overlapTolerance(x.kind));
+    x.congruentIndex = cong.size() == 1 ? static_cast<long>(cong[0]) : -1;
+    if (x.strict.elems.empty())
+        return x;
+    // Slivers are left out of the expectation (isSliver), unless nothing else is left.
+    auto withoutSlivers = [&](TruthEval& te) {
+        TruthEval kept;
+        for (const std::uint32_t e : te.elems)
+            if (!sliver(N[e], x.kind))
+                kept.elems.push_back(e);
+        if (kept.elems.empty() || kept.elems.size() == te.elems.size())
+            return;
+        for (const std::uint32_t e : te.partial)
+            if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
+                kept.partial.push_back(e);
+        kept.merged = !kept.partial.empty();
+        te = kept;
+    };
+    std::set<int> strictParts, anchoredParts;
+    for (const std::uint32_t e : x.strict.elems)
+        if (!sliver(N[e], x.kind))
+            strictParts.insert(x.componentOf(e));
+    for (std::size_t i = 0; i < x.logical.size(); ++i)
+        if (x.anchored[i] != 0)
+            anchoredParts.insert(x.component[i]);
+    if ((!x.weak || x.siblings == 0) && strictParts.size() <= 1) {
+        // The description (with its separators) picks out one connected part: that is the continuation. So does a
+        // weak one when the picked element was the only piece of its logical element.
+        x.expected = x.strict;
+        withoutSlivers(x.expected);
+        return x;
+    }
+    // A weak reference keeps, of those parts, the pieces over the mapped pick and the pieces over no other baseline
+    // piece (another piece's continuation is not its own).
+    for (const std::uint32_t e : x.strict.elems)
+        if (anchoredParts.count(x.componentOf(e)) != 0 && (!x.weak || x.isAnchored(e) || !x.isClaimed(e)))
+            x.expected.elems.push_back(e);
+    if (x.weak && x.expected.elems.empty() && !anchoredParts.empty())
+        return x; // only other pieces' continuations are left: the picked piece is gone
+    for (const std::uint32_t e : x.expected.elems)
+        if (std::binary_search(x.strict.partial.begin(), x.strict.partial.end(), e) || (x.weak && x.isClaimed(e)))
+            x.expected.partial.push_back(e);
+    x.expected.merged = !x.expected.partial.empty();
+    withoutSlivers(x.expected);
+    if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
+        x.twins = true;
+        const Vec3 p = N[x.expected.elems.front()].nodes.front();
+        for (const std::uint32_t e : x.expected.elems)
+            x.twins = x.twins && norm(sub(N[e].nodes.front(), p)) <= 1e-4;
+    }
+    if (x.expected.elems.empty())
+        x.noAnchor = x.mapped.pts.empty() ? "the picked element cannot be mapped through the edit"
+                                          : "no part of the logical element overlaps the picked element mapped "
+                                            "through the edit";
+    return x;
+}
+
+namespace {
+
+// The new-territory rule (oracle.h). `v` is the set verdict.
+bool newTerritory(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp, Answer answer,
+                  const std::vector<std::uint32_t>& X, Verdict v, std::string& why)
+{
+    const std::vector<std::uint32_t>& E = x.expected.elems;
+    if (x.moved || E.empty() || x.mapped.pts.empty() || answer == Answer::Merged)
+        return false;
+    if (!std::includes(X.begin(), X.end(), E.begin(), E.end()))
+        return false; // never drop an expected element
+    const SubKind kind = x.kind;
+    const auto& N = smp.of(kind);
+    const auto& B = pick.baseline->of(kind);
+    const ElemSamples& P = pick.picked();
+    // Does point p (of element `of` of the new shape) lie on a baseline element? `skipPicked`: not counting the
+    // picked element itself.
+    auto onBaseline = [&](const Vec3& p, const ElemSamples& of, bool skipPicked) {
+        for (std::uint32_t i = 0; i < B.size(); ++i) {
+            if (skipPicked && i == pick.base.index)
+                continue;
+            if (sameSheet(of, B[i], kind) && nearElement(p, B[i], kind, overlapTolerance(kind)))
+                return true;
+        }
+        return false;
+    };
     std::vector<std::uint32_t> extra;
     std::set_difference(X.begin(), X.end(), E.begin(), E.end(), std::back_inserter(extra));
-    for (const std::uint32_t e : extra)
-        if (!isNewTerritory(e))
-            return v;
-    // An Exact answer on an element larger than the description: the part outside it must be new territory too,
-    // and inside the logical element.
-    if (answer == Answer::Exact && X.size() == 1 && (v == Verdict::WrongSilentMerge || expected.merged)) {
-        // The element is on the description's carriers (it matched); what lies outside the description must
-        // overlap no other baseline element: a region that was another element when the reference was picked
-        // makes this a merge, and Exact is wrong.
-        const std::uint32_t e = X.front();
-        FitMasks masks;
-        evalTruthImpl(d, ow, now, &masks);
-        const std::vector<char>* mask = nullptr;
-        for (const auto& [x, m] : masks)
-            if (x == e)
-                mask = &m;
-        if (mask == nullptr)
-            return v;
-        const auto& B = baseline.of(kind);
-        double outside = 0, onOther = 0;
-        for (std::size_t j = 0; j < N[e].pts.size(); ++j) {
-            if ((*mask)[j] != 0)
-                continue;
-            outside += N[e].w[j];
-            for (std::uint32_t i = 0; i < B.size(); ++i)
-                if (i != picked.index && sameSheet(N[e], B[i], kind) &&
-                    nearElement(N[e].pts[j], B[i], kind, overlapTolerance(kind)) && survives(SubId{kind, i})) {
-                    onOther += N[e].w[j];
-                    break;
-                }
-        }
-        if (outside > 0 && onOther >= 0.1 * outside)
-            return v;
+    for (const std::uint32_t e : extra) {
+        if (!x.inLogical(e))
+            return false;
+        bool linked = false;
+        for (const std::uint32_t a : X)
+            linked = linked || (x.isAnchored(a) && x.componentOf(a) == x.componentOf(e));
+        if (!linked)
+            return false;
+        for (const Vec3& p : N[e].pts)
+            if (onBaseline(p, N[e], false))
+                return false;
     }
-    newTerritory = true;
-    return Verdict::Correct;
+    // An expected element larger than the description, answered without Merged: the part outside the description
+    // must be new too.
+    std::vector<std::uint32_t> partial;
+    for (const std::uint32_t e : x.expected.partial)
+        partial.push_back(e);
+    if (!partial.empty()) {
+        std::vector<std::pair<std::uint32_t, std::vector<char>>> masks;
+        evalTruthImpl(pick.truth, now, smp, &masks);
+        for (const std::uint32_t e : partial) {
+            const std::vector<char>* mask = nullptr;
+            for (const auto& [m, bits] : masks)
+                if (m == e)
+                    mask = &bits;
+            if (mask == nullptr)
+                return false;
+            for (std::size_t j = 0; j < N[e].pts.size(); ++j) {
+                if ((*mask)[j] != 0)
+                    continue;
+                const Vec3& p = N[e].pts[j];
+                if (nearElement(p, P, kind, overlapTolerance(kind)))
+                    continue; // on what was picked
+                if (onBaseline(p, N[e], true))
+                    return false;
+            }
+        }
+    }
+    why = std::string(answerName(answer)) + " " + listOf(X) + " where the oracle expects " + listOf(E) +
+          (x.expected.merged ? " (larger than described)" : "") + " [" + verdictName(v) +
+          "]: the difference lies on no element of the baseline and is connected to the picked element";
+    return true;
+}
+
+} // namespace
+
+Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp,
+                      Answer answer, std::vector<std::uint32_t> X)
+{
+    Judgement j;
+    std::sort(X.begin(), X.end());
+    X.erase(std::unique(X.begin(), X.end()), X.end());
+    const auto& N = smp.of(x.kind);
+    for (const std::uint32_t e : X)
+        if (e >= N.size()) {
+            j.verdict = Verdict::WrongOther; // not an element of the shape at all
+            return j;
+        }
+    // Slivers are left out of the answer as out of the expectation; an answer of slivers alone is judged as it is.
+    {
+        std::vector<std::uint32_t> kept;
+        for (const std::uint32_t e : X)
+            if (!sliver(N[e], x.kind))
+                kept.push_back(e);
+        if (!kept.empty())
+            X = std::move(kept);
+    }
+    const std::vector<std::uint32_t>& E = x.expected.elems;
+    if (x.twins && (answer == Answer::Exact || answer == Answer::Repaired) && X.size() == 1 &&
+        std::binary_search(E.begin(), E.end(), X[0])) {
+        j.verdict = Verdict::Correct;
+        j.twin = true;
+        return j;
+    }
+    if (!x.noAnchor.empty()) {
+        if (answer == Answer::Broken) {
+            j.verdict = Verdict::Missed;
+        } else {
+            j.verdict = Verdict::Unjudged;
+            j.unjudged = true;
+        }
+        return j;
+    }
+    if (x.weak) {
+        if (answer == Answer::Broken)
+            j.verdict = E.empty() ? Verdict::BrokenGone : Verdict::Missed;
+        else if (E.empty())
+            j.verdict = Verdict::WrongGhost;
+        else if (X.empty() || !std::includes(E.begin(), E.end(), X.begin(), X.end()))
+            j.verdict = Verdict::WrongOther;
+        else if (answer == Answer::Exact || answer == Answer::Repaired) {
+            // The one piece that continues the pick; an element that also continues another baseline piece is a
+            // merge, and with two or more pieces the pick came apart.
+            if (X.size() != 1)
+                j.verdict = Verdict::WrongOther;
+            else if (X != E)
+                j.verdict = Verdict::WrongIncomplete;
+            else
+                j.verdict = x.expected.merged ? Verdict::WrongSilentMerge : Verdict::Correct;
+        } else
+            j.verdict = X == E ? Verdict::Correct : Verdict::WrongIncomplete;
+        return j;
+    }
+    j.verdict = judge(answer, X, x.expected);
+    if (isWrong(j.verdict) && answer != Answer::Broken &&
+        newTerritory(x, pick, now, smp, answer, X, j.verdict, j.accepted))
+        j.verdict = Verdict::Correct;
+    return j;
 }
 
 } // namespace ray::naming_oracle

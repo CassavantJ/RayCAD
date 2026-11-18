@@ -1,0 +1,4 @@
+# Congruence conflicts of the naming oracle that have been reviewed: an element of the edited shape lies exactly
+# where the picked element was, and the oracle expects another answer (harness.h, RefResult::conflict).
+# One per line: <key> => <one-line justification>. The key is printed by the test ("CONFLICT <key>: ...").
+# The tests fail on any conflict that is not listed here.

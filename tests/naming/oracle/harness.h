@@ -32,16 +32,41 @@ BodyId testBody();
 struct Pick {
     std::size_t target = 0;
     naming::TopoRef ref;
-    TruthDesc truth;
+    PickRecord record; // record.truth.ok false: the oracle cannot vouch for the pick, and it is not judged
 };
 using FeatRefs = std::map<std::string, std::vector<Pick>>;
+
+// One reference judged on an edited build: the verdict on the resolver's answer, the oracle's own cross-checks,
+// and the mutation test of the oracle (mutants of the oracle's expected answer pushed through the same judge).
+struct RefResult {
+    Answer answer = Answer::Broken;
+    Judgement judgement;
+    std::vector<std::uint32_t> expected; // E
+    bool merged = false;
+    std::string noAnchor;
+    long congruent = -1;   // the one element congruent in place with the pick, or -1
+    int conflict = 0;      // the one element congruent in place is not E, nothing moved, and: 1 the answer was judged
+                           // correct, 2 it was not (Broken, or judged wrong); 3: the same after a move
+    std::string selfCheck; // non-empty: the oracle's own expected answer was not judged correct (why)
+    struct Mutant {
+        std::string cls;
+        bool caught = false;
+        bool byReviewOnly = false; // accepted by the new-territory rule: caught only because mutants are never on
+                                   // the reviewed list
+        std::string detail;
+    };
+    std::vector<Mutant> mutants;
+};
+// `prefix` names the reference class in the mutant classes ("weak: ", "pick: ").
+RefResult judgeReference(const PickRecord& pick, const Owners& now, const Samples& samples,
+                         const naming::Resolved& resolved, const std::string& prefix);
 
 struct PickOutcome {
     std::string feature;
     std::size_t target = 0;
+    std::uint32_t edge = 0; // the picked edge on the shape it was picked on
     naming::Resolved resolved;
-    TruthEval expected;
-    Verdict verdict = Verdict::Correct;
+    RefResult result;
 };
 
 Answer answerOf(naming::ResolveState state);
@@ -64,6 +89,8 @@ public:
     // Ids of the features that built (a failed feature leaves the body as it was).
     const std::set<std::string>& builtIds() const { return builtIds_; }
     int unverifiablePicks() const { return unverifiablePicks_; }
+    // Replay: picks the oracle could not vouch for when they were made (resolved and used, not judged).
+    int unjudgedPicks() const { return unjudgedPicks_; }
     std::size_t lineageEvents() const { return lineage_; }
     // Every map the build produced, serialised, in order (for determinism checks).
     const std::vector<std::vector<std::byte>>& history() const { return history_; }
@@ -85,6 +112,7 @@ private:
     int built_ = 0;
     std::set<std::string> builtIds_;
     int unverifiablePicks_ = 0;
+    int unjudgedPicks_ = 0;
     std::size_t lineage_ = 0;
     bool keepHistory_ = false;
     std::vector<std::vector<std::byte>> history_;
@@ -97,43 +125,68 @@ Builder buildScript(const Script& script, Mode mode, FeatRefs& refs, bool keepHi
 // feature that failed (and of blends on its faces) are left out.
 Script builtOnly(const Script& script, const Builder& b);
 
-// A reference recorded on a baseline build, with the oracle's description of its element.
+// A reference recorded on a baseline build, with what the oracle keeps of it.
 struct Ref {
-    SubId base;
     naming::TopoRef ref;
-    TruthDesc truth;
-    ElemSamples picked; // the element's samples on the baseline (for the congruence cross-check)
-    std::string names;  // the roles of its names, for diagnosis
+    PickRecord record;
+    std::string names; // the roles of its names, for diagnosis
 };
 
 // Every element of the built shape that the oracle can vouch for and that has a name, as a reference. `skipped`
 // counts the others by reason.
-std::vector<Ref> recordReferences(const Builder& b, const Owners& owners, const Samples& samples,
-                                  std::map<std::string, int>* skipped);
+std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners> owners,
+                                  std::shared_ptr<const Samples> samples, std::map<std::string, int>* skipped);
 
 // Totals of judged resolutions.
 struct Tally {
     long n = 0;
-    std::array<long, 5> state{};         // by Answer
-    std::array<long, 7> verdict{};       // by Verdict
-    long existing = 0, existingOk = 0;   // references whose element still exists, of them Exact/Split/Merged
-    long conflicts = 0;                  // congruent-in-place element exists but the oracle names another answer
-    long mutants = 0, mutantsCaught = 0; // non-weak references only
-    long weak = 0;                       // references the oracle checks only for membership
-    long repairedUsable = 0;             // Repaired answers that claimed to be usable (must stay 0)
-    long newTerritory = 0;               // verdicts accepted by the oracle's new-territory rule (oracle.h)
-    long unjudged = 0;                   // wrong-looking answers on elements the mesher left without triangles
+    std::array<long, 5> state{};             // by Answer
+    std::array<long, kVerdicts> verdict{};   // by Verdict
+    long existing = 0, existingOk = 0;       // references whose element still exists, of them Exact/Split/Merged
+    long weak = 0;                           // references without separators (judged by position, oracle.h)
+    long picks = 0;                          // blend picks judged (included in n)
+    long picksUnjudged = 0;                  // blend picks the oracle could not vouch for (not in n)
+    long repairedUsable = 0;                 // Repaired answers that claimed to be usable (must stay 0)
+    long noAnchor = 0;                       // references whose continuation the oracle cannot tell (any answer)
+    long accepted = 0, acceptedReviewed = 0; // new-territory acceptances, and of them those on the reviewed list
+    long conflicts = 0;                      // the one congruent-in-place element is not E, nothing moved, and the
+                        // answer was judged correct (gated: oracle and resolver may share an error)
+    long conflictsReviewed = 0;
+    long conflictsOther = 0;    // the same with a Broken or wrong answer (counted: no answer was accepted)
+    long congruentGhosts = 0;   // the same after a move (another element took the place: counted only)
+    long injectivity = 0;       // elements answered Exact for two or more distinct references
+    long twins = 0;             // Exact on one of coincident vertices (oracle.h Expectation::twins)
+    long selfCheckFailures = 0; // the oracle's own expected answer not judged correct
+    std::map<std::string, std::array<long, 3>> mutants; // class: made, caught, caught only by the review gate
     void add(Answer a, Verdict v);
     void merge(const Tally& o);
     long wrong() const;
+    long unjudged() const { return verdict[static_cast<std::size_t>(Verdict::Unjudged)]; }
+    long mutantsMade() const;
+    long mutantsCaught() const;
 };
 
-// Resolves every reference against the replayed build, judges it (with the new-territory rule of oracle.h, against
-// `baseline`, the samples of the build the references were recorded on), and adds it to `tally`. Wrong answers are
-// described in `wrongs` (at most `maxWrongs` lines).
+struct JudgeLog {
+    std::vector<std::string> wrongs; // wrong answers and failed cross-checks (at most maxWrongs)
+    std::vector<std::string> notes;  // every new-territory acceptance and every conflict, reviewed or not
+    std::vector<std::string> trace;  // one line per judged reference, when RAYCAD_NAMING_VERDICTS is set
+    std::size_t maxWrongs = 20;
+};
+
+// The reviewed lists (tests/naming/oracle/reviewed_territory.txt, reviewed_conflicts.txt): key -> one-line
+// justification. Keys are "<run key>|<kind> <baseline index>" for references and
+// "<run key>|pick <feature>/<target> edge <index>" for blend picks.
+const std::map<std::string, std::string>& reviewedTerritory();
+const std::map<std::string, std::string>& reviewedConflicts();
+
+// Resolves every reference against the replayed build, judges it with the full judge (oracle.h), adds it and the
+// replay's blend picks to `tally`, and runs the cross-checks (congruence, injectivity, mutants). `key` names the run
+// in the reviewed lists and in the log.
 void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners& owners, const Samples& samples,
-              const Samples& baseline, Tally& tally, std::vector<std::string>& wrongs, std::size_t maxWrongs,
-              const std::string& label);
+              Tally& tally, JudgeLog& log, const std::string& key);
+
+// Prints the totals of a tally, every bucket, in one block.
+void printTally(const char* title, const Tally& t);
 
 std::string percent(long a, long n);
 

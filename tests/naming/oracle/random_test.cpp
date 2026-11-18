@@ -1,12 +1,18 @@
-// Randomised edit sequences on corpus parts (task T-081a acceptance): 1,000 sequences, 50 on each of 20 parts of
-// tests/corpus. Each sequence imports a part, adds 3 to 5 random features (cut, boss, fillet, chamfer), records
-// every element the oracle can vouch for as a reference, makes one random edit to the script (move, resize or
-// deepen a cut or boss, change a blend size, suppress a feature, insert a cut early, or nothing), rebuilds, and
-// judges every reference and every blend pick with the oracle. Gate: zero wrong-element resolutions.
+// Randomised edit sequences on corpus parts (task T-081a acceptance): 1,000 judged sequences, 50 on each of 20
+// parts of tests/corpus. Each sequence imports a part, adds 3 to 5 random features (cut, boss, fillet, chamfer),
+// records every element the oracle can vouch for as a reference, makes one to three random edits to the script
+// (move, resize or deepen a cut or boss, change a blend size, suppress a feature, insert a cut early, swap two
+// features, or nothing), rebuilds, and judges every reference and every blend pick with the full oracle. A sequence
+// that cannot be judged (no feature could be added, sampling failed) is replaced by the next seed of its part, so
+// exactly 50 per part are judged; every replacement and every exclusion is printed by reason.
+// Gates: zero wrong-element resolutions, none not judged, every new-territory acceptance and congruence conflict
+// on the reviewed lists, no injectivity violation, every mutant caught, no usable Repaired, 1,000 judged.
 //
 // Seeds are fixed (part index and sequence index), the random numbers come from splitmix64 with our own
 // conversions (no std distributions, whose output differs between standard libraries), so a run is reproducible.
 // A failing sequence is printed with its part and index; RAYCAD_NAMING_ONLY=<part>:<sequence> runs just that one.
+// The holdout block ([random-holdout]) uses other seeds, which were not run while the naming code and the oracle
+// were developed; it is reported on its own.
 #include <catch2/catch_test_macros.hpp>
 
 #include "harness.h"
@@ -14,9 +20,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -29,6 +38,7 @@ namespace {
 
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr int kSequencesPerPart = 50;
+constexpr int kHoldoutPerPart = 10;
 
 const char* const kParts[] = {
     "raycad-synthetic/block_blind_holes_1.stp",
@@ -283,21 +293,94 @@ std::optional<Feature> proposeBlend(const Script& built, const Samples& smp, Rng
 
 struct SequenceResult {
     Tally tally;
-    std::vector<std::string> wrongs;
+    JudgeLog log;
     std::string edit;
     int ops = 0;
+    int refused = 0; // proposed features the kernel refused while authoring (dropped, another was proposed)
     long refs = 0;
+    std::map<std::string, int> excluded; // baseline elements that are not references, by reason
     int replayFailures = 0;
     bool skipped = false;
+    std::string skipReason;
 };
 
-SequenceResult runSequence(const Part& part, int partIndex, int seq)
+struct SequenceOptions {
+    std::uint64_t seedBase = 0x5EED0000ull;
+    std::string keyPrefix;    // in the keys of the reviewed lists
+    bool freshReplay = false; // replay on a fresh deserialised copy of the imported part (another session)
+};
+
+// One random edit of `edited` (the import, at 0, is never edited). Returns it in words.
+std::string randomEdit(Script& edited, const Part& part, Rng& rng, int& inserted)
+{
+    std::vector<std::size_t> sweeps, blends;
+    for (std::size_t i = 1; i < edited.size(); ++i)
+        (edited[i].type == FType::Sweep ? sweeps : blends).push_back(i);
+    const std::size_t roll = rng.below(100);
+    if (roll < 35 && !sweeps.empty()) {
+        Feature& f = edited[sweeps[rng.below(sweeps.size())]];
+        const std::size_t kind = rng.below(4);
+        if (kind == 0) {
+            // Move by exactly its own width (spike S4 P23).
+            f.frame.o = add(f.frame.o, mul(f.frame.xd, profileWidth(f.loops[0])));
+            return "move " + f.id + " by its width";
+        }
+        if (kind == 1) {
+            const double a = rng.uniform(0, 2 * kPi), d = profileWidth(f.loops[0]) * rng.uniform(0.1, 1.2);
+            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * std::cos(a)), mul(f.frame.yd(), d * std::sin(a))));
+            return "move " + f.id;
+        }
+        if (kind == 2) {
+            const double k = rng.uniform(0.6, 1.5);
+            for (Ent& e : f.loops[0].ents) {
+                e.x0 *= k;
+                e.y0 *= k;
+                e.x1 *= k;
+                e.y1 *= k;
+                e.cx *= k;
+                e.cy *= k;
+                e.r *= k;
+            }
+            return "resize " + f.id;
+        }
+        f.dist *= rng.uniform(0.4, 2.0);
+        return "change depth of " + f.id;
+    }
+    if (roll < 50 && !blends.empty()) {
+        Feature& f = edited[blends[rng.below(blends.size())]];
+        f.size *= rng.uniform(0.5, 1.8);
+        return "change size of " + f.id;
+    }
+    if (roll < 65 && edited.size() > 1) {
+        const std::size_t i = 1 + rng.below(edited.size() - 1);
+        edited[i].suppressed = true;
+        return "suppress " + edited[i].id;
+    }
+    if (roll < 82) {
+        auto f = proposeSweep(*part.samples, part.size, rng, "X" + std::to_string(++inserted), true);
+        if (!f)
+            return "no-op";
+        const std::size_t at = 1 + rng.below(edited.size());
+        edited.insert(edited.begin() + static_cast<std::ptrdiff_t>(at), *f);
+        return "insert cut " + f->id + " at " + std::to_string(at);
+    }
+    if (roll < 95 && edited.size() > 2) {
+        // Swap two neighbouring features (a blend moved before the feature it blends fails, as it would in the
+        // product).
+        const std::size_t i = 1 + rng.below(edited.size() - 2);
+        std::swap(edited[i], edited[i + 1]);
+        return "swap " + edited[i + 1].id + " and " + edited[i].id;
+    }
+    return "no-op";
+}
+
+SequenceResult runSequence(const Part& part, int partIndex, int seq, const SequenceOptions& opt = {})
 {
     SequenceResult out;
-    Rng rng{0x5EED0000ull + static_cast<std::uint64_t>(partIndex) * 1000003ull + static_cast<std::uint64_t>(seq)};
+    Rng rng{opt.seedBase + static_cast<std::uint64_t>(partIndex) * 1000003ull + static_cast<std::uint64_t>(seq)};
     for (int i = 0; i < 4; ++i)
         rng.next();
-    const std::string label = part.path + " #" + std::to_string(seq);
+    const std::string label = opt.keyPrefix + part.path + " #" + std::to_string(seq);
 
     Feature import;
     import.id = "I";
@@ -341,73 +424,42 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq)
         if (b.built() > before) {
             script.push_back(*f);
             ++out.ops;
+        } else {
+            ++out.refused;
         }
     }
     if (out.ops == 0) {
         out.skipped = true;
+        out.skipReason = "no feature could be added";
         return out;
     }
     auto smp0 = sampleShape(b.shape());
     if (!smp0) {
         out.skipped = true;
+        out.skipReason = "sampling the baseline failed";
         return out;
     }
-    const Owners owners0 = buildOwners(builtOnly(script, b));
-    const std::vector<Ref> refs = recordReferences(b, owners0, **smp0, nullptr);
+    const auto owners0 = std::make_shared<const Owners>(buildOwners(builtOnly(script, b)));
+    const std::vector<Ref> refs = recordReferences(b, owners0, *smp0, &out.excluded);
     out.refs = static_cast<long>(refs.size());
 
-    // ---- one random edit ----
+    // ---- one to three random edits ----
     Script edited = script;
-    std::vector<std::size_t> sweeps, blends;
-    for (std::size_t i = 1; i < edited.size(); ++i)
-        (edited[i].type == FType::Sweep ? sweeps : blends).push_back(i);
-    const std::size_t roll = rng.below(100);
-    if (roll < 40 && !sweeps.empty()) {
-        Feature& f = edited[sweeps[rng.below(sweeps.size())]];
-        const std::size_t kind = rng.below(4);
-        if (kind == 0) {
-            // Move by exactly its own width (spike S4 P23).
-            f.frame.o = add(f.frame.o, mul(f.frame.xd, profileWidth(f.loops[0])));
-            out.edit = "move " + f.id + " by its width";
-        } else if (kind == 1) {
-            const double a = rng.uniform(0, 2 * kPi), d = profileWidth(f.loops[0]) * rng.uniform(0.1, 1.2);
-            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * std::cos(a)), mul(f.frame.yd(), d * std::sin(a))));
-            out.edit = "move " + f.id;
-        } else if (kind == 2) {
-            const double k = rng.uniform(0.6, 1.5);
-            for (Ent& e : f.loops[0].ents) {
-                e.x0 *= k;
-                e.y0 *= k;
-                e.x1 *= k;
-                e.y1 *= k;
-                e.cx *= k;
-                e.cy *= k;
-                e.r *= k;
-            }
-            out.edit = "resize " + f.id;
-        } else {
-            f.dist *= rng.uniform(0.4, 2.0);
-            out.edit = "change depth of " + f.id;
+    const std::size_t edits = rng.chance(0.35) ? 2 + rng.below(2) : 1;
+    int inserted = 0;
+    for (std::size_t k = 0; k < edits; ++k)
+        out.edit += (k == 0 ? "" : "; ") + randomEdit(edited, part, rng, inserted);
+    if (opt.freshReplay) {
+        // Another session: the part read back from its serialised form, the references kept.
+        auto copy = kernel::deserialize(kernel::serialize(edited[0].base->shape));
+        auto own =
+            copy ? analyseImport(*copy) : Result<std::shared_ptr<const ImportBase>>(tl::unexpected(copy.error()));
+        if (!own) {
+            out.skipped = true;
+            out.skipReason = "the fresh copy of the part failed";
+            return out;
         }
-    } else if (roll < 55 && !blends.empty()) {
-        Feature& f = edited[blends[rng.below(blends.size())]];
-        f.size *= rng.uniform(0.5, 1.8);
-        out.edit = "change size of " + f.id;
-    } else if (roll < 75) {
-        const std::size_t i = 1 + rng.below(edited.size() - 1);
-        edited[i].suppressed = true;
-        out.edit = "suppress " + edited[i].id;
-    } else if (roll < 95) {
-        auto f = proposeSweep(*part.samples, part.size, rng, "X1", true);
-        if (f) {
-            const std::size_t at = 1 + rng.below(edited.size());
-            edited.insert(edited.begin() + static_cast<std::ptrdiff_t>(at), *f);
-            out.edit = "insert a cut at " + std::to_string(at);
-        } else {
-            out.edit = "no-op";
-        }
-    } else {
-        out.edit = "no-op";
+        edited[0].base = *own;
     }
 
     Builder replay(Mode::Replay, picks);
@@ -417,11 +469,13 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq)
     auto smp1 = sampleShape(replay.shape());
     if (!smp1) {
         out.skipped = true;
+        out.skipReason = "sampling the replay failed";
         return out;
     }
     const Owners owners1 = buildOwners(builtOnly(edited, replay));
-    judgeAll(refs, replay, owners1, **smp1, **smp0, out.tally, out.wrongs, 20, label + " (" + out.edit + ")");
-    if (!out.wrongs.empty() && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
+    out.log.maxWrongs = 20;
+    judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
+    if ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
         auto describe = [](const Script& s) {
             std::string text;
             char buf[400];
@@ -444,12 +498,13 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq)
             }
             return text;
         };
-        out.wrongs.insert(out.wrongs.begin(), "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
+        out.log.wrongs.insert(out.log.wrongs.begin(),
+                              "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
         if (std::getenv("RAYCAD_NAMING_ONLY") != nullptr)
-            out.wrongs.push_back("  baseline edges:\n" + dumpElements(b, **smp0, SubKind::Edge) + "  replay edges:\n" +
-                                 dumpElements(replay, **smp1, SubKind::Edge));
+            out.log.wrongs.push_back("  baseline edges:\n" + dumpElements(b, **smp0, SubKind::Edge) +
+                                     "  replay edges:\n" + dumpElements(replay, **smp1, SubKind::Edge));
         for (const std::string& f : replay.failed())
-            out.wrongs.push_back("  replay failure: " + f);
+            out.log.wrongs.push_back("  replay failure: " + f);
     }
     return out;
 }
@@ -464,6 +519,208 @@ unsigned workerCount()
 
 } // namespace
 
+namespace {
+
+std::vector<Part> loadParts()
+{
+    std::vector<Part> parts(kPartCount);
+    std::atomic<int> next{0};
+    std::vector<std::thread> threads;
+    for (unsigned t = 0; t < workerCount(); ++t)
+        threads.emplace_back([&] {
+            for (int i = next++; i < kPartCount; i = next++)
+                parts[static_cast<std::size_t>(i)] = loadPart(kParts[i]);
+        });
+    for (std::thread& t : threads)
+        t.join();
+    return parts;
+}
+
+struct BlockResult {
+    Tally total;
+    long judged = 0, replaced = 0, ops = 0, refused = 0, replayFailures = 0, refs = 0;
+    std::vector<int> shortParts;          // parts that ran out of seeds before reaching their count
+    std::map<std::string, long> skipped;  // replaced sequences by reason
+    std::map<std::string, long> excluded; // baseline elements that are not references, by reason
+    std::map<std::string, long> edits;    // edits by kind
+};
+
+// Runs `perPart` judged sequences of every part (only the RAYCAD_NAMING_ONLY one if set), replacing a sequence that
+// cannot be judged by the next seed of its part (up to 4 x perPart seeds). Prints the table and every bucket.
+BlockResult runBlock(const char* title, const std::vector<Part>& parts, int perPart, const SequenceOptions& opt)
+{
+    int onlyPart = -1, onlySeq = -1;
+    if (const char* only = std::getenv("RAYCAD_NAMING_ONLY"))
+        if (std::sscanf(only, "%d:%d", &onlyPart, &onlySeq) != 2)
+            onlyPart = onlySeq = -1;
+    struct Job {
+        int part, seq;
+    };
+    std::map<std::pair<int, int>, SequenceResult> results;
+    std::vector<int> nextSeq(kPartCount, 0), judged(kPartCount, 0);
+    const bool progress = std::getenv("RAYCAD_NAMING_PROGRESS") != nullptr;
+    for (bool first = true;; first = false) {
+        std::vector<Job> jobs;
+        if (onlyPart >= 0) {
+            if (!first)
+                break;
+            for (int s = 0; s < (onlySeq < 0 ? perPart : 1); ++s)
+                jobs.push_back({onlyPart, onlySeq < 0 ? s : onlySeq});
+        } else {
+            for (int p = 0; p < kPartCount; ++p)
+                for (int k = judged[static_cast<std::size_t>(p)];
+                     k < perPart && nextSeq[static_cast<std::size_t>(p)] < 4 * perPart; ++k)
+                    jobs.push_back({p, nextSeq[static_cast<std::size_t>(p)]++});
+        }
+        if (jobs.empty())
+            break;
+        std::vector<SequenceResult> out(jobs.size());
+        std::atomic<std::size_t> next{0};
+        std::mutex lock;
+        std::size_t done = 0;
+        std::vector<std::thread> threads;
+        for (unsigned t = 0; t < workerCount(); ++t)
+            threads.emplace_back([&] {
+                for (std::size_t i = next++; i < jobs.size(); i = next++) {
+                    if (progress)
+                        std::fprintf(stderr, "sequence %d:%d\n", jobs[i].part, jobs[i].seq);
+                    out[i] = runSequence(parts[static_cast<std::size_t>(jobs[i].part)], jobs[i].part, jobs[i].seq, opt);
+                    const std::lock_guard<std::mutex> guard(lock);
+                    if (++done % 100 == 0)
+                        std::printf("  %zu of %zu sequences\n", done, jobs.size());
+                }
+            });
+        for (std::thread& t : threads)
+            t.join();
+        for (std::size_t i = 0; i < jobs.size(); ++i) {
+            if (!out[i].skipped)
+                ++judged[static_cast<std::size_t>(jobs[i].part)];
+            results[{jobs[i].part, jobs[i].seq}] = std::move(out[i]);
+        }
+    }
+
+    BlockResult r;
+    std::printf("\n%s (oracle: %s)\n| part | judged | replaced | features | refs judged | Exact %% | Split %% | "
+                "Merged %% | Repaired %% | Broken %% | gone / missed | exists: E+S+M %% | WRONG | not judged |\n"
+                "|-|-|-|-|-|-|-|-|-|-|-|-|-|-|\n",
+                title, strictnessName().c_str());
+    for (int p = 0; p < kPartCount; ++p) {
+        Tally t;
+        long n = 0, o = 0, replaced = 0;
+        for (const auto& [job, res] : results) {
+            if (job.first != p)
+                continue;
+            if (res.skipped) {
+                ++replaced;
+                ++r.skipped[res.skipReason.empty() ? "the copy of the part failed" : res.skipReason];
+                continue;
+            }
+            ++n;
+            o += res.ops;
+            r.refused += res.refused;
+            r.replayFailures += res.replayFailures;
+            r.refs += res.refs;
+            for (const auto& [why, k] : res.excluded)
+                r.excluded[why] += k;
+            // Each edit by kind (feature ids and positions left out), and the number of edits.
+            std::size_t count = 0;
+            for (std::size_t from = 0; from <= res.edit.size(); ++count) {
+                std::size_t to = res.edit.find("; ", from);
+                if (to == std::string::npos)
+                    to = res.edit.size();
+                std::string kind, word;
+                for (std::size_t i = from; i <= to; ++i) {
+                    if (i == to || res.edit[i] == ' ') {
+                        const bool id = word.size() >= 2 && (word[0] == 'R' || word[0] == 'X') &&
+                                        std::isdigit(static_cast<unsigned char>(word[1])) != 0;
+                        const bool number = !word.empty() && std::isdigit(static_cast<unsigned char>(word[0])) != 0;
+                        if (!word.empty() && !id && !number)
+                            kind += (kind.empty() ? "" : " ") + word;
+                        word.clear();
+                    } else {
+                        word += res.edit[i];
+                    }
+                }
+                ++r.edits["edit: " + kind];
+                from = to + 2;
+            }
+            ++r.edits["sequences with " + std::to_string(count) + " edit(s)"];
+            t.merge(res.tally);
+        }
+        if (n == 0 && replaced == 0)
+            continue;
+        if (onlyPart < 0 && n < perPart)
+            r.shortParts.push_back(p);
+        r.judged += n;
+        r.replaced += replaced;
+        r.ops += o;
+        r.total.merge(t);
+        std::printf("| %s | %ld | %ld | %ld | %ld | %s | %s | %s | %s | %s | %ld / %ld | %s | %ld | %ld |\n", kParts[p],
+                    n, replaced, o, t.n, percent(t.state[0], t.n).c_str(), percent(t.state[1], t.n).c_str(),
+                    percent(t.state[2], t.n).c_str(), percent(t.state[3], t.n).c_str(),
+                    percent(t.state[4], t.n).c_str(), t.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
+                    t.verdict[static_cast<std::size_t>(Verdict::Missed)], percent(t.existingOk, t.existing).c_str(),
+                    t.wrong(), t.unjudged());
+    }
+    for (const auto& [job, res] : results)
+        for (const std::string& w : res.log.wrongs)
+            std::printf("  [%d:%d %s] %s\n", job.first, job.second, res.edit.c_str(), w.c_str());
+    for (const auto& [job, res] : results)
+        for (const std::string& n : res.log.notes)
+            std::printf("  [%d:%d %s] %s\n", job.first, job.second, res.edit.c_str(), n.c_str());
+    // RAYCAD_NAMING_TRACE=<file>: one line per sequence; RAYCAD_NAMING_VERDICTS=<file>: one per judged reference.
+    if (const char* trace = std::getenv("RAYCAD_NAMING_TRACE"))
+        if (std::FILE* f = std::fopen(trace, "w")) {
+            for (const auto& [job, res] : results)
+                std::fprintf(f, "%d:%d ops %d refs %ld edit [%s] n %ld exact %ld broken %ld replayfail %d skipped %d\n",
+                             job.first, job.second, res.ops, res.refs, res.edit.c_str(), res.tally.n,
+                             res.tally.state[0], res.tally.state[4], res.replayFailures, res.skipped ? 1 : 0);
+            std::fclose(f);
+        }
+    if (const char* trace = std::getenv("RAYCAD_NAMING_VERDICTS"))
+        if (std::FILE* f = std::fopen(trace, "w")) {
+            for (const auto& [job, res] : results)
+                for (const std::string& line : res.log.trace)
+                    std::fprintf(f, "%s\n", line.c_str());
+            std::fclose(f);
+        }
+
+    std::printf("\n%s: %ld sequences judged, %ld replaced (", title, r.judged, r.replaced);
+    for (const auto& [why, n] : r.skipped)
+        std::printf(" %s: %ld;", why.c_str(), n);
+    std::printf(" ), parts short of %d judged: %zu\n", perPart, r.shortParts.size());
+    std::printf("  %ld features (%ld proposals refused by the kernel while authoring, dropped), %ld feature failures "
+                "on replay, %ld references recorded\n",
+                r.ops, r.refused, r.replayFailures, r.refs);
+    std::printf("  baseline elements that are not references:\n");
+    for (const auto& [why, n] : r.excluded)
+        std::printf("    %s: %ld\n", why.c_str(), n);
+    std::printf("  edits:\n");
+    for (const auto& [what, n] : r.edits)
+        std::printf("    %s: %ld\n", what.c_str(), n);
+    printTally(title, r.total);
+    return r;
+}
+
+void checkGates(const BlockResult& r, int perPart)
+{
+    if (std::getenv("RAYCAD_NAMING_ONLY") == nullptr) {
+        CHECK(r.judged == static_cast<long>(perPart) * kPartCount);
+        CHECK(r.shortParts.empty());
+    }
+    const Tally& t = r.total;
+    CHECK(t.mutantsCaught() == t.mutantsMade());
+    CHECK(t.repairedUsable == 0);
+    CHECK(t.selfCheckFailures == 0);
+    CHECK(t.injectivity == 0);
+    CHECK(t.unjudged() == 0);
+    CHECK(t.accepted == t.acceptedReviewed);
+    CHECK(t.conflicts == t.conflictsReviewed);
+    REQUIRE(t.wrong() == 0);
+}
+
+} // namespace
+
 TEST_CASE("A randomised sequence gives the same result every time, serially and in parallel", "[naming][acceptance]")
 {
     const Part part = loadPart(kParts[7]);
@@ -471,6 +728,8 @@ TEST_CASE("A randomised sequence gives the same result every time, serially and 
     auto summary = [](const SequenceResult& r) {
         std::string s = std::to_string(r.ops) + "/" + std::to_string(r.refs) + "/" + r.edit;
         for (const long n : r.tally.state)
+            s += "/" + std::to_string(n);
+        for (const long n : r.tally.verdict)
             s += "/" + std::to_string(n);
         return s;
     };
@@ -486,25 +745,36 @@ TEST_CASE("A randomised sequence gives the same result every time, serially and 
         CHECK(parallel[t] == first[t % 2]);
 }
 
+TEST_CASE("References replayed on a part read back in another session resolve as in the same session",
+          "[random-session]")
+{
+    // One sequence per part, replayed once on the part as built and once on a fresh deserialised copy of it: the
+    // imported part's names must come out the same, so every reference must get the same answer and verdict.
+    const std::vector<Part> parts = loadParts();
+    long refs = 0, wrong = 0;
+    for (int p = 0; p < kPartCount; ++p) {
+        INFO(kParts[p]);
+        REQUIRE(parts[static_cast<std::size_t>(p)].base != nullptr);
+        SequenceOptions fresh;
+        fresh.freshReplay = true;
+        const SequenceResult same = runSequence(parts[static_cast<std::size_t>(p)], p, 0);
+        const SequenceResult other = runSequence(parts[static_cast<std::size_t>(p)], p, 0, fresh);
+        CHECK(same.skipped == other.skipped);
+        CHECK(same.edit == other.edit);
+        CHECK(same.tally.state == other.tally.state);
+        CHECK(same.tally.verdict == other.tally.verdict);
+        refs += other.tally.n;
+        wrong += other.tally.wrong();
+        for (const std::string& w : other.log.wrongs)
+            std::printf("  %s\n", w.c_str());
+    }
+    std::printf("Another session: %ld resolutions on fresh copies, WRONG %ld\n", refs, wrong);
+    CHECK(wrong == 0);
+}
+
 TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference resolves to a wrong element", "[random]")
 {
-    int onlyPart = -1, onlySeq = -1;
-    if (const char* only = std::getenv("RAYCAD_NAMING_ONLY"))
-        if (std::sscanf(only, "%d:%d", &onlyPart, &onlySeq) != 2)
-            onlyPart = onlySeq = -1;
-
-    std::vector<Part> parts(kPartCount);
-    {
-        std::atomic<int> next{0};
-        std::vector<std::thread> threads;
-        for (unsigned t = 0; t < workerCount(); ++t)
-            threads.emplace_back([&] {
-                for (int i = next++; i < kPartCount; i = next++)
-                    parts[static_cast<std::size_t>(i)] = loadPart(kParts[i]);
-            });
-        for (std::thread& t : threads)
-            t.join();
-    }
+    const std::vector<Part> parts = loadParts();
     if (std::getenv("RAYCAD_NAMING_PROGRESS") != nullptr)
         for (const Part& p : parts)
             if (p.base)
@@ -513,94 +783,20 @@ TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference reso
         INFO(p.path << ": " << p.error);
         REQUIRE(p.base != nullptr);
     }
+    const BlockResult r = runBlock("Randomised", parts, kSequencesPerPart, SequenceOptions{});
+    checkGates(r, kSequencesPerPart);
+}
 
-    struct Job {
-        int part, seq;
-    };
-    std::vector<Job> jobs;
-    for (int p = 0; p < kPartCount; ++p)
-        for (int s = 0; s < kSequencesPerPart; ++s)
-            if (onlyPart < 0 || (p == onlyPart && (s == onlySeq || onlySeq < 0)))
-                jobs.push_back({p, s});
-    std::vector<SequenceResult> results(jobs.size());
-    std::atomic<std::size_t> next{0};
-    std::mutex progress;
-    std::size_t done = 0;
-    std::vector<std::thread> threads;
-    for (unsigned t = 0; t < workerCount(); ++t)
-        threads.emplace_back([&] {
-            for (std::size_t i = next++; i < jobs.size(); i = next++) {
-                if (std::getenv("RAYCAD_NAMING_PROGRESS") != nullptr)
-                    std::fprintf(stderr, "sequence %d:%d\n", jobs[i].part, jobs[i].seq);
-                results[i] = runSequence(parts[static_cast<std::size_t>(jobs[i].part)], jobs[i].part, jobs[i].seq);
-                const std::lock_guard<std::mutex> lock(progress);
-                if (++done % 100 == 0)
-                    std::printf("  %zu of %zu sequences\n", done, jobs.size());
-            }
-        });
-    for (std::thread& t : threads)
-        t.join();
-
-    Tally total;
-    long sequences = 0, skipped = 0, ops = 0, replayFailures = 0;
-    std::printf("\n| part | sequences | features | refs judged | Exact %% | Split %% | Merged %% | Repaired %% | "
-                "Broken %% | gone / missed | WRONG |\n|-|-|-|-|-|-|-|-|-|-|-|\n");
-    for (int p = 0; p < kPartCount; ++p) {
-        Tally t;
-        long n = 0, o = 0;
-        for (std::size_t i = 0; i < jobs.size(); ++i) {
-            if (jobs[i].part != p)
-                continue;
-            const SequenceResult& r = results[i];
-            if (r.skipped) {
-                ++skipped;
-                continue;
-            }
-            ++n;
-            o += r.ops;
-            replayFailures += r.replayFailures;
-            t.merge(r.tally);
-        }
-        if (n == 0)
-            continue;
-        sequences += n;
-        ops += o;
-        total.merge(t);
-        std::printf("| %s | %ld | %ld | %ld | %s | %s | %s | %s | %s | %ld / %ld | %ld |\n", kParts[p], n, o, t.n,
-                    percent(t.state[0], t.n).c_str(), percent(t.state[1], t.n).c_str(),
-                    percent(t.state[2], t.n).c_str(), percent(t.state[3], t.n).c_str(),
-                    percent(t.state[4], t.n).c_str(), t.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
-                    t.verdict[static_cast<std::size_t>(Verdict::Missed)], t.wrong());
+TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development", "[random-holdout]")
+{
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
     }
-    for (const SequenceResult& r : results)
-        for (const std::string& w : r.wrongs)
-            std::printf("  %s\n", w.c_str());
-    // RAYCAD_NAMING_TRACE=<file>: one line per sequence, to compare runs.
-    if (const char* trace = std::getenv("RAYCAD_NAMING_TRACE"))
-        if (std::FILE* f = std::fopen(trace, "w")) {
-            for (std::size_t i = 0; i < jobs.size(); ++i) {
-                const SequenceResult& r = results[i];
-                std::fprintf(f, "%d:%d ops %d refs %ld edit [%s] n %ld exact %ld broken %ld replayfail %d\n",
-                             jobs[i].part, jobs[i].seq, r.ops, r.refs, r.edit.c_str(), r.tally.n, r.tally.state[0],
-                             r.tally.state[4], r.replayFailures);
-            }
-            std::fclose(f);
-        }
-    std::printf("\nRandomised: %ld sequences run (%ld skipped: no feature could be added), %ld features, %ld feature "
-                "failures on replay; %ld resolutions (%ld weak-oracle): Exact %s%%, Split %s%%, Merged %s%%, Repaired "
-                "%s%%, Broken %s%% (really gone %ld, missed %ld); among elements that still exist %s%% Exact, Split or "
-                "Merged; WRONG %ld; oracle conflicts %ld; mutants caught %ld of %ld; usable Repaired %ld; accepted by "
-                "the new-territory rule %ld; not judged (no mesh) %ld\n",
-                sequences, skipped, ops, replayFailures, total.n, total.weak, percent(total.state[0], total.n).c_str(),
-                percent(total.state[1], total.n).c_str(), percent(total.state[2], total.n).c_str(),
-                percent(total.state[3], total.n).c_str(), percent(total.state[4], total.n).c_str(),
-                total.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
-                total.verdict[static_cast<std::size_t>(Verdict::Missed)],
-                percent(total.existingOk, total.existing).c_str(), total.wrong(), total.conflicts, total.mutantsCaught,
-                total.mutants, total.repairedUsable, total.newTerritory, total.unjudged);
-    if (onlyPart < 0)
-        CHECK(sequences >= 950);
-    CHECK(total.mutantsCaught == total.mutants);
-    CHECK(total.repairedUsable == 0);
-    REQUIRE(total.wrong() == 0);
+    SequenceOptions holdout;
+    holdout.seedBase = 0x401D0000ull;
+    holdout.keyPrefix = "holdout ";
+    const BlockResult r = runBlock("Holdout", parts, kHoldoutPerPart, holdout);
+    checkGates(r, kHoldoutPerPart);
 }
