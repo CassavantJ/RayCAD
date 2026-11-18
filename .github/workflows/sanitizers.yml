@@ -31,7 +31,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang ninja-build pkg-config autoconf automake libtool curl zip unzip tar \
             libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxmu-dev \
-            libxkbcommon-dev libvulkan-dev libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 p7zip-full
+            libxkbcommon-dev libvulkan-dev libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 libarchive-tools p7zip-full
 
       # vcpkg at the exact commit that vcpkg-configuration.json pins as the baseline.
       - name: Set up vcpkg

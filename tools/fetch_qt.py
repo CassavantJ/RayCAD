@@ -3,7 +3,7 @@
 
 Used by CI instead of aqtinstall / install-qt-action, which cannot find Qt 6.12 for Windows
 (the repository layout changed: Windows packages live under qt6_<ver>/qt6_<ver>_<arch>/, Linux and
-macOS packages under qt6_<ver>/qt6_<ver>/). Standard library only; needs a `7z` executable on PATH.
+macOS packages under qt6_<ver>/qt6_<ver>/). Standard library only; needs bsdtar (libarchive) or a `7z` executable on PATH.
 
 Every archive is verified against the .sha1 file published next to it.
 
@@ -49,6 +49,42 @@ def sha1(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+def find_extractors() -> list[list[str]]:
+    """Command prefixes that can unpack a .7z, best first. `{src}` and `{dst}` are filled in per archive.
+
+    bsdtar (libarchive) comes first: the Linux Qt archives hold chains of symlinks (libX.so -> libX.so.6 ->
+    libX.so.6.12.0) that current 7-Zip refuses as "dangerous links" and then exits with an error.
+    """
+    found: list[list[str]] = []
+    for name in ("bsdtar", "tar"):
+        exe = shutil.which(name)
+        if not exe:
+            continue
+        try:
+            banner = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30).stdout
+        except Exception:
+            continue
+        if "bsdtar" in banner or "libarchive" in banner:
+            found.append([exe, "-xf", "{src}", "-C", "{dst}"])
+            break
+    sevenz = next((p for p in (shutil.which(n) for n in ("7z", "7zz", "7za", "7zr")) if p), None)
+    if sevenz:
+        for extra in (["-snld20"], ["-snld"], []):
+            found.append([sevenz, "x", "-y", "-bso0", "-bsp0", *extra, "-o{dst}", "{src}"])
+    return found
+
+
+def extract(extractors: list[list[str]], src: pathlib.Path, dst: pathlib.Path) -> None:
+    errors = []
+    for cmd in extractors:
+        argv = [a.format(src=str(src), dst=str(dst)) for a in cmd]
+        r = subprocess.run(argv, capture_output=True, text=True)
+        if r.returncode == 0:
+            return
+        errors.append(f"{' '.join(argv[:3])}: exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
+    raise SystemExit("could not extract " + src.name + "\n  " + "\n  ".join(errors))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -66,9 +102,9 @@ def main() -> int:
     wanted = {f"qt.qt6.{v}.{arch}"} | {f"qt.qt6.{v}.addons.{m}.{arch}" for m in a.module}
 
     if not marker.exists():
-        sevenz = next((p for p in (shutil.which(n) for n in ("7z", "7zz", "7za", "7zr")) if p), None)
-        if not sevenz:
-            raise SystemExit("no 7z executable on PATH")
+        extractors = find_extractors()
+        if not extractors:
+            raise SystemExit("no bsdtar or 7z executable found")
         if prefix.exists():
             shutil.rmtree(prefix)
         prefix.mkdir(parents=True)
@@ -93,7 +129,7 @@ def main() -> int:
                 dst.write_bytes(get(url))
                 if sha1(dst) != want:
                     raise SystemExit(f"SHA-1 mismatch: {arc}")
-                subprocess.run([sevenz, "x", "-y", "-bso0", "-bsp0", f"-o{prefix}", str(dst)], check=True)
+                extract(extractors, dst, prefix)
                 dst.unlink()
         missing = wanted - found
         if missing:
