@@ -8,9 +8,17 @@ set(RAY_OCCT_TOOLKITS
     TKBO TKBool TKShHealing TKFillet TKOffset TKFeat TKMesh TKHLR
     TKXSBase TKDE TKDESTEP TKDEIGES TKDESTL TKLCAF TKXCAF)
 
-add_library(ray_kernel STATIC kernel_module.cpp occt_smoke.cpp occt_smoke.h)
+# Shape::contentHash and the serialisation checksum use BLAKE3 directly until ray::Hasher (T-002) is merged.
+# TODO(T-002 merge): use ray::Hasher and drop this package and the BLAKE3::blake3 link below.
+find_package(BLAKE3 CONFIG REQUIRED)
+
+add_library(ray_kernel STATIC
+    kernel_module.cpp occt_smoke.cpp occt_smoke.h
+    shape_impl.h shape.cpp shape_guard.cpp shape_serialize.cpp shape_testing.h shape_testing.cpp
+    query.cpp)
 ray_module(ray_kernel DETERMINISTIC)
 target_link_libraries(ray_kernel PRIVATE ray_core ${RAY_OCCT_TOOLKITS})
+target_link_libraries(ray_kernel PRIVATE BLAKE3::blake3)
 target_include_directories(ray_kernel SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
 list(JOIN RAY_OCCT_TOOLKITS "," _ray_occt_toolkits_csv)
 target_compile_definitions(ray_kernel PRIVATE RAY_OCCT_TOOLKITS="${_ray_occt_toolkits_csv}")
