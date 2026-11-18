@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ray::render::rhi {
@@ -115,11 +116,29 @@ Result<OffscreenDevice> createOffscreenDevice(RhiBackend backend, bool preferSof
                 failures += " OpenGL: no QGuiApplication;";
                 continue;
             }
-            QRhiGles2InitParams params;
-            params.format = QSurfaceFormat::defaultFormat();
-            dev.surface.reset(QRhiGles2InitParams::newFallbackSurface(params.format));
-            params.fallbackSurface = dev.surface.get();
-            dev.rhi.reset(QRhi::create(QRhi::OpenGLES2, &params, flags));
+            // Ask for OpenGL 3.3 first. QRhi takes the GL version from the context's reported format, and Qt's
+            // offscreen platform reports the version that was requested, not the one Mesa created (4.5 for
+            // llvmpipe): with the default 2.0 request QRhi turned instancing off, and the wide-line pipeline (smooth
+            // edges, addLines) with it. The default format remains the fallback for drivers without 3.3.
+            QSurfaceFormat wanted = QSurfaceFormat::defaultFormat();
+            std::vector<QSurfaceFormat> formats;
+            if (wanted.renderableType() != QSurfaceFormat::OpenGLES &&
+                std::make_pair(wanted.majorVersion(), wanted.minorVersion()) < std::make_pair(3, 3)) {
+                QSurfaceFormat gl33 = wanted;
+                gl33.setVersion(3, 3);
+                formats.push_back(gl33);
+            }
+            formats.push_back(wanted);
+            for (const QSurfaceFormat& format : formats) {
+                QRhiGles2InitParams params;
+                params.format = format;
+                dev.surface.reset(QRhiGles2InitParams::newFallbackSurface(params.format));
+                params.fallbackSurface = dev.surface.get();
+                dev.rhi.reset(QRhi::create(QRhi::OpenGLES2, &params, flags));
+                if (dev.rhi)
+                    break;
+                dev.surface.reset();
+            }
             break;
         }
 #endif
@@ -132,8 +151,10 @@ Result<OffscreenDevice> createOffscreenDevice(RhiBackend backend, bool preferSof
             failures += std::string(" ") + nameOf(b) + ": not available on this platform;";
             continue;
         }
-        if (dev.rhi)
+        if (dev.rhi) {
+            detail::noteGraphicsDriverLoaded();
             return dev;
+        }
         failures += std::string(" ") + nameOf(b) + ": could not be initialised;";
     }
     return tl::unexpected(Error{ErrorCode::Internal, "No graphics API could be initialised:" + failures, {}});

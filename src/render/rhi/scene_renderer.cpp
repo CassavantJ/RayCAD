@@ -437,6 +437,25 @@ void SceneRenderer::uploadItem(const detail::SceneItem& item, GpuItem& gpu, bool
     gpu.generation = item.geometryGeneration;
     if (item.kind == detail::ItemKind::Lines) {
         ensureWide(item, gpu, u);
+        if (!rhi_->isFeatureSupported(QRhi::Instancing)) {
+            // No wide-line pipeline on this device: the lines are drawn 1 px wide instead, never left out.
+            const std::vector<float>& p = item.lines->points;
+            const std::size_t vertices = p.size() / 6 * 2;
+            QByteArray data(static_cast<qsizetype>(vertices * kThinStride), Qt::Uninitialized);
+            char* out = data.data();
+            for (std::size_t v = 0; v < vertices; ++v, out += kThinStride) {
+                putFloats(out, &p[v * 3], 3);
+                putU32(out + 12, static_cast<std::uint32_t>(v / 2 + 1));
+            }
+            gpu.thinEdges = own(counter_, rhi_->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer,
+                                                          static_cast<quint32>(std::max<qsizetype>(data.size(), 4))));
+            if (vertices > 0 && gpu.thinEdges->create()) {
+                u->uploadStaticBuffer(gpu.thinEdges.get(), std::move(data));
+                gpu.thinEdgeVertexCount = static_cast<std::uint32_t>(vertices);
+            } else {
+                gpu.thinEdges.reset();
+            }
+        }
         return;
     }
     const kernel::Mesh& mesh = *item.mesh;
@@ -695,10 +714,10 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
     }
     // 2. edges and lines
     for (const DrawItem& d : draws_) {
-        if (d.item->kind == detail::ItemKind::Lines) {
+        if (d.item->kind == detail::ItemKind::Lines && set.lineWide) {
             drawWide(d);
-        } else if (d.item->style.showEdges) {
-            if (smoothEdges_ && d.gpu->wideEdges) {
+        } else if (d.item->kind == detail::ItemKind::Lines || d.item->style.showEdges) {
+            if (smoothEdges_ && d.gpu->wideEdges && set.lineWide) {
                 drawWide(d);
             } else if (d.gpu->thinEdges && d.gpu->thinEdgeVertexCount > 0) {
                 use(set.lineThin.get(), d.itemUniformOffset);

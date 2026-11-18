@@ -26,3 +26,9 @@ struct OffscreenDevice {
 Result<OffscreenDevice> createOffscreenDevice(RhiBackend backend, bool preferSoftware);
 
 } // namespace ray::render::rhi
+
+namespace ray::render::detail {
+// viewport_runtime.cpp: a graphics driver is now loaded; the application ensureQtRuntime made must be destroyed at
+// exit before the driver's own exit handlers run.
+void noteGraphicsDriverLoaded();
+} // namespace ray::render::detail
