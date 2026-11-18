@@ -9,10 +9,18 @@ add_executable(ray_sketch_tests
     solver_determinism_test.cpp
     solver_cancel_test.cpp
     drag_s11_test.cpp
-    property_test.cpp)
-target_link_libraries(ray_sketch_tests PRIVATE ray_sketch ray_core Catch2::Catch2WithMain)
-# The private headers of src/sketch (model.h, solver_internal.h: test hooks). Neither includes PlaneGCS or Eigen.
+    property_test.cpp
+    loops_test.cpp
+    infer_test.cpp
+    dxf_corpus_expect.h
+    dxf_test.cpp)
+# ray_kernel: the loop tests extrude closedLoops output through the kernel (sketch may depend on kernel, PLAN.md 1.1).
+target_link_libraries(ray_sketch_tests PRIVATE ray_sketch ray_kernel ray_core Catch2::Catch2WithMain)
+# The private headers of src/sketch (model.h, solver_internal.h, loops.h, dxf.h: test hooks). None includes PlaneGCS,
+# Eigen or OCCT.
 target_include_directories(ray_sketch_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/sketch")
+# The DXF corpus (tests/corpus, see its README); dxf_corpus_expect.h names files below it.
+target_compile_definitions(ray_sketch_tests PRIVATE RAY_CORPUS_ROOT="${CMAKE_SOURCE_DIR}/tests/corpus")
 set_property(TARGET ray_sketch_tests PROPERTY FOLDER "tests")
 
 # The determinism probe: one process per core class (solver_determinism_test.cpp starts it).
