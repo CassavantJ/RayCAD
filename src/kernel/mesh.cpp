@@ -32,6 +32,7 @@
 // Message_ProgressIndicator whose UserBreak() reads ctx.cancel into BRepMesh_IncrementalMesh::Perform.
 // A single slow face still cannot be interrupted (S3: up to 14 s at 0.01 mm); the caller abandons the job
 // (kernel.h contract).
+#include "io_internal.h"
 #include "mesh_testing.h"
 #include "shape_impl.h"
 
@@ -90,10 +91,10 @@ constexpr double kFaceMbExponent = 0.6;
 
 std::atomic<bool> gInParallel{true};
 
+// The one process-wide mesh lock, shared with STL export (io_internal.h).
 std::mutex& meshMutex()
 {
-    static std::mutex mutex;
-    return mutex;
+    return detail::processMeshMutex();
 }
 
 int poolThreads()
