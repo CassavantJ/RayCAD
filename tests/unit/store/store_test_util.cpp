@@ -382,4 +382,128 @@ void useTestLockTiming()
     ray::store::detail::setLockTiming({kTestHeartbeatMs, kTestStaleMs});
 }
 
+bool breakLockOfDeadWriter(const std::string& doc)
+{
+    // A lock file the writer died writing has no readable content; on POSIX that is judged stale only after a short
+    // grace period.
+    auto broken = ray::store::breakStaleLock(doc);
+    for (const auto end = nowMs() + 5000; !broken && nowMs() < end;) {
+        sleepMs(50);
+        broken = ray::store::breakStaleLock(doc);
+    }
+    return broken.has_value();
+}
+
+std::string randomUuid(std::mt19937_64& rng)
+{
+    std::string hex = randomHex(rng, 32);
+    hex[12] = '4';
+    hex[16] = "89ab"[rng() % 4];
+    return hex.substr(0, 8) + "-" + hex.substr(8, 4) + "-" + hex.substr(12, 4) + "-" + hex.substr(16, 4) + "-" +
+           hex.substr(20);
+}
+
+ray::doc::Command randomCommand(std::mt19937_64& rng, const ray::doc::DocState& state, std::size_t payloadChars)
+{
+    const auto pick = [&rng](std::size_t n) {
+        return static_cast<std::size_t>(rng() % n);
+    };
+    const auto props = [&]() {
+        return "{\"distance\":\"" + std::to_string(pick(50)) + " mm\",\"note\":\"" +
+               randomHex(rng, 1 + pick(payloadChars > 0 ? payloadChars : 1)) + "\"}";
+    };
+    const std::size_t count = state.features.size();
+    const auto anyFeature = [&]() {
+        return state.features[pick(count)].id.value.toString();
+    };
+    const std::size_t kind = count == 0 ? 0 : pick(10);
+    if (kind < 4) {
+        const std::string name =
+            std::string(reinterpret_cast<const char*>(u8"Feature ü ")) + std::to_string(pick(1000));
+        std::string args =
+            "{\"id\":\"" + randomUuid(rng) + "\",\"type\":\"extrude\",\"name\":\"" + name + "\",\"props\":" + props();
+        if (pick(2) == 0) {
+            args += ",\"index\":" + std::to_string(pick(count + 1));
+        }
+        return {"feature.add", args + "}", "Add " + name};
+    }
+    if (kind < 6) {
+        if (pick(2) == 0) {
+            return {"feature.edit", "{\"id\":\"" + anyFeature() + "\",\"props\":" + props() + "}", "Edit"};
+        }
+        return {"feature.edit",
+                "{\"id\":\"" + anyFeature() + "\",\"name\":\"Renamed " + std::to_string(pick(1000)) + "\"}", "Rename"};
+    }
+    if (kind < 8) {
+        return {"feature.remove", "{\"id\":\"" + anyFeature() + "\"}", "Delete"};
+    }
+    if (kind == 8) {
+        return {"feature.reorder", "{\"id\":\"" + anyFeature() + "\",\"index\":" + std::to_string(pick(count)) + "}",
+                "Reorder"};
+    }
+    return {"feature.suppress",
+            "{\"id\":\"" + anyFeature() + "\",\"suppressed\":" + (pick(2) == 0 ? "true" : "false") + "}", "Suppress"};
+}
+
+Step randomStep(std::mt19937_64& rng, ray::doc::Document& doc, ray::store::IRecoveryJournal& journal,
+                ray::store::IDocumentFile* file, int savePercent,
+                const std::function<void(const ray::doc::DocStatePtr&)>& before)
+{
+    const auto check = [](const ray::Status& st, const char* what) {
+        if (!st) {
+            throw std::runtime_error(std::string(what) + ": " + st.error().message);
+        }
+    };
+    const int roll = static_cast<int>(rng() % 100);
+    if (file && roll < savePercent) {
+        const ray::doc::DocStatePtr state = doc.state();
+        if (before) {
+            before(state);
+        }
+        ray::store::IDocumentFile::SaveRequest request;
+        request.state = state;
+        request.message = "journal test save";
+        request.author = "store test";
+        ray::JobContext ctx;
+        auto saved = file->save(request, ctx);
+        if (!saved) {
+            throw std::runtime_error("save: " + saved.error().message);
+        }
+        check(journal.markSaved(*saved), "markSaved");
+        doc.markClean();
+        return Step::Save;
+    }
+    if (roll < savePercent + 15 && doc.canUndo()) {
+        check(doc.undo(), "undo");
+        if (before) {
+            before(doc.state());
+        }
+        check(journal.appendUndo(doc.state()), "appendUndo");
+        return Step::Undo;
+    }
+    if (roll < savePercent + 25 && doc.canRedo()) {
+        check(doc.redo(), "redo");
+        if (before) {
+            before(doc.state());
+        }
+        check(journal.appendRedo(doc.state()), "appendRedo");
+        return Step::Redo;
+    }
+    for (int attempt = 0;; ++attempt) {
+        const ray::doc::Command command = randomCommand(rng, *doc.state());
+        auto result = doc.execute(command);
+        if (!result) {
+            if (attempt < 20) {
+                continue; // e.g. a reorder to the index the feature has already
+            }
+            throw std::runtime_error(command.name + " " + command.argsJson + ": " + result.error().message);
+        }
+        if (before) {
+            before(*result);
+        }
+        check(journal.append(command, *result), "append");
+        return Step::Execute;
+    }
+}
+
 } // namespace storetest

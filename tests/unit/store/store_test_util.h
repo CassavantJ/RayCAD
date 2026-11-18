@@ -4,6 +4,7 @@
 #include <ray/store.h>
 
 #include <cstdint>
+#include <functional>
 #include <random>
 #include <span>
 #include <string>
@@ -81,5 +82,24 @@ std::int64_t saveNumber(const std::string& message);
 inline constexpr std::int64_t kTestHeartbeatMs = 200;
 inline constexpr std::int64_t kTestStaleMs = 1500;
 void useTestLockTiming();
+
+// Breaks the stale lock a killed helper left on `doc`, retrying for up to 5 s; false if it stays locked.
+bool breakLockOfDeadWriter(const std::string& doc);
+
+// ---------- Recovery journal tests ----------
+// A random version 4 UUID string.
+std::string randomUuid(std::mt19937_64& rng);
+// A random command that is valid for `state`: feature.add, feature.edit, feature.remove, feature.reorder or
+// feature.suppress, with props of up to `payloadChars` random characters.
+ray::doc::Command randomCommand(std::mt19937_64& rng, const ray::doc::DocState& state, std::size_t payloadChars = 200);
+
+enum class Step { Execute, Undo, Redo, Save };
+// One random step on `doc`, recorded in `journal` as the app would: mostly an executed command, sometimes an undo or a
+// redo, and, with a `file`, `savePercent` percent of the time a save followed by markSaved and markClean.
+// `before(state)` runs after the step and before its journal record (for a save: before saving). Throws
+// std::runtime_error on any failure.
+Step randomStep(std::mt19937_64& rng, ray::doc::Document& doc, ray::store::IRecoveryJournal& journal,
+                ray::store::IDocumentFile* file, int savePercent,
+                const std::function<void(const ray::doc::DocStatePtr&)>& before = {});
 
 } // namespace storetest

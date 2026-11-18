@@ -376,7 +376,7 @@ TEST_CASE("refs, branches and named versions", "[store][commit]")
     REQUIRE(after);
     CHECK((*after)[0].named);
     CHECK_FALSE((*after)[1].named);
-    CHECK(file->compact(90, ctx).error().code == ErrorCode::Internal); // T-012
+    CHECK(file->compact(90, ctx)); // T-012: nothing to drop here, every commit is recent
 }
 
 TEST_CASE("a file with a newer format version is refused and left unchanged", "[store][format]")

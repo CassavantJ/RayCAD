@@ -4,9 +4,19 @@
 //   hold   <doc> <ready> <heartbeat 0|1>                  open for writing, write "rw"/"ro" to <ready>, then wait
 //   race   <doc> <go> <result> <done>                     wait for <go>, break the stale lock, open for writing,
 //                                                         write "rw", "ro" or "err ..." to <result>, wait for <done>
+//   journal <recovery dir> <doc> <acks> <seed> <steps> <savePercent>
+//                                                         create <doc>, journal <steps> random steps (commands,
+//                                                         undos, redos, saves), logging "R <state hash>" when the
+//                                                         journal is open,
+//                                                         "B <i> <state hash>" before each journal record (or save),
+//                                                         "A <i> <undo count> <redo count> <saves>" after it and "D"
+//                                                         at the end, then wait to be killed
+//   compact <doc> <acks> <days>                           open for writing, log "B", compact, log "A", repeat
 // All paths are UTF-8. Lock timing is the tests' (store_test_util.h).
+#include "journal.h"
 #include "lock.h"
 #include "store_test_util.h"
+#include "test_dispatcher.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -185,6 +195,80 @@ int race(const std::vector<std::string>& args)
     return 0;
 }
 
+void sayLine(std::FILE* f, const std::string& line)
+{
+    std::fputs((line + "\n").c_str(), f);
+    std::fflush(f);
+}
+
+int journalSession(const std::vector<std::string>& args)
+{
+    ray::store::detail::setRecoveryDir(args.at(0));
+    const std::string doc = args.at(1);
+    std::FILE* acks = openAppend(args.at(2));
+    std::mt19937_64 rng(std::strtoull(args.at(3).c_str(), nullptr, 10));
+    const int steps = std::atoi(args.at(4).c_str());
+    const int savePercent = std::atoi(args.at(5).c_str());
+
+    auto created = IDocumentFile::create(doc);
+    if (!created) {
+        std::fprintf(stderr, "helper: create failed: %s\n", created.error().message.c_str());
+        return 4;
+    }
+    auto& file = *created;
+    IDocumentFile::SaveRequest first;
+    first.state = std::make_shared<const ray::doc::DocState>(makeState(rng, 1 + static_cast<int>(rng() % 4), 64));
+    first.message = "first save";
+    ray::JobContext ctx;
+    if (!file->save(first, ctx)) {
+        return 5;
+    }
+    auto head = file->loadHead();
+    if (!head) {
+        return 5;
+    }
+    ray::test::TestDispatcher ui;
+    std::unique_ptr<ray::doc::Document> document = ray::doc::makeDocument(ui, nullptr, *head);
+    auto journal = ray::store::IRecoveryJournal::start(*file, doc, *head);
+    if (!journal) {
+        std::fprintf(stderr, "helper: journal failed: %s\n", journal.error().message.c_str());
+        return 6;
+    }
+    sayLine(acks, "R " + (*head)->stateHash().hex());
+    int saves = 0;
+    for (int i = 0; i < steps; ++i) {
+        const Step step =
+            randomStep(rng, *document, **journal, file.get(), savePercent, [&](const ray::doc::DocStatePtr& state) {
+                sayLine(acks, "B " + std::to_string(i) + " " + state->stateHash().hex());
+            });
+        saves += step == Step::Save ? 1 : 0;
+        sayLine(acks, "A " + std::to_string(i) + " " + std::to_string(document->undoCount()) + " " +
+                          std::to_string(document->redoCount()) + " " + std::to_string(saves));
+        ui.runPending();
+    }
+    sayLine(acks, "D");
+    for (;;) {
+        sleepMs(1000);
+    }
+}
+
+int compactLoop(const std::vector<std::string>& args)
+{
+    const std::string doc = args.at(0);
+    std::FILE* acks = openAppend(args.at(1));
+    const int days = std::atoi(args.at(2).c_str());
+    auto file = openForWrite(doc);
+    ray::JobContext ctx;
+    for (;;) {
+        sayLine(acks, "B");
+        if (auto st = file->compact(days, ctx); !st) {
+            std::fprintf(stderr, "helper: compact failed: %s\n", st.error().message.c_str());
+            return 6;
+        }
+        sayLine(acks, "A");
+    }
+}
+
 std::vector<std::string> utf8Arguments(int argc, char** argv)
 {
     std::vector<std::string> out;
@@ -230,6 +314,12 @@ int main(int argc, char** argv)
         }
         if (command == "race") {
             return race(rest);
+        }
+        if (command == "journal") {
+            return journalSession(rest);
+        }
+        if (command == "compact") {
+            return compactLoop(rest);
         }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "helper: %s\n", e.what());
