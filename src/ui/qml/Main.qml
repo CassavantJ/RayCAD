@@ -1,10 +1,32 @@
-// The empty main window (task T-001). Colours, fonts and sizes will come from theme tokens (PLAN.md 6.5).
+// The main window. It starts hidden: AppHost sets the graphics configuration and size, then shows it.
+// Shows the shell, or the controls gallery with --gallery (loaded by URL, so a normal start never compiles it).
 import QtQuick
+import RayCad.Ui
 
 Window {
     id: root
-    visible: true
-    width: Screen.width * 0.6
-    height: Screen.height * 0.6
-    title: qsTr("RayCAD")
+
+    visible: false
+    minimumWidth: Theme.controlHeight * 32
+    minimumHeight: Theme.controlHeight * 20
+    title: AppContext.page === "gallery" ? qsTr("RayCAD controls gallery") : qsTr("RayCAD")
+    color: Theme.windowBg
+
+    Loader {
+        id: page
+        objectName: "page"
+        anchors.fill: parent
+        focus: true
+        Component.onCompleted: {
+            if (AppContext.page === "gallery")
+                source = Qt.resolvedUrl("Gallery.qml")
+            else
+                sourceComponent = shellPage
+        }
+    }
+
+    Component {
+        id: shellPage
+        Shell {}
+    }
 }
