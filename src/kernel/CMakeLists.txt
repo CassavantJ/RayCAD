@@ -12,7 +12,8 @@ set(RAY_OCCT_TOOLKITS
 add_library(ray_kernel STATIC
     kernel_module.cpp occt_smoke.cpp occt_smoke.h
     shape_impl.h shape.cpp shape_guard.cpp shape_serialize.cpp shape_testing.h shape_testing.cpp
-    query.cpp)
+    query.cpp
+    mesh.cpp mesh_testing.h)
 ray_module(ray_kernel DETERMINISTIC)
 target_link_libraries(ray_kernel PRIVATE ray_core ${RAY_OCCT_TOOLKITS})
 target_include_directories(ray_kernel SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})

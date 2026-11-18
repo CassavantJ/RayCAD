@@ -21,6 +21,20 @@ Result<Shape> makeLocatedCompound();
 // A lone planar 10 x 20 face at z = 5 (no solid).
 Result<Shape> makePlanarFace();
 
+// Builders for the tessellation tests (task T-006).
+// An 80 x 50 x 20 box with its four vertical edges filleted (radius 5), two radius 6 through holes at
+// (20, 25) and (60, 25), and the top rims of both holes filleted (radius 1.5).
+Result<Shape> makeFilletedBody();
+// A sphere of the given radius centred at `centre`.
+Result<Shape> makeSphere(Vec3 centre, double radius);
+// A torus about the z axis through the origin.
+Result<Shape> makeTorus(double majorRadius, double minorRadius);
+// A 10 * cols x 10 * rows x 5 plate with a radius 3 through hole in the middle of every 10 x 10 cell.
+Result<Shape> makeHolePlate(int rows, int cols);
+// A compound of a 10 x 10 x 10 box and a planar "bow tie" face at z = 50 whose outer wire crosses itself at
+// (5, 5, 50). BRepMesh leaves that face without triangles. Its face SubId is the last one (index 6).
+Result<Shape> makeBodyWithUnmeshableFace();
+
 // Does to the shape's TShapes, in place, what later operations do to shared TShapes: meshes it (adds
 // triangulations and polygons, sets the Modified flag) and adds it into a compound (clears its Free flag).
 // For the canonical-serialisation test only; never call it on a shape another thread can see.
