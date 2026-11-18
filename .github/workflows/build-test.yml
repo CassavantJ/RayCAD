@@ -39,7 +39,7 @@ jobs:
             preset: linux-gcc
             triplet: x64-linux-dynamic
             qt_arch: linux_gcc_64
-          - os: macos-14
+          - os: macos-latest
             preset: macos-arm64
             triplet: arm64-osx-dynamic
             qt_arch: clang_64

@@ -1296,6 +1296,6 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 - **`document.h` `RebuildContext`** has reference members and no constructor; T-010 adds one.
 - **`sim.h` `makeTriDexelGpu`** takes a `render::IComputeBackend&` while rule 2 forbids `sim` linking `render`; the v2 implementation must live in `src/render` or a new module.
 - **Binary cache in CI** uses `actions/cache` on vcpkg's archive folder, not NuGet on GitHub Packages as section 10 says (NuGet needs mono on Linux and macOS and write access that fork pull requests do not get).
-- **CI runners** are `windows-latest`, `ubuntu-latest` and `macos-14`, not the images named in section 10.
+- **CI runners** are `windows-latest`, `ubuntu-latest` and `macos-latest` (GitHub no longer offers `macos-14`), not the images named in section 10.
 - **gperf (GPL-3.0-or-later)** is pulled in on Linux as a host build tool by OCCT's freetype feature. The licence lint allows GPL for rows marked "Build tool only". Building OCCT without freetype would remove it.
 - From T-001 on, `include/ray/` holds the real headers; `docs/interfaces/` is kept identical as the reviewable copy.
