@@ -66,15 +66,22 @@ public:
 
     // Interactive drag is a SESSION that keeps the solver alive; a stateless call would rebuild and diagnose
     // on every step (22 to 42 ms even at 50 curves). Budget (PLAN.md section 9): one step under 16 ms for a
-    // coupled group of up to 50 curves. Larger groups take longer (0.4 to 0.8 s at 200), so the caller runs
-    // the session on the drag worker and always passes the newest pointer position.
+    // coupled group of up to 200 curves (spike S11: sparse re-run of PlaneGCS's drag iteration on a reduced
+    // system, falling back to the full sparse step). The caller still runs the session on the drag worker and
+    // always passes the newest pointer position.
+    // move(target) solves from the beginDrag state, never from the previous move, so the result depends only
+    // on `target` and skipped pointer positions cannot change the final geometry.
+    // Drag results are bit-identical run to run and across core types on one build. They agree with
+    // solve() to 1e-9 mm but are not bit-identical to it.
+    // beginDrag builds and diagnoses the system (measured up to 0.6 s at 200 curves), so it takes a
+    // JobContext and runs on a worker like solve().
     class IDragSession {
     public:
         virtual ~IDragSession() = default;
         virtual Result<SolveResult> move(Vec2 target) = 0;     // diagnosis fields are those from beginDrag
         virtual Sketch end() = 0;                              // final solved sketch
     };
-    virtual Result<std::unique_ptr<IDragSession>> beginDrag(const Sketch&, SketchEntId point) = 0;
+    virtual Result<std::unique_ptr<IDragSession>> beginDrag(const Sketch&, SketchEntId point, JobContext&) = 0;
 };
 std::unique_ptr<ISketchSolver> makePlaneGcsSolver();
 

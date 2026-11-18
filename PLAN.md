@@ -613,7 +613,7 @@ How each source of nondeterminism is closed:
 | Same with glass panels on | 30 FPS (when enabled) | 60 FPS | 60 FPS | As above with backdrop enabled. |
 | Idle GPU use | 0 frames/s | 0 | 0 | Frame counter over 5 s idle must be 0. |
 | Incremental rebuild, 100-feature part, edit feature 50 | 1.0 s | 0.7 s | 0.5 s | `raycad-cli bench rebuild`. |
-| Sketch drag step, one coupled group of up to 50 curves | 33 ms [estimate] | 16 ms | 16 ms [measured S7: 8 to 16 ms] | Micro-benchmark on the S7 sketch. Larger coupled groups are solved on the drag worker and follow the pointer late: 54 to 81 ms at 100 curves, 0.4 to 0.8 s at 200 [measured S7]. The UI thread never blocks. Spike S11 looks for a faster drag. |
+| Sketch drag step, one coupled group of up to 200 curves | 33 ms [estimate] | 16 ms | 16 ms [measured S11 on High under load: median 1.5 ms or less, 95th percentile 4.3 ms or less] | Micro-benchmark on the S7 sketches at 50 to 200 curves. S11 replaced PlaneGCS's dense drag step with a sparse re-run of the same iteration on a reduced system, with a fallback to the full sparse step; 0 of 43,200 steps differed from PlaneGCS by more than 1e-9 mm. Not measured: Low tier, Linux, macOS, splines and other constraint types, sketches above 200 curves. The session still runs on the drag worker; the UI thread never blocks. |
 | Sketch full solve with diagnosis, 200 curves | 2 s [estimate] | 1 s | 1 s [measured S7: 0.65 s] | Micro-benchmark. Always on a worker. |
 | 2D adaptive, BP2 circular pocket | 2 s | 1 s | 0.5 s [measured S5: 0.26 s] | `bench toolpath`. |
 | 2D adaptive, 90 x 60 mm pocket with two islands | 12 s | 6 s | 3 s [measured S5: 4.3 s today] | `bench toolpath`. |
@@ -734,7 +734,7 @@ Every milestone ends in a build Jake can install and a demo of one workflow. Dur
 
 - Parametric modeling now comes before direct editing, the reverse of the first plan. Naming therefore meets sweeps, booleans and blends first, and the history-free direct-edit case later. T-081 is split so its core no longer waits for T-080 (see T-081a, T-081b).
 - The hole feature ships in M7 without CAM thread pickup; that part moves to T-097b in M2.
-- S11 runs first, then T-090. T-094 starts at once.
+- S11 ran on 2026-11-18 (`spikes/s11-sketch-drag/`): adopt its sparse drag step and reduced drag system in T-090; no PlaneGCS fork. `sketch.h` changed with it: `beginDrag` takes a `JobContext`, and `move` solves from the drag-start state.
 - M7 grows by about a week for the T-081a work pulled into it; M6 shrinks by the same amount. The total is unchanged.
 - The v1 exit gate (M8) does not move in content, but the first G-code arrives about nine weeks later than first planned.
 

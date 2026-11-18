@@ -16,6 +16,8 @@
 //  - Every function taking JobContext reports progress and honours cancellation, with two exceptions the
 //    CALLER handles by abandoning the job: the model-load stage of importStep (about 30 ms per MiB) and
 //    a single slow face inside a mesh call (up to 14 s at fine tolerance). See PLAN.md section 7.
+//    fillet and chamfer check cancellation between OCCT builds only: OCCT 8.0.1 ignores the progress hook
+//    inside one blend build (longest whole call on the corpus 0.5 s).
 //  - OCCT internal parallelism is OFF for anything that produces geometry (determinism); meshing is the
 //    one exception above, and CI compares its hashes against a single-threaded run.
 #pragma once
@@ -46,8 +48,10 @@ public:
 // IsDeleted() and normalised to SubId on both sides. BRepGraph is NOT used (withdrawn upstream
 // from master on 2026-10-13 pending API review; see PLAN.md 0.2 row 2).
 // Normalisation guarantees (spike S4): results that are not in the final shape are dropped; history of a
-// boolean already includes its same-domain unification; a sub-shape with NO entry is unchanged (same SubId
-// meaning, same geometry); for direct edits the edited face is reported Modified, never "Deleted plus a
+// boolean already includes its same-domain unification; every input vertex, edge, face and
+// solid has exactly one Modified or Deleted entry, plus Generated where OCCT reports one; an UNCHANGED
+// sub-shape is listed as Modified to its SubId in the result, because SubIds are not stable across shapes;
+// result edges and vertices bounding a new blend face may have no ancestor and are named from their faces; for direct edits the edited face is reported Modified, never "Deleted plus a
 // face Generated from an internal tool body" (spike S9).
 struct HistoryEntry {
     enum class Relation : std::uint8_t { Modified, Generated, Deleted };
@@ -103,6 +107,11 @@ Result<Shape>          deserialize(std::span<const std::byte>);
 // ---------- Construction ----------
 struct Plane { Vec3 origin, normal, xDir; };
 // A closed planar profile: outer loop first, then holes. Curves are lines, arcs and B-splines.
+// ProfileCurve::pts by kind (mm, in the profile plane): Line {start, end}; Arc {start, end, centre} with
+// `ccw` about the plane normal (`radius` optional, checked when given); Circle {centre} with `radius`;
+// Bspline = control points of a clamped uniform curve of degree min(3, n-1). A spline with its own degree,
+// knots or weights cannot be passed yet. Curves of a loop may come in any order and direction; joints must
+// meet within 1e-6 mm.
 struct ProfileCurve { enum class Kind { Line, Arc, Circle, Bspline } kind; std::vector<Vec2> pts; double radius{}; bool ccw{}; std::uint64_t tag{}; };
 struct ProfileLoop { std::vector<ProfileCurve> curves; std::uint64_t tag{}; };   // tag echoed as SweepFaceOrigin::loopTag
 struct Profile { Plane plane; std::vector<ProfileLoop> loops; };
