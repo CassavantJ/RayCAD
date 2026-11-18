@@ -15,6 +15,8 @@ set_property(TARGET ray_ui_viewport_tests PROPERTY FOLDER "tests")
 
 add_test(NAME ray_ui_viewport_tests COMMAND ray_ui_viewport_tests)
 set_tests_properties(ray_ui_viewport_tests PROPERTIES TIMEOUT 600)
+# Catch2 exits with 4 when every test case skipped (no QRhi scene graph): CTest then reports the test as skipped.
+set_tests_properties(ray_ui_viewport_tests PROPERTIES SKIP_RETURN_CODE 4)
 ray_test_runtime_path(ray_ui_viewport_tests QT)
 # Frames must not wait for a display's vertical blank: on a machine whose display is asleep or locked, Direct3D's
 # present blocks and the window draws only when grabbed, so picks (which need a frame) would never be answered.
