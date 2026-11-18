@@ -25,7 +25,10 @@ come from vcpkg. Versions of vcpkg ports are those of the baseline pinned in `vc
 | SQLite | `sqlite3` | 3.54.1 | `blessing` | https://sqlite.org/ | Dynamically linked into `src/store` only; the `.raycad` container (PLAN.md 4.1). Public domain; no notice required. Built without default features (no JSON functions). |
 | Zstandard | `zstd` | 1.5.7 | `BSD-3-Clause` | https://github.com/facebook/zstd | Dynamically linked into `src/store` only; compression of stored objects. vcpkg records `BSD-3-Clause OR GPL-2.0-only`; used under BSD-3-Clause. Ship the licence text. |
 | Catch2 | `catch2` | 3.16.1 | `BSL-1.0 AND BSD-3-Clause` | https://github.com/catchorg/Catch2 | Tests only. Not shipped. |
-| Boost (Graph, Math, and the Boost libraries those two depend on) | `boost-*` | 1.92.0 | `BSL-1.0` | https://www.boost.org/ | Headers, for the PlaneGCS sketch solver. In the manifest since T-001; nothing includes or links it yet. |
+| Boost (Graph, Math, and the Boost libraries those two depend on) | `boost-*` | 1.92.0 | `BSL-1.0` | https://www.boost.org/ | Headers only (`Boost::headers`, no library linked), for the vendored PlaneGCS in `src/sketch`: Graph's `adjacency_list` and `connected_components`, Math's constants. |
+| Eigen | `eigen3` | 5.0.1 | `MPL-2.0` | https://gitlab.com/libeigen/eigen | Header-only, in `src/sketch` and the vendored PlaneGCS only. FreeCAD 1.1.4 pins 3.4.0; 5.0.1 is the pinned vcpkg baseline's version (an older version needs a vcpkg version override, which the project's shallow vcpkg clones cannot resolve). Every Eigen 5 module used, `SparseCholesky` included, is MPL-2.0; MPL-2.0 is file-level copyleft: ship the licence text and keep Eigen's files as they are. |
+| PlaneGCS (FreeCAD's sketch solver, vendored as `third_party/planegcs`) | - | FreeCAD 1.1.4 (`4fd3bf32`) | `LGPL-2.1-or-later` | https://github.com/FreeCAD/FreeCAD/tree/1.1.4/src/Mod/Sketcher/App/planegcs | Compiled into `src/sketch` as the static library `ray_planegcs`. The 11 upstream files are unmodified (`third_party/planegcs/sync_upstream.py` checks them); a four-header shim (spike S7) stands in for FreeCAD's `Base/Console.h`, `FCConfig.h`, `SketcherGlobal.h` and `boost_graph_adjacency_list.hpp`. Licence text and file headers kept. See `third_party/planegcs/README.md`. |
+| Code adapted from PlaneGCS (`src/sketch/solver_iterate.cpp`, `.h`) | - | FreeCAD 1.1.4 | `LGPL-2.1-or-later` | https://github.com/FreeCAD/FreeCAD/blob/1.1.4/src/Mod/Sketcher/App/planegcs/GCS.cpp | Part of `src/sketch`: the partition of `System::initSolution`, the DogLeg loop of `System::solve_DL` (plus a cancellation check) and the drag iteration of `System::solve(SubSystem*, SubSystem*)` and `qp_eq.cpp` with sparse linear algebra (spike S11). Upstream copyright (Konstantinos Poulios, 2011) and the LGPL notice are in the file headers. |
 | FreeType | `freetype` | 2.15.0 | `FTL OR GPL-2.0-or-later` | https://freetype.org/ | Dependency of OCCT (default `freetype` feature), dynamically linked by OCCT. Used under the FreeType License (FTL). |
 | zlib | `zlib` | 1.4 | `Zlib` | https://www.zlib.net/ | Dependency of FreeType and libpng. |
 | libpng | `libpng` | 1.6.59 | `libpng-2.0` | https://github.com/pnggroup/libpng | Dependency of FreeType. |
@@ -48,8 +51,6 @@ record only; add a row to the table above in the same change that adds the depen
 
 | Component | Planned version | Licence (SPDX) | Needed by |
 |-|-|-|-|
-| Eigen | 3.4.0 | `MPL-2.0` | `sketch` (PlaneGCS) |
-| PlaneGCS (vendored from FreeCAD as `third_party/planegcs`) | FreeCAD 1.1.4 | `LGPL-2.1-or-later` | `sketch` |
 | FreeCAD `Adaptive.cpp` (adapted in `src/cam/ops/adaptive2d`) | FreeCAD main, 56062b61 or later | `LGPL-2.1-or-later` | `cam` |
 | Clipper2 | 2.0.1 | `BSL-1.0` | `cam` |
 | nlohmann/json | current vcpkg | `MIT` | plain-text formats |
