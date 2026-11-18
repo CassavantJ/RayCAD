@@ -36,6 +36,7 @@ void AppContext::setApp(api::IApp* app)
     }
     app_ = app;
     emit sessionChanged();
+    emit canOpenFilesChanged();
 }
 
 void AppContext::setGlass(bool on)
@@ -96,6 +97,32 @@ void AppContext::clearJob()
     jobTitle_.clear();
     jobProgress_ = -1;
     emit jobChanged();
+}
+
+void AppContext::showMessage(const QString& text, bool isError)
+{
+    message_ = text;
+    messageIsError_ = isError;
+    emit messageChanged();
+}
+
+void AppContext::dismissMessage()
+{
+    if (message_.isEmpty()) {
+        return;
+    }
+    message_.clear();
+    messageIsError_ = false;
+    emit messageChanged();
+}
+
+void AppContext::setCanOpenFiles(bool on)
+{
+    if (on == canOpenFiles_) {
+        return;
+    }
+    canOpenFiles_ = on;
+    emit canOpenFilesChanged();
 }
 
 QString AppContext::version() const
