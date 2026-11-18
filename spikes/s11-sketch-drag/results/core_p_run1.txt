@@ -1,0 +1,44 @@
+== core_p run 1, start 2026-11-18T12:02:18, affinity mask 0x4000, args: --rows 4 --cases 0,3 --modes 3 --steps 10 --reps 1 --methods 0x15
+Eigen detected cache sizes before pinning: L1 49152 L2 2097152 L3 37748736
+S11 sketch drag. Eigen 3.4.0, SIMD SSE, SSE2, cache sizes L1 32768 L2 1048576 L3 8388608 (fixed). methods 0x15, steps 10, reps 1, row tol 1.0e-06, accept tol 1.0e-09, mismatch tol 1.0e-09
+  full prepare(): 2.26 ms, 1 components
+
+-- rows 4 (200 curves), D1 slide (nearly constrained, last unit bottom.p2), FreeCAD default (solve from drag start) --
+  1200 parameters, 1195 constraint objects, DOF 5; free parameters 216, constraints touching them 363, rows kept 211 (of which dependent Equal rows 0); reduced system: DOF 5, redundant 0, conflicting 0, components 5, dragged point free 1, reduced system usable 1
+  begin: stateless build+diagnose median 314.80 ms; add temp constraint + initSolution 3.47 ms; reduced system setup 10.49 ms; prepare(reduced) 0.29 ms
+  STEP full, PlaneGCS System::solve (reference)     n=10   median   489.761 ms  p95   611.278  worst   611.278 | mismatch>1e-09: 0 (max 0) | fallbacks 0 | failed 0 | hash 60a9b9bad765ec78
+  STEP full, sparse                                 n=10   median     4.971 ms  p95     9.253  worst     9.253 | mismatch>1e-09: 0 (max 3.55e-15) | fallbacks 0 | failed 0 | hash cd4b22c4fd0aa98b
+  STEP reduced, sparse + fallback                   n=10   median     0.115 ms  p95     0.169  worst     0.169 | mismatch>1e-09: 0 (max 3.55e-15) | fallbacks 0 | failed 0 | hash 5f82fb4e00b9bea3
+  PROFILE full, sparse: 10 SQP calls, 4.60 iterations per call, xsize 586, csize 581; per call ms: total 5.226 = setup 0.261 + gradB 0.008 + jacA 0.394 + resA 0.041 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.221 + analyseK 0.479 + factorK 2.462 + kktSolve 0.462 + lambda 0.167 + linesearch 0.639 + bfgs 0.033
+  PROFILE reduced, sparse + fallback: 10 SQP calls, 4.00 iterations per call, xsize 11, csize 10; per call ms: total 0.034 = setup 0.008 + gradB 0.001 + jacA 0.004 + resA 0.001 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.000 + analyseK 0.002 + factorK 0.002 + kktSolve 0.007 + lambda 0.002 + linesearch 0.004 + bfgs 0.002
+  full prepare(): 2.35 ms, 1 components
+
+-- rows 4 (200 curves), D1 slide (nearly constrained, last unit bottom.p2), re-init every step --
+  1200 parameters, 1195 constraint objects, DOF 5; free parameters 216, constraints touching them 363, rows kept 211 (of which dependent Equal rows 0); reduced system: DOF 5, redundant 0, conflicting 0, components 5, dragged point free 1, reduced system usable 1
+  begin: stateless build+diagnose median 440.27 ms; add temp constraint + initSolution 3.61 ms; reduced system setup 14.49 ms; prepare(reduced) 0.28 ms
+  STEP full, PlaneGCS System::solve (reference)     n=10   median  1033.883 ms  p95  1271.954  worst  1271.954 | mismatch>1e-09: 0 (max 0) | fallbacks 0 | failed 0 | hash 57f84898b8c7093c
+  STEP full, sparse                                 n=10   median     9.325 ms  p95    16.040  worst    16.040 | mismatch>1e-09: 0 (max 1.42e-14) | fallbacks 0 | failed 0 | hash d09b4fc0ec51f79a
+  STEP reduced, sparse + fallback                   n=10   median     0.192 ms  p95     0.388  worst     0.388 | mismatch>1e-09: 0 (max 2.13e-14) | fallbacks 0 | failed 0 | hash c83220998c0154f3
+  PROFILE full, sparse: 10 SQP calls, 4.00 iterations per call, xsize 586, csize 581; per call ms: total 8.508 = setup 0.397 + gradB 0.014 + jacA 0.784 + resA 0.058 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.629 + analyseK 0.469 + factorK 4.295 + kktSolve 0.442 + lambda 0.183 + linesearch 1.112 + bfgs 0.046
+  PROFILE reduced, sparse + fallback: 10 SQP calls, 4.00 iterations per call, xsize 11, csize 10; per call ms: total 0.048 = setup 0.009 + gradB 0.001 + jacA 0.005 + resA 0.001 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.001 + analyseK 0.002 + factorK 0.005 + kktSolve 0.011 + lambda 0.003 + linesearch 0.007 + bfgs 0.003
+  full prepare(): 2.17 ms, 1 components
+
+-- rows 4 (200 curves), D4 loose (no distance dimensions, last unit bottom.p2), FreeCAD default (solve from drag start) --
+  1200 parameters, 1161 constraint objects, DOF 39; free parameters 852, constraints touching them 1005, rows kept 813 (of which dependent Equal rows 0); reduced system: DOF 39, redundant 0, conflicting 0, components 4, dragged point free 1, reduced system usable 1
+  begin: stateless build+diagnose median 303.24 ms; add temp constraint + initSolution 3.52 ms; reduced system setup 562.51 ms; prepare(reduced) 1.22 ms
+  STEP full, PlaneGCS System::solve (reference)     n=10   median   948.527 ms  p95   985.880  worst   985.880 | mismatch>1e-09: 0 (max 0) | fallbacks 0 | failed 0 | hash 6ce8b66891bcce5b
+  STEP full, sparse                                 n=10   median     9.481 ms  p95    16.020  worst    16.020 | mismatch>1e-09: 0 (max 5.58e-12) | fallbacks 0 | failed 0 | hash ce55465412bc497f
+  STEP reduced, sparse + fallback                   n=10   median     1.274 ms  p95     1.616  worst     1.616 | mismatch>1e-09: 0 (max 5.58e-12) | fallbacks 0 | failed 0 | hash bdc43f7d221ac38b
+  PROFILE full, sparse: 10 SQP calls, 10.00 iterations per call, xsize 586, csize 547; per call ms: total 10.623 = setup 0.235 + gradB 0.014 + jacA 0.743 + resA 0.078 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.375 + analyseK 0.624 + factorK 4.090 + kktSolve 2.974 + lambda 0.379 + linesearch 0.927 + bfgs 0.083
+  PROFILE reduced, sparse + fallback: 10 SQP calls, 10.00 iterations per call, xsize 202, csize 182; per call ms: total 1.130 = setup 0.079 + gradB 0.005 + jacA 0.177 + resA 0.029 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.027 + analyseK 0.025 + factorK 0.106 + kktSolve 0.353 + lambda 0.040 + linesearch 0.228 + bfgs 0.024
+  full prepare(): 2.04 ms, 1 components
+
+-- rows 4 (200 curves), D4 loose (no distance dimensions, last unit bottom.p2), re-init every step --
+  1200 parameters, 1161 constraint objects, DOF 39; free parameters 852, constraints touching them 1005, rows kept 813 (of which dependent Equal rows 0); reduced system: DOF 39, redundant 0, conflicting 0, components 4, dragged point free 1, reduced system usable 1
+  begin: stateless build+diagnose median 309.80 ms; add temp constraint + initSolution 3.44 ms; reduced system setup 484.22 ms; prepare(reduced) 1.19 ms
+  STEP full, PlaneGCS System::solve (reference)     n=10   median  1024.576 ms  p95  1677.467  worst  1677.467 | mismatch>1e-09: 0 (max 0) | fallbacks 0 | failed 0 | hash b9f0ccb27789d10a
+  STEP full, sparse                                 n=10   median    11.279 ms  p95    23.382  worst    23.382 | mismatch>1e-09: 0 (max 5.54e-13) | fallbacks 0 | failed 0 | hash 6f768916e7120536
+  STEP reduced, sparse + fallback                   n=10   median     1.461 ms  p95     2.199  worst     2.199 | mismatch>1e-09: 0 (max 5.54e-13) | fallbacks 0 | failed 0 | hash ccce8c84a03b1014
+  PROFILE full, sparse: 10 SQP calls, 10.00 iterations per call, xsize 586, csize 547; per call ms: total 12.258 = setup 0.265 + gradB 0.016 + jacA 1.004 + resA 0.082 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.416 + analyseK 0.414 + factorK 5.406 + kktSolve 2.990 + lambda 0.324 + linesearch 1.098 + bfgs 0.085
+  PROFILE reduced, sparse + fallback: 10 SQP calls, 10.00 iterations per call, xsize 202, csize 182; per call ms: total 1.306 = setup 0.078 + gradB 0.010 + jacA 0.246 + resA 0.031 + QR 0.000 + formQ 0.000 + formY 0.000 + nullspace 0.000 + formK 0.029 + analyseK 0.029 + factorK 0.116 + kktSolve 0.359 + lambda 0.063 + linesearch 0.280 + bfgs 0.027
+== end 2026-11-18T12:02:58
