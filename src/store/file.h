@@ -17,8 +17,15 @@ std::string connectionSettings(const IDocumentFile& file);
 // The local copy a read-only file was opened from, or "" for a live connection.
 std::string snapshotPath(const IDocumentFile& file);
 // The checks a snapshot copy passes before it is opened: header, PRAGMA integrity_check, every ref's commit id,
-// root manifest and feature objects. May roll back a hot journal copied with it.
-Status verifyCopy(const std::string& path);
+// root manifest and feature objects. May roll back a hot journal copied with it. With `upgradedFrom`, a copy in an
+// older format that registered migrations can upgrade is upgraded in place first and its old format stored there.
+Status verifyCopy(const std::string& path, int* upgradedFrom = nullptr);
+// The document's file id (meta table), "" if it has none or `file` is not a document file.
+std::string fileIdOf(const IDocumentFile& file);
+// IDocumentFile::compact with the age policy measured against `nowMs` instead of the clock (tests).
+struct CompactStats;
+Status compactAsOf(IDocumentFile& file, int keepMicroversionsDays, std::int64_t nowMs, JobContext& ctx,
+                   CompactStats* stats = nullptr);
 // How long a read-only opener waits for an idle moment to copy in (30 s; tests shorten it).
 void setSnapshotPatienceMs(std::int64_t ms) noexcept;
 

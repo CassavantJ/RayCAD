@@ -1,12 +1,17 @@
 # store: Native file, objects, commits, recovery journal, migrations. Allowed dependencies: PLAN.md section 1.1.
 add_library(ray_store STATIC
     store_module.cpp
+    compact.cpp
     file.cpp
     file_db.cpp
     file_util.cpp
+    journal.cpp
+    journal_io_posix.cpp
+    journal_io_win.cpp
     lock.cpp
     lock_posix.cpp
     lock_win.cpp
+    migrate.cpp
     objects.cpp
 )
 ray_module(ray_store DETERMINISTIC)

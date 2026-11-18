@@ -2,8 +2,10 @@
 // commits and refs, saved as one transaction, guarded by the lock file; read-only access through a verified copy.
 #include "file.h"
 
+#include "compact.h"
 #include "file_db.h"
 #include "lock.h"
+#include "migrate.h"
 #include "objects.h"
 
 #include <ray/document.h>
@@ -70,7 +72,8 @@ Error internalError(const char* what)
 
 // ---------- Checks shared by live files and snapshot copies ----------
 
-Status checkHeader(Db& db, int& version)
+// `allowOld`: an older format is accepted when registered migrations lead from it to kFormatVersion.
+Status checkHeader(Db& db, int& version, bool allowOld = false)
 {
     auto appId = db.queryInt("PRAGMA application_id");
     if (!appId) {
@@ -92,7 +95,7 @@ Status checkHeader(Db& db, int& version)
                         std::to_string(kFormatVersion) + "; update RayCAD to open it.",
                     "user_version " + std::to_string(*userVersion));
     }
-    if (*userVersion < 1) {
+    if (*userVersion < kFormatVersion && !(allowOld && canMigrate(version))) {
         return fail(ErrorCode::FormatError, "This document uses an old file format that cannot be read",
                     "user_version " + std::to_string(*userVersion));
     }
@@ -347,8 +350,9 @@ bool sameOwner(const LockState& a, const LockState& b)
 // descriptor of a file drops every fcntl lock this process holds on it, including the writer's SQLite lock.
 bool backupFromOpenWriter(const std::string& path, const std::string& copy, Status& result);
 
-// Copies the document to a local temp file while no save overlaps the copy, then verifies the copy.
-Result<std::string> takeSnapshot(const std::string& path)
+// Copies the document to a local temp file while no save overlaps the copy, then verifies the copy (migrating the
+// copy if the document has an older format; `upgradedFrom` then receives that format).
+Result<std::string> takeSnapshot(const std::string& path, int& upgradedFrom)
 {
     std::error_code ec;
     const auto dir = std::filesystem::temp_directory_path(ec) / "raycad-snapshots";
@@ -360,7 +364,7 @@ Result<std::string> takeSnapshot(const std::string& path)
     };
     if (Status backedUp; backupFromOpenWriter(path, copy, backedUp)) {
         if (backedUp) {
-            backedUp = verifyCopy(copy);
+            backedUp = verifyCopy(copy, &upgradedFrom);
         }
         if (!backedUp) {
             cleanup();
@@ -414,7 +418,7 @@ Result<std::string> takeSnapshot(const std::string& path)
         if (!consistent) {
             continue; // a save (or a new writer) overlapped the copy
         }
-        auto verified = verifyCopy(copy);
+        auto verified = verifyCopy(copy, &upgradedFrom);
         if (verified) {
             return copy;
         }
@@ -447,13 +451,20 @@ void setSnapshotPatienceMs(std::int64_t ms) noexcept
     gSnapshotPatienceMs = ms;
 }
 
-Status verifyCopy(const std::string& path)
+Status verifyCopy(const std::string& path, int* upgradedFrom)
 {
     try {
         Db db;
         RAY_TRY(db.open(path, SQLITE_OPEN_READWRITE));
         int version = 0;
-        RAY_TRY(checkHeader(db, version));
+        RAY_TRY(checkHeader(db, version, upgradedFrom != nullptr));
+        if (version < kFormatVersion) {
+            // A private copy of an older file: upgrade it in place (migrateInPlace verifies it again).
+            db.close();
+            RAY_TRY(migrateInPlace(path, version));
+            *upgradedFrom = version;
+            return {};
+        }
         RAY_TRY(checkIntegrity(db));
         RAY_TRY(checkSchema(db));
         auto refs = readRefs(db);
@@ -637,6 +648,9 @@ public:
                 }
                 auto commit = readCommit(db_, *next);
                 if (!commit) {
+                    if (!out.empty() && commit.error().code == ErrorCode::NotFound) {
+                        break; // compact() pruned the history from here on
+                    }
                     return tl::unexpected<Error>(commit.error());
                 }
                 next = commit->parents.empty() ? std::nullopt : std::optional<Hash256>(commit->parents.front());
@@ -718,9 +732,37 @@ public:
         }
     }
 
-    Status compact(int, JobContext&) override
+    Status compact(int keepMicroversionsDays, JobContext& ctx) override
     {
-        return fail(ErrorCode::Internal, "Compacting a document is not available yet", "IDocumentFile::compact: T-012");
+        return compactAsOf(keepMicroversionsDays, unixNowMs(), ctx, nullptr);
+    }
+
+    Status compactAsOf(int keepMicroversionsDays, std::int64_t nowMs, JobContext& ctx, CompactStats* stats)
+    {
+        try {
+            std::lock_guard<std::mutex> guard(mutex_);
+            RAY_TRY(requireWritable());
+            return compactDatabase(
+                db_, keepMicroversionsDays, nowMs, ctx, [this] { lock_->beginWrite(); }, [this] { lock_->endWrite(); },
+                stats);
+        } catch (const std::exception& e) {
+            return tl::unexpected<Error>(internalError(e.what()));
+        }
+    }
+
+    std::string fileId() const
+    {
+        try {
+            std::lock_guard<std::mutex> guard(mutex_);
+            Stmt stmt;
+            if (!stmt.prepare(db_, "SELECT value FROM meta WHERE key = 'file_id'")) {
+                return {};
+            }
+            auto rc = stmt.step();
+            return rc && *rc == SQLITE_ROW ? stmt.text(0) : std::string();
+        } catch (...) {
+            return {};
+        }
     }
 
     // Called once, right after a live open (lock order: gWritersMutex, then mutex_).
@@ -995,6 +1037,22 @@ std::string snapshotPath(const IDocumentFile& file)
     return impl(file).snapshot();
 }
 
+std::string fileIdOf(const IDocumentFile& file)
+{
+    const auto* found = dynamic_cast<const FileImpl*>(&file);
+    return found ? found->fileId() : std::string();
+}
+
+Status compactAsOf(IDocumentFile& file, int keepMicroversionsDays, std::int64_t nowMs, JobContext& ctx,
+                   CompactStats* stats)
+{
+    auto* found = dynamic_cast<FileImpl*>(&file);
+    if (!found) {
+        return fail(ErrorCode::InvalidArgument, "Not a RayCAD document file");
+    }
+    return found->compactAsOf(keepMicroversionsDays, nowMs, ctx, stats);
+}
+
 namespace {
 
 // Opens the document for writing; `lock` is the lock file this process has just created.
@@ -1005,12 +1063,29 @@ Result<std::unique_ptr<IDocumentFile>> openLive(const std::string& path, std::un
     // close, so a journal found now means the last session did not end cleanly (PLAN.md 4.2).
     const bool unclean = pathExists(path + "-journal");
     Db db;
-    RAY_TRY(db.open(path, SQLITE_OPEN_READWRITE));
-    sqlite3_busy_timeout(db.raw(), 2000);
-    RAY_TRY(db.exec("PRAGMA locking_mode = EXCLUSIVE"));
+    const auto connect = [&db, &path]() -> Status {
+        RAY_TRY(db.open(path, SQLITE_OPEN_READWRITE));
+        sqlite3_busy_timeout(db.raw(), 2000);
+        return db.exec("PRAGMA locking_mode = EXCLUSIVE");
+    };
+    RAY_TRY(connect());
     int version = 0;
     // Reads the header (rolling back a hot journal first, if there is one) before anything could write.
-    RAY_TRY(checkHeader(db, version));
+    RAY_TRY(checkHeader(db, version, true));
+    if (info) {
+        info->formatVersion = version;
+    }
+    if (version < kFormatVersion) {
+        // PLAN.md 4.4: upgrade with the connection closed (the lock file stays ours), then open the result.
+        db.close();
+        RAY_TRY(migrateFile(path, version));
+        RAY_TRY(connect());
+        int migrated = 0;
+        RAY_TRY(checkHeader(db, migrated));
+        if (info) {
+            info->migrated = true;
+        }
+    }
     auto journal = db.queryText("PRAGMA journal_mode = DELETE");
     if (!journal) {
         return tl::unexpected<Error>(journal.error());
@@ -1030,9 +1105,6 @@ Result<std::unique_ptr<IDocumentFile>> openLive(const std::string& path, std::un
     }
     RAY_TRY(checkSchema(db));
     lock->endWrite();
-    if (info) {
-        info->formatVersion = version;
-    }
     auto file = std::make_unique<FileImpl>(std::move(db), std::move(lock), std::string());
     file->registerWriter(path);
     return std::unique_ptr<IDocumentFile>(std::move(file));
@@ -1127,7 +1199,8 @@ Result<std::unique_ptr<IDocumentFile>> openFile(const std::string& path, OpenMod
         info->lock = toLockInfo(*holder);
         info->openedReadOnlyBecauseLocked = mode == OpenMode::ReadWrite;
     }
-    auto copy = takeSnapshot(path);
+    int upgradedFrom = -1;
+    auto copy = takeSnapshot(path, upgradedFrom);
     if (!copy) {
         return tl::unexpected<Error>(copy.error());
     }
@@ -1143,7 +1216,8 @@ Result<std::unique_ptr<IDocumentFile>> openFile(const std::string& path, OpenMod
         return tl::unexpected<Error>(st.error());
     }
     if (info) {
-        info->formatVersion = version;
+        info->formatVersion = upgradedFrom >= 0 ? upgradedFrom : version;
+        info->migrated = upgradedFrom >= 0;
     }
     return std::unique_ptr<IDocumentFile>(new FileImpl(std::move(db), nullptr, *copy));
 }
