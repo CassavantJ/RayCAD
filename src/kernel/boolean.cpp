@@ -16,6 +16,16 @@
 // (ShapeUpgrade_UnifySameDomain turned 10 of 496 valid results into invalid solids in spike S9).
 // Cancel: OCCT polls JobIndicator::UserBreak() during the boolean; a cancelled call returns Error{Cancelled}.
 //
+// IMMUTABLE INPUTS (PLAN.md section 7 rule 1). Non-destructive mode is not enough: on OCCT 8.0.1 Build() clears
+// the Free flag of both argument solids and SimplifyResult() adds pcurves to edges the result shares with the
+// arguments (their canonical bytes change), and UnifySameDomain can make a B-spline surface periodic in place. With
+// the caller's shapes shared between features and threads, that made a later operation on the same body give a
+// different result (the naming random test: 54 of 1,000 sequences differed between two identical runs, and one
+// reference resolved to a wrong face). So every attempt runs on fresh private copies of target and tool, geometry
+// included (boolean_internal.h PrivateCopy), and the history is mapped back to the caller's SubIds. Cost, measured
+// on the largest corpus body (nist_ctc_04, 517 faces): 9 to 11 ms and about 1.9 MB per copy against 280 to 340 ms
+// for the cut; the result keeps the copy's untouched faces instead of sharing the input's.
+//
 // TRANSFORMED. A rigid move only (core.h Xform). The geometry is copied and moved (BRepBuilderAPI_Transform with
 // copied geometry), so the result shares no TShape with the input and carries no location; every sub-shape is
 // reported Modified to its moved copy. The identity is a no-op and fails (section 7 rule 6).
@@ -25,7 +35,6 @@
 #include <BOPAlgo_Operation.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
-#include <BRepCheck_Analyzer.hxx>
 #include <NCollection_List.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
@@ -50,6 +59,8 @@ constexpr double kNoOpRelative = 1e-12;
 constexpr double kNoiseRelative = 1e-6;
 // Slack on the upper and lower volume bounds of check 3.
 constexpr double kBoundRelative = 1e-7;
+// Whether the private copies of the inputs get their own curves and surfaces too (see "IMMUTABLE INPUTS").
+constexpr bool kCopyGeometry = true;
 
 struct OpWords {
     const char* subject; // "The cut"
@@ -125,12 +136,21 @@ struct Attempt {
 Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, double targetVolume, double toolVolume,
                 JobContext& ctx, std::string_view where)
 {
+    // OCCT works on private copies (boolean_internal.h PrivateCopy): Build and SimplifyResult write into the TShapes
+    // of their arguments. Fresh copies for every attempt, so the retry without unification does not see what the
+    // first attempt wrote.
+    auto targetCopy = detail::privateCopy(target, kCopyGeometry, where);
+    if (!targetCopy)
+        return {tl::unexpected(targetCopy.error())};
+    auto toolCopy = detail::privateCopy(tool, kCopyGeometry, where);
+    if (!toolCopy)
+        return {tl::unexpected(toolCopy.error())};
     const OpWords words = wordsFor(op);
     BRepAlgoAPI_BooleanOperation maker;
     NCollection_List<TopoDS_Shape> arguments;
-    arguments.Append(detail::occt(target));
+    arguments.Append(detail::occt(targetCopy->shape));
     NCollection_List<TopoDS_Shape> tools;
-    tools.Append(detail::occt(tool));
+    tools.Append(detail::occt(toolCopy->shape));
     maker.SetArguments(arguments);
     maker.SetTools(tools);
     maker.SetOperation(occtOperation(op));
@@ -169,8 +189,12 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
 
     OpResult out;
     out.shape = detail::wrap(solids);
-    const std::array<const Shape*, 2> inputs{&target, &tool};
+    const std::array<const Shape*, 2> inputs{&targetCopy->shape, &toolCopy->shape};
     out.history = detail::buildHistory(maker, inputs, out.shape);
+    for (int input = 0; input < 2; ++input)
+        if (auto mapped = detail::remapSources(out.history, input, input == 0 ? *targetCopy : *toolCopy, where);
+            !mapped)
+            return {tl::unexpected(mapped.error())};
 
     bool toolContributes = false;
     for (const HistoryEntry& entry : out.history.entries)
@@ -304,8 +328,8 @@ Result<OpResult> transformed(const Shape& shape, const Xform& xform)
         for (const SubKind kind : {SubKind::Vertex, SubKind::Edge, SubKind::Face, SubKind::Solid})
             if (out.shape.count(kind) != shape.count(kind))
                 return tl::unexpected(kernelFailure("Moving the body changed its topology.", where));
-        if (!BRepCheck_Analyzer(maker.Shape()).IsValid()) {
-            if (BRepCheck_Analyzer(detail::occt(shape)).IsValid())
+        if (!detail::checkedValid(maker.Shape())) {
+            if (detail::checkedValid(detail::occt(shape)))
                 return tl::unexpected(kernelFailure("Moving the body made it invalid.", where));
             out.warnings.push_back("The body was already invalid before the move.");
         }

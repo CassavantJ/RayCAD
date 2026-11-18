@@ -23,7 +23,9 @@
 #include <Message_ProgressScope.hxx>
 #include <TopoDS_Shape.hxx>
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -57,6 +59,33 @@ private:
 Error cancelledError(std::string_view where);
 // Error{KernelFailure} with a user-presentable message.
 Error kernelFailure(std::string message, std::string_view where);
+
+// A private copy of an input Shape, for the OCCT algorithms that write into the TShapes they are given (PLAN.md
+// section 7 rule 1: a Shape never changes). Measured on OCCT 8.0.1 (tests/unit/kernel/immutability_test.cpp):
+// BRepAlgoAPI_BooleanOperation::Build clears the Free flag of its argument solids even in non-destructive mode, and
+// SimplifyResult (ShapeUpgrade_UnifySameDomain, safe input mode) adds pcurves to edges that the result shares with
+// the arguments, which changes the arguments' canonical bytes; UnifySameDomain also makes a B-spline surface periodic
+// in place when it merges faces across its seam. Fillets and chamfers write pcurves and tolerances into the shape too.
+// The copy has the same canonical sub-shape order as the input in practice (BRepBuilderAPI_Copy rebuilds every
+// container with its children in stored order), but the map is built and checked, never assumed.
+struct PrivateCopy {
+    Shape shape;                                                     // the copy
+    std::array<std::vector<std::uint32_t>, kSubKindCount> toInput{}; // copy SubId index -> input SubId index, per kind
+    bool identity = true;                                            // toInput maps every index to itself
+};
+inline constexpr std::uint32_t kNoInputIndex = 0xFFFFFFFFu;
+
+// Copies `input` with BRepBuilderAPI_Copy (new TShapes; with `copyGeometry` also new curves and surfaces) and builds
+// the SubId map back. KernelFailure if the copy's topology differs. May throw (call inside guarded()).
+Result<PrivateCopy> privateCopy(const Shape& input, bool copyGeometry, std::string_view where);
+
+// The input SubId of a SubId of the copy; empty if it has none.
+std::optional<SubId> inputSubId(const PrivateCopy& copy, SubId id);
+
+// Rewrites the sources of the entries of `history` whose inputIndex is `input` from the copy's SubIds to the input's,
+// then restores the canonical entry order (input, kind, index; buildHistory's Modified/Deleted before Generated is
+// kept by a stable sort). KernelFailure if a source has no input SubId.
+Status remapSources(ShapeHistory& history, int input, const PrivateCopy& copy, std::string_view where);
 
 // See "HISTORY NORMALISATION" above. `inputs[i]` must be the shapes the maker was given, in kernel.h input order.
 // May throw (call inside guarded()).

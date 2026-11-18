@@ -96,6 +96,11 @@ Error makeError(ErrorCode code, std::string message, std::string_view where);
 using GuardedThunk = void (*)(void*);
 bool runGuarded(GuardedThunk thunk, void* context, std::string& message) noexcept;
 
+// How many structured exceptions runGuarded() has caught in this process (always 0 off Windows, where nothing
+// catches them). A caught access violation inside OCCT may leave OCCT state corrupt, so the kernel's own checks
+// must keep OCCT from faulting in the first place; the tests use this count to prove that they do.
+std::uint64_t structuredExceptionCount() noexcept;
+
 // Runs `body` (returning a Result<T>) and turns anything it throws into ErrorCode::KernelFailure with
 // `where` as context. Every public kernel entry point runs its OCCT work through this.
 template <class F>
@@ -112,6 +117,17 @@ auto guarded(std::string_view where, F&& body) -> std::invoke_result_t<F&>
         return tl::unexpected(makeError(ErrorCode::KernelFailure, "The geometry kernel failed: " + message, where));
     return std::move(*result);
 }
+
+// ---------- Checking shapes OCCT made (shape_check.cpp) ----------
+// A cheap structural check of a shape that came out of an OCCT algorithm or a file, to run BEFORE
+// BRepCheck_Analyzer or other OCCT code that classifies points on its faces. OCCT 8.0.1 reads out of bounds on
+// some shapes that it should merely call invalid, which kills the process off Windows (shape_check.cpp says which).
+// Returns why the shape must be refused, or nothing if OCCT may look at it. May throw (call inside guarded()).
+std::optional<std::string> structuralFault(const TopoDS_Shape& shape);
+
+// BRepCheck_Analyzer(shape).IsValid(), but false without running BRepCheck when structuralFault() refuses the
+// shape. Every kernel check of a shape it did not build itself goes through this. May throw.
+bool checkedValid(const TopoDS_Shape& shape);
 
 // ---------- Shape <-> TopoDS_Shape ----------
 // Wraps an OCCT shape; a null TopoDS_Shape gives a null Shape. Builds the canonical maps, so it may throw:

@@ -1,8 +1,9 @@
 // fillet() and chamfer() (task T-095).
 //
 // Both run BRepFilletAPI_MakeFillet (constant radius, rational circles) or BRepFilletAPI_MakeChamfer (one distance,
-// symmetric) on a private copy of the input, so OCCT never writes into the caller's immutable TShapes (PLAN.md
-// section 7 rule 3); the copy's SubIds are mapped back to the input's before the history is returned.
+// symmetric) on a private copy of the input (boolean_internal.h PrivateCopy), so OCCT never writes into the caller's
+// immutable TShapes (PLAN.md section 7 rules 1 and 3); the copy's SubIds are mapped back to the input's before the
+// history is returned.
 //
 // PICKED EDGES. Every SubId must be an edge of the shape; duplicates are ignored. An edge must lie between exactly two
 // different faces that meet at an angle: a seam, an open boundary, a collapsed edge, a non-manifold edge or a smooth
@@ -41,7 +42,6 @@
 // longest whole call in the corpus stress test, size search included, took 0.5 s (Windows, release build).
 #include "boolean_internal.h"
 
-#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRep_Tool.hxx>
@@ -59,7 +59,6 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -81,7 +80,6 @@ constexpr int kRefineSteps = 4;
 constexpr int kSearchAttempts = static_cast<int>(kShrink.size()) + kRefineSteps;
 // At most this many edges are listed by number in a message.
 constexpr std::size_t kListedEdges = 8;
-constexpr std::uint32_t kNoIndex = std::numeric_limits<std::uint32_t>::max();
 
 enum class Blend { Fillet, Chamfer };
 
@@ -130,26 +128,23 @@ std::string edgeList(const std::vector<SubId>& edges)
 // Which way the volume must move.
 enum class Expect { Less, More, Either };
 
-// The input copied for OCCT, with the copy's SubIds mapped to the input's, and what the picked edges are.
+// The input copied for OCCT (boolean_internal.h PrivateCopy), and what the picked edges are.
 struct Prepared {
-    Shape copy;
-    std::array<std::vector<std::uint32_t>, detail::kSubKindCount> toInput; // copy index -> input index, per kind
-    std::vector<SubId> picked;                                             // input SubIds, sorted, unique
-    std::vector<TopoDS_Edge> edges;                                        // the picked edges in the copy
+    detail::PrivateCopy copied;
+    std::vector<SubId> picked;      // input SubIds, sorted, unique
+    std::vector<TopoDS_Edge> edges; // the picked edges in the copy
     double volume = 0.0;
     std::uint32_t solids = 0;
+    const Shape& copy() const { return copied.shape; }
 };
 
 // The input SubId of a sub-shape of the copy; empty if it is not one.
 std::optional<SubId> inputId(const Prepared& p, const TopoDS_Shape& sub)
 {
-    const auto id = detail::subIdOf(p.copy, sub);
+    const auto id = detail::subIdOf(p.copy(), sub);
     if (!id)
         return std::nullopt;
-    const std::uint32_t index = p.toInput[detail::kindSlot(id->kind)][id->index];
-    if (index == kNoIndex)
-        return std::nullopt;
-    return SubId{id->kind, index};
+    return detail::inputSubId(p.copied, *id);
 }
 
 // The distinct faces of `shape` that contain `edge` (ancestor map of the Shape).
@@ -198,52 +193,43 @@ Status checkEdges(const Shape& shape, const std::vector<SubId>& picked, const Wo
     return {};
 }
 
-// Copies the input and maps the copy back. May throw.
-Result<Prepared> prepare(const Shape& shape, std::vector<SubId> picked, std::string_view where)
+// A fresh private copy of `shape` with the picked edges found in it; the rest of `base` is kept. May throw.
+Result<Prepared> freshCopy(const Shape& shape, const Prepared& base, std::string_view where)
 {
     Prepared p;
-    p.picked = std::move(picked);
-    BRepBuilderAPI_Copy copier(detail::occt(shape), true, false);
-    if (!copier.IsDone() || copier.Shape().IsNull())
-        return tl::unexpected(kernelFailure("The body could not be copied for blending.", where));
-    p.copy = detail::wrap(copier.Shape());
-    for (std::size_t slot = 0; slot < detail::kSubKindCount; ++slot) {
-        const auto kind = static_cast<SubKind>(slot);
-        const detail::ShapeIndex& map = shape.impl->subs[slot];
-        std::vector<std::uint32_t>& table = p.toInput[slot];
-        table.assign(p.copy.count(kind), kNoIndex);
-        if (table.size() != static_cast<std::size_t>(map.Extent()))
-            return tl::unexpected(kernelFailure("Copying the body changed its topology.", where));
-        for (int j = 1; j <= map.Extent(); ++j) {
-            const auto id = detail::subIdOf(p.copy, copier.ModifiedShape(map.FindKey(j)));
-            if (!id || id->kind != kind || table[id->index] != kNoIndex)
-                return tl::unexpected(kernelFailure("Copying the body changed its topology.", where));
-            table[id->index] = static_cast<std::uint32_t>(j - 1);
-        }
-    }
-    const detail::ShapeIndex& inputEdges = shape.impl->subs[detail::kindSlot(SubKind::Edge)];
+    p.picked = base.picked;
+    p.volume = base.volume;
+    p.solids = base.solids;
+    auto copied = detail::privateCopy(shape, /*copyGeometry=*/true, where);
+    if (!copied)
+        return tl::unexpected(copied.error());
+    p.copied = std::move(*copied);
+    // The copy's edge whose input SubId is each picked one.
+    std::vector<std::uint32_t> toCopy(shape.count(SubKind::Edge), detail::kNoInputIndex);
+    const std::vector<std::uint32_t>& edgeMap = p.copied.toInput[detail::kindSlot(SubKind::Edge)];
+    for (std::uint32_t i = 0; i < edgeMap.size(); ++i)
+        toCopy[edgeMap[i]] = i;
+    const detail::ShapeIndex& copyEdges = p.copy().impl->subs[detail::kindSlot(SubKind::Edge)];
     for (const SubId& id : p.picked)
-        p.edges.push_back(TopoDS::Edge(copier.ModifiedShape(inputEdges.FindKey(static_cast<int>(id.index) + 1))));
-    p.volume = detail::solidVolume(detail::occt(shape));
-    p.solids = shape.count(SubKind::Solid);
+        p.edges.push_back(TopoDS::Edge(copyEdges.FindKey(static_cast<int>(toCopy[id.index]) + 1)));
     return p;
 }
 
-// Rewrites history sources from copy SubIds to input SubIds and restores canonical entry order (input, kind, index,
-// then Modified/Deleted before Generated, as buildHistory emits them).
+// Copies the input, maps the copy back and measures the input. May throw.
+Result<Prepared> prepare(const Shape& shape, std::vector<SubId> picked, std::string_view where)
+{
+    Prepared base;
+    base.picked = std::move(picked);
+    base.volume = detail::solidVolume(detail::occt(shape));
+    base.solids = shape.count(SubKind::Solid);
+    return freshCopy(shape, base, where);
+}
+
+// Rewrites history sources from copy SubIds to input SubIds (boolean_internal.h remapSources).
 Result<ShapeHistory> remapHistory(ShapeHistory history, const Prepared& p, std::string_view where)
 {
-    for (HistoryEntry& entry : history.entries) {
-        const std::uint32_t index = p.toInput[detail::kindSlot(entry.source.kind)][entry.source.index];
-        if (index == kNoIndex)
-            return tl::unexpected(kernelFailure("The blend history names an element the body does not have.", where));
-        entry.source.index = index;
-    }
-    std::stable_sort(history.entries.begin(), history.entries.end(), [](const HistoryEntry& a, const HistoryEntry& b) {
-        if (a.inputIndex != b.inputIndex)
-            return a.inputIndex < b.inputIndex;
-        return a.source < b.source;
-    });
+    if (auto ok = detail::remapSources(history, 0, p.copied, where); !ok)
+        return tl::unexpected(ok.error());
     return history;
 }
 
@@ -322,10 +308,13 @@ Failure failed(std::string message, std::string_view where)
     return Failure{kernelFailure(std::move(message), where), {}};
 }
 
-// One build at `value`. Never throws (the OCCT part runs in guarded()).
+// One build at `value`, on a fresh private copy of `shape`: OCCT's blend builders leave state on the shape they are
+// given, so a copy that the dry run of the contours or an earlier attempt of the size search used is never used again.
+// (With one copy for all of them, two of the 1,000 naming random sequences came out differently than with a fresh
+// copy each.) Never throws (the OCCT part runs in guarded()).
 template <class Maker>
-Attempt attempt(const Prepared& p, double value, Expect expect, const Words& words, JobContext& ctx,
-                std::string_view where)
+Attempt attempt(const Shape& shape, const Prepared& base, double value, Expect expect, const Words& words,
+                JobContext& ctx, std::string_view where)
 {
     Attempt out;
     if (ctx.cancel.cancelled()) {
@@ -333,7 +322,13 @@ Attempt attempt(const Prepared& p, double value, Expect expect, const Words& wor
         return out;
     }
     auto built = detail::guarded(where, [&]() -> Result<OpResult> {
-        Maker maker(detail::occt(p.copy));
+        auto fresh = freshCopy(shape, base, where);
+        if (!fresh) {
+            out.failure = Failure{fresh.error(), {}};
+            return tl::unexpected(fresh.error());
+        }
+        const Prepared& p = *fresh;
+        Maker maker(detail::occt(p.copy()));
         for (const TopoDS_Edge& edge : p.edges)
             addEdge(maker, value, edge);
         maker.Build();
@@ -375,7 +370,7 @@ Attempt attempt(const Prepared& p, double value, Expect expect, const Words& wor
                                  where);
             return tl::unexpected(out.failure->error);
         }
-        const std::array<const Shape*, 1> inputs{&p.copy};
+        const std::array<const Shape*, 1> inputs{&p.copy()};
         auto history = remapHistory(detail::buildHistory(maker, inputs, op.shape), p, where);
         if (!history) {
             out.failure = Failure{history.error(), {}};
@@ -490,7 +485,7 @@ Result<OpResult> blend(Blend kind, const Shape& shape, std::span<const SubId> ed
         Plan plan{std::move(*prepared), {}, Expect::Either};
         const Prepared& p = plan.prepared;
         // A dry run of the contours: OCCT builds them in Add(), before Build().
-        Maker maker(detail::occt(p.copy));
+        Maker maker(detail::occt(p.copy()));
         for (std::size_t i = 0; i < p.edges.size(); ++i) {
             addEdge(maker, value, p.edges[i]);
             if (maker.Contour(p.edges[i]) == 0)
@@ -510,7 +505,7 @@ Result<OpResult> blend(Blend kind, const Shape& shape, std::span<const SubId> ed
                     return tl::unexpected(kernelFailure("A blended edge is not an edge of the body.", where));
                 if (!std::binary_search(p.picked.begin(), p.picked.end(), *id))
                     plan.extra.push_back(*id);
-                const std::vector<TopoDS_Face> faces = facesOf(p.copy, edge);
+                const std::vector<TopoDS_Face> faces = facesOf(p.copy(), edge);
                 if (faces.size() != 2) {
                     other = true;
                     continue;
@@ -540,7 +535,7 @@ Result<OpResult> blend(Blend kind, const Shape& shape, std::span<const SubId> ed
     const Prepared& p = plan.prepared;
 
     ctx.progress.set(0.1, words.stage);
-    Attempt first = attempt<Maker>(p, value, plan.expect, words, ctx, where);
+    Attempt first = attempt<Maker>(shape, p, value, plan.expect, words, ctx, where);
     if (first.cancelled)
         return tl::unexpected(detail::cancelledError(where));
     if (first.result) {
@@ -566,7 +561,7 @@ Result<OpResult> blend(Blend kind, const Shape& shape, std::span<const SubId> ed
         if (!(size > kMinSize))
             break;
         ++tried;
-        Attempt trial = attempt<Maker>(p, size, plan.expect, words, ctx, where);
+        Attempt trial = attempt<Maker>(shape, p, size, plan.expect, words, ctx, where);
         if (trial.cancelled)
             return tl::unexpected(detail::cancelledError(where));
         ctx.progress.set(0.5 + 0.5 * tried / kSearchAttempts, "Finding a size that fits");
@@ -580,7 +575,7 @@ Result<OpResult> blend(Blend kind, const Shape& shape, std::span<const SubId> ed
         for (int step = 0; step < kRefineSteps; ++step) {
             const double size = 0.5 * (works + fails);
             ++tried;
-            Attempt trial = attempt<Maker>(p, size, plan.expect, words, ctx, where);
+            Attempt trial = attempt<Maker>(shape, p, size, plan.expect, words, ctx, where);
             if (trial.cancelled)
                 return tl::unexpected(detail::cancelledError(where));
             ctx.progress.set(0.5 + 0.5 * tried / kSearchAttempts, "Finding a size that fits");

@@ -17,7 +17,8 @@
 //      one process unsafe for meshing and not yet soak-tested for healing. One unit of work per body keeps the
 //      cancel granularity and the progress steps, and the result does not depend on thread count. A part used
 //      several times is sewn and healed once.
-//   5. Check every body with BRepCheck_Analyzer (an invalid body is kept, with a warning), then place each
+//   5. Check every body with BRepCheck_Analyzer, behind the structural pre-check of shape_check.cpp (an invalid
+//      body is kept, with a warning), then place each
 //      instance: a part's first use at the identity keeps its shapes, every other use gets its own copy with
 //      the transform applied to the geometry, so no two bodies share a TShape (meshing writes into TShapes).
 #include "io_occt.h"
@@ -27,7 +28,6 @@
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
-#include <BRepCheck_Analyzer.hxx>
 #include <BRepLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Builder.hxx>
@@ -941,7 +941,7 @@ Result<ImportResult> runImport(Format format, IoTask& task, const std::filesyste
                     body.shape = fixedShape;
             }
             task.report(healed, stage);
-            body.valid = BRepCheck_Analyzer(body.shape).IsValid();
+            body.valid = detail::checkedValid(body.shape);
             doneFaces += weight;
             task.report(to, stage);
         }
