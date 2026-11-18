@@ -213,16 +213,13 @@ TEST_CASE("a live owner whose heartbeat stops goes stale but still guards the fi
     CHECK(state->stale);
     CHECK_FALSE(state->ownerDead);
     CHECK(state->ageSec > static_cast<double>(kTestStaleMs) / 1000.0);
+    // The owner still has its lock file open (Windows: its handle denies delete sharing; POSIX: it holds the file's
+    // flock), so the lock is not broken while the owner process lives, however old its heartbeat ...
     auto broken = ray::store::breakStaleLock(path);
-#ifdef _WIN32
-    // The owner's handle denies delete sharing: the file cannot be renamed while the owner process lives.
     REQUIRE_FALSE(broken);
     CHECK(broken.error().code == ErrorCode::Locked);
-#else
-    // POSIX cannot stop the rename (the plan allows breaking a lock older than the limit) ...
-    REQUIRE(broken);
-#endif
-    // ... and either way SQLite's own exclusive lock, taken at the owner's open, still keeps a second writer out.
+    CHECK(exists(path + ".lock"));
+    // ... and SQLite's own exclusive lock, taken at the owner's open, would still keep a second writer out.
     OpenInfo info{};
     auto opened = IDocumentFile::open(path, OpenMode::ReadWrite, &info);
     if (opened) {

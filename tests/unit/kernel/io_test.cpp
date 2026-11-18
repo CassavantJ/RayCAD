@@ -442,6 +442,31 @@ TEST_CASE("importing the same file twice gives identical bodies", "[kernel][io]"
     }
 }
 
+TEST_CASE("imported bodies serialise canonically on the first round trip", "[kernel][io]")
+{
+    // T-004's guarantee, serialize(deserialize(b)) == b, must already hold for the bytes of a fresh import:
+    // content hashes and the derived-object cache key on them. Bodies placed by an assembly are the hard case.
+    for (const char* name : {"assembly_mm.step", "assembly_inch.step", "box_hole.step", "box_hole.igs",
+                             "colored_box_inch.igs", "loft.step", "loose_faces.step"}) {
+        const ImportResult imported = importOk(dataFile(name));
+        REQUIRE_FALSE(imported.bodies.empty());
+        for (std::size_t i = 0; i < imported.bodies.size(); ++i) {
+            INFO(name << " body " << i << " (" << imported.bodies[i].name << ")");
+            const Shape& body = imported.bodies[i].shape;
+            const std::vector<std::byte> first = serialize(body);
+            REQUIRE_FALSE(first.empty());
+            const Shape back = take(deserialize(first));
+            const std::vector<std::byte> second = serialize(back);
+            const auto mismatch = std::mismatch(first.begin(), first.end(), second.begin(), second.end());
+            INFO("sizes " << first.size() << " and " << second.size() << ", first difference at byte "
+                          << (mismatch.first - first.begin()));
+            const bool identical = first == second;
+            CHECK(identical);
+            CHECK(back.contentHash() == body.contentHash());
+        }
+    }
+}
+
 TEST_CASE("imports and exports run concurrently on several threads", "[kernel][io]")
 {
     TempDir dir;
@@ -591,6 +616,10 @@ TEST_CASE("broken, truncated and foreign files give an error, never a crash", "[
             CHECK(acceptable(importError(path, iges)));
         }
         // Random bytes in the middle of a valid file: an error or a result, never a crash or a hang.
+        // Only Windows contains a crash inside OCCT (runGuarded's structured-exception handler). On Linux and macOS
+        // these rounds pass because the import rejects models with dangling or unreadable entities before the
+        // transfer (io_import.cpp, damagedEntities). That is not a general guarantee: with more rounds, OCCT's
+        // IGES reader itself was seen to dereference null while loading a damaged file (IGESSolid_ToolLoop).
         std::mt19937 random(12345);
         for (int round = 0; round < 10; ++round) {
             std::vector<char> damaged = bytes;

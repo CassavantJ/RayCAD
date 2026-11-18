@@ -70,9 +70,22 @@ const QString kMidSize = QStringLiteral(RAY_CORPUS_DIR "/nist-pmi/nist_ctc_04_as
 
 constexpr int kOpenTimeoutMs = 120000;
 
+// Asked of a real, shown window: QQuickWindow::graphicsApi() only says what would be requested, and where the
+// platform has no OpenGL (the offscreen platform on Linux) Qt Quick then falls back to its software backend, so a
+// viewport pick would never be answered.
 bool rhiSceneGraph()
 {
-    return QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi());
+    static const bool rhi = [] {
+        QQuickWindow probe;
+        probe.resize(64, 64);
+        probe.show();
+        if (!QTest::qWaitForWindowExposed(&probe))
+            return false;
+        (void)probe.grabWindow(); // initialises the scene graph
+        const QSGRendererInterface* renderer = probe.rendererInterface();
+        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
+    }();
+    return rhi;
 }
 
 #define REQUIRE_RHI()                                                                                                  \

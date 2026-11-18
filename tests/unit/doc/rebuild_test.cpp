@@ -130,7 +130,10 @@ TEST_CASE("unchanged features report cacheHit and are not built again", "[doc][r
     // A rename changes no geometry: still all hits.
     auto renamed = std::make_shared<DocState>(*state);
     renamed->features[1].name = "Renamed";
-    for (const auto& r : env.rebuild(renamed)->reports) {
+    // Held in a variable: a range-for over env.rebuild(...)->reports would read the reports after the temporary
+    // result (the only owner) was released.
+    const auto renamedResult = env.rebuild(renamed);
+    for (const auto& r : renamedResult->reports) {
         CHECK(r.cacheHit);
     }
 }

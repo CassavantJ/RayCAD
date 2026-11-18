@@ -77,10 +77,11 @@ Result<naming::ElementMap> nameBody(const FeatureId& feature, const kernel::Shap
     return map;
 }
 
-// A shape in the form a restore gives: deserialize(serialize(shape)), and its BREP bytes. For bodies placed by a
-// STEP assembly, serialize(deserialize(b)) differs from b on the first round trip (it is stable from then on), so
-// a freshly imported shape is put through one round trip before it is stored or used. Then the stored object, the
-// restored shape and a re-imported shape all have the same bytes and contentHash().
+// A shape in the form a restore gives: deserialize(serialize(shape)), and its BREP bytes. Then the stored object,
+// the restored shape and a re-imported shape all have the same bytes and contentHash(). (This round trip was added
+// when kernel::serialize was not yet canonical on the first round trip for bodies placed by a STEP assembly; the
+// kernel now writes the read-back form itself, so it is kept only so the stored and the used shape are one object
+// of one form.)
 struct Canonical {
     kernel::Shape shape;
     std::vector<std::byte> bytes;

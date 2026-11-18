@@ -99,6 +99,8 @@ jobs:
 
       # Leak detection is off for now: Qt, Fontconfig and OpenCASCADE keep process-lifetime allocations
       # that LeakSanitizer reports, and no suppression list has been built yet.
+      # UBSan checks are built non-recoverable, so they cannot be suppressed at run time; the few third-party
+      # header findings that are not RayCAD's are turned off at compile time by cmake/ubsan_ignorelist.txt.
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen

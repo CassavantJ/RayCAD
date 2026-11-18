@@ -14,7 +14,8 @@ std::atomic<std::int64_t> gStaleMs{LockTiming{}.staleMs};
 
 // A lock file whose content cannot be parsed and whose owner is gone (it died between creating and writing it) is
 // treated as stale after this long. On Windows the owner's handle exists from the moment the file does, so "owner
-// gone" is certain at once; on POSIX the creator takes its flock a moment after creating the file.
+// gone" is certain at once. On POSIX the lock file normally appears complete and flocked (lock_posix.cpp), but on a
+// file system without hard links the creator takes its flock and writes a moment after creating the file.
 #ifdef _WIN32
 constexpr std::int64_t kUnreadableGraceMs = 0;
 #else
@@ -240,9 +241,17 @@ OwnedLock::OwnedLock(HeldPtr file, LockFields fields) : file_(std::move(file)), 
 Result<std::unique_ptr<OwnedLock>> OwnedLock::acquire(const std::string& docPath)
 {
     const std::string path = lockPathOf(docPath);
+    LockFields fields;
+    fields.user = currentUserName();
+    fields.host = currentHostName();
+    fields.pid = currentProcessId();
+    // "saving" until the open has finished: opening may roll back a hot journal, which changes the file.
+    fields.saving = true;
     for (int attempt = 0; attempt < 50; ++attempt) {
+        fields.sinceUnixMs = unixNowMs();
+        fields.heartbeatUnixMs = fields.sinceUnixMs;
         HeldPtr held;
-        auto outcome = os::createLockFile(path, held);
+        auto outcome = os::createLockFile(path, encodeLock(fields), held);
         if (!outcome) {
             return tl::unexpected<Error>(outcome.error());
         }
@@ -252,18 +261,6 @@ Result<std::unique_ptr<OwnedLock>> OwnedLock::acquire(const std::string& docPath
         if (*outcome == os::CreateOutcome::Retry) {
             sleepMs(10);
             continue;
-        }
-        LockFields fields;
-        fields.user = currentUserName();
-        fields.host = currentHostName();
-        fields.pid = currentProcessId();
-        fields.sinceUnixMs = unixNowMs();
-        fields.heartbeatUnixMs = fields.sinceUnixMs;
-        // "saving" until the open has finished: opening may roll back a hot journal, which changes the file.
-        fields.saving = true;
-        if (auto st = os::writeHeld(*held, encodeLock(fields)); !st) {
-            os::deleteHeld(std::move(held));
-            return tl::unexpected<Error>(st.error());
         }
         return std::unique_ptr<OwnedLock>(new OwnedLock(std::move(held), std::move(fields)));
     }
