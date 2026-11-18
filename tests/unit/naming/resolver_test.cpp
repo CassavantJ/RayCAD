@@ -43,7 +43,7 @@ std::unique_ptr<IResolver> resolverFor(const kernel::Shape& shape, BodyId body =
 
 Fingerprint lineAt(std::int64_t x)
 {
-    Fingerprint f = detail::emptyFingerprint();
+    Fingerprint f = naming::detail::emptyFingerprint();
     f.surface = static_cast<kernel::SurfaceType>(kernel::CurveType::Line);
     f.qCx = x;
     f.qArea = 50'000;
@@ -56,25 +56,25 @@ Fingerprint lineAt(std::int64_t x)
 // discriminators, so their names carry ordinals.
 ElementMap siblingEdges(std::int64_t middleX)
 {
-    detail::BodyFacts facts;
+    naming::detail::BodyFacts facts;
     facts.faceCount = 2;
-    Fingerprint a = detail::emptyFingerprint();
+    Fingerprint a = naming::detail::emptyFingerprint();
     a.surface = kernel::SurfaceType::Plane;
     a.qCz = 0;
     a.qAxisZ = 1'000'000;
     Fingerprint b = a;
     b.qCz = 100'000;
-    facts.faces = {detail::FaceFacts{0, a, {1}}, detail::FaceFacts{1, b, {0}}};
+    facts.faces = {naming::detail::FaceFacts{0, a, {1}}, naming::detail::FaceFacts{1, b, {0}}};
     facts.edgeCount = 3;
     const std::array<std::int64_t, 3> xs{0, middleX, 100'000};
     for (std::uint32_t i = 0; i < 3; ++i) {
-        detail::EdgeFacts e;
+        naming::detail::EdgeFacts e;
         e.index = i;
         e.fingerprint = lineAt(xs[i]);
         e.faces = {0, 1};
         facts.edges.push_back(e);
     }
-    return take(detail::assignNames(kImport, facts));
+    return take(naming::detail::assignNames(kImport, facts));
 }
 
 } // namespace
@@ -295,16 +295,16 @@ TEST_CASE("Malformed and unresolvable references are Broken and never exceptions
 
 TEST_CASE("Elements that cannot be told apart are never resolved", "[naming][resolver][ambiguous]")
 {
-    detail::BodyFacts facts;
+    naming::detail::BodyFacts facts;
     facts.faceCount = 3;
-    Fingerprint same = detail::emptyFingerprint();
+    Fingerprint same = naming::detail::emptyFingerprint();
     same.surface = kernel::SurfaceType::Plane;
     same.qAxisZ = 1'000'000;
     Fingerprint other = same;
     other.qCx = 70'000;
-    facts.faces = {detail::FaceFacts{0, same, {2}}, detail::FaceFacts{1, same, {2}},
-                   detail::FaceFacts{2, other, {0, 1}}};
-    const ElementMap map = take(detail::assignNames(kImport, facts));
+    facts.faces = {naming::detail::FaceFacts{0, same, {2}}, naming::detail::FaceFacts{1, same, {2}},
+                   naming::detail::FaceFacts{2, other, {0, 1}}};
+    const ElementMap map = take(naming::detail::assignNames(kImport, facts));
     const auto resolver = makeResolver({ResolverBody{kBody, map, kernel::Shape{}}});
     const TopoRef ref = resolver->makeRef(kBody, kernel::SubId{kernel::SubKind::Face, 0});
     REQUIRE(ref.names.size() == 1);

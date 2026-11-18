@@ -48,7 +48,7 @@ kernel::Shape sphere()
 }
 
 // Visiting orders for the test hook.
-detail::VisitOrder reversedOrder()
+naming::detail::VisitOrder reversedOrder()
 {
     return [](kernel::SubKind, std::uint32_t count) {
         std::vector<std::uint32_t> v(count);
@@ -57,7 +57,7 @@ detail::VisitOrder reversedOrder()
         return v;
     };
 }
-detail::VisitOrder shuffledOrder(std::uint32_t seed)
+naming::detail::VisitOrder shuffledOrder(std::uint32_t seed)
 {
     return [seed](kernel::SubKind kind, std::uint32_t count) {
         std::vector<std::uint32_t> v(count);
@@ -96,19 +96,19 @@ Census census(const kernel::Shape& shape, const ElementMap& map)
 }
 
 // Facts for the synthetic tests: faces only (no edges, no vertices) unless added.
-detail::BodyFacts faceFacts(const std::vector<Fingerprint>& fingerprints,
-                            const std::vector<std::vector<std::uint32_t>>& neighbours)
+naming::detail::BodyFacts faceFacts(const std::vector<Fingerprint>& fingerprints,
+                                    const std::vector<std::vector<std::uint32_t>>& neighbours)
 {
-    detail::BodyFacts facts;
+    naming::detail::BodyFacts facts;
     facts.faceCount = static_cast<std::uint32_t>(fingerprints.size());
     for (std::uint32_t i = 0; i < facts.faceCount; ++i)
-        facts.faces.push_back(detail::FaceFacts{i, fingerprints[i], neighbours[i]});
+        facts.faces.push_back(naming::detail::FaceFacts{i, fingerprints[i], neighbours[i]});
     return facts;
 }
 
 Fingerprint planeAt(std::int64_t x, std::int64_t area = 1'000'000)
 {
-    Fingerprint f = detail::emptyFingerprint();
+    Fingerprint f = naming::detail::emptyFingerprint();
     f.surface = kernel::SurfaceType::Plane;
     f.qCx = x;
     f.qArea = area;
@@ -140,9 +140,9 @@ TEST_CASE("Names do not depend on the order in which elements are visited", "[na
     const FeatureId feature = test::featureId(3);
     for (const kernel::Shape& shape : {holePlate4x4(), cube(), sphere()}) {
         const auto canonical = nameImported(feature, shape).serialize();
-        CHECK(detail::nameImported(feature, shape, reversedOrder()).serialize() == canonical);
+        CHECK(naming::detail::nameImported(feature, shape, reversedOrder()).serialize() == canonical);
         for (std::uint32_t seed = 1; seed <= 5; ++seed)
-            CHECK(detail::nameImported(feature, shape, shuffledOrder(seed)).serialize() == canonical);
+            CHECK(naming::detail::nameImported(feature, shape, shuffledOrder(seed)).serialize() == canonical);
     }
 }
 
@@ -228,9 +228,10 @@ TEST_CASE("Siblings are told apart by their surrounding faces before any ordinal
     const FeatureId feature = test::featureId(9);
     // Faces 0..3 have one and the same fingerprint; each touches a different one of faces 4..7.
     const Fingerprint same = planeAt(0);
-    detail::BodyFacts facts = faceFacts({same, same, same, same, planeAt(10), planeAt(20), planeAt(30), planeAt(40)},
-                                        {{4}, {5}, {6}, {7}, {0}, {1}, {2}, {3}});
-    const ElementMap map = take(detail::assignNames(feature, facts));
+    naming::detail::BodyFacts facts =
+        faceFacts({same, same, same, same, planeAt(10), planeAt(20), planeAt(30), planeAt(40)},
+                  {{4}, {5}, {6}, {7}, {0}, {1}, {2}, {3}});
+    const ElementMap map = take(naming::detail::assignNames(feature, facts));
     std::set<Hash256> names;
     Hash256 family{};
     for (std::uint32_t i = 0; i < 4; ++i) {
@@ -251,19 +252,19 @@ TEST_CASE("Siblings are told apart by their surrounding faces before any ordinal
     CHECK(map.family(family).size() == 4);
 
     // Visiting order does not matter here either.
-    detail::BodyFacts reversed = facts;
+    naming::detail::BodyFacts reversed = facts;
     std::reverse(reversed.faces.begin(), reversed.faces.end());
-    CHECK(take(detail::assignNames(feature, reversed)).serialize() == map.serialize());
+    CHECK(take(naming::detail::assignNames(feature, reversed)).serialize() == map.serialize());
 }
 
 TEST_CASE("Siblings with identical surroundings get ordinals by fingerprint", "[naming][import][siblings]")
 {
     const FeatureId feature = test::featureId(10);
     // Three edges on the same two faces and without vertices: one family, empty discriminators.
-    detail::BodyFacts facts = faceFacts({planeAt(0), planeAt(100)}, {{1}, {0}});
+    naming::detail::BodyFacts facts = faceFacts({planeAt(0), planeAt(100)}, {{1}, {0}});
     facts.edgeCount = 3;
     auto edge = [](std::uint32_t index, std::int64_t x) {
-        detail::EdgeFacts e;
+        naming::detail::EdgeFacts e;
         e.index = index;
         e.fingerprint = planeAt(x, 5000);
         e.fingerprint.surface = static_cast<kernel::SurfaceType>(kernel::CurveType::Line);
@@ -271,7 +272,7 @@ TEST_CASE("Siblings with identical surroundings get ordinals by fingerprint", "[
         return e;
     };
     facts.edges = {edge(0, 300), edge(1, 100), edge(2, 200)};
-    const ElementMap map = take(detail::assignNames(feature, facts));
+    const ElementMap map = take(naming::detail::assignNames(feature, facts));
     // Ordinal follows the centroid (x = 100, 200, 300), not the SubId.
     const std::array<std::uint32_t, 3> expectedOrdinal{3, 1, 2};
     for (std::uint32_t i = 0; i < 3; ++i) {
@@ -283,17 +284,17 @@ TEST_CASE("Siblings with identical surroundings get ordinals by fingerprint", "[
         CHECK(record->discriminator.empty());
     }
     std::reverse(facts.edges.begin(), facts.edges.end());
-    CHECK(take(detail::assignNames(feature, facts)).serialize() == map.serialize());
+    CHECK(take(naming::detail::assignNames(feature, facts)).serialize() == map.serialize());
 }
 
 TEST_CASE("A name issued alone differs from one issued as one of n", "[naming][import][siblings]")
 {
     const FeatureId feature = test::featureId(11);
     auto withEdges = [](std::vector<std::int64_t> xs) {
-        detail::BodyFacts facts = faceFacts({planeAt(0), planeAt(100)}, {{1}, {0}});
+        naming::detail::BodyFacts facts = faceFacts({planeAt(0), planeAt(100)}, {{1}, {0}});
         facts.edgeCount = static_cast<std::uint32_t>(xs.size());
         for (std::uint32_t i = 0; i < xs.size(); ++i) {
-            detail::EdgeFacts e;
+            naming::detail::EdgeFacts e;
             e.index = i;
             e.fingerprint = planeAt(xs[i], 5000);
             e.faces = {0, 1};
@@ -301,8 +302,8 @@ TEST_CASE("A name issued alone differs from one issued as one of n", "[naming][i
         }
         return facts;
     };
-    const ElementMap one = take(detail::assignNames(feature, withEdges({100})));
-    const ElementMap two = take(detail::assignNames(feature, withEdges({100, 200})));
+    const ElementMap one = take(naming::detail::assignNames(feature, withEdges({100})));
+    const ElementMap two = take(naming::detail::assignNames(feature, withEdges({100, 200})));
     const Hash256 alone = one.namesOf(kernel::SubId{kernel::SubKind::Edge, 0})[0];
     CHECK_FALSE(one.record(alone)->ambiguous());
     for (std::uint32_t i = 0; i < 2; ++i) {
@@ -318,8 +319,8 @@ TEST_CASE("Elements that tie on everything share a name that find() refuses", "[
 {
     const FeatureId feature = test::featureId(12);
     const Fingerprint same = planeAt(0);
-    const detail::BodyFacts facts = faceFacts({same, same, planeAt(50)}, {{2}, {2}, {0, 1}});
-    const ElementMap map = take(detail::assignNames(feature, facts));
+    const naming::detail::BodyFacts facts = faceFacts({same, same, planeAt(50)}, {{2}, {2}, {0, 1}});
+    const ElementMap map = take(naming::detail::assignNames(feature, facts));
     const Hash256 a = map.namesOf(kernel::SubId{kernel::SubKind::Face, 0})[0];
     const Hash256 b = map.namesOf(kernel::SubId{kernel::SubKind::Face, 1})[0];
     CHECK(a == b);
@@ -336,20 +337,20 @@ TEST_CASE("Elements that tie on everything share a name that find() refuses", "[
 TEST_CASE("Inconsistent facts and bad visiting orders are errors and never exceptions", "[naming][import]")
 {
     const FeatureId feature = test::featureId(13);
-    detail::BodyFacts facts = faceFacts({planeAt(0), planeAt(1)}, {{1}, {0}});
+    naming::detail::BodyFacts facts = faceFacts({planeAt(0), planeAt(1)}, {{1}, {0}});
     facts.faces[1].neighbours = {5};
-    CHECK_FALSE(detail::assignNames(feature, facts).has_value());
+    CHECK_FALSE(naming::detail::assignNames(feature, facts).has_value());
     facts = faceFacts({planeAt(0), planeAt(1)}, {{1}, {0}});
     facts.faces[1].index = 0;
-    CHECK_FALSE(detail::assignNames(feature, facts).has_value());
+    CHECK_FALSE(naming::detail::assignNames(feature, facts).has_value());
 
     const kernel::Shape shape = cube();
-    const detail::VisitOrder notAPermutation = [](kernel::SubKind, std::uint32_t count) {
+    const naming::detail::VisitOrder notAPermutation = [](kernel::SubKind, std::uint32_t count) {
         return std::vector<std::uint32_t>(count, 0);
     };
-    CHECK_FALSE(detail::gatherFacts(shape, notAPermutation).has_value());
+    CHECK_FALSE(naming::detail::gatherFacts(shape, notAPermutation).has_value());
     ElementMap map;
-    CHECK_NOTHROW(map = detail::nameImported(feature, shape, notAPermutation));
+    CHECK_NOTHROW(map = naming::detail::nameImported(feature, shape, notAPermutation));
     CHECK(map.size() == 0);
     CHECK_NOTHROW(map = nameImported(feature, kernel::Shape{}));
     CHECK(map.size() == 0);
@@ -378,7 +379,7 @@ TEST_CASE("Runtime of nameImported on a body with a few thousand faces", "[namin
     CHECK(c.elements == map.size());
     CHECK(c.shared == 0);
     CHECK(back.serialize() == bytes);
-    CHECK(detail::nameImported(feature, star, shuffledOrder(99)).serialize() == bytes);
+    CHECK(naming::detail::nameImported(feature, star, shuffledOrder(99)).serialize() == bytes);
 
     std::printf("[naming perf] star prism: %u faces, %u edges, %u vertices, %zu ambiguous\n",
                 star.count(kernel::SubKind::Face), star.count(kernel::SubKind::Edge),

@@ -22,7 +22,7 @@ namespace {
 
 Fingerprint sampleFingerprint()
 {
-    Fingerprint f = detail::emptyFingerprint();
+    Fingerprint f = naming::detail::emptyFingerprint();
     f.surface = kernel::SurfaceType::Plane;
     f.qArea = 1'000'000;
     f.qCx = 50'000;
@@ -106,15 +106,15 @@ TEST_CASE("Fingerprint::matches compares with a tolerance", "[naming][fingerprin
 
 TEST_CASE("Quantisation rounds to the 1e-4 mm grid and clamps", "[naming][fingerprint]")
 {
-    CHECK(detail::quantise(1.0, detail::kLengthQuantaPerMm) == 10'000);
-    CHECK(detail::quantise(-2.5, detail::kLengthQuantaPerMm) == -25'000);
-    CHECK(detail::quantise(0.00012, detail::kLengthQuantaPerMm) == 1);
-    CHECK(detail::quantise(0.00016, detail::kLengthQuantaPerMm) == 2);
-    CHECK(detail::quantise(std::numeric_limits<double>::quiet_NaN(), detail::kLengthQuantaPerMm) == 0);
-    CHECK(detail::quantise(1e300, detail::kLengthQuantaPerMm) == (std::int64_t{1} << 60));
-    CHECK(detail::quantise(-std::numeric_limits<double>::infinity(), detail::kLengthQuantaPerMm) ==
+    CHECK(naming::detail::quantise(1.0, naming::detail::kLengthQuantaPerMm) == 10'000);
+    CHECK(naming::detail::quantise(-2.5, naming::detail::kLengthQuantaPerMm) == -25'000);
+    CHECK(naming::detail::quantise(0.00012, naming::detail::kLengthQuantaPerMm) == 1);
+    CHECK(naming::detail::quantise(0.00016, naming::detail::kLengthQuantaPerMm) == 2);
+    CHECK(naming::detail::quantise(std::numeric_limits<double>::quiet_NaN(), naming::detail::kLengthQuantaPerMm) == 0);
+    CHECK(naming::detail::quantise(1e300, naming::detail::kLengthQuantaPerMm) == (std::int64_t{1} << 60));
+    CHECK(naming::detail::quantise(-std::numeric_limits<double>::infinity(), naming::detail::kLengthQuantaPerMm) ==
           -(std::int64_t{1} << 60));
-    CHECK(detail::quantise(0.7071067811865476, detail::kAxisQuanta) == 707'107);
+    CHECK(naming::detail::quantise(0.7071067811865476, naming::detail::kAxisQuanta) == 707'107);
 }
 
 TEST_CASE("An empty ElementMap answers every query safely", "[naming][map]")
@@ -155,8 +155,8 @@ TEST_CASE("ElementMap lookups agree with each other", "[naming][map]")
         CHECK(record->id == names[0]);
         CHECK(record->kind == sub.kind);
         CHECK(record->origin == feature);
-        CHECK(record->id == detail::nameId(*record));
-        CHECK(record->family == detail::familyId(record->kind, record->origin, record->role, record->parents));
+        CHECK(record->id == naming::detail::nameId(*record));
+        CHECK(record->family == naming::detail::familyId(record->kind, record->origin, record->role, record->parents));
         const std::string expectedRole = sub.kind == kernel::SubKind::Face   ? "import.face"
                                          : sub.kind == kernel::SubKind::Edge ? "import.edge"
                                                                              : "import.vertex";
