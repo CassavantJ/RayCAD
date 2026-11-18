@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include "app_context.h"
+#include "queued_call.h"
 #include "scene_controller.h"
 #include "theme_object.h"
 #include "units.h"
@@ -313,13 +314,11 @@ void SettingsObject::bind(std::shared_ptr<api::SettingsStore> store)
         if (QThread::currentThread() == self->thread()) {
             self->onStoreChanged(s, keys);
         } else {
-            QMetaObject::invokeMethod(
-                self.data(),
-                [self, s, keys] {
-                    if (self)
-                        self->onStoreChanged(s, keys);
-                },
-                Qt::QueuedConnection);
+            // The store changed on another thread: continue on this object's thread, through its event queue.
+            invokeQueued(self.data(), [self, s, keys] {
+                if (self)
+                    self->onStoreChanged(s, keys);
+            });
         }
     });
     refreshValues();

@@ -4,6 +4,7 @@
 #include "app_host.h"
 #include "app_options.h"
 #include "files.h"
+#include "queued_call.h"
 #include "scene_controller.h"
 #include "selection_model.h"
 #include "viewport_item.h"
@@ -201,7 +202,7 @@ int runApp(int argc, char** argv)
         [&] {
             if (!seen.exchange(true)) {
                 tFrame = msSinceProcessStart();
-                QMetaObject::invokeMethod(&app, onFirstFrame, Qt::QueuedConnection);
+                invokeQueued(&app, onFirstFrame);
             }
         },
         Qt::DirectConnection);

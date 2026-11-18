@@ -19,6 +19,7 @@ add_library(ray_ui STATIC
     app_host.h
     app_host.cpp
     scene_jobs.h
+    queued_call.h
     session_recovery.h
     session_recovery.cpp
     viewport_navigation.h

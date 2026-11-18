@@ -3,10 +3,11 @@
 // system (api::viewer::makeViewerJobs); with a session it is IApp::jobs().
 #pragma once
 
+#include "queued_call.h"
+
 #include <ray/api.h>
 
 #include <QtCore/QCoreApplication>
-#include <QtCore/QMetaObject>
 #include <QtCore/QObject>
 
 #include <functional>
@@ -15,14 +16,13 @@
 
 namespace ray::ui {
 
-// Posts to the Qt event loop of the thread that created it (the UI thread). Queued, never run inline.
+// Posts to the Qt event loop of the thread that created it (the UI thread). Queued, never run inline. Workers post
+// here (UiBridge::call, job continuations, the app's notifications): invokeQueued lets ThreadSanitizer see that the
+// closure is handed over through Qt's posted-event queue.
 class QtUiDispatcher final : public IUiDispatcher {
 public:
     QtUiDispatcher() : context_(std::make_unique<QObject>()) {}
-    void post(std::function<void()> fn) override
-    {
-        QMetaObject::invokeMethod(context_.get(), std::move(fn), Qt::QueuedConnection);
-    }
+    void post(std::function<void()> fn) override { invokeQueued(context_.get(), std::move(fn)); }
 
 private:
     std::unique_ptr<QObject> context_; // queued calls are dropped when the dispatcher goes

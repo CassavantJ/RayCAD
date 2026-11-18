@@ -46,6 +46,7 @@ add_subdirectory(ui/settings)
 add_subdirectory(ui/glass)
 add_subdirectory(ui/measure)
 add_subdirectory(ui/section)
+add_subdirectory(ui/dispatch)
 # (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
 # ---------- Sanitizer run options for every test ----------
