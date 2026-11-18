@@ -239,6 +239,16 @@ private:
     QPointF hoverPos_;
     std::optional<Vec3> hoverPoint_; // world point of the last hover hit
     QPointF hoverPointAt_;
+    // Qt Quick sends a hover again, at the same place, after frames while the cursor rests on the window. Picking
+    // again for it would ask for a frame and so for the next such hover: the view would never go idle. A hover is
+    // picked again only where the last hover pick was not made, or after something other than this item's hover
+    // picks and highlights asked the view for a frame (camera, scene, size: the picture under the cursor changed).
+    std::uint64_t viewChanges_ = 0;
+    bool ownRequest_ = false; // a frame request of this item's hover pick or highlight: not a view change
+    bool hoverPicked_ = false;
+    QPointF hoverPickedPos_;
+    std::uint8_t hoverPickedMask_ = 0;
+    std::uint64_t hoverPickedChanges_ = 0;
     // Camera transition.
     QTimer animTimer_;
     QElapsedTimer animClock_;

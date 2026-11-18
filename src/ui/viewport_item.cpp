@@ -263,7 +263,11 @@ ViewportItem::ViewportItem(QQuickItem* parent) : QQuickRhiItem(parent)
     rhiAvailable_ = QSGRendererInterface::isApiRhiBased(QQuickWindow::graphicsApi());
     // Told when an ancestor moves or resizes it, so glass panels can map onto it again (T-016).
     setFlag(ItemObservesViewport);
-    front_ = render::makeHostedViewport([this] { update(); });
+    front_ = render::makeHostedViewport([this] {
+        if (!ownRequest_)
+            ++viewChanges_;
+        update();
+    });
     animTimer_.setInterval(kTickMs);
     animTimer_.setTimerType(Qt::PreciseTimer);
     connect(&animTimer_, &QTimer::timeout, this, &ViewportItem::animationTick);
@@ -298,6 +302,8 @@ void ViewportItem::componentComplete()
 void ViewportItem::geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry)
 {
     QQuickRhiItem::geometryChange(newGeometry, oldGeometry);
+    if (newGeometry.size() != oldGeometry.size())
+        ++viewChanges_; // the picture under a resting cursor moves
     emit scenePlacementChanged();
 }
 
@@ -648,12 +654,20 @@ void ViewportItem::updateHighlight()
         return;
     }
     const std::vector<render::PickHit> hits = selection_->hits();
+    // A highlight changes no pick answer (the picking ID buffer has none).
+    ownRequest_ = true;
     front_->setHighlight(hits, selection_->hover());
+    ownRequest_ = false;
 }
 
 void ViewportItem::requestHover(QPointF pos)
 {
     hoverPos_ = pos;
+    if (hoverPicked_ && pos == hoverPickedPos_ && pickMask() == hoverPickedMask_ &&
+        viewChanges_ == hoverPickedChanges_) {
+        hoverWanted_ = false; // picked here already (or being picked), with the picture as it is now
+        return;
+    }
     hoverWanted_ = true;
     if (!hoverInFlight_)
         sendHover();
@@ -668,7 +682,12 @@ void ViewportItem::sendHover()
     hoverWanted_ = false;
     hoverInFlight_ = true;
     const QPointF pos = hoverPos_;
+    hoverPicked_ = true;
+    hoverPickedPos_ = pos;
+    hoverPickedMask_ = pickMask();
+    hoverPickedChanges_ = viewChanges_;
     QPointer<ViewportItem> self(this);
+    ownRequest_ = true;
     front_->pick(int(std::floor(pos.x())), int(std::floor(pos.y())), pickMask(),
                  [self, pos](std::optional<render::PickHit> hit) {
                      if (!self)
@@ -682,14 +701,18 @@ void ViewportItem::sendHover()
                      }
                      if (self->drag_.action == DragAction::None && self->selection_)
                          self->selection_->setHover(hit);
+                     else
+                         self->hoverPicked_ = false; // the answer was not used: pick again at the next hover
                      if (self->hoverWanted_)
                          self->sendHover();
                  });
+    ownRequest_ = false;
 }
 
 void ViewportItem::clearHover()
 {
     hoverWanted_ = false;
+    hoverPicked_ = false;
     hoverPoint_.reset();
     if (selection_)
         selection_->setHover(std::nullopt);
