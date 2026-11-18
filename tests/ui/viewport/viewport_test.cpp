@@ -9,7 +9,8 @@
 //   - the selection filters (faces, edges, vertices, bodies), Ctrl/Shift, box select and Esc
 //   - tree to view and view to tree selection, and the visibility toggle
 //   - a frame that only answers a pick leaves the image as it was
-//   - no UI-thread stall over 50 ms while a mid-size corpus file imports; no frame while idle for 1 s
+//   - no UI-thread stall over 50 ms while a mid-size corpus file imports; no frame while idle for 1 s, nor for a
+//     hover repeated at the same place (Qt Quick's while the cursor rests on the window)
 //   - Esc abandons an import at once; errors show as a message; dropping a file opens it
 //   - SceneController::syncFromDocument (the T-017/T-019 seam) lists features and bodies
 #include "app_context.h"
@@ -1008,6 +1009,32 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; i
     QTest::qWait(1000);
     CHECK(w.view()->viewport()->info().framesRendered == frames);
     CHECK(swapped == 0);
+
+    // While the cursor rests on the window, Qt Quick sends the hover again, at the same place, after frames. The
+    // view picks a place once: the same hover again neither picks nor draws (picking would ask for a frame, and so
+    // for the next such hover, for ever), until the picture under the cursor changes.
+    const QPointF centre = w.frameCentre();
+    w.hover(centre); // Qt Quick's own repeated hovers now come here too, not where the real cursor is
+    const QPointF at = w.view()->mapFromScene(centre);
+    const auto hoverAgain = [&] {
+        QHoverEvent e(QEvent::HoverMove, at, w.view()->mapToGlobal(at), at);
+        QCoreApplication::sendEvent(w.view(), &e);
+    };
+    hoverAgain();
+    QTest::qWait(300);
+    const render::ViewportInfo rested = w.view()->viewport()->info();
+    swapped = 0;
+    for (int i = 0; i < 5; ++i) {
+        hoverAgain();
+        QTest::qWait(100);
+    }
+    CHECK(w.view()->viewport()->info().framesRendered == rested.framesRendered);
+    CHECK(swapped == 0);
+    // After a camera change the same place is picked again (the picking ID buffer is drawn anew for it).
+    w.view()->orbitBy(10, 0);
+    hoverAgain();
+    CHECK(QTest::qWaitFor([&] { return w.view()->viewport()->info().pickBufferRenders > rested.pickBufferRenders; },
+                          3000));
 }
 
 TEST_CASE("Esc abandons an import at once; a failed open shows a message; a dropped file opens", "[open]")
