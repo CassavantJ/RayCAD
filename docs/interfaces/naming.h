@@ -23,7 +23,8 @@ struct TopoName {
     // Siblings share (kind, origin, role, parents). They are told apart first by `discriminator`:
     // the sorted names of the faces around the element that are not among its parents. May be empty.
     std::vector<Hash256> discriminator;
-    std::uint32_t ordinal;        // last resort, among siblings with an identical discriminator; by fingerprint sort
+    std::uint32_t ordinal;        // last resort, among siblings with an identical discriminator; by fingerprint sort.
+                                  // 0 = not needed; 1-based when used, so ambiguous() == (ordinal != 0)
     std::uint32_t siblingCount;   // hashed into id. A name issued alone differs from one issued as 1 of n.
     Hash256 family;               // hash(kind, origin, role, parents); NOT part of id
     bool ambiguous() const;       // true if this name needed the ordinal; such a name is trusted only while the
@@ -51,9 +52,10 @@ public:
     const TopoName* record(const Hash256& nameId) const;               // null if not issued in this build
     std::span<const Hash256> family(const Hash256& familyId) const;    // member names issued in this build
     Fingerprint fingerprintOf(kernel::SubId) const;
-    std::size_t size() const;
+    std::size_t size() const;                                          // number of named sub-shapes
     std::vector<std::byte> serialize() const;                       // canonical, deterministic
     static Result<ElementMap> deserialize(std::span<const std::byte>);
+    struct Impl; std::shared_ptr<const Impl> impl;   // opaque, immutable, shared by copies; null = empty map
 };
 
 // Lineage of the CURRENT build: when a named element is split, merged or deleted, record it.
@@ -77,7 +79,8 @@ struct NamingInput {
 struct NamingOutput { ElementMap map; std::vector<LineageEvent> lineage; };
 Result<NamingOutput> propagate(const NamingInput&);
 
-// Names for a history-free import: role "import.<kind>", ordinal from canonical order, plus fingerprint.
+// Names for a history-free import: role "import.<kind>", derived from geometry and adjacency, never from
+// sub-shape order (PLAN.md 3.3 rule 5), plus fingerprint.
 ElementMap nameImported(FeatureId importFeature, const kernel::Shape&);
 // Re-import or replace-geometry: match old names to the new shape by fingerprint + adjacency.
 struct RematchResult { ElementMap map; std::vector<LineageEvent> lineage; std::vector<Hash256> unmatched; };

@@ -5,6 +5,7 @@
 #include <ray/kernel.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -34,6 +35,19 @@ Result<Shape> makeHolePlate(int rows, int cols);
 // A compound of a 10 x 10 x 10 box and a planar "bow tie" face at z = 50 whose outer wire crosses itself at
 // (5, 5, 50). BRepMesh leaves that face without triangles. Its face SubId is the last one (index 6).
 Result<Shape> makeBodyWithUnmeshableFace();
+
+// A plate from (0, 0, 0) to `size` with a vertical through hole of `radius` at each (x, y) of `centres`, all cut
+// in one BRepAlgoAPI_Cut (task T-007).
+Result<Shape> makePlateWithHoles(Vec3 size, double radius, std::span<const Vec2> centres);
+
+// A prism of height `height` over a star polygon with `points` outer corners at radius `outer` alternating with
+// inner corners at radius `inner`: 2 * points side faces plus two caps (task T-007, a body with many faces).
+Result<Shape> makeStarPrism(int points, double outer, double inner, double height);
+
+// The same solid with the faces of every shell listed in a different order (a permutation chosen by `seed`).
+// The faces, edges and vertices are the very same TShapes, so the geometry is bit-identical, but the
+// canonical SubId order differs. The input must be a solid (task T-007).
+Result<Shape> reorderFaces(const Shape& solid, std::uint64_t seed);
 
 // Does to the shape's TShapes, in place, what later operations do to shared TShapes: meshes it (adds
 // triangulations and polygons, sets the Modified flag) and adds it into a compound (clears its Free flag).
