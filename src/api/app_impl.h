@@ -42,7 +42,28 @@ struct DocEntry {
     std::shared_ptr<FileSource> fileSource;
     std::shared_ptr<doc::IObjectSource> objects; // od.objects, then the file
     std::atomic<int> busy{0};                    // app jobs using the document (close refuses meanwhile)
-    std::mutex saveMutex;                        // one save at a time
+    std::mutex saveMutex;                        // one save at a time; an import into the document holds it too
+    // Recovery journal (od.journal): made under journalMutex, from the UI thread or a worker.
+    std::mutex journalMutex;
+    bool journalOff = false;                       // a journal write failed: no journal until a save-as
+    std::unique_ptr<store::IDocumentFile> backing; // never-saved document: the file its journal belongs to
+    std::string backingPath;
+};
+
+// A journal made on a worker before (or for) a document: for a never-saved document with its backing file.
+struct JournalSlot {
+    std::unique_ptr<store::IRecoveryJournal> journal;
+    std::unique_ptr<store::IDocumentFile> backing;
+    std::string backingPath;
+    std::optional<Error> error; // why there is no journal (reported as a warning)
+};
+
+// What a document is built from: its object pool, the chain the rebuilder reads (pool, then the file), the rebuilder.
+struct DocParts {
+    std::shared_ptr<doc::ObjectPool> pool;
+    std::shared_ptr<FileSource> fileSource;
+    std::shared_ptr<doc::IObjectSource> chain;
+    std::shared_ptr<doc::IRebuilder> rebuilder;
 };
 
 // Keeps busy > 0 while a job uses a document.
@@ -71,6 +92,10 @@ private:
 };
 
 enum class ExportFormat { Step, Iges, Stl };
+
+// Deletes a .raycad file with its SQLite journal and lock file (PLAN.md 4.1, 4.3), ignoring errors. Only for backing
+// files of never-saved documents, which no user ever sees.
+void removeDocumentFiles(const std::string& path);
 
 class AppImpl;
 std::unique_ptr<IActionRegistry> makeActionRegistry(AppImpl& app);
@@ -106,6 +131,9 @@ public:
     void setConfirmHook(ConfirmHook hook) override;
     std::vector<RecentFile> recentFiles() const override { return recent_->list(); }
     std::string userDataDir() const override { return userDataDir_; }
+    std::vector<RecoveryInfo> pendingRecoveries() const override;
+    JobHandle<OpenDocument*> recover(const RecoveryInfo&) override;
+    Status discardRecovery(const RecoveryInfo&) override;
     std::vector<JobStatus> activeJobs() const override;
     void cancelJob(std::uint64_t id) override;
     int subscribe(AppListener) override;
@@ -147,8 +175,28 @@ public:
     // UI thread: executes a command on the document (recovery-journal seam), returning the new state.
     Result<doc::DocStatePtr> execute(DocEntry& entry, const doc::Command& command);
     Status undo(DocEntry& entry, bool redo);
-    // UI thread: close (the busy check is the caller's).
-    void closeEntry(DocEntry* entry);
+    // UI thread: close (the busy check is the caller's). `keepJournal`: leave the journal (and backing file) for
+    // recovery at the next start instead of deleting it.
+    void closeEntry(DocEntry* entry, bool keepJournal = false);
+
+    // ---- Recovery journal (recovery.cpp) ----
+    Result<OpenDocument*> recoverWork(const RecoveryInfo& info, JobContext& ctx); // on a worker
+    bool journaling() const { return !userDataDir_.empty(); }
+    std::string unsavedDir() const;
+    // Any thread: a backing file in unsavedDir() and its journal, starting from `base`.
+    JournalSlot startUnsavedJournal(doc::DocStatePtr base);
+    // Any thread: makes the journal of a never-saved document at its first change (base: its state() now).
+    // Returns the error to warn about, if it could not.
+    std::optional<Error> ensureJournal(DocEntry& entry);
+    // UI thread: a journal write failed: recovery is off for the document (until a save-as), with a warning.
+    void journalFailed(DocEntry& entry, const Error& error);
+    void journalFailedLocked(DocEntry& entry, const Error& error); // the caller holds entry.journalMutex
+    void warn(DocEntry& entry, std::string message);
+    // UI thread: closes and deletes a never-saved document's backing file.
+    void dropBacking(DocEntry& entry);
+    // Any thread: the parts of a document over `file` (may be null), and a document from them.
+    Result<DocParts> makeParts(store::IObjectStore* file);
+    std::unique_ptr<doc::Document> makeDocumentFrom(const DocParts& parts, doc::DocStatePtr initial);
 
 private:
     struct TrackedJob {
@@ -169,7 +217,20 @@ private:
     // UI thread. Takes ownership of `file` (may be null) and makes the document.
     Result<DocEntry*> addEntry(std::unique_ptr<store::IDocumentFile> file, doc::DocStatePtr initial, std::string path,
                                std::string title, bool readOnly, std::optional<store::LockInfo> lock);
-    void emit(AppEvent::Kind kind, std::string documentId);
+    struct NewEntry {
+        std::unique_ptr<store::IDocumentFile> file;
+        doc::DocStatePtr initial;
+        std::string path, title;
+        bool readOnly = false;
+        std::optional<store::LockInfo> lock;
+        JournalSlot journal;
+        std::optional<DocParts> parts;           // made already (recovery); else made over `file`
+        std::unique_ptr<doc::Document> document; // made already (recovery); else made from `initial`
+        bool modified = false;
+        std::vector<std::string> warnings;
+    };
+    Result<DocEntry*> addEntry(NewEntry entry);
+    void emit(AppEvent::Kind kind, std::string documentId, std::string message = {});
     void jobProgress(std::uint64_t id, double fraction, std::string_view stage);
     void jobEnded(std::uint64_t id);
     std::string untitledName();

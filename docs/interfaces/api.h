@@ -1,7 +1,8 @@
 // RayCAD interface contract: application API (the one API everything goes through)
 // Module: src/api   Depends on: core, doc, cam, lib, sim, post, store
 // Status: PLAN DRAFT, revised by T-017 (asynchronous open/save, several open documents, app events and jobs,
-// AppOptions/makeApp for the GUI, HeadlessApp; CAM, libraries and post are null until M2).
+// AppOptions/makeApp for the GUI, HeadlessApp; CAM, libraries and post are null until M2); crash recovery wired in
+// (a recovery journal per document, pendingRecoveries/recover/discardRecovery, Warning events).
 //
 // The UI, the command palette, keyboard shortcuts, scripts (v2) and the MCP server (v2) all call this
 // and nothing else. Built-in features and operations are registered through the same registries a
@@ -81,14 +82,35 @@ struct OpenDocument {
     std::unique_ptr<store::IDocumentFile> file;         // null until saved
     std::shared_ptr<doc::ObjectPool> objects;           // imported BREP objects (written into `file` by save)
     std::unique_ptr<doc::Document> document;
-    std::unique_ptr<store::IRecoveryJournal> journal;   // null in M1: T-012 implements the journal
+    // The crash-recovery journal (PLAN.md 4.2): every executed command, undo, redo and imported object since the
+    // last save. Null for a read-only document, when nothing is persisted (AppOptions::userDataDir ""), and for a
+    // never-saved document until its first change (it then journals into a backing file, see IApp::newDocument).
+    // After a journal write failed it is switched off (a Warning event says so) and stays so until a save-as.
+    std::unique_ptr<store::IRecoveryJournal> journal;
+    // Set after a recovery whose state is not the file's head although document->dirty() is false (a journalled
+    // undo past the last save): show the document as modified while `modified || document->dirty()`. Cleared by save.
+    bool modified = false;
+    std::vector<std::string> warnings;                  // the messages of the Warning events about this document
+};
+
+// A journal left by a session that ended without saving or closing (a crash, a kill, a power cut).
+struct RecoveryInfo {
+    std::string id;                                     // the journal's path: the key for recover/discardRecovery
+    std::string filePath;                               // the .raycad document (for `unsaved`, its backing file)
+    bool unsaved = false;                               // never saved by the user: recovers as an untitled document
+    std::string title;                                  // the file name without folder, or "Untitled"
+    std::size_t steps = 0;                              // journalled changes (commands, undos, redos, snapshots)
+    std::int64_t lastWriteMs = 0;                       // ms since 1970
+    bool damagedTail = false;                           // the last record was torn: the changes before it recover
 };
 
 // Delivered on the UI thread, posted through the dispatcher (never inside the call that caused it).
 struct AppEvent {
-    enum class Kind { DocumentOpened, DocumentClosed, ActiveDocumentChanged, DocumentSaved, JobsChanged, RecentFilesChanged };
+    enum class Kind { DocumentOpened, DocumentClosed, ActiveDocumentChanged, DocumentSaved, JobsChanged, RecentFilesChanged,
+                      Warning };
     Kind kind;
     std::string documentId;                             // empty for JobsChanged and RecentFilesChanged
+    std::string message;                                // Warning: user-presentable text (also in OpenDocument::warnings)
 };
 using AppListener = std::function<void(const AppEvent&)>;
 
@@ -121,12 +143,19 @@ public:
     virtual std::vector<OpenDocument*> documents() = 0;                // in the order they were opened
     virtual OpenDocument* findDocument(std::string_view id) = 0;
     // A new, empty, unsaved document that becomes active. templateId "" is the default (inch); others NotFound.
+    // Never-saved documents (this one, and STEP/IGES opens) are protected by the journal too: at their first change
+    // the app creates a backing .raycad file in <user data dir>/unsaved/ that holds no version and exists only for the
+    // journal (OpenDocument::path stays empty; save still asks for a name, and save-as deletes the backing file).
     virtual Result<OpenDocument*> newDocument(std::string_view templateId) = 0;
     // .raycad: opens the file (read-only with OpenDocument::lock set when another session holds it) and rebuilds
     // from the stored objects; a file this app has open already is just made active. STEP/IGES (.step .stp .p21
     // .iges .igs): a new unsaved document with one import feature. The result becomes active. Errors: NotFound
     // (no such file), FormatError/FormatTooNew (not a RayCAD file, damaged, newer), InvalidArgument (unknown
     // file type), the kernel's import errors, Cancelled.
+    // A .raycad file with changes from a session that ended unexpectedly is NOT opened: open fails with Locked
+    // ("... recover or discard them first") and pendingRecoveries() lists the journal (match RecoveryInfo::filePath);
+    // open succeeds once recover() or discardRecovery() dealt with it. Opened read-write, a document starts its
+    // journal at once; read-only documents have none.
     virtual JobHandle<OpenDocument*> open(const std::string& path) = 0;
     // Imports a STEP/IGES file into the document as one undoable import feature.
     virtual JobHandle<std::monostate> importFile(OpenDocument&, const std::string& path) = 0;
@@ -135,9 +164,23 @@ public:
     // InvalidArgument unless `overwrite` (then it must be a RayCAD file nobody has open). A read-only document can
     // only be saved as a new file (Locked otherwise). Edits made while the save runs stay dirty.
     virtual JobHandle<std::monostate> save(OpenDocument&, std::optional<std::string> saveAsPath = {}, bool overwrite = false) = 0;
-    // Closes without saving (asking about unsaved changes is the caller's business). Locked while a job of the
-    // app is using the document (a save, an import, an export).
+    // Closes without saving (asking about unsaved changes is the caller's business) and deletes its recovery
+    // journal: call it for a clean close and for "don't save", not when the user cancelled closing. Locked while a
+    // job of the app is using the document (a save, an import, an export). The app's destructor, by contrast, keeps
+    // the journals of documents with unsaved changes, so they are offered at the next start.
     virtual Status close(OpenDocument&) = 0;
+
+    // ---- Crash recovery (PLAN.md 4.2) ----
+    // Journals no running session has open, newest first; empty when nothing is persisted. Call at start-up.
+    virtual std::vector<RecoveryInfo> pendingRecoveries() const = 0;
+    // Opens the document read-write (breaking its lock if the owner is provably dead or the lock is stale: the user
+    // asked for the recovery), restores the journalled objects and replays the journal; the document becomes active
+    // and keeps journalling. If replay stopped early, a Warning ("N of M changes recovered: ...") is raised.
+    // An `unsaved` document recovers untitled (path empty). Errors: NotFound (journal or file gone), Locked (the file
+    // is open in a live session, or in this app), InvalidArgument (the file was saved again after the journal began).
+    virtual JobHandle<OpenDocument*> recover(const RecoveryInfo&) = 0;
+    // Deletes the journal (and an `unsaved` document's backing file): the user declined. Locked if it is in use.
+    virtual Status discardRecovery(const RecoveryInfo&) = 0;
 
     virtual void setConfirmHook(ConfirmHook) = 0;
     // Most recent first, at most 20; persisted per user in <user data dir>/recent-files.json. Thumbnails are empty

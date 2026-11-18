@@ -8,6 +8,7 @@ add_library(ray_api STATIC
     describe.cpp
     files.cpp
     json.cpp
+    recovery.cpp
     registry.cpp
     schema.cpp
     search.cpp

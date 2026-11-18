@@ -6,8 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -35,6 +37,11 @@ constexpr const char* kUsage =
     "                                     open FILE first (optional), invoke the action and print its result JSON;\n"
     "                                     --yes approves changes to toolpaths or G-code requested by a script or\n"
     "                                     agent caller, --save saves the active document afterwards\n"
+    "  recover --list                     list the changes left by sessions that ended without saving (JSON)\n"
+    "  recover <file|id> [-o <out.raycad>] [--overwrite]\n"
+    "                                     replay them and save (in place, or to -o; -o is required for a\n"
+    "                                     document that was never saved)\n"
+    "  recover --discard <file|id>        delete them\n"
     "\n"
     "exit codes: 0 ok, 1 failed, 2 usage error, 3 invalid argument, 4 not found, 5 cancelled or declined,\n"
     "            6 locked, 7 not a valid or supported file\n"
@@ -123,12 +130,24 @@ struct Args {
     double chordTol = 0.01;
     int limit = 0;
     int threads = 0;
-    bool overwrite = false, yes = false, save = false;
+    bool overwrite = false, yes = false, save = false, list = false, discard = false;
 };
 
 class Session {
 public:
     explicit Session(int threads) : app_(ray::api::makeHeadlessApp({}, threads)) {}
+    // What the CLI did not save is not kept: every document is closed, which deletes its recovery journal.
+    ~Session()
+    {
+        if (!app_) {
+            return;
+        }
+        for (ray::api::OpenDocument* od : app_->documents()) {
+            (void)app_->close(*od);
+        }
+    }
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
     ray::api::HeadlessApp* app() { return app_.get(); }
 
     // Opens and rebuilds; notes a read-only open on stderr.
@@ -171,6 +190,75 @@ public:
 private:
     std::unique_ptr<ray::api::HeadlessApp> app_;
 };
+
+// The pending recovery named by `which`: its id (journal path) or its document's path.
+std::optional<ray::api::RecoveryInfo> findRecovery(Session& s, const std::string& which)
+{
+    const auto key = [](const std::string& p) {
+        std::error_code ec;
+        const std::filesystem::path fs(std::u8string(reinterpret_cast<const char8_t*>(p.data()), p.size()));
+        auto canonical = std::filesystem::weakly_canonical(std::filesystem::absolute(fs, ec), ec);
+        return ec ? fs.lexically_normal() : canonical;
+    };
+    for (const auto& info : s.app()->pendingRecoveries()) {
+        if (info.id == which || key(info.filePath) == key(which)) {
+            return info;
+        }
+    }
+    return std::nullopt;
+}
+
+int cmdRecover(Session& s, const Args& a)
+{
+    if (a.list) {
+        std::string out = "[";
+        bool first = true;
+        for (const auto& info : s.app()->pendingRecoveries()) {
+            out += std::string(first ? "" : ",") + "{\"damagedTail\":" + (info.damagedTail ? "true" : "false") +
+                   ",\"filePath\":" + quoted(info.filePath) + ",\"id\":" + quoted(info.id) +
+                   ",\"lastWriteMs\":" + std::to_string(info.lastWriteMs) + ",\"steps\":" + std::to_string(info.steps) +
+                   ",\"title\":" + quoted(info.title) + ",\"unsaved\":" + (info.unsaved ? "true" : "false") + "}";
+            first = false;
+        }
+        printLine(out + "]");
+        return 0;
+    }
+    if (a.positional.size() != 2) {
+        return usageError("recover needs --list, or a file (or journal id), optionally with --discard or -o");
+    }
+    auto info = findRecovery(s, a.positional[1]);
+    if (!info) {
+        return report(Error{ErrorCode::NotFound, "There are no changes to recover for " + a.positional[1], {}});
+    }
+    if (a.discard) {
+        if (auto st = s.app()->discardRecovery(*info); !st) {
+            return report(st.error());
+        }
+        printLine("discarded " + info->filePath);
+        return 0;
+    }
+    if (info->unsaved && a.output.empty()) {
+        return usageError("this document was never saved: recover it with -o <out.raycad>");
+    }
+    auto od = s.app()->wait(s.app()->recover(*info));
+    if (!od) {
+        return report(od.error());
+    }
+    for (const std::string& w : (*od)->warnings) {
+        std::fprintf(stderr, "raycad-cli: warning: %s\n", w.c_str());
+    }
+    if (auto st = s.app()->waitForBuild(**od); !st) {
+        return report(st.error());
+    }
+    // The recovered changes are saved: in place, or to -o.
+    auto saved = a.output.empty() ? s.app()->wait(s.app()->save(**od))
+                                  : s.app()->wait(s.app()->save(**od, a.output, a.overwrite));
+    if (!saved) {
+        return report(saved.error());
+    }
+    s.describe(**od, true);
+    return 0;
+}
 
 int cmdImport(Session& s, const Args& a)
 {
@@ -377,6 +465,10 @@ int run(std::vector<std::string> argv)
             a.yes = true;
         } else if (arg == "--save") {
             a.save = true;
+        } else if (arg == "--list") {
+            a.list = true;
+        } else if (arg == "--discard") {
+            a.discard = true;
         } else if (arg.size() > 1 && arg[0] == '-' && arg[1] == '-') {
             return usageError("unknown option " + arg);
         } else {
@@ -392,7 +484,7 @@ int run(std::vector<std::string> argv)
         return 0;
     }
     if (command != "import" && command != "info" && command != "hash" && command != "export" && command != "actions" &&
-        command != "invoke") {
+        command != "invoke" && command != "recover") {
         return usageError("unknown command '" + command + "'");
     }
     Session s(a.threads);
@@ -414,6 +506,9 @@ int run(std::vector<std::string> argv)
     }
     if (command == "actions") {
         return cmdActions(s, a);
+    }
+    if (command == "recover") {
+        return cmdRecover(s, a);
     }
     return cmdInvoke(s, a);
 }

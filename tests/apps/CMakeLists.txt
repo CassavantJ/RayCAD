@@ -21,3 +21,6 @@ ray_cli_test(raycad_cli_roundtrip_small --step "${CMAKE_SOURCE_DIR}/tests/unit/k
 ray_cli_test(raycad_cli_roundtrip_corpus
              --step "${CMAKE_SOURCE_DIR}/tests/corpus/files/nist-pmi/nist_ctc_04_asme1_rd_geometry.stp")
 ray_cli_test(raycad_cli_errors --errors)
+# Crash recovery: the api tests' helper is killed mid-session, then raycad-cli recover lists, replays or discards.
+ray_cli_test(raycad_cli_recovery --recovery --helper "$<TARGET_FILE:ray_api_helper>"
+             --step "${CMAKE_SOURCE_DIR}/tests/unit/kernel/data/box_hole.step")

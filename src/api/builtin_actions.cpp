@@ -73,7 +73,7 @@ Value documentResult(const OpenDocument& od)
     }
     if (od.document) {
         out.set("stateHash", Value::string(od.document->state()->stateHash().hex()));
-        out.set("dirty", Value::boolean(od.document->dirty()));
+        out.set("dirty", Value::boolean(od.document->dirty() || od.modified));
     }
     return out;
 }
@@ -431,7 +431,7 @@ Status registerBuiltinActions(AppImpl& app)
                     return tl::unexpected<Error>(entry.error());
                 }
                 OpenDocument& od = (*entry)->od;
-                if (od.document->dirty() && !args->boolOr("discardChanges", false)) {
+                if ((od.document->dirty() || od.modified) && !args->boolOr("discardChanges", false)) {
                     return fail(ErrorCode::InvalidArgument,
                                 "'" + od.title + "' has unsaved changes; save it, or pass discardChanges");
                 }

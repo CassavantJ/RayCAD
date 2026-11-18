@@ -5,9 +5,12 @@
 // Work that takes time (opening, importing, saving, exporting) runs as a job on a worker; the short steps that touch
 // a document (creating it, executing a command, switching its file) hop to the UI thread through UiBridge.
 //
-// Recovery journal (T-012): OpenDocument::journal stays null in M1. The seams where it plugs in are marked
-// "JOURNAL SEAM" below: append after every executed command (and undo/redo), markSaved after a save, discard on
-// close.
+// Recovery journal (PLAN.md 4.2, store.h IRecoveryJournal; the recovery side is in recovery.cpp): a document opened
+// read-write starts its journal at open; a never-saved one at its first change, into a backing file in
+// <user data dir>/unsaved. Every executed command, undo and redo is appended on the UI thread right after it
+// succeeded, imported objects before their command; save calls markSaved then markClean; close() discards the
+// journal; the app's destructor keeps the journals of documents with unsaved changes. A failed append switches the
+// journal off for that document with a warning, and work goes on.
 #include "app_impl.h"
 
 #include <algorithm>
@@ -15,6 +18,11 @@
 #include <new>
 #include <system_error>
 #include <thread>
+
+namespace ray::store::detail {
+// Defined in src/store/journal.cpp (declared in its private journal.h): where journals live; "" = the default.
+void setRecoveryDir(const std::string& utf8Dir);
+} // namespace ray::store::detail
 
 namespace ray::api::detail {
 
@@ -88,6 +96,11 @@ Status AppImpl::init(AppOptions options, std::unique_ptr<QueueDispatcher> owned)
     }
     userDataDir_ = resolveUserDataDir(options.userDataDir);
     recent_ = std::make_unique<RecentFiles>(userDataDir_);
+    if (journaling()) {
+        // Journals live in <user data dir>/recovery (store.h). The store has no public setting for the folder, so the
+        // app names it through the store's own hook; for the platform default it is the store's default anyway.
+        store::detail::setRecoveryDir(fromFsPath(toFsPath(userDataDir_) / "recovery"));
+    }
     actions_ = makeActionRegistry(*this);
     if (auto st = registerBuiltinActions(*this); !st) {
         return withContext(st.error(), "registering the built-in actions");
@@ -123,7 +136,8 @@ AppImpl::~AppImpl()
         for (auto& w : waits) {
             w();
         }
-        // 2. Close every document; a rebuild still running reads no file after this.
+        // 2. Close every document; a rebuild still running reads no file after this. Unsaved changes keep their
+        //    journal, so the next start offers them for recovery.
         std::vector<DocEntry*> entries;
         {
             std::lock_guard<std::mutex> lock(docsMutex_);
@@ -132,7 +146,8 @@ AppImpl::~AppImpl()
             }
         }
         for (DocEntry* e : entries) {
-            closeEntry(e);
+            const bool unsaved = e->od.modified || (e->od.document && e->od.document->dirty());
+            closeEntry(e, unsaved);
         }
         // 3. The job system (if ours) cancels and waits for the remaining jobs (rebuilds).
         ownedJobs_.reset();
@@ -239,26 +254,68 @@ Result<DocEntry*> AppImpl::addEntry(std::unique_ptr<store::IDocumentFile> file, 
                                     std::string path, std::string title, bool readOnly,
                                     std::optional<store::LockInfo> lock)
 {
+    NewEntry e;
+    e.file = std::move(file);
+    e.initial = std::move(initial);
+    e.path = std::move(path);
+    e.title = std::move(title);
+    e.readOnly = readOnly;
+    e.lock = std::move(lock);
+    return addEntry(std::move(e));
+}
+
+Result<DocParts> AppImpl::makeParts(store::IObjectStore* file)
+{
+    DocParts parts;
+    parts.pool = doc::makeObjectPool();
+    parts.fileSource = std::make_shared<FileSource>(file);
+    if (!parts.pool) {
+        return fail(ErrorCode::Internal, "Out of memory while creating a document");
+    }
+    parts.chain = doc::makeObjectChain({parts.pool, parts.fileSource});
+    parts.rebuilder = doc::makeRebuilder(*jobs_, featureTypes_, parts.chain);
+    if (!parts.chain || !parts.rebuilder) {
+        return fail(ErrorCode::Internal, "Out of memory while creating a document");
+    }
+    return parts;
+}
+
+std::unique_ptr<doc::Document> AppImpl::makeDocumentFrom(const DocParts& parts, doc::DocStatePtr initial)
+{
+    return doc::makeDocument(*dispatcher_, *jobs_, parts.rebuilder, commands_, std::move(initial));
+}
+
+Result<DocEntry*> AppImpl::addEntry(NewEntry e)
+{
+    if (!e.parts) {
+        auto parts = makeParts(e.file.get());
+        if (!parts) {
+            return tl::unexpected<Error>(parts.error());
+        }
+        e.parts = std::move(*parts);
+    }
+    if (!e.document) {
+        e.document = makeDocumentFrom(*e.parts, std::move(e.initial));
+    }
+    if (!e.document) {
+        return fail(ErrorCode::Internal, "Out of memory while creating a document");
+    }
     auto entry = std::make_unique<DocEntry>();
     OpenDocument& od = entry->od;
     od.id = Uuid::generate().toString();
-    od.path = std::move(path);
-    od.title = std::move(title);
-    od.readOnly = readOnly;
-    od.lock = std::move(lock);
-    od.objects = doc::makeObjectPool();
-    entry->fileSource = std::make_shared<FileSource>(file.get());
-    entry->objects = doc::makeObjectChain({od.objects, entry->fileSource});
-    auto rebuilder = doc::makeRebuilder(*jobs_, featureTypes_, entry->objects);
-    if (!od.objects || !entry->objects || !rebuilder) {
-        return fail(ErrorCode::Internal, "Out of memory while creating a document");
-    }
-    od.document = doc::makeDocument(*dispatcher_, *jobs_, std::move(rebuilder), commands_, std::move(initial));
-    if (!od.document) {
-        return fail(ErrorCode::Internal, "Out of memory while creating a document");
-    }
-    od.file = std::move(file);
-    // JOURNAL SEAM (T-012): open or create the recovery journal for od.file's id here (od.journal).
+    od.path = std::move(e.path);
+    od.title = std::move(e.title);
+    od.readOnly = e.readOnly;
+    od.lock = std::move(e.lock);
+    od.objects = e.parts->pool;
+    od.document = std::move(e.document);
+    od.file = std::move(e.file);
+    od.journal = std::move(e.journal.journal);
+    od.modified = e.modified;
+    entry->fileSource = e.parts->fileSource;
+    entry->objects = e.parts->chain;
+    entry->backing = std::move(e.journal.backing);
+    entry->backingPath = std::move(e.journal.backingPath);
     entry->key = od.path.empty() ? std::string() : pathKey(od.path);
     DocEntry* raw = entry.get();
     {
@@ -268,6 +325,13 @@ Result<DocEntry*> AppImpl::addEntry(std::unique_ptr<store::IDocumentFile> file, 
     }
     emit(AppEvent::Kind::DocumentOpened, raw->od.id);
     emit(AppEvent::Kind::ActiveDocumentChanged, raw->od.id);
+    if (e.journal.error) {
+        raw->journalOff = true;
+        warn(*raw, "Crash recovery is off for '" + raw->od.title + "': " + e.journal.error->message);
+    }
+    for (std::string& w : e.warnings) {
+        warn(*raw, std::move(w));
+    }
     return raw;
 }
 
@@ -287,7 +351,7 @@ Result<OpenDocument*> AppImpl::newDocument(std::string_view templateId)
     }
 }
 
-void AppImpl::closeEntry(DocEntry* entry)
+void AppImpl::closeEntry(DocEntry* entry, bool keepJournal)
 {
     if (entry == nullptr) {
         return;
@@ -308,11 +372,23 @@ void AppImpl::closeEntry(DocEntry* entry)
         }
     }
     const std::string id = owned->od.id;
-    // JOURNAL SEAM (T-012): the user closed without saving: discard the journal (owned->od.journal) here.
     owned->fileSource->detach();
     owned->od.document.reset();
-    owned->od.journal.reset();
+    {
+        std::lock_guard<std::mutex> journalLock(owned->journalMutex);
+        if (owned->od.journal && !keepJournal) {
+            if (auto st = owned->od.journal->discard(); !st) {
+                log(LogLevel::Warn, "api", "The recovery journal could not be deleted: " + st.error().message);
+            }
+        }
+        owned->od.journal.reset(); // without discard() the journal is kept for the next start
+    }
     owned->od.file.reset();
+    if (keepJournal) {
+        owned->backing.reset();
+    } else {
+        dropBacking(*owned);
+    }
     owned.reset();
     emit(AppEvent::Kind::DocumentClosed, id);
     if (activeChanged) {
@@ -350,9 +426,20 @@ ConfirmHook AppImpl::confirmHook() const
 // ---------- Commands ----------
 Result<doc::DocStatePtr> AppImpl::execute(DocEntry& entry, const doc::Command& command)
 {
+    // A never-saved document starts its journal at its first change, from the state before it.
+    if (auto error = ensureJournal(entry)) {
+        journalFailed(entry, *error);
+    }
     auto result = entry.od.document->execute(command);
     if (result) {
-        // JOURNAL SEAM (T-012): entry.od.journal->append(*entry.od.document->undoCommand()) here.
+        std::lock_guard<std::mutex> lock(entry.journalMutex);
+        if (entry.od.journal && !entry.journalOff) {
+            // The command as the document executed it (canonical arguments).
+            const std::optional<doc::Command> executed = entry.od.document->undoCommand();
+            if (auto st = entry.od.journal->append(executed ? *executed : command, *result); !st) {
+                journalFailedLocked(entry, st.error());
+            }
+        }
     }
     return result;
 }
@@ -363,8 +450,18 @@ Status AppImpl::undo(DocEntry& entry, bool redo)
     if (redo ? !d.canRedo() : !d.canUndo()) {
         return fail(ErrorCode::InvalidArgument, redo ? "There is nothing to redo" : "There is nothing to undo");
     }
-    // JOURNAL SEAM (T-012): record the undo/redo step in entry.od.journal here.
-    return redo ? d.redo() : d.undo();
+    Status done = redo ? d.redo() : d.undo();
+    if (done) {
+        std::lock_guard<std::mutex> lock(entry.journalMutex);
+        if (entry.od.journal && !entry.journalOff) {
+            const doc::DocStatePtr after = d.state();
+            auto st = redo ? entry.od.journal->appendRedo(after) : entry.od.journal->appendUndo(after);
+            if (!st) {
+                journalFailedLocked(entry, st.error());
+            }
+        }
+    }
+    return done;
 }
 
 // ---------- Open and import ----------
@@ -458,18 +555,45 @@ Result<OpenDocument*> AppImpl::openWork(const std::string& path, JobContext& ctx
     } else if (loaded.error().code != ErrorCode::NotFound) {
         return withContext(loaded.error(), "reading " + path);
     } // NotFound: a file with no saved version yet opens as an empty document.
-    // std::function needs a copyable closure: the file travels in a shared holder (closed if the hop is abandoned).
-    auto holder = std::make_shared<std::unique_ptr<store::IDocumentFile>>(std::move(*file));
     const bool readOnly = info.openedReadOnlyBecauseLocked;
     std::optional<store::LockInfo> lock = info.lock;
     if (readOnly && lock) {
         log(LogLevel::Info, "api",
             "'" + path + "' is open in another session (" + lockText(*lock) + "): opened read-only");
     }
+    // Changes from a session that ended unexpectedly come first (its lock may still be there, so a read-only open
+    // checks too); otherwise a read-write document starts its journal now.
+    auto slot = std::make_shared<JournalSlot>();
+    if (journaling()) {
+        if (auto pending = store::IRecoveryJournal::findPendingFor(**file)) {
+            return fail(ErrorCode::Locked,
+                        "'" + fileName(path) +
+                            "' has unsaved changes from a session that ended unexpectedly; recover or discard them "
+                            "first",
+                        "recovery journal " + pending->journalPath);
+        }
+    }
+    if (!readOnly && journaling()) {
+        auto journal = store::IRecoveryJournal::start(**file, path, head);
+        if (journal) {
+            slot->journal = std::move(*journal);
+        } else {
+            slot->error = journal.error();
+        }
+    }
+    // std::function needs a copyable closure: the file travels in a shared holder (closed if the hop is abandoned).
+    auto holder = std::make_shared<std::unique_ptr<store::IDocumentFile>>(std::move(*file));
     return bridge_->call<OpenDocument*>(
-        [this, holder, head, path, readOnly, lock]() -> Result<OpenDocument*> {
-            auto entry =
-                addEntry(std::move(*holder), head, path, fileStem(path), readOnly, readOnly ? lock : std::nullopt);
+        [this, holder, slot, head, path, readOnly, lock]() -> Result<OpenDocument*> {
+            NewEntry e;
+            e.file = std::move(*holder);
+            e.initial = head;
+            e.path = path;
+            e.title = fileStem(path);
+            e.readOnly = readOnly;
+            e.lock = readOnly ? lock : std::nullopt;
+            e.journal = std::move(*slot);
+            auto entry = addEntry(std::move(e));
             if (!entry) {
                 return tl::unexpected<Error>(entry.error());
             }
@@ -517,15 +641,57 @@ Result<std::string> AppImpl::importWork(std::optional<std::string> documentId, c
         return withContext(prepared.error(), "importing " + path);
     }
     auto shared = std::make_shared<doc::PreparedImport>(std::move(*prepared));
+
+    // The imported objects go into the recovery journal before the import command, here on the worker (they can be
+    // large). An import into an open document holds its save lock until the command is journalled, so a save never
+    // runs between the objects and the command (markSaved would otherwise drop the objects from the journal).
+    auto slot = std::make_shared<JournalSlot>();
+    std::optional<Error> journalError;
+    std::unique_lock<std::mutex> saving;
+    const auto appendObjects = [&shared](store::IRecoveryJournal& journal) -> std::optional<Error> {
+        for (const auto& [hash, bytes] : shared->objects) {
+            if (auto st = journal.appendObject(hash, bytes); !st) {
+                return st.error();
+            }
+        }
+        return std::nullopt;
+    };
+    if (DocEntry* existing = guard->get()) {
+        saving = std::unique_lock<std::mutex>(existing->saveMutex);
+        journalError = ensureJournal(*existing);
+        if (!journalError) {
+            std::lock_guard<std::mutex> lock(existing->journalMutex);
+            if (existing->od.journal && !existing->journalOff) {
+                journalError = appendObjects(*existing->od.journal);
+            }
+        }
+    } else if (journaling()) {
+        *slot = startUnsavedJournal(nullptr);
+        if (slot->journal) {
+            if (auto error = appendObjects(*slot->journal)) {
+                (void)slot->journal->discard();
+                slot->journal.reset();
+                slot->backing.reset();
+                removeDocumentFiles(slot->backingPath);
+                slot->backingPath.clear();
+                slot->error = *error;
+            }
+        }
+    }
     return bridge_->call<std::string>(
-        [this, guard, shared, path]() -> Result<std::string> {
+        [this, guard, shared, path, slot, journalError]() -> Result<std::string> {
             DocEntry* entry = guard->get();
             if (entry == nullptr) {
-                auto created = addEntry(nullptr, nullptr, {}, fileStem(path), false, std::nullopt);
+                NewEntry e;
+                e.title = fileStem(path);
+                e.journal = std::move(*slot);
+                auto created = addEntry(std::move(e));
                 if (!created) {
                     return tl::unexpected<Error>(created.error());
                 }
                 entry = *created;
+            } else if (journalError) {
+                journalFailed(*entry, *journalError);
             }
             for (const auto& [hash, bytes] : shared->objects) {
                 auto put = entry->od.objects->put(bytes);
@@ -655,31 +821,59 @@ Result<store::Commit> AppImpl::saveWork(DocEntry& entry, std::optional<std::stri
         return withContext(commit.error(), "saving " + path);
     }
 
+    // A new file gets a new journal, from the saved state (changes made while a save-as ran are in neither).
+    auto slot = std::make_shared<JournalSlot>();
+    if (asNew && journaling()) {
+        auto journal = store::IRecoveryJournal::start(*created, path, state);
+        if (journal) {
+            slot->journal = std::move(*journal);
+        } else {
+            slot->error = journal.error();
+        }
+    }
     auto holder = std::make_shared<std::unique_ptr<store::IDocumentFile>>(std::move(created));
     const store::Commit done = *commit;
-    // The new file and markClean are applied on the UI thread. If that hop is abandoned (the app shuts down), the
-    // file was still written completely.
+    // The new file, the journal and markClean are applied on the UI thread. If that hop is abandoned (the app shuts
+    // down), the file was still written completely.
     auto applied = bridge_->call<std::monostate>(
-        [this, &entry, holder, path, state, asNew, done]() -> Result<std::monostate> {
+        [this, &entry, holder, slot, path, state, asNew, done]() -> Result<std::monostate> {
             OpenDocument& o = entry.od;
             if (asNew) {
                 entry.fileSource->set(holder->get());
                 std::unique_ptr<store::IDocumentFile> old = std::move(o.file);
                 o.file = std::move(*holder);
+                {
+                    // The old file's journal (or the never-saved document's backing file) is done with.
+                    std::lock_guard<std::mutex> lock(entry.journalMutex);
+                    if (o.journal) {
+                        (void)o.journal->discard();
+                    }
+                    o.journal = std::move(slot->journal);
+                    entry.journalOff = slot->error.has_value();
+                }
                 old.reset();
+                dropBacking(entry);
                 o.path = path;
                 o.title = fileStem(path);
                 o.readOnly = false;
                 o.lock.reset();
                 entry.key = pathKey(path);
-                // JOURNAL SEAM (T-012): the document now has a new file id: move the journal to it here.
+                if (slot->error) {
+                    warn(entry, "Crash recovery is off for '" + o.title + "': " + slot->error->message);
+                }
+            } else {
+                std::lock_guard<std::mutex> lock(entry.journalMutex);
+                if (o.journal && !entry.journalOff) {
+                    if (auto st = o.journal->markSaved(done); !st) {
+                        journalFailedLocked(entry, st.error());
+                    }
+                }
             }
             // Edits made while the save ran are not in the file: only an unchanged document becomes clean.
             if (o.document->state() == state) {
                 o.document->markClean();
+                o.modified = false;
             }
-            // JOURNAL SEAM (T-012): o.journal->markSaved(done.id) here.
-            (void)done;
             recent_->add(path);
             emit(AppEvent::Kind::DocumentSaved, o.id);
             emit(AppEvent::Kind::RecentFilesChanged, {});
@@ -860,11 +1054,11 @@ void AppImpl::unsubscribe(int id)
     listeners_.erase(id);
 }
 
-void AppImpl::emit(AppEvent::Kind kind, std::string documentId)
+void AppImpl::emit(AppEvent::Kind kind, std::string documentId, std::string message)
 {
     std::shared_ptr<Alive> alive = alive_;
     try {
-        dispatcher_->post([this, alive, kind, documentId = std::move(documentId)]() {
+        dispatcher_->post([this, alive, kind, documentId = std::move(documentId), message = std::move(message)]() {
             if (!alive->ok.load()) {
                 return;
             }
@@ -875,7 +1069,7 @@ void AppImpl::emit(AppEvent::Kind kind, std::string documentId)
                     listeners.push_back(l);
                 }
             }
-            const AppEvent event{kind, documentId};
+            const AppEvent event{kind, documentId, message};
             for (auto& l : listeners) {
                 try {
                     l(event);

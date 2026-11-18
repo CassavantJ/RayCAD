@@ -3,7 +3,10 @@
 gone and compare the state hash and every body's content hash, export, list and invoke actions, and check the exit
 codes and messages of failures.
 
-Usage: cli_roundtrip.py --cli PATH --step PATH --work DIR [--errors]
+With --recovery (and --helper, the api tests' helper process that is killed like a crash): recover --list, recover
+and recover --discard.
+
+Usage: cli_roundtrip.py --cli PATH --step PATH --work DIR [--errors] [--recovery --helper PATH]
 """
 import argparse
 import json
@@ -11,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 FAILURES = []
 
@@ -133,19 +137,83 @@ def errors(cli, work, env):
     expect(code == 2 and "usage" in err, "no command gave %d" % code)
 
 
+def run_and_kill(helper, args, out):
+    """Runs the api test helper until it wrote what it reached, then kills it like a crash."""
+    proc = subprocess.Popen([helper] + args)
+    deadline = time.monotonic() + 180
+    try:
+        while not os.path.exists(out):
+            if proc.poll() is not None:
+                expect(False, "the helper exited with %r before it was killed" % proc.returncode)
+                return None
+            if time.monotonic() > deadline:
+                expect(False, "the helper did not finish in time")
+                return None
+            time.sleep(0.05)
+    finally:
+        proc.kill()
+        proc.wait()
+    with open(out, encoding="utf-8") as f:
+        return f.readline().strip()
+
+
+def recovery(cli, helper, step, work, env):
+    user = env["RAYCAD_USER_DATA_DIR"]
+    saved = os.path.join(work, "doc.raycad")
+    code, out, err = run(cli, "import", step, "-o", saved, env=env)
+    expect(code == 0, "import exited %d: %s" % (code, err))
+
+    reached = run_and_kill(helper, ["edit", user, saved, step, os.path.join(work, "reached.txt")],
+                           os.path.join(work, "reached.txt"))
+    code, out, err = run(cli, "recover", "--list", env=env)
+    pending = json.loads(out) if code == 0 else []
+    expect(len(pending) == 1 and not pending[0]["unsaved"] and pending[0]["steps"] > 0,
+           "recover --list gave %r (%d, %s)" % (out, code, err))
+    code, out, err = run(cli, "info", saved, env=env)
+    expect(code == 6 and "recover" in err, "info on a file with pending changes gave %d %r" % (code, err))
+    code, out, err = run(cli, "recover", saved, env=env)
+    expect(code == 0, "recover exited %d: %s" % (code, err))
+    state, _ = parse_info(out)
+    expect(state == reached, "recovered state %s, the killed session reached %s" % (state, reached))
+    code, out, err = run(cli, "recover", "--list", env=env)
+    expect(code == 0 and json.loads(out) == [], "something is still pending after recovery: %r" % out)
+    code, out, err = run(cli, "hash", saved, env=env)
+    expect(code == 0 and out.strip() == "state %s" % reached, "the recovered file hashes to %r" % out)
+
+    # A never-saved document: -o is required, and --discard deletes it.
+    reached = run_and_kill(helper, ["new", user, step, os.path.join(work, "reached2.txt")],
+                           os.path.join(work, "reached2.txt"))
+    code, out, err = run(cli, "recover", "--list", env=env)
+    pending = json.loads(out) if code == 0 else []
+    expect(len(pending) == 1 and pending[0]["unsaved"], "recover --list gave %r" % out)
+    if pending:
+        code, out, err = run(cli, "recover", pending[0]["id"], env=env)
+        expect(code == 2, "recovering an untitled document without -o gave %d" % code)
+        code, out, err = run(cli, "recover", "--discard", pending[0]["id"], env=env)
+        expect(code == 0, "recover --discard exited %d: %s" % (code, err))
+    code, out, err = run(cli, "recover", "--list", env=env)
+    expect(code == 0 and json.loads(out) == [], "something is still pending after discard: %r" % out)
+    code, out, err = run(cli, "recover", "--discard", saved, env=env)
+    expect(code == 4, "discarding nothing gave %d" % code)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cli", required=True)
     parser.add_argument("--step")
     parser.add_argument("--work", required=True)
     parser.add_argument("--errors", action="store_true")
+    parser.add_argument("--recovery", action="store_true")
+    parser.add_argument("--helper", help="ray_api_helper, for --recovery")
     args = parser.parse_args()
 
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)
     env = dict(os.environ)
     env["RAYCAD_USER_DATA_DIR"] = os.path.join(args.work, "user")
-    if args.step:
+    if args.recovery:
+        recovery(args.cli, args.helper, args.step, args.work, env)
+    elif args.step:
         roundtrip(args.cli, args.step, args.work, env)
     if args.errors:
         errors(args.cli, args.work, env)
