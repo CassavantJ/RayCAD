@@ -71,8 +71,13 @@ public:
     // always passes the newest pointer position.
     // move(target) solves from the beginDrag state, never from the previous move, so the result depends only
     // on `target` and skipped pointer positions cannot change the final geometry.
-    // Drag results are bit-identical run to run and across core types on one build. They agree with
-    // solve() to 1e-9 mm but are not bit-identical to it.
+    // Drag results are bit-identical run to run and across core types on one build (proven on Windows
+    // only). They are not bit-identical to PlaneGCS's own drag solve: they agree with it to 1e-9 mm on
+    // the S7/S11 grid sketches and to about 1e-8 mm with tangent arcs, angles, point-on-curve and
+    // symmetry; on an under-constrained shape dragged a long way the two can settle up to 1e-6 mm apart.
+    // In every case all constraints hold to 1e-14 (T-090).
+    // A failed move() returns status Failed with the drag-start geometry; end() returns the last
+    // successful move. Sketches with partially redundant constraints drag on PlaneGCS's own slow path.
     // beginDrag builds and diagnoses the system (measured up to 0.6 s at 200 curves), so it takes a
     // JobContext and runs on a worker like solve().
     class IDragSession {
