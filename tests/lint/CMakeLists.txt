@@ -24,3 +24,7 @@ add_test(NAME corpus_check COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/too
 add_test(NAME corpus_check_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/corpus_check.py" --self-test)
 add_test(NAME corpus_fetch_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/corpus_fetch.py" --self-test)
 add_test(NAME update_golden_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/update_golden.py" --self-test)
+
+# The JSON the document model writes (golden files pinned by ray_doc_tests) against schemas/doc*.schema.json.
+add_test(NAME doc_schema COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tests/lint/check_doc_schema.py")
+add_test(NAME doc_schema_selftest COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tests/lint/check_doc_schema.py" --self-test)
