@@ -67,6 +67,42 @@ All ten spikes ran on 2026-11-17. Reports are in `spikes/<id>/REPORT.md`; `spike
 | S9 direct editing | Booleans give 95% or better for hole and pocket removal, resize and push/pull. `BRepOffset_MakeOffset` is unusable. Fillet-run removal succeeded 18 of 35 times on real parts. | T-080 to T-083, `kernel.h` |
 | S10 file format | 1,000 kills during save, 0 damaged files. A plain snapshot copy taken during a save is usually corrupt. Loopback SMB only. | 4.1 to 4.3, T-011, `store.h` |
 
+### 0.6 What M1 changed (revision 3)
+
+All 25 M1 tasks were merged on 2026-11-18. These are the places where the code now differs from this plan or from the headers in `docs/interfaces/`. The headers have not all been updated yet; where they disagree with this list, this list is right.
+
+**Decided and built**
+
+- File schema: `objects` and `thumbs` are rowid tables, not `WITHOUT ROWID` as section 4.1 says.
+- Recovery journal: carries Execute, Undo, Redo and Snapshot records and can append objects. A document that was never saved is journalled through a backing file in `<userDataDir>/unsaved`.
+- `IApp` open and save return job handles. The CAM, library and post accessors are nullable until those modules exist.
+- The module rule stays "ui uses api and render only", so viewer, measure and settings helpers live in `src/api/include/ray_api/`.
+- Imported bodies are named from their fingerprint (the fingerprint stands in for the parent feature).
+- BREP is stored in a canonical form (`RAYBREP` v1); the payload is round-tripped once so the bytes are stable.
+- One job system per process; one process-wide mesh lock shared by meshing and STL export; IGES reads are serialised.
+- New theme tokens `DraftPositive`, `DraftNegative`, `DraftVertical`. T-016 needed no custom shader. Section caps use stencil parity in the main pass.
+- Test corpus: 388 files, 204 committed. The ABC and Fusion gallery sets were rejected on licence grounds.
+
+**Missing from the headers, to add in an interface task**
+
+Per-focus shortcuts; `ActionInfo::appliesTo`; `AppEvent::SettingsChanged`; the tier explanation in `render.h`; optional import colour; vertex ids on `EdgeRange`; non-pickable lines; a public way to set the store's recovery folder (api uses a private one today).
+
+**Known gaps carried forward**
+
+- Import runs in the app's process. OCCT's readers crashed or looped on damaged files twice; both cases are now rejected before reading, which is not a guarantee. An out-of-process import worker is needed (risk 2).
+- A 95 MiB STEP takes about 29 s to import against a 10 s budget; healing is sequential.
+- No stored thumbnails. One document at a time. The unit toggle changes display only. Import options from the palette form are ignored. File shortcuts fire behind modal dialogs. Edits made during Save As are not journalled.
+- `SurfaceInfo` gives the wrong plane normal for left-handed faces (measure works around it).
+- Section panel state is not saved; section and draft shaders are unverified on llvmpipe and Metal.
+- API tests read the real user profile.
+- Three UI tests and one kernel timing test fail under machine load on Windows and pass alone.
+- Linux and macOS have not passed on the final M1 tree.
+
+**Open for Jake**
+
+- Licence of the synthetic corpus parts: LGPL or CC0.
+- `cam.h` against the section 1.1 dependency rule, before T-032.
+
 ---
 
 ## 1. Architecture overview
@@ -684,15 +720,23 @@ Every milestone ends in a build Jake can install and a demo of one workflow. Dur
 |-|-|-|-|
 | M0 | Spikes and skeleton | Ten spike reports with measured numbers (**done 2026-11-17**, `spikes/RESULTS.md`); an empty app window on all three OSes from CI. | 2 weeks left |
 | M1 | Open and look | Start screen. Open a 50 MB STEP with progress and cancel. Orbit, select faces and edges, measure, section, switch theme and tier at runtime, toggle glass. Save and reopen as `.raycad`. Kill the app and recover. | 6 weeks |
+| M7 | Model it (**runs second**, see below) | Sketch with constraints and dimensions, DXF import, extrude, cut, revolve, fillet, chamfer, hole feature, named parameters. Model a simple fixture plate from scratch, save it and export STEP. Programming it waits for M2. | 9 weeks |
 | M2 | First G-code | Create a setup with stock and WCS on an imported part. Holes are recognised; spot, drill and tap them with tools from the library. Backplot. Post for Haas, Fanuc, Mazak and generic ISO. | 6 weeks |
 | M3 | 2.5D milling | Face, contour with leads and tabs, pocket, slot, chamfer, engrave, thread mill. Feeds and speeds calculator. Save an operation as a shop template and reuse it on another part. | 5 weeks |
 | M4 | Adaptive | 2D adaptive roughing with helix entry on the benchmark pockets, and a ramp entry in a narrow slot; engagement plot shows constant load; cycle time compared against the plain pocket. | 6 weeks |
 | M5 | Prove it | Material-removal simulation with timeline; collisions and rapids into stock flagged and clickable through to the G-code line; second setup starts from the first setup's simulated stock; setup sheet PDF; save to a network folder with naming rules. | 6 weeks |
 | M6 | Fix the model | On a customer STEP: delete a fillet, resize a hole, push a face. Toolpaths go stale and regenerate; nothing is silently wrong. Replace the STEP with a new revision and review what changed. | 5 weeks |
-| M7 | Model it | Sketch with constraints and dimensions, DXF import, extrude, cut, revolve, fillet, chamfer, hole feature, named parameters. Model a simple fixture plate from scratch and program it. | 8 weeks |
 | M8 | Harden and cut | Budgets met on Low tier, installers for three OSes, benchmark parts cut on the Mazak, Haas and Fanuc machines with no hand edits. **v1 exit gate.** | 6 weeks |
 
-**Total: about 50 weeks from now, so roughly 11 to 12 months.** M4 grew by two weeks because the adaptive code needs reworking before it is safe to run in parallel and it has no narrow-slot entry (S5); the spikes themselves took a day, not three weeks. Confidence: about 50% that the exit gate lands within 12 to 16 months. The spikes removed the renderer risk and confirmed the file format, but they also showed that naming needs more states and more review UI than planned, that sketch dragging needs a second look (S11), and that direct editing cannot promise fillet-run removal. The three things most likely to move it are persistent naming (M6, M7), adaptive quality (M4), and on-machine proving (M8), which depends on machine availability I cannot estimate. Direct editing comes before parametric modeling on purpose: the exit-gate workflow needs it and it exercises naming on the harder, history-free case first. If the schedule must shrink, cut M7 down to "sketch plus extrude/cut" before touching anything else.
+**Total: about 50 weeks from now, so roughly 11 to 12 months.** M4 grew by two weeks because the adaptive code needs reworking before it is safe to run in parallel and it has no narrow-slot entry (S5); the spikes themselves took a day, not three weeks. Confidence: about 50% that the exit gate lands within 12 to 16 months. The spikes removed the renderer risk and confirmed the file format, but they also showed that naming needs more states and more review UI than planned, that sketch dragging needs a second look (S11), and that direct editing cannot promise fillet-run removal. The three things most likely to move it are persistent naming (M6, M7), adaptive quality (M4), and on-machine proving (M8), which depends on machine availability I cannot estimate. If the schedule must shrink, cut M7 down to "sketch plus extrude/cut" before touching anything else.
+
+**Execution order (revision 3, 2026-11-18, Jake's decision): M1, M7, M2, M3, M4, M5, M6, M8.** Milestone numbers are kept as stable labels, like task ids, so nothing else in this plan is renumbered. Jake asked to be able to make a part before CAM. What that changes:
+
+- Parametric modeling now comes before direct editing, the reverse of the first plan. Naming therefore meets sweeps, booleans and blends first, and the history-free direct-edit case later. T-081 is split so its core no longer waits for T-080 (see T-081a, T-081b).
+- The hole feature ships in M7 without CAM thread pickup; that part moves to T-097b in M2.
+- S11 runs first, then T-090. T-094 starts at once.
+- M7 grows by about a week for the T-081a work pulled into it; M6 shrinks by the same amount. The total is unchanged.
+- The v1 exit gate (M8) does not move in content, but the first G-code arrives about nine weeks later than first planned.
 
 **v1.x after the gate:** shell, draft, linear and circular pattern, mirror, split body, Okuma/Siemens/Heidenhain posts.
 
@@ -1139,9 +1183,15 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 - How, from S9: `deleteFaces` uses `BRepAlgoAPI_Defeaturing`; for a hole with a counterbore, countersink or chamfer it removes the whole stack and falls back to the bore alone. `resizeHole` expands the picked face to the whole cylinder (real holes are often two or more faces), enlarges by boolean cut, and shrinks by fusing a sleeve with a fall-back to defeature-then-cut. `offsetFaces` accepts planar faces only and is built as prism plus boolean; when a neighbour is not square to the face the result is a slab or notch with a step, and the call returns a warning saying so. `BRepOffset_MakeOffset` is not used. `unifySameDomain` validates its result and returns the input unchanged if unifying made it invalid. Every function validates its result and detects no-ops (section 7 rule 6). History is rewritten so the edited face is `Modified`, not "deleted plus a new face from the tool body", and an unchanged face with no entry means unchanged.
 - Acceptance: on the S9 set, success rates are at least: delete plain hole 95%; delete hole with its counterbore, countersink or chamfer 95%; delete closed pocket 95%; resize hole larger 97% and smaller 95%; push/pull planar face 95% each way; delete a fillet that touches no other blend 75% on the real parts; delete a whole blend run 50% on the real parts (S9 measured 18 of 35). Every success is a valid closed solid with volume change of the expected sign; every failure returns `KernelFailure` with a message a machinist can act on (for example "this fillet joins other blends; select the whole run" or "neighbouring faces cannot be extended to close the gap"); no call reports success for a no-op; cancel is honoured within 10 s and the caller is released within 100 ms (S9 saw fillet removals run past 150 s and take up to 9.4 s to honour cancel); structured exceptions are contained on Windows. Add 20 or more real job-shop STEP files to the set before M6 and re-measure; the fillet and push/pull rates are the most likely to move.
 
-**T-081 naming: propagation through modifying operations** · SEQUENTIAL · Size M
-- Files: `src/naming/propagate*`, tests, `tests/naming/oracle/` (the S4 oracle and scenarios, promoted). Interfaces: implements `propagate`, `LineageEvent`, families, resolver states `Split`, `Merged` and `Repaired` exactly as section 3.3. Depends: T-080, T-007 (read `spikes/s4-naming/REPORT.md` sections 6, 9 and 10).
-- Acceptance: scripted scenarios: delete an unrelated fillet (all other references `Exact`); resize a hole referenced by a drill op (`Exact`); offset a face that splits a neighbour (`Split` with both pieces); push a face until two faces unify (`Merged`); delete a referenced face (`Broken`); the three S4 failure cases (ordinal swap after an unrelated cut, hole rim broken into two arcs, slot moved by its own width) resolve `Exact`, `Split` and `Broken` respectively and never to another element. A `Repaired` result is never returned to a rebuild or to CAM as usable until confirmed. Zero wrong-element resolutions across 1,000 randomised edit sequences on 20 corpus parts, judged by an oracle that does not share code with the naming module.
+**T-081 was split in revision 3.** "T-081" elsewhere in this plan means both halves unless it says otherwise.
+
+**T-081a naming: propagation core** · SEQUENTIAL · Size M · **runs in M7, after T-095**
+- Files: `src/naming/propagate*`, tests, `tests/naming/oracle/` (the S4 oracle and scenarios, promoted). Interfaces: implements `propagate`, `LineageEvent`, families, resolver states `Split`, `Merged` and `Repaired` exactly as section 3.3. Depends: T-007, T-094, T-095 (read `spikes/s4-naming/REPORT.md` sections 6, 9 and 10).
+- Acceptance: scenarios scripted with the T-094 and T-095 operations only (extrude, cut, boolean, fillet, chamfer): an unrelated cut leaves all other references `Exact`; a cut that splits a referenced face gives `Split` with both pieces; a fuse that unifies two faces gives `Merged`; a cut that removes a referenced face gives `Broken`; the three S4 failure cases (ordinal swap after an unrelated cut, hole rim broken into two arcs, slot moved by its own width) resolve `Exact`, `Split` and `Broken` respectively and never to another element. A `Repaired` result is never returned to a rebuild or to CAM as usable until confirmed. Zero wrong-element resolutions across 1,000 randomised sequences of those operations on 20 corpus parts, judged by an oracle that does not share code with the naming module.
+
+**T-081b naming: propagation through direct edits** · SEQUENTIAL · Size S
+- Files: `src/naming/propagate*` (fixes only), tests, `tests/naming/oracle/`. Interfaces: none new. Depends: T-080, T-081a.
+- Acceptance: scripted scenarios: delete an unrelated fillet (all other references `Exact`); resize a hole referenced by a drill op (`Exact`); offset a face that splits a neighbour (`Split` with both pieces); push a face until two faces unify (`Merged`); delete a referenced face (`Broken`). The T-081a randomised test is extended with the T-080 edits and still gives zero wrong-element resolutions.
 
 **T-082 doc: direct-edit feature types** · SEQUENTIAL · Size S
 - Files: `src/doc/features/delete_face*`, `offset_face*`, `resize_hole*`, tests. Interfaces: `IFeatureType` for the three types. Depends: T-081, T-010.
@@ -1182,12 +1232,16 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 - Acceptance: history marks blend faces `Generated` from their edges and neighbours `Modified`; radius too large returns a clear failure; 8-thread stress over the corpus is TSan clean.
 
 **T-096 doc and naming: parametric feature types** · SEQUENTIAL · Size M
-- Files: `src/doc/features/sketch*`, `datum_plane*`, `extrude*`, `revolve*`, `fillet*`, `chamfer*`, `src/naming/sweep*`, `tests/golden/geometry/`. Interfaces: `IFeatureType` for the six types; `propagate` with `sweepOrigins`. Depends: T-094, T-095, T-081, T-090.
-- Acceptance: sketch entity ids and loop ids are stable through trims, splits and solves (test), and hole positions have stable ids; the S4 40-feature part rebuilds with all 47 S4 edit scenarios at 95% or better `Exact`/`Split`/`Merged` among references whose element still exists, and zero wrong-element resolutions by the T-081 oracle; revolve is added to the scenario set; 100-feature synthetic part incremental rebuild meets the Low budget on the baseline machine; geometry goldens stored.
+- Files: `src/doc/features/sketch*`, `datum_plane*`, `extrude*`, `revolve*`, `fillet*`, `chamfer*`, `src/naming/sweep*`, `tests/golden/geometry/`. Interfaces: `IFeatureType` for the six types; `propagate` with `sweepOrigins`. Depends: T-094, T-095, T-081a, T-090.
+- Acceptance: sketch entity ids and loop ids are stable through trims, splits and solves (test), and hole positions have stable ids; the S4 40-feature part rebuilds with all 47 S4 edit scenarios at 95% or better `Exact`/`Split`/`Merged` among references whose element still exists, and zero wrong-element resolutions by the T-081a oracle; revolve is added to the scenario set; 100-feature synthetic part incremental rebuild meets the Low budget on the baseline machine; geometry goldens stored.
 
 **T-097 Hole feature and thread standards** · SEQUENTIAL · Size M
-- Files: `src/doc/features/hole*`, `resources/standards/threads.json`, `src/cam/holes*` (thread pickup only), tests. Interfaces: `IFeatureType` `hole`; `RecognizedHole::threadSpec`. Depends: T-096, T-034.
-- Acceptance: UNC, UNF and metric coarse and fine tables with tap-drill sizes, cited to a public standard summary; drilled, tapped, counterbored and countersunk holes build correctly; hole recognition returns the thread spec and the "tapped holes" template picks the matching tap with no user input.
+- Files: `src/doc/features/hole*`, `resources/standards/threads.json`, tests. Interfaces: `IFeatureType` `hole`. Depends: T-096.
+- Acceptance: UNC, UNF and metric coarse and fine tables with tap-drill sizes, cited to a public standard summary; drilled, tapped, counterbored and countersunk holes build correctly; the thread spec is stored on the feature where T-097b can read it.
+
+**T-097b cam: thread pickup from hole features** · SEQUENTIAL · Size S · **runs in M2, after T-034** (split from T-097 in revision 3)
+- Files: `src/cam/holes*` (thread pickup only), tests. Interfaces: `RecognizedHole::threadSpec`. Depends: T-097, T-034.
+- Acceptance: hole recognition returns the thread spec of a hole made by the hole feature, and the "tapped holes" template picks the matching tap with no user input.
 
 **T-098 ui: feature tools and parameter table** · PARALLEL-SAFE · Size M
 - Files: `src/ui/qml/model/`, `src/ui/model/features*`. Interfaces: consumes `feature.*`, `param.*` actions, `IFeatureType::propsSchemaJson`, `beginPreview`. Depends: T-096, T-097, T-093.
@@ -1221,12 +1275,12 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 - Goal and acceptance: machine definitions corrected against the real machines and marked verified; a post-proving program per control exercising every cycle and code the posts emit, run in air; any post fix lands with an updated golden; **exit gate: BP1 to BP3 cut with no hand edits, measured against the section 12.3 tolerances, signed off by Jake.**
 
 **T-106 User documentation** · PARALLEL-SAFE · Size S
-- Files: `docs/user/`. Depends: M7.
+- Files: `docs/user/`. Depends: M6.
 - Goal and acceptance: getting started (import to G-code in 15 minutes), post editing guide with the full `post_api.d.ts` reference, library sharing on a network drive, file format and recovery notes; every screenshot generated by a script so it can be refreshed.
 
 ### Task count and parallelism
 
-10 M0 spikes (done), 1 follow-up spike (S11) and 86 tasks. 28 tasks are SEQUENTIAL (kernel, naming, document, renderer core, API hub, CAM engine); they form the critical path. The rest can run two to four at a time behind them. Suggested lanes after M1: lane A kernel/naming/doc, lane B CAM operations, lane C posts and libraries, lane D UI.
+10 M0 spikes (done), 1 follow-up spike (S11) and 86 tasks. 28 tasks are SEQUENTIAL (kernel, naming, document, renderer core, API hub, CAM engine); they form the critical path. The rest can run two to four at a time behind them. Suggested lanes after M7: lane A kernel/naming/doc, lane B CAM operations, lane C posts and libraries, lane D UI. During M7 there are two lanes: kernel and naming (T-094, T-095, T-081a, T-096, T-097) and sketch (S11, T-090, T-091), which join at T-096; the UI tasks follow.
 
 ---
 
@@ -1234,7 +1288,7 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 
 | # | Risk | Likelihood | Impact | How we reduce it |
 |-|-|-|-|-|
-| 1 | **Persistent naming** resolves a reference to the wrong face after an edit, or breaks too often to be usable | High | Critical: wrong toolpath on the wrong geometry | S4 showed the first rules were unsafe (17 wrong of 33,785) and that amended rules reach 0 wrong on the same scenarios. That is one part, one author and an oracle that shares the script's idea of identity, so the risk stays High. Design rule: fail loudly, never guess; `Repaired` is a suggestion until confirmed; broken references block posting. The S4 oracle and scenarios become permanent tests; randomised edit tests with a zero-wrong-match gate (T-081, T-096); a second part and imports are added there. Start with the history-free import case (M1, M6) before sweeps (M7). BRepGraph avoided. Expect user-visible `Broken` references on about 0.3% of surviving elements per edit. |
+| 1 | **Persistent naming** resolves a reference to the wrong face after an edit, or breaks too often to be usable | High | Critical: wrong toolpath on the wrong geometry | S4 showed the first rules were unsafe (17 wrong of 33,785) and that amended rules reach 0 wrong on the same scenarios. That is one part, one author and an oracle that shares the script's idea of identity, so the risk stays High. Design rule: fail loudly, never guess; `Repaired` is a suggestion until confirmed; broken references block posting. The S4 oracle and scenarios become permanent tests; randomised edit tests with a zero-wrong-match gate (T-081, T-096); a second part and imports are added there. Since revision 3 sweeps and blends (M7) come before direct edits (M6), so the zero-wrong-match gate of T-081a is the first real test of naming and must not be relaxed to keep M7 moving. BRepGraph avoided. Expect user-visible `Broken` references on about 0.3% of surviving elements per edit. |
 | 2 | **OCCT fails on bad STEP files** (crash, hang, invalid solids), or direct edits fail on real parts | High | High: the first thing every user does is import | Corpus of 300 to 1,000 files tagged by exporter, run in CI with a pass rate that may only rise. Healing and sewing on import; everything wrapped to return errors; watchdog time limits; import into a worker so the app survives. S9 measures direct-edit success so v1 only promises what works. A failed import still shows surfaces so the user can see what arrived. |
 | 3 | **Adaptive roughing quality**: engagement spikes, air cutting, slow generation, or broken tools on steel | Medium | High: it is the headline toolpath | S5 chose to adapt FreeCAD main's code: engagement control is good, but the base is two weeks old upstream, hung and crashed at 32 concurrent runs for an undiagnosed reason, and has no slot entry. Diagnosis is the first step of T-060 and can reopen the rewrite option. Independent sweep checker with numeric gates (T-060, T-063). Review pack for Jake before simulation work (T-062). BP3 in 4140 is in the exit gate. Conservative shipped presets. |
 | 4 | **Post-processor error crashes a machine** | Medium | Critical: safety and reputation | Golden files per post per feature, reviewed line by line once by Jake. Independent G-code round-trip interpreter (T-043). Posts cannot post stale or unverified operations. Analytic safety checks on every toolpath. Proving checklist: air cut, single block, soft material, then metal. Machine definitions marked unverified until checked. Posts are plain text so shops can read every line. |
@@ -1267,7 +1321,7 @@ Every task also has these acceptance criteria, not repeated below: builds on all
 **Would change scope or schedule**
 
 6. **Target date** for the exit gate, if you have one. The estimate is 12 to 16 months at 50% confidence.
-7. **Is M7 order acceptable?** Parametric modeling arrives after direct editing and CAM. If you want to model fixtures from scratch earlier, M7 can swap with M6 at some risk to naming.
+7. **Is M7 order acceptable?** Answered 2026-11-18: no. M7 runs straight after M1, ahead of CAM (section 12, revision 3).
 8. **Cutter compensation:** which do your customers' shops use by default, wear compensation in control (G41/G42 with small offsets) or computer-only? It sets the default in `contour2d` and the posts.
 9. **Probing in v1?** The brief tags it v2. If your machines have probes and you want WCS probing in the benchmark runs, it needs adding.
 10. **Customer STEP files:** can you contribute anonymised real parts to the test corpus? They are worth more than any public set. Two spikes were limited by this: S3 had no real file above 6 MiB (needs a few at 20 to 100 MB) and S9 had only 11 real solids (needs 20 or more typical job-shop parts before M6).
