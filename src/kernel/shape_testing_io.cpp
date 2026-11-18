@@ -364,7 +364,7 @@ Result<bool> isValidShape(const Shape& shape)
     return detail::guarded("kernel::testing::isValidShape", [&]() -> Result<bool> {
         if (auto ok = detail::requireShape(shape, "kernel::testing::isValidShape"); !ok)
             return tl::unexpected(ok.error());
-        return BRepCheck_Analyzer(detail::occt(shape)).IsValid();
+        return detail::checkedValid(detail::occt(shape));
     });
 }
 

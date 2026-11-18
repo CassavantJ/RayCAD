@@ -3,6 +3,8 @@
 
 #include <Standard_Failure.hxx>
 
+#include <atomic>
+#include <cstdint>
 #include <exception>
 #include <new>
 #include <sstream>
@@ -42,6 +44,8 @@ bool runCatching(GuardedThunk thunk, void* context, std::string& message) noexce
     return false;
 }
 
+std::atomic<std::uint64_t> gStructuredExceptions{0};
+
 #if defined(_MSC_VER)
 // A structured exception (an access violation inside OCCT, a stack overflow, a delay-loaded DLL that cannot be
 // loaded) is caught here. This frame holds no C++ object with a destructor, which __try requires.
@@ -64,6 +68,7 @@ bool runGuarded(GuardedThunk thunk, void* context, std::string& message) noexcep
     unsigned long code = 0;
     const bool ok = runSeh(thunk, context, message, code);
     if (!ok && code != 0) {
+        gStructuredExceptions.fetch_add(1, std::memory_order_relaxed);
         if (code == static_cast<unsigned long>(EXCEPTION_STACK_OVERFLOW))
             (void)_resetstkoflw();
         try {
@@ -79,6 +84,11 @@ bool runGuarded(GuardedThunk thunk, void* context, std::string& message) noexcep
 #else
     return runCatching(thunk, context, message);
 #endif
+}
+
+std::uint64_t structuredExceptionCount() noexcept
+{
+    return gStructuredExceptions.load(std::memory_order_relaxed);
 }
 
 Error makeError(ErrorCode code, std::string message, std::string_view where)

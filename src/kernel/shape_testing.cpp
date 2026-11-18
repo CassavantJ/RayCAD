@@ -15,6 +15,10 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_CurveRepresentation.hxx>
+#include <BRep_TEdge.hxx>
+#include <BRep_TFace.hxx>
+#include <BRep_TVertex.hxx>
 #include <TopExp.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
@@ -27,6 +31,10 @@
 #include <gp_Trsf.hxx>
 
 #include <cmath>
+#include <ios>
+#include <locale>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace ray::kernel::testing {
@@ -204,6 +212,59 @@ Status meshAndShare(const Shape& shape)
         builder.Add(compound, stored);
         return std::monostate{};
     });
+}
+
+std::string rawState(const Shape& shape)
+{
+    std::string out;
+    const Status ok = detail::guarded("kernel::testing::rawState", [&]() -> Status {
+        const TopoDS_Shape& stored = detail::occt(shape);
+        if (stored.IsNull())
+            return std::monostate{};
+        std::ostringstream os;
+        os.imbue(std::locale::classic());
+        os << std::hexfloat;
+        // Every TShape once (orientation and location ignored), in the order of a walk of the shape.
+        detail::ShapeIndex all;
+        TopExp::MapShapes(stored, all, false, false);
+        for (int i = 1; i <= all.Extent(); ++i) {
+            const TopoDS_Shape& sub = all(i);
+            os << i << ' ' << static_cast<int>(sub.ShapeType()) << " flags " << sub.Free() << sub.Modified()
+               << sub.Checked() << sub.Orientable() << sub.Closed() << sub.Infinite() << sub.Convex() << sub.Locked()
+               << " children " << sub.NbChildren();
+            if (sub.ShapeType() == TopAbs_VERTEX) {
+                const auto* tv = static_cast<const BRep_TVertex*>(sub.TShape().get());
+                os << " tol " << tv->Tolerance() << " points " << tv->Points().Extent();
+            } else if (sub.ShapeType() == TopAbs_EDGE) {
+                const auto* te = static_cast<const BRep_TEdge*>(sub.TShape().get());
+                os << " tol " << te->Tolerance() << " sp " << te->SameParameter() << " sr " << te->SameRange() << " dg "
+                   << te->Degenerated() << " reps";
+                for (const occ::handle<BRep_CurveRepresentation>& rep : te->Curves()) {
+                    os << ' ' << (rep->IsCurve3D() ? "c3" : "") << (rep->IsCurveOnSurface() ? "cs" : "")
+                       << (rep->IsCurveOnClosedSurface() ? "cc" : "") << (rep->IsRegularity() ? "rg" : "")
+                       << (rep->IsPolygon3D() ? "p3" : "") << (rep->IsPolygonOnTriangulation() ? "pt" : "")
+                       << (rep->IsPolygonOnSurface() ? "ps" : "");
+                    if (rep->IsCurveOnSurface())
+                        os << '@' << rep->Surface().get();
+                }
+            } else if (sub.ShapeType() == TopAbs_FACE) {
+                const auto* tf = static_cast<const BRep_TFace*>(sub.TShape().get());
+                os << " tol " << tf->Tolerance() << " surface " << tf->Surface().get() << " natural "
+                   << tf->NaturalRestriction() << " meshes " << tf->NbTriangulations() << !tf->Triangulation().IsNull();
+            }
+            os << '\n';
+        }
+        out = os.str();
+        return std::monostate{};
+    });
+    if (!ok)
+        out = "rawState failed: " + ok.error().message;
+    return out;
+}
+
+std::uint64_t structuredExceptions() noexcept
+{
+    return detail::structuredExceptionCount();
 }
 
 std::vector<std::byte> payloadOf(std::span<const std::byte> serialized)

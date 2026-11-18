@@ -11,7 +11,7 @@ set(RAY_OCCT_TOOLKITS
 
 add_library(ray_kernel STATIC
     kernel_module.cpp occt_smoke.cpp occt_smoke.h
-    shape_impl.h shape.cpp shape_guard.cpp shape_serialize.cpp
+    shape_impl.h shape.cpp shape_guard.cpp shape_check.cpp shape_serialize.cpp
     shape_testing.h shape_testing.cpp shape_testing_naming.cpp shape_testing_io.cpp
     query.cpp
     mesh.cpp mesh_testing.h

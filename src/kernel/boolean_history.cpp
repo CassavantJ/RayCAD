@@ -2,6 +2,7 @@
 // boolean_internal.h.
 #include "boolean_internal.h"
 
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRep_Builder.hxx>
@@ -78,6 +79,61 @@ ShapeHistory buildHistory(BRepBuilderAPI_MakeShape& maker, std::span<const Shape
     return history;
 }
 
+Result<PrivateCopy> privateCopy(const Shape& input, bool copyGeometry, std::string_view where)
+{
+    PrivateCopy out;
+    BRepBuilderAPI_Copy copier(occt(input), copyGeometry, /*copyMesh=*/false);
+    if (!copier.IsDone() || copier.Shape().IsNull())
+        return tl::unexpected(kernelFailure("The body could not be copied for the geometry kernel.", where));
+    out.shape = wrap(copier.Shape());
+    for (std::size_t slot = 0; slot < kSubKindCount; ++slot) {
+        const auto kind = static_cast<SubKind>(slot);
+        const ShapeIndex& map = input.impl->subs[slot];
+        std::vector<std::uint32_t>& table = out.toInput[slot];
+        table.assign(out.shape.count(kind), kNoInputIndex);
+        if (table.size() != static_cast<std::size_t>(map.Extent()))
+            return tl::unexpected(kernelFailure("Copying the body changed its topology.", where));
+        for (int j = 1; j <= map.Extent(); ++j) {
+            const auto id = subIdOf(out.shape, copier.ModifiedShape(map.FindKey(j)));
+            if (!id || id->kind != kind || table[id->index] != kNoInputIndex)
+                return tl::unexpected(kernelFailure("Copying the body changed its topology.", where));
+            table[id->index] = static_cast<std::uint32_t>(j - 1);
+            out.identity = out.identity && id->index == static_cast<std::uint32_t>(j - 1);
+        }
+    }
+    return out;
+}
+
+std::optional<SubId> inputSubId(const PrivateCopy& copy, SubId id)
+{
+    if (!validKind(id.kind))
+        return std::nullopt;
+    const std::vector<std::uint32_t>& table = copy.toInput[kindSlot(id.kind)];
+    if (id.index >= table.size() || table[id.index] == kNoInputIndex)
+        return std::nullopt;
+    return SubId{id.kind, table[id.index]};
+}
+
+Status remapSources(ShapeHistory& history, int input, const PrivateCopy& copy, std::string_view where)
+{
+    if (copy.identity)
+        return std::monostate{};
+    for (HistoryEntry& entry : history.entries) {
+        if (entry.inputIndex != input)
+            continue;
+        const auto source = inputSubId(copy, entry.source);
+        if (!source)
+            return tl::unexpected(kernelFailure("The history names an element the body does not have.", where));
+        entry.source = *source;
+    }
+    std::stable_sort(history.entries.begin(), history.entries.end(), [](const HistoryEntry& a, const HistoryEntry& b) {
+        if (a.inputIndex != b.inputIndex)
+            return a.inputIndex < b.inputIndex;
+        return a.source < b.source;
+    });
+    return std::monostate{};
+}
+
 std::vector<SubId> orphanFaces(const ShapeHistory& history, const Shape& result)
 {
     const std::uint32_t faces = result.count(SubKind::Face);
@@ -151,6 +207,9 @@ Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, 
     if (allFaces.Extent() != solidFaces.Extent())
         return tl::unexpected(kernelFailure(subject + " left faces that do not belong to a solid.", where));
 
+    // Before BRepCheck, which crashes on some shapes it should only reject (shape_check.cpp).
+    if (const auto fault = structuralFault(shape))
+        return tl::unexpected(kernelFailure(subject + " produced an invalid solid (" + *fault + ").", where));
     if (!BRepCheck_Analyzer(shape).IsValid())
         return tl::unexpected(kernelFailure(subject + " produced an invalid solid (BRepCheck).", where));
 

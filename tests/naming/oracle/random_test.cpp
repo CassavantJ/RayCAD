@@ -303,19 +303,7 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq)
     import.id = "I";
     import.type = FType::Import;
     import.role = "import";
-    // Every sequence works on its own copy of the part (a BREP round trip makes new sub-shapes). Kernel operations
-    // leave state on the sub-shapes they are given, and with one shared copy a sequence gave a different result
-    // when another had run on the part before it (see the T-081a report), so the runs were not reproducible.
-    {
-        auto copy = kernel::deserialize(kernel::serialize(part.base->shape));
-        auto own =
-            copy ? analyseImport(*copy) : Result<std::shared_ptr<const ImportBase>>(tl::unexpected(copy.error()));
-        if (!own) {
-            out.skipped = true;
-            return out;
-        }
-        import.base = *own;
-    }
+    import.base = part.base;
     Script script{import};
     FeatRefs picks;
     Builder b(Mode::Author, picks);
