@@ -18,8 +18,13 @@ configs=("$@")
 
 work="${RAYCAD_WORK:-$HOME/raycad}"
 mkdir -p "$work"
-rsync -a --delete --exclude .git --exclude build --exclude 'spikes/*/build*' --exclude 'spikes/*/third_party' \
-      --exclude 'spikes/*/data' "$src/" "$work/src/"
+# Files are compared by content, and a copied file gets the time of the copy, not its time in the checkout
+# (--no-times). With -a's preserved times, a source that changed in the checkout while a build of the previous copy
+# was running (a merge, a checkout) could arrive older than the objects built meanwhile from its old content; ninja
+# then kept those stale objects and linked them with code built from the new headers, which corrupted memory at
+# run time (a GCC debug ray_doc_tests aborted with "stack smashing detected" until the object was rebuilt).
+rsync -a --no-times --checksum --delete --exclude .git --exclude build --exclude 'spikes/*/build*' \
+      --exclude 'spikes/*/third_party' --exclude 'spikes/*/data' "$src/" "$work/src/"
 cd "$work/src"
 
 baseline=$(python3 -c "import json; print(json.load(open('vcpkg-configuration.json'))['default-registry']['baseline'])")

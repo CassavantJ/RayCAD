@@ -334,7 +334,9 @@ QRect AppHost::clampToScreens(const QRect& wanted, const QSize& minimum)
     const int w = std::clamp(wanted.width(), std::min(minimum.width(), area.width()), area.width());
     const int h = std::clamp(wanted.height(), std::min(minimum.height(), area.height()), area.height());
     if (offScreen) {
-        return QRect(area.center().x() - w / 2, area.center().y() - h / 2, w, h);
+        // Centred from the edges, not from QRect::center(): that rounds down ((left + right) / 2 with right =
+        // left + width - 1), which put a window as wide as an even-sized screen one pixel off its left edge.
+        return QRect(area.left() + (area.width() - w) / 2, area.top() + (area.height() - h) / 2, w, h);
     }
     // Wholly on that screen: the title bar can always be reached.
     const int x = std::clamp(wanted.x(), area.left(), area.left() + area.width() - w);

@@ -10,6 +10,7 @@
 //   - 200 scripted window resizes with glass on: no crash, no warning, no RHI resource leak
 //   - imported body colours (an assembly file that carries them) are drawn, and a selection stays visible on them
 // With RAY_GLASS_SCREENSHOT_DIR set, the windows are saved there as PNG files (for review; nothing is compared).
+#include "../scene_graph_probe.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -76,26 +77,7 @@ QStringList takeWarnings()
     return std::exchange(g_warnings, {});
 }
 
-bool rhiSceneGraph()
-{
-    static const bool rhi = [] {
-        QQuickWindow probe;
-        probe.resize(64, 64);
-        probe.show();
-        if (!QTest::qWaitForWindowExposed(&probe))
-            return false;
-        (void)probe.grabWindow();
-        const QSGRendererInterface* renderer = probe.rendererInterface();
-        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
-    }();
-    return rhi;
-}
-
-#define REQUIRE_RHI()                                                                                                  \
-    do {                                                                                                               \
-        if (!rhiSceneGraph())                                                                                          \
-            SKIP("the scene graph has no QRhi (software backend): the viewport cannot render here");                   \
-    } while (false)
+using ray::uitest::rhiSceneGraph;
 
 QQuickItem* findItem(QQuickItem* item, const char* objectName)
 {
@@ -270,7 +252,7 @@ Continuity continuity(const Window& w, QQuickItem* panel, double innerX, double 
 
 TEST_CASE("glass panels show the blurred model behind them, aligned", "[glass][align]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     for (const char* themeName : {"dark", "light"}) {
         INFO("theme " << themeName);
         Window w(themeName, true);
@@ -357,7 +339,7 @@ TEST_CASE("glass panels show the blurred model behind them, aligned", "[glass][a
 
 TEST_CASE("one blur per changed frame with any number of glass panels; none when off", "[glass][counter]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark", true);
     w.open(kBoxHole);
     const std::size_t panels = w.sampling().size();
@@ -449,7 +431,7 @@ TEST_CASE("one blur per changed frame with any number of glass panels; none when
 
 TEST_CASE("200 window resizes with glass on: no crash, no RHI resource leak", "[glass][resize]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     static_cast<void>(takeWarnings());
     {
         Window w("dark", true, QSize(1200, 800));
@@ -494,7 +476,7 @@ TEST_CASE("200 window resizes with glass on: no crash, no RHI resource leak", "[
 
 TEST_CASE("imported body colours are drawn and a selection stays visible on them", "[glass][bodycolor]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     for (const char* themeName : {"dark", "light"}) {
         INFO("theme " << themeName);
         Window w(themeName, true);

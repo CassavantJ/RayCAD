@@ -15,6 +15,7 @@
 //   - warm start to the first frame, reported against PLAN.md section 9
 //
 // Screenshots: with RAY_T019_SHOTS set to a folder, some steps save the window there.
+#include "../scene_graph_probe.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -74,24 +75,7 @@ const QString kMidSize = QStringLiteral(RAY_CORPUS_DIR "/nist-pmi/nist_ctc_04_as
 constexpr int kOpenTimeoutMs = 180000;
 constexpr const char* kParamId = "6f1c1d4e-2b7a-4c39-9a51-0d2e8f3b7c11";
 
-// Whether the scene graph renders through a QRhi, asked of a real, shown window: QQuickWindow::graphicsApi() only
-// says what would be requested, and on the offscreen platform without OpenGL (Linux) Qt Quick falls back to its
-// software backend. Only the UI-thread stall measurement depends on it: the software backend rasterises every frame
-// on the UI thread, so it measures software rendering, not RayCAD. Every other test here runs on any scene graph.
-bool rhiSceneGraph()
-{
-    static const bool rhi = [] {
-        QQuickWindow probe;
-        probe.resize(64, 64);
-        probe.show();
-        if (!QTest::qWaitForWindowExposed(&probe))
-            return false;
-        (void)probe.grabWindow(); // initialises the scene graph
-        const QSGRendererInterface* renderer = probe.rendererInterface();
-        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
-    }();
-    return rhi;
-}
+using ray::uitest::rhiSceneGraph;
 
 // A crash-recovery source standing in for the app's journals (the dialog's rows, discard and the recover flow).
 // "Recovering" just opens the file.
@@ -838,6 +822,8 @@ TEST_CASE("crash recovery end to end: a session that ended without saving is rec
 }
 TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[stall]")
 {
+    // The software backend rasterises every frame on the UI thread, so there this would measure Qt's software
+    // renderer, not RayCAD. Every other test here needs no rendering viewport and runs on any scene graph.
     if (!rhiSceneGraph())
         SKIP("the scene graph has no QRhi (software backend): frames are rasterised on the UI thread here");
     Window w("dark");

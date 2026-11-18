@@ -9,6 +9,7 @@
 //   - nothing is created before first use; disabled commands say why; long-running ones use the jobs list
 //   - with a document open the file, edit and export commands enable; a read-only one disables Save (Save As hint);
 //     file commands that need a path use the native file dialog instead of the form (T-019)
+#include "../scene_graph_probe.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -65,23 +66,7 @@ namespace {
 const QString kBoxHole = QStringLiteral(RAY_KERNEL_TEST_DATA_DIR "/box_hole.step");
 constexpr int kOpenTimeoutMs = 120000;
 
-// Whether the viewport can render (and so answer a pick), asked of a real, shown window: QQuickWindow::graphicsApi()
-// only says what would be requested, and where the platform has no OpenGL (the offscreen platform on Linux) Qt Quick
-// falls back to its software backend afterwards ("No QRhi found for window").
-bool rhiSceneGraph()
-{
-    static const bool rhi = [] {
-        QQuickWindow probe;
-        probe.resize(64, 64);
-        probe.show();
-        if (!QTest::qWaitForWindowExposed(&probe))
-            return false;
-        (void)probe.grabWindow(); // initialises the scene graph
-        const QSGRendererInterface* renderer = probe.rendererInterface();
-        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
-    }();
-    return rhi;
-}
+using ray::uitest::rhiSceneGraph;
 
 // Calls of the test actions, from any thread.
 struct Calls {

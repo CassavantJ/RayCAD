@@ -7,6 +7,7 @@
 
 #include <bit>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <random>
@@ -314,6 +315,144 @@ TEST_CASE("reading agrees with std::from_chars", "[doc][number]")
         REQUIRE(result.ec == std::errc());
         REQUIRE(ours.has_value());
         CHECK(std::bit_cast<std::uint64_t>(*ours) == std::bit_cast<std::uint64_t>(expected));
+    }
+}
+
+namespace {
+
+// Reads `text` with std::from_chars and with parseDouble; both must give the same bits (or both report overflow).
+void readsLikeTheStandard(const std::string& text)
+{
+    INFO(text);
+    double expected = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), expected);
+    const auto ours = parseDouble(text);
+    if (result.ec == std::errc::result_out_of_range) {
+        if (ours.has_value()) {
+            CHECK(*ours == 0.0); // underflow: a signed zero; overflow is an error for us
+        }
+        return;
+    }
+    REQUIRE(result.ec == std::errc());
+    REQUIRE(result.ptr == text.data() + text.size());
+    REQUIRE(ours.has_value());
+    CHECK(std::bit_cast<std::uint64_t>(*ours) == std::bit_cast<std::uint64_t>(expected));
+}
+
+// formatDouble agrees with std::to_chars and reads back to the same bits.
+void roundTrips(double d)
+{
+    INFO(std::bit_cast<std::uint64_t>(d));
+    const std::string text = formatDouble(d);
+    CHECK(text == viaToChars(d));
+    const auto back = parseDouble(text);
+    REQUIRE(back.has_value());
+    CHECK(std::bit_cast<std::uint64_t>(*back) == std::bit_cast<std::uint64_t>(d == 0.0 ? 0.0 : d));
+}
+
+} // namespace
+
+TEST_CASE("extreme and long numbers convert exactly in both directions", "[doc][number]")
+{
+    using limits = std::numeric_limits<double>;
+    // The value a GCC debug run was reading when a stack-protector abort hit the process (it is read correctly; the
+    // abort did not come from here).
+    readsLikeTheStandard("7.08204361320760e-99");
+    roundTrips(7.08204361320760e-99);
+    for (const double d : {limits::min(), limits::denorm_min(), limits::max(), limits::lowest(), -limits::denorm_min(),
+                           limits::epsilon(), 1e-99, 1e-308, 2.2250738585072009e-308 /* largest subnormal */,
+                           2.2250738585072014e-308, 4.9406564584124654e-324, 1.7976931348623157e308, 1e308, 1e22, 1e23,
+                           9007199254740993.0, 0.1, 5e-324, 2.4703282292062328e-324}) {
+        roundTrips(d);
+        roundTrips(-d);
+    }
+    // Neighbours of the boundaries.
+    for (const double d : {limits::min(), limits::max(), 1e-99, 1e-308}) {
+        roundTrips(std::nextafter(d, 0.0));
+        if (d != limits::max()) {
+            roundTrips(std::nextafter(d, limits::infinity())); // above DBL_MAX is infinity, which JSON cannot hold
+        }
+    }
+    // Every bit pattern around 1e-99 and the bottom of the subnormals.
+    const std::uint64_t around = std::bit_cast<std::uint64_t>(7.08204361320760e-99);
+    for (std::uint64_t b = around - 500; b < around + 500; ++b) {
+        roundTrips(fromBits(b));
+    }
+    for (std::uint64_t b = 1; b < 300; ++b) {
+        roundTrips(fromBits(b));
+    }
+
+    // Texts: 17 and more significant digits, the exact (767-digit) expansion of the smallest subnormal, long runs of
+    // leading and trailing zeros, long exponents, halfway cases.
+    for (const char* text : {"7.08204361320760e-99",
+                             "4.9406564584124654e-324",
+                             "2.4703282292062327e-324",
+                             "2.4703282292062328e-324",
+                             "2.2250738585072011e-308",
+                             "2.2250738585072012e-308",
+                             "1.7976931348623157e308",
+                             "1.7976931348623158e308",
+                             "1.7976931348623159e308",
+                             "9007199254740993",
+                             "9007199254740992.5000000000000000000000001",
+                             "0.1000000000000000055511151231257827021181583404541015625",
+                             "1e-400",
+                             "1e400",
+                             "1e-324",
+                             "1e-325",
+                             "123456789012345678901234567890e-300",
+                             "0.000000000000000000000000000000000000000000000001e-260",
+                             "1e0000000000000000000000000000000000000000000000000000000000001",
+                             "1e-0000000000000000000000000000000099",
+                             "1000000000000000000000000000000000000000000000000000000000000e-61",
+                             "-0",
+                             "-0.0e-999999999999999"}) {
+        readsLikeTheStandard(text);
+    }
+    std::string exact = "0.";
+    exact.append(323, '0');
+    exact += "49406564584124654417656879286822137236505980"; // DBL_TRUE_MIN, first digits ...
+    for (int k = 0; k < 800; ++k) {
+        exact.push_back(static_cast<char>('0' + k % 10)); // ... then far more digits than any double needs
+    }
+    readsLikeTheStandard(exact);
+    std::string zeros = "0." + std::string(5000, '0') + "1e5000";
+    readsLikeTheStandard(zeros);
+    std::string ones(2000, '1');
+    readsLikeTheStandard(ones + "e-2100");
+    readsLikeTheStandard(ones + std::string(3000, '0') + "e-4700");
+}
+
+// Not part of the regular run (about a minute in a debug build): run with "[.number-fuzz]" under ASan or a hardened
+// GCC build.
+TEST_CASE("number fuzz: 300,000 random bit patterns and texts", "[.number-fuzz]")
+{
+    std::mt19937_64 rng(0x5241594341440009ULL);
+    for (int i = 0; i < 300000; ++i) {
+        const double d = fromBits(rng());
+        if (!(d == d) || d - d != 0.0) {
+            continue;
+        }
+        const std::string text = formatDouble(d);
+        const auto back = parseDouble(text);
+        REQUIRE(back.has_value());
+        REQUIRE(std::bit_cast<std::uint64_t>(*back) == std::bit_cast<std::uint64_t>(d == 0.0 ? 0.0 : d));
+        // A random JSON number: 2 to 41 significant digits (JSON needs a digit after the point), any exponent.
+        std::string t = (rng() % 2 == 0) ? "-" : "";
+        t.push_back(static_cast<char>('1' + rng() % 9));
+        t.push_back('.');
+        for (int k = 1 + static_cast<int>(rng() % 40); k > 0; --k) {
+            t.push_back(static_cast<char>('0' + rng() % 10));
+        }
+        t += "e" + std::to_string(static_cast<int>(rng() % 700) - 350);
+        INFO(t);
+        double expected = 0;
+        const auto result = std::from_chars(t.data(), t.data() + t.size(), expected);
+        const auto ours = parseDouble(t);
+        if (result.ec == std::errc()) {
+            REQUIRE(ours.has_value());
+            REQUIRE(std::bit_cast<std::uint64_t>(*ours) == std::bit_cast<std::uint64_t>(expected));
+        }
     }
 }
 #endif

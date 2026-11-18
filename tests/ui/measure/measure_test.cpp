@@ -11,6 +11,7 @@
 //   - no UI-thread stall over 50 ms while measuring a mid-size corpus part
 //
 // Screenshots: with RAY_T022_SHOTS set to a folder, the window is saved there (both themes).
+#include "../scene_graph_probe.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -68,26 +69,7 @@ const QString kMidSize = QStringLiteral(RAY_CORPUS_DIR "/nist-pmi/nist_ctc_04_as
 
 constexpr int kOpenTimeoutMs = 120000;
 
-bool rhiSceneGraph()
-{
-    static const bool rhi = [] {
-        QQuickWindow probe;
-        probe.resize(64, 64);
-        probe.show();
-        if (!QTest::qWaitForWindowExposed(&probe))
-            return false;
-        (void)probe.grabWindow();
-        const QSGRendererInterface* renderer = probe.rendererInterface();
-        return renderer != nullptr && QSGRendererInterface::isApiRhiBased(renderer->graphicsApi());
-    }();
-    return rhi;
-}
-
-#define REQUIRE_RHI()                                                                                                  \
-    do {                                                                                                               \
-        if (!rhiSceneGraph())                                                                                          \
-            SKIP("the scene graph has no QRhi (software backend): the viewport cannot render here");                   \
-    } while (false)
+using ray::uitest::rhiSceneGraph;
 
 struct Window {
     QTemporaryDir cache;
@@ -265,7 +247,7 @@ void selectFaces(const Window& w, std::uint32_t a, std::uint32_t b)
 
 TEST_CASE("two holes show their centre distance; inch and mm switch live; copy; pin", "[measure][e2e]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     w.open(kPlate);
     MeasureModel& m = *w.measure();
@@ -396,7 +378,7 @@ TEST_CASE("two holes show their centre distance; inch and mm switch live; copy; 
 
 TEST_CASE("click-selected faces show distance and angle; the angle on a chamfer; mass properties", "[measure][angle]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("light");
     w.open(kChamfer);
     MeasureModel& m = *w.measure();
@@ -580,7 +562,7 @@ TEST_CASE("every measure command is in the palette and the context menu; corner 
 
 TEST_CASE("no UI-thread stall over 50 ms while measuring a mid-size corpus part", "[measure][stall]")
 {
-    REQUIRE_RHI();
+    RAY_REQUIRE_RHI();
     Window w("dark");
     w.open(kMidSize);
     MeasureModel& m = *w.measure();
