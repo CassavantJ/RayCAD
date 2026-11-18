@@ -1,0 +1,463 @@
+// The UI-thread half of every viewport (task T-014). See viewport_frontend.h.
+#include "viewport_frontend.h"
+
+#include <QtCore/QMetaObject>
+#include <QtCore/QObject>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <mutex>
+#include <string>
+#include <utility>
+
+namespace ray::render::detail {
+
+namespace {
+
+constexpr int kMaxCaptureSide = 16384;
+
+// One warning per process for each entry point that a later task fills in.
+void notImplemented(std::once_flag& once, const char* what)
+{
+    std::call_once(once, [what] { ray::log(LogLevel::Warn, "render", std::string(what) + ": not implemented yet"); });
+}
+
+void grow(Box3& box, double x, double y, double z)
+{
+    box.min.x = std::min(box.min.x, x);
+    box.min.y = std::min(box.min.y, y);
+    box.min.z = std::min(box.min.z, z);
+    box.max.x = std::max(box.max.x, x);
+    box.max.y = std::max(box.max.y, y);
+    box.max.z = std::max(box.max.z, z);
+}
+
+Box3 emptyBox()
+{
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    return Box3{Vec3{inf, inf, inf}, Vec3{-inf, -inf, -inf}};
+}
+
+std::optional<Box3> pointsBounds(const std::vector<float>& xyz)
+{
+    if (xyz.size() < 3)
+        return std::nullopt;
+    Box3 box = emptyBox();
+    for (std::size_t i = 0; i + 2 < xyz.size(); i += 3)
+        grow(box, xyz[i], xyz[i + 1], xyz[i + 2]);
+    return box;
+}
+
+} // namespace
+
+// ---------- Outbox ----------
+void Outbox::post(std::function<void()> onUiThread)
+{
+    std::lock_guard lock(mutex_);
+    if (!wake_)
+        return; // the front is gone
+    queue_.push_back(std::move(onUiThread));
+    if (!wakePending_) {
+        wakePending_ = true;
+        wake_();
+    }
+}
+
+void Outbox::attach(std::function<void()> wake)
+{
+    std::lock_guard lock(mutex_);
+    wake_ = std::move(wake);
+}
+
+void Outbox::detach()
+{
+    std::lock_guard lock(mutex_);
+    wake_ = nullptr;
+    queue_.clear();
+}
+
+void Outbox::drain()
+{
+    std::vector<std::function<void()>> work;
+    {
+        std::lock_guard lock(mutex_);
+        work.swap(queue_);
+        wakePending_ = false;
+    }
+    for (auto& fn : work) {
+        if (fn)
+            fn();
+    }
+}
+
+// ---------- Mesh helpers ----------
+Status validateMesh(const kernel::Mesh& mesh)
+{
+    const auto bad = [](std::string what) {
+        return Status(tl::unexpected(Error{ErrorCode::InvalidArgument, "Mesh cannot be displayed: " + what, {}}));
+    };
+    if (mesh.positions.size() % 3 != 0)
+        return bad("positions is not a list of xyz triples");
+    if (mesh.normals.size() != mesh.positions.size())
+        return bad("normals and positions differ in size");
+    if (mesh.indices.size() % 3 != 0)
+        return bad("indices is not a list of triangles");
+    if (mesh.edgePositions.size() % 3 != 0)
+        return bad("edgePositions is not a list of xyz triples");
+    const std::size_t vertexCount = mesh.positions.size() / 3;
+    for (const std::uint32_t index : mesh.indices) {
+        if (index >= vertexCount)
+            return bad("an index is out of range");
+    }
+    for (const kernel::FaceRange& face : mesh.faces) {
+        if (std::size_t{face.firstIndex} + face.indexCount > mesh.indices.size() || face.indexCount % 3 != 0)
+            return bad("a face range is out of bounds");
+    }
+    const std::size_t edgeVertexCount = mesh.edgePositions.size() / 3;
+    for (const kernel::EdgeRange& edge : mesh.edges) {
+        if (std::size_t{edge.firstVertex} + edge.vertexCount > edgeVertexCount)
+            return bad("an edge range is out of bounds");
+    }
+    return {};
+}
+
+std::optional<Box3> meshBounds(const kernel::Mesh& mesh)
+{
+    std::optional<Box3> faces = mesh.indices.empty() ? std::nullopt : pointsBounds(mesh.positions);
+    std::optional<Box3> edges = pointsBounds(mesh.edgePositions);
+    if (!faces)
+        return edges;
+    if (edges) {
+        grow(*faces, edges->min.x, edges->min.y, edges->min.z);
+        grow(*faces, edges->max.x, edges->max.y, edges->max.z);
+    }
+    return faces;
+}
+
+Box3 transformBox(const Box3& box, const Xform& xf)
+{
+    Box3 out = emptyBox();
+    for (int corner = 0; corner < 8; ++corner) {
+        const double x = (corner & 1) ? box.max.x : box.min.x;
+        const double y = (corner & 2) ? box.max.y : box.min.y;
+        const double z = (corner & 4) ? box.max.z : box.min.z;
+        const double* m = xf.m;
+        grow(out, m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7],
+             m[8] * x + m[9] * y + m[10] * z + m[11]);
+    }
+    return out;
+}
+
+// ---------- ViewportFrontend ----------
+ViewportFrontend::ViewportFrontend(std::function<void()> requestUpdate)
+    : requestUpdate_(std::move(requestUpdate)), outbox_(std::make_shared<Outbox>()),
+      status_(std::make_shared<SharedStatus>()), uiContext_(std::make_unique<QObject>())
+{
+    state_.camera = defaultCamera();
+    state_.preset = presetFor(Tier::Low);
+    QObject* context = uiContext_.get();
+    std::weak_ptr<Outbox> weak = outbox_;
+    outbox_->attach([context, weak] {
+        QMetaObject::invokeMethod(
+            context,
+            [weak] {
+                if (auto box = weak.lock())
+                    box->drain();
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+ViewportFrontend::~ViewportFrontend()
+{
+    outbox_->detach();  // after this no render-thread post reaches uiContext_
+    uiContext_.reset(); // drops wake-ups still queued for it
+}
+
+SceneItem* ViewportFrontend::find(ItemId id)
+{
+    const auto it = items_.find(id);
+    return it == items_.end() ? nullptr : &it->second;
+}
+
+void ViewportFrontend::changed(bool scene, bool camera)
+{
+    if (scene)
+        ++state_.sceneGeneration;
+    if (camera)
+        ++state_.cameraGeneration;
+    if (requestUpdate_)
+        requestUpdate_();
+}
+
+ItemId ViewportFrontend::addMesh(std::shared_ptr<const kernel::Mesh> mesh, const Xform& xf, MeshStyle style)
+{
+    if (!mesh) {
+        ray::log(LogLevel::Warn, "render", "addMesh: null mesh ignored");
+        return 0;
+    }
+    if (Status ok = validateMesh(*mesh); !ok) {
+        ray::log(LogLevel::Warn, "render", "addMesh: " + ok.error().message);
+        return 0;
+    }
+    SceneItem item;
+    item.id = nextId_++;
+    item.kind = ItemKind::Mesh;
+    item.localBounds = meshBounds(*mesh);
+    item.mesh = std::move(mesh);
+    item.xform = xf;
+    item.style = style;
+    item.geometryGeneration = nextGeometryGeneration_++;
+    const ItemId id = item.id;
+    items_.emplace(id, std::move(item));
+    changed(true, false);
+    return id;
+}
+
+void ViewportFrontend::updateMesh(ItemId id, std::shared_ptr<const kernel::Mesh> mesh, std::optional<Box3> dirty)
+{
+    // `dirty` would let the renderer patch only part of the buffers (simulation stock, T-07x). T-014 uploads the
+    // whole mesh again.
+    (void)dirty;
+    SceneItem* item = find(id);
+    if (!item || item->kind != ItemKind::Mesh || !mesh)
+        return;
+    if (Status ok = validateMesh(*mesh); !ok) {
+        ray::log(LogLevel::Warn, "render", "updateMesh: " + ok.error().message);
+        return;
+    }
+    item->localBounds = meshBounds(*mesh);
+    item->mesh = std::move(mesh);
+    item->geometryGeneration = nextGeometryGeneration_++;
+    changed(true, false);
+}
+
+ItemId ViewportFrontend::addBackplot(std::shared_ptr<const sim::Backplot>)
+{
+    static std::once_flag once;
+    notImplemented(once, "IViewport::addBackplot");
+    return 0;
+}
+
+void ViewportFrontend::setBackplotRange(ItemId, std::uint32_t, std::uint32_t)
+{
+    static std::once_flag once;
+    notImplemented(once, "IViewport::setBackplotRange");
+}
+
+ItemId ViewportFrontend::addLines(std::span<const Vec3> segments, Token colour, float widthPx, bool dashed)
+{
+    if (segments.size() < 2 || !(widthPx > 0) || colour >= Token::Count)
+        return 0;
+    auto lines = std::make_shared<LineSet>();
+    const std::size_t count = segments.size() / 2 * 2; // an odd last point has no partner
+    lines->points.reserve(count * 3);
+    for (std::size_t i = 0; i < count; ++i) {
+        lines->points.push_back(static_cast<float>(segments[i].x));
+        lines->points.push_back(static_cast<float>(segments[i].y));
+        lines->points.push_back(static_cast<float>(segments[i].z));
+    }
+    lines->widthPx = widthPx;
+    lines->dashed = dashed;
+    SceneItem item;
+    item.id = nextId_++;
+    item.kind = ItemKind::Lines;
+    item.localBounds = pointsBounds(lines->points);
+    item.lines = std::move(lines);
+    item.style = MeshStyle{colour, colour, 1.0f, true, false};
+    item.geometryGeneration = nextGeometryGeneration_++;
+    const ItemId id = item.id;
+    items_.emplace(id, std::move(item));
+    changed(true, false);
+    return id;
+}
+
+ItemId ViewportFrontend::addToolGlyph(std::span<const Vec2>, Token)
+{
+    static std::once_flag once;
+    notImplemented(once, "IViewport::addToolGlyph");
+    return 0;
+}
+
+void ViewportFrontend::setTransform(ItemId id, const Xform& xf)
+{
+    if (SceneItem* item = find(id)) {
+        item->xform = xf;
+        changed(true, false);
+    }
+}
+
+void ViewportFrontend::setStyle(ItemId id, MeshStyle style)
+{
+    if (SceneItem* item = find(id); item && style.face < Token::Count && style.edge < Token::Count) {
+        item->style = style;
+        changed(false, false);
+    }
+}
+
+void ViewportFrontend::setVisible(ItemId id, bool visible)
+{
+    if (SceneItem* item = find(id); item && item->visible != visible) {
+        item->visible = visible;
+        changed(true, false);
+    }
+}
+
+void ViewportFrontend::remove(ItemId id)
+{
+    if (items_.erase(id) > 0)
+        changed(true, false);
+}
+
+void ViewportFrontend::setHighlight(std::span<const PickHit> selected, std::optional<PickHit> hover)
+{
+    // Stored for T-015, which draws it; T-014 draws no highlight.
+    state_.selected.assign(selected.begin(), selected.end());
+    state_.hover = hover;
+    changed(false, false);
+}
+
+void ViewportFrontend::setCamera(const Camera& camera)
+{
+    state_.camera = camera;
+    changed(false, true);
+}
+
+Camera ViewportFrontend::camera() const
+{
+    return state_.camera;
+}
+
+void ViewportFrontend::setSection(std::optional<SectionPlane> section)
+{
+    // Stored for T-023, which clips and caps; T-014 draws the whole model.
+    static std::once_flag once;
+    if (section)
+        notImplemented(once, "IViewport::setSection");
+    state_.section = section;
+    changed(false, false);
+}
+
+void ViewportFrontend::setTheme(std::shared_ptr<const Theme> theme)
+{
+    state_.theme = std::move(theme);
+    changed(false, false);
+}
+
+void ViewportFrontend::setPreset(const TierPreset& preset)
+{
+    state_.preset = preset;
+    changed(false, false);
+}
+
+void ViewportFrontend::pick(int, int, std::uint8_t, std::function<void(std::optional<PickHit>)> done)
+{
+    // T-015 renders the ID buffer and reads it back. Until then every pick misses, delivered asynchronously like
+    // the real answer will be.
+    static std::once_flag once;
+    notImplemented(once, "IViewport::pick");
+    if (done)
+        outbox_->post([done = std::move(done)] { done(std::nullopt); });
+}
+
+void ViewportFrontend::pickRect(int, int, int, int, std::uint8_t, std::function<void(std::vector<PickHit>)> done)
+{
+    static std::once_flag once;
+    notImplemented(once, "IViewport::pickRect");
+    if (done)
+        outbox_->post([done = std::move(done)] { done({}); });
+}
+
+void ViewportFrontend::requestFrame()
+{
+    if (requestUpdate_)
+        requestUpdate_();
+}
+
+void ViewportFrontend::captureImage(int w, int h, std::function<void(std::vector<std::byte> png)> done)
+{
+    if (!done)
+        return;
+    if (w <= 0 || h <= 0 || w > kMaxCaptureSide || h > kMaxCaptureSide) {
+        ray::log(LogLevel::Warn, "render", "captureImage: bad size " + std::to_string(w) + "x" + std::to_string(h));
+        outbox_->post([done = std::move(done)] { done({}); });
+        return;
+    }
+    captures_.push_back(CaptureRequest{w, h, std::move(done)});
+    changed(false, false);
+}
+
+IViewport::FrameStats ViewportFrontend::lastFrameStats() const
+{
+    std::lock_guard lock(status_->mutex);
+    return status_->stats;
+}
+
+IViewport::Backdrop ViewportFrontend::blurredBackdropTexture()
+{
+    // T-016 renders the shared blur. Until then there is no texture; panels fall back to flat.
+    static std::once_flag once;
+    notImplemented(once, "IViewport::blurredBackdropTexture");
+    return Backdrop{nullptr, 0, 0, false, 0};
+}
+
+void ViewportFrontend::setBackdropEnabled(bool on)
+{
+    state_.backdropEnabled = on;
+    changed(false, false);
+}
+
+std::optional<Box3> ViewportFrontend::sceneBounds() const
+{
+    std::optional<Box3> all;
+    for (const auto& [id, item] : items_) {
+        if (!item.visible || !item.localBounds)
+            continue;
+        const Box3 box = transformBox(*item.localBounds, item.xform);
+        if (!all) {
+            all = box;
+        } else {
+            grow(*all, box.min.x, box.min.y, box.min.z);
+            grow(*all, box.max.x, box.max.y, box.max.z);
+        }
+    }
+    return all;
+}
+
+ViewportInfo ViewportFrontend::info() const
+{
+    std::lock_guard lock(status_->mutex);
+    return status_->info;
+}
+
+void ViewportFrontend::setDevicePixelRatio(double ratio)
+{
+    if (ratio > 0 && std::isfinite(ratio) && ratio != state_.devicePixelRatio) {
+        state_.devicePixelRatio = ratio;
+        changed(false, false);
+    }
+}
+
+FrameSnapshot ViewportFrontend::takeSnapshot()
+{
+    FrameSnapshot snap;
+    snap.camera = state_.camera;
+    snap.theme = state_.theme;
+    snap.preset = state_.preset;
+    snap.devicePixelRatio = state_.devicePixelRatio;
+    snap.section = state_.section;
+    snap.selected = state_.selected;
+    snap.hover = state_.hover;
+    snap.backdropEnabled = state_.backdropEnabled;
+    snap.sceneGeneration = state_.sceneGeneration;
+    snap.cameraGeneration = state_.cameraGeneration;
+    snap.items.reserve(items_.size());
+    for (const auto& [id, item] : items_)
+        snap.items.push_back(item);
+    snap.captures = std::move(captures_);
+    captures_.clear();
+    return snap;
+}
+
+} // namespace ray::render::detail
