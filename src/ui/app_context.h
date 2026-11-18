@@ -2,9 +2,9 @@
 //
 // It wraps an api::IApp* that MAY BE NULL (no session: the shell still starts and is fully usable for layout and
 // theme work). Actions go through invoke(), which does nothing and returns false without a session.
-// Later tasks extend it: T-020 sets backdropSource and reports display meshing through the job slot (setJob /
-// clearJob, jobCancelRequested; T-019's Session merges it into the jobs list), T-019 routes file actions through
-// the action handler, T-021 lists and invokes actions, T-024 persists glass and the theme mode.
+// Later tasks extend it: T-016's ViewportItem sets backdropSource; T-020 reports display meshing through the job
+// slot (setJob / clearJob, jobCancelRequested; T-019's Session merges it into the jobs list), T-019 routes file
+// actions through the action handler, T-021 lists and invokes actions, T-024 persists glass and the theme mode.
 #pragma once
 
 #include <QtCore/QObject>
@@ -28,8 +28,9 @@ class AppContext : public QObject {
     Q_PROPERTY(bool hasSession READ hasSession NOTIFY sessionChanged)
     // Liquid Glass panels (PLAN.md 6.6). Off means flat opaque panels; the layout is the same either way.
     Q_PROPERTY(bool glass READ glass WRITE setGlass NOTIFY glassChanged)
-    // The blurred viewport backdrop glass panels sample (T-016/T-020). Null until then: glass panels fall back to
-    // the tinted translucent fill.
+    // The blurred viewport backdrop glass panels sample (T-016): the ViewportItem, which sets itself here. Each glass
+    // panel's GlassBackdrop draws the part of its one shared blurred texture behind the panel (viewport_item.h).
+    // Null (no viewport, or no QRhi): glass panels show the tinted translucent fill alone.
     Q_PROPERTY(QObject* backdropSource READ backdropSource WRITE setBackdropSource NOTIFY backdropSourceChanged)
     // Index into workspaceNames.
     Q_PROPERTY(int workspace READ workspace WRITE setWorkspace NOTIFY workspaceChanged)

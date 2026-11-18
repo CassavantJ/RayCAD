@@ -19,8 +19,14 @@ add_library(ray_render STATIC
     viewport_hosted.cpp
     pick.h
     pick.cpp
+    backdrop.h
+    backdrop.cpp
+    highlight.h
+    highlight.cpp
     rhi/pick_pass.h
     rhi/pick_pass.cpp
+    rhi/backdrop_pass.h
+    rhi/backdrop_pass.cpp
     rhi/rhi_util.h
     rhi/rhi_util.cpp
     rhi/rhi_device.h
@@ -54,6 +60,13 @@ qt_add_shaders(ray_render "ray_render_shaders"
         shaders/pick_mesh.vert
         shaders/pick_line.vert
         shaders/pick_wideline.vert
-        shaders/pick.frag)
-set_source_files_properties(shaders/frame.glsl PROPERTIES HEADER_FILE_ONLY TRUE)
-target_sources(ray_render PRIVATE shaders/frame.glsl)
+        shaders/pick.frag
+        shaders/backdrop.vert
+        shaders/backdrop_down.frag
+        shaders/backdrop_blur7.frag
+        shaders/backdrop_blur11.frag
+        shaders/backdrop_blur15.frag
+        shaders/backdrop_blur23.frag)
+# backdrop.glsl is #included by the backdrop_*.frag variants (T-016).
+set_source_files_properties(shaders/frame.glsl shaders/backdrop.glsl PROPERTIES HEADER_FILE_ONLY TRUE)
+target_sources(ray_render PRIVATE shaders/frame.glsl shaders/backdrop.glsl)

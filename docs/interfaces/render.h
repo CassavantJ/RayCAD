@@ -85,7 +85,13 @@ double contrastRatio(Color fg, Color bg);             // WCAG 2 ratio; fg alpha 
 
 // ---------- Scene ----------
 using ItemId = std::uint32_t;
-struct MeshStyle { Token face; Token edge; float opacity = 1; bool showEdges = true; bool silhouetteOnly = false; };
+// faceColor (T-016): when set, faces are drawn in this colour (linear RGB; alpha is ignored, `opacity` applies)
+// instead of the `face` token. It is DATA, e.g. a body colour from a STEP/IGES file, never a literal in code; edges,
+// selection and hover keep their theme tokens (highlights on such faces are strengthened so they stay visible).
+struct MeshStyle {
+    Token face; Token edge; float opacity = 1; bool showEdges = true; bool silhouetteOnly = false;
+    std::optional<Color> faceColor;
+};
 struct Camera { Vec3 eye, target, up; bool perspective; double fovDeg, orthoHeight; };
 struct SectionPlane { Vec3 origin, normal; bool cap; };
 
@@ -127,13 +133,22 @@ public:
 
     // Liquid Glass support: a downsampled, blurred copy of the last viewport frame, regenerated only when the
     // viewport image changed. Panels sample this ONE texture.
-    // Ownership and threading (spike S1 hit a double free here): the viewport OWNS the texture; the handle is valid
-    // only on the render thread until the next resize or setBackdropEnabled(false), after which the UI must fetch it
-    // again. The UI wraps it WITHOUT taking ownership (QQuickWindow::createTextureFromRhiTexture takes ownership
-    // by default; that must be turned off).
+    // Ownership (spike S1 hit a double free here): the viewport OWNS the texture (a QRhiTexture). Whoever wraps it
+    // for a scene graph must not take ownership (QQuickWindow::createTextureFromRhiTexture does, so it is not used;
+    // src/ui wraps it in a non-owning QSGTexture). The handle stays valid until the viewport is resized, the backdrop
+    // is disabled or the renderer releases its resources; after that it must be fetched again (`generation` moves
+    // with every new blur, `width`/`height` say when the texture was replaced).
+    // Orientation: the texture has the native orientation of a render target; yUp true (OpenGL) means its first row
+    // is the BOTTOM of the picture, so a sampler flips V. Width and height are about a quarter of the viewport's
+    // pixels; the whole texture covers the whole viewport.
+    // Threading (settled in T-016): the handle is only usable on the render thread, so on the UI thread this call
+    // returns the description of the latest blur with rhiTexture null for a Qt Quick viewport; the render thread
+    // gets the handle from HostedViewportRenderer::backdrop() (ray_render/viewport_rhi.h) right after rendering. The
+    // offscreen viewport, whose UI thread is its render thread, returns the handle itself.
     struct Backdrop { void* rhiTexture; int width, height; bool yUp; std::uint64_t generation; };
     virtual Backdrop blurredBackdropTexture() = 0;
-    virtual void setBackdropEnabled(bool) = 0;                     // off => zero cost (flat panels)
+    // off => zero cost: no blur pass and no backdrop texture (flat panels, or no glass panel visible).
+    virtual void setBackdropEnabled(bool) = 0;
 };
 
 // ---------- GPU compute plug-in point (High tier, v2) ----------

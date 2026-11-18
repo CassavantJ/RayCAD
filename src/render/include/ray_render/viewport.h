@@ -29,6 +29,9 @@ struct ViewportInfo {
     std::int64_t liveRhiResources = 0; // QRhi resources this viewport's renderer currently owns (leak checks)
     // Times the picking ID buffer was drawn. Picks reuse it until the camera or the scene changes (task T-015).
     std::uint64_t pickBufferRenders = 0;
+    // Times the glass backdrop was blurred (task T-016): at most once per frame, only while the backdrop is enabled
+    // and only when the viewport image changed (or the backdrop has no blur of the current image yet).
+    std::uint64_t backdropBlurs = 0;
 };
 
 // ---------- Picking (task T-015) ----------
@@ -87,6 +90,7 @@ struct Ray {
 Ray cameraRay(const Camera&, double xPx, double yPx, int widthPx, int heightPx);
 
 // ---------- Offscreen viewport: its own QRhi, no window (tests, thumbnails, the headless CLI) ----------
+struct Image; // below
 enum class RhiBackend : std::uint8_t { Auto, D3D11, D3D12, Metal, OpenGL, Null };
 struct OffscreenOptions {
     int width = 640, height = 480;
@@ -102,6 +106,9 @@ public:
     // Draws a frame now, on the calling thread, whether or not one was requested. Frames that requestFrame and the
     // setters ask for are drawn from the Qt event loop, coalesced into one per loop iteration.
     virtual Status renderNow() = 0;
+    // The blurred glass backdrop (blurredBackdropTexture) read back as an image, rows top to bottom whatever the
+    // texture's orientation (tests and diagnostics). NotFound when the backdrop is disabled or not drawn yet.
+    virtual Result<Image> readBackdrop() = 0;
 };
 // Needs ensureQtRuntime() first. Fails with InvalidArgument for a bad size and with Internal when no graphics API
 // could be initialised (tests then skip).

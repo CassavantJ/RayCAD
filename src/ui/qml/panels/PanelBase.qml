@@ -2,9 +2,11 @@
 // only the background below differs, and nothing in it has an implicit size, so children lay out the same way.
 //
 //   flat   an opaque PanelBg rounded rectangle with a PanelBorder outline.
-//   glass  the shared blurred viewport backdrop (backdropSource, supplied by T-016/T-020; null for now) under a
-//          PanelBgGlassTint fill, a top-edge PanelHighlightTop sheen and the same outline. With no backdrop the tint
-//          alone is drawn: translucent over the viewport, its opacity chosen by the theme so text keeps 4.5:1.
+//   glass  the shared blurred viewport backdrop (backdropSource: the ViewportItem, T-016) under a PanelBgGlassTint
+//          fill, a top-edge PanelHighlightTop sheen and the same outline. GlassBackdrop (viewport_item.h) draws the
+//          part of the ONE blurred texture that lies behind this panel; with no backdrop (no viewport, no QRhi) the
+//          tint alone is drawn: translucent over the viewport. The tint's opacity is chosen by the theme so text
+//          keeps 4.5:1 over any backdrop.
 //
 // Children go into contentItem (inset by `padding`).
 import QtQuick
@@ -37,9 +39,17 @@ Item {
         anchors.fill: parent
         visible: panel.glass
 
-        // T-016/T-020: when panel.backdropSource is set, sample the blurred backdrop here, under the tint, at this
-        // panel's scene position (one shared texture; no blur per panel).
+        // The blurred viewport behind this panel, under the tint (one shared texture; no blur per panel). It takes
+        // part in the backdrop only while visible: flat mode hides it and the viewport stops blurring.
+        GlassBackdrop {
+            objectName: "panelGlassBackdrop"
+            anchors.fill: parent
+            source: panel.backdropSource
+            radius: panel.radius
+        }
+
         Rectangle {
+            objectName: "panelGlassTint"
             anchors.fill: parent
             radius: panel.radius
             color: Theme.panelBgGlassTint
