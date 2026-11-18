@@ -17,7 +17,8 @@ add_library(ray_kernel STATIC
     mesh.cpp mesh_testing.h
     io_internal.h io_occt.h io_worker.cpp io_import.cpp io_export.cpp
     boolean_internal.h boolean_history.cpp boolean.cpp
-    sweep_internal.h sweep_profile.cpp sweep.cpp)
+    sweep_internal.h sweep_profile.cpp sweep.cpp
+    blend.cpp)
 ray_module(ray_kernel DETERMINISTIC)
 target_link_libraries(ray_kernel PRIVATE ray_core ${RAY_OCCT_TOOLKITS})
 target_include_directories(ray_kernel SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
