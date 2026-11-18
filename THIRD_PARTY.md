@@ -21,6 +21,7 @@ come from vcpkg. Versions of vcpkg ports are those of the baseline pinned in `vc
 | tl::expected | `tl-expected` | 1.3.1 | `CC0-1.0` | https://github.com/TartanLlama/expected | Header-only; `ray::Result` in `include/ray/core.h`. |
 | BLAKE3 | `blake3` | 1.8.7 | `CC0-1.0 OR Apache-2.0` | https://github.com/BLAKE3-team/BLAKE3 | Linked into `src/core`; content hashing (`ray::Hasher`). Used under CC0-1.0. |
 | oneTBB | `tbb` | 2023.2.0 | `Apache-2.0` | https://github.com/uxlfoundation/oneTBB | Dynamically linked into `src/core`; the job system. Ship the licence text and notice. |
+| musl libm (subset, vendored as `third_party/dmath`) | - | 1.2.6 | `MIT` | https://musl.libc.org/ | Compiled into `src/core` as `ray::dmath` (sin, cos, tan, asin, acos, atan2, hypot and their helpers). Upstream files, unchanged except for one include line in three of them; a build header renames every function. See `third_party/dmath/README.md`. Ship the copyright notice (`third_party/dmath/COPYRIGHT`). |
 | Catch2 | `catch2` | 3.16.1 | `BSL-1.0 AND BSD-3-Clause` | https://github.com/catchorg/Catch2 | Tests only. Not shipped. |
 | Boost (Graph, Math, and the Boost libraries those two depend on) | `boost-*` | 1.92.0 | `BSL-1.0` | https://www.boost.org/ | Headers, for the PlaneGCS sketch solver. In the manifest since T-001; nothing includes or links it yet. |
 | FreeType | `freetype` | 2.15.0 | `FTL OR GPL-2.0-or-later` | https://freetype.org/ | Dependency of OCCT (default `freetype` feature), dynamically linked by OCCT. Used under the FreeType License (FTL). |
@@ -45,7 +46,6 @@ record only; add a row to the table above in the same change that adds the depen
 
 | Component | Planned version | Licence (SPDX) | Needed by |
 |-|-|-|-|
-| musl libm (vendored as `third_party/dmath`) | to be pinned | `MIT` | `core` dmath (T-002) |
 | Eigen | 3.4.0 | `MPL-2.0` | `sketch` (PlaneGCS) |
 | PlaneGCS (vendored from FreeCAD as `third_party/planegcs`) | FreeCAD 1.1.4 | `LGPL-2.1-or-later` | `sketch` |
 | FreeCAD `Adaptive.cpp` (adapted in `src/cam/ops/adaptive2d`) | FreeCAD main, 56062b61 or later | `LGPL-2.1-or-later` | `cam` |
