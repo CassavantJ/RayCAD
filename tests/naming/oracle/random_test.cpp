@@ -791,6 +791,9 @@ TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development
     SequenceOptions holdout;
     holdout.seedBase = 0x401D0000ull;
     holdout.keyPrefix = "holdout ";
+    // No OCCT call may fault (see the first test case).
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Holdout", parts, kHoldoutPerPart, holdout);
+    CHECK(kernel::testing::structuredExceptions() == guardBefore);
     checkGates(r, kHoldoutPerPart);
 }
