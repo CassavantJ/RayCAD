@@ -56,9 +56,35 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
 {
     const auto registry = builtinCommandRegistry();
     REQUIRE(registry != nullptr);
-    CHECK(registry->names() == std::vector<std::string>{"body.set", "document.import", "feature.add", "feature.edit",
-                                                        "feature.remove", "feature.reorder", "feature.suppress",
-                                                        "param.set"});
+    // The model commands (T-009), document.import (T-010), and the parametric features and sketch editing (T-096).
+    CHECK(registry->names() == std::vector<std::string>{"body.set",
+                                                        "document.import",
+                                                        "feature.add",
+                                                        "feature.chamfer.add",
+                                                        "feature.chamfer.edit",
+                                                        "feature.datum_plane.add",
+                                                        "feature.datum_plane.edit",
+                                                        "feature.edit",
+                                                        "feature.extrude.add",
+                                                        "feature.extrude.edit",
+                                                        "feature.fillet.add",
+                                                        "feature.fillet.edit",
+                                                        "feature.remove",
+                                                        "feature.reorder",
+                                                        "feature.revolve.add",
+                                                        "feature.revolve.edit",
+                                                        "feature.sketch.add",
+                                                        "feature.sketch.edit",
+                                                        "feature.suppress",
+                                                        "param.set",
+                                                        "sketch.constraint.add",
+                                                        "sketch.constraint.remove",
+                                                        "sketch.constraint.set",
+                                                        "sketch.entity.add",
+                                                        "sketch.entity.remove",
+                                                        "sketch.set",
+                                                        "sketch.split",
+                                                        "sketch.trim"});
     for (const std::string& name : registry->names()) {
         const ray::doc::ICommandHandler* handler = registry->find(name);
         REQUIRE(handler != nullptr);

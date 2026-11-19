@@ -587,6 +587,28 @@ TEST_CASE("a trial blend that would crash OCCT's checker is refused, not checked
     filletWithoutFault(body, SubId{SubKind::Edge, 14}, 0.56046961970619469);
 }
 
+TEST_CASE("a fillet whose stripe OCCT reprocesses next to a collapsed end fails cleanly", "[kernel][blend][errors]")
+{
+    // The body and pick of naming random sequence 18:37 (nist 827-9999-905 after three features): edge 21, a 10 um
+    // sliver edge at the end of a tangent chain. The 0.6254 mm fillet fails and its size search tries 0.156 mm, where
+    // OCCT 8.0.1's ChFi3d_Builder::PerformSetOfKGen called D1 through a null 3D curve (access violation on Windows,
+    // SIGSEGV on Linux). Fixed in OCCT by ports/opencascade/0006-chfi3d-null-neighbour-curve.patch: the stripe fails.
+    const Shape body = loadBody("fillet_builder_fault.rbrep");
+    REQUIRE(body.count(SubKind::Solid) == 1);
+    const SubId edge{SubKind::Edge, 21};
+    // The size-search trial on its own: an ordinary failure, the guard does not fire.
+    {
+        const std::uint64_t guardBefore = testing::structuredExceptions();
+        JobContext ctx;
+        auto trial = fillet(body, {&edge, 1}, 0.15633965180909595, ctx);
+        CHECK(testing::structuredExceptions() == guardBefore);
+        REQUIRE_FALSE(trial.has_value());
+        CHECK(trial.error().code == ErrorCode::KernelFailure);
+    }
+    // The request of the naming sequence, size search included.
+    filletWithoutFault(body, edge, 0.62535860723638381);
+}
+
 TEST_CASE("a size equal to a face width gives a valid body or a clear failure", "[kernel][blend][errors]")
 {
     const Shape block = box({0, 0, 0}, {100, 60, 20});

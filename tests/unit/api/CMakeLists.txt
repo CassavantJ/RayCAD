@@ -8,6 +8,7 @@ set_property(TARGET ray_api_helper PROPERTY FOLDER "tests")
 add_executable(ray_api_tests
     actions_test.cpp
     external_app_test.cpp
+    features_test.cpp
     measure_test.cpp
     recovery_test.cpp
     session_test.cpp

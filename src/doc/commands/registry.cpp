@@ -2,7 +2,17 @@
 #include "commands.h"
 
 #include "../document_impl.h"
+#include "../features/datum_plane_feature.h"
+#include "../features/extrude_feature.h"
+#include "../features/feature_props.h"
+#include "../features/fillet_feature.h"
 #include "../features/import_feature.h"
+#include "../features/revolve_feature.h"
+#include "../features/sketch_commands.h"
+#include "../features/sketch_feature.h"
+
+#include <string_view>
+#include <utility>
 
 #include <exception>
 #include <new>
@@ -60,7 +70,31 @@ Status registerBuiltinCommands(CommandRegistry& registry)
                 return added;
             }
         }
-        return registry.add(features::makeImportCommandHandler()); // document.import (task T-010)
+        if (auto added = registry.add(features::makeImportCommandHandler()); !added) { // document.import (T-010)
+            return added;
+        }
+        // The parametric features (task T-096): feature.<type>.add / .edit, and the sketch editing commands.
+        const std::pair<std::string_view, std::string_view> typed[] = {
+            {features::kDatumPlaneType, features::datumPlanePropsSchema()},
+            {features::kSketchType, features::sketchPropsSchema()},
+            {features::kExtrudeType, features::extrudePropsSchema()},
+            {features::kRevolveType, features::revolvePropsSchema()},
+            {features::kFilletType, features::filletPropsSchema()},
+            {features::kChamferType, features::chamferPropsSchema()},
+        };
+        for (const auto& [type, schema] : typed) {
+            for (auto& handler : features::makeTypedFeatureCommands(type, schema)) {
+                if (auto added = registry.add(std::move(handler)); !added) {
+                    return added;
+                }
+            }
+        }
+        for (auto& handler : features::makeSketchCommands()) {
+            if (auto added = registry.add(std::move(handler)); !added) {
+                return added;
+            }
+        }
+        return {};
     } catch (...) {
         return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while registering the built-in commands", {}});
     }
