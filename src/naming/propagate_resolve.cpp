@@ -889,6 +889,52 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
 
 } // namespace
 
+bool edgeContinuesUnderOtherName(const ElementMap& map, const kernel::Shape& shape, kernel::SubId edge)
+{
+    try {
+        if (edge.kind != SubKind::Edge || !map.impl)
+            return false;
+        // The face names each name of the edge was made from, and the pieces those faces were split into since.
+        std::set<Hash256> own, pieces;
+        for (const Hash256& name : map.namesOf(edge)) {
+            const TopoName* record = map.record(name);
+            if (record == nullptr || record->role != "nb.edge")
+                continue;
+            for (const Hash256& parent : record->parents) {
+                own.insert(parent);
+                for (const TopoName* child : splitChildren(map, parent))
+                    pieces.insert(child->id);
+            }
+        }
+        if (pieces.empty())
+            return false;
+        auto holds = [&](SubId face, const std::set<Hash256>& set) {
+            for (const Hash256& n : map.namesOf(face))
+                if (set.count(n) != 0)
+                    return true;
+            return false;
+        };
+        std::set<Hash256> ownOrPieces = own;
+        ownOrPieces.insert(pieces.begin(), pieces.end());
+        for (const SubId& vertex : kernel::adjacent(shape, edge, SubKind::Vertex))
+            for (const SubId& other : kernel::adjacent(shape, vertex, SubKind::Edge)) {
+                if (other == edge)
+                    continue;
+                const std::vector<SubId> faces = kernel::adjacent(shape, other, SubKind::Face);
+                if (faces.size() != 2)
+                    continue;
+                // One face a piece of a face the edge was named from, the other that face's partner or a piece of it.
+                const bool a = holds(faces[0], pieces) && holds(faces[1], ownOrPieces);
+                const bool b = holds(faces[1], pieces) && holds(faces[0], ownOrPieces);
+                if (a || b)
+                    return true;
+            }
+        return false;
+    } catch (...) {
+        return true;
+    }
+}
+
 bool holdsHintCentre(const kernel::Shape& shape, kernel::SubId face, const Fingerprint& hint)
 {
     try {

@@ -815,3 +815,20 @@ TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the
     const BlockResult r = runBlock("Second holdout", parts, kHoldoutPerPart, holdout);
     checkGates(r, kHoldoutPerPart);
 }
+
+TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the second holdout's findings were fixed",
+          "[random-holdout3]")
+{
+    // The second holdout block's first run found two wrong answers; one was fixed (an edge named from a face that was
+    // split since), so this block, with seeds not run before, is the unseen check of that fix.
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x7A11D000ull;
+    holdout.keyPrefix = "holdout3 ";
+    const BlockResult r = runBlock("Third holdout", parts, kHoldoutPerPart, holdout);
+    checkGates(r, kHoldoutPerPart);
+}

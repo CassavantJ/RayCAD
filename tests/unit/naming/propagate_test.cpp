@@ -507,6 +507,45 @@ TEST_CASE("siblings told apart by all faces around them are marked and need thei
     CHECK(pieces >= 2);
 }
 
+TEST_CASE("an edge named from a face that was split since, running on under another name, is detected",
+          "[naming][propagate][t081a-gate]")
+{
+    // Holdout2 sequence 1:7: a resized hole's wall was split; the edge where it meets a cut's floor kept its name on
+    // one stretch, the next stretch was named from the wall's new piece, and Exact on the first stretch was incomplete.
+    // Here a history says face f0 of a block became itself and a neighbouring face f1 (two pieces): an edge e between
+    // f0 and the top keeps its name, and the edge between f1 and the top, at e's end, is named from f1's piece name.
+    const Body b = block();
+    const SubId top = faceNear(b.shape, Vec3{50, 30, 20});
+    const SubId f0 = faceNear(b.shape, Vec3{50, 0, 10});
+    const SubId f1 = faceNear(b.shape, Vec3{100, 30, 10});
+    kernel::ShapeHistory h;
+    for (const SubId s : test::allElements(b.shape)) {
+        std::vector<SubId> results{s};
+        if (s == f0)
+            results = {f0, f1};
+        else if (s == f1)
+            continue; // f1's own face is gone: its place is a piece of f0
+        std::sort(results.begin(), results.end());
+        h.entries.push_back({kernel::HistoryEntry::Relation::Modified, 0, s, results});
+    }
+    h.entries.push_back({kernel::HistoryEntry::Relation::Deleted, 0, f1, {}});
+    const std::array<const ElementMap*, 1> maps{&b.map};
+    const NamingInput in{kCut, "extrude", maps, &h, &b.shape, {}};
+    const NamingOutput out = take(propagate(in));
+    // The edge between f0 and the top.
+    const auto edgesOf = [&](SubId face) {
+        return kernel::adjacent(b.shape, face, SubKind::Edge);
+    };
+    std::vector<SubId> e0;
+    const auto a = edgesOf(f0), c = edgesOf(top);
+    std::set_intersection(a.begin(), a.end(), c.begin(), c.end(), std::back_inserter(e0));
+    REQUIRE(e0.size() == 1);
+    CHECK(naming::detail::edgeContinuesUnderOtherName(out.map, b.shape, e0[0]));
+    // On the block as named by the extrusion (no face split), no edge does.
+    for (std::uint32_t i = 0; i < b.shape.count(SubKind::Edge); ++i)
+        CHECK_FALSE(naming::detail::edgeContinuesUnderOtherName(b.map, b.shape, SubId{SubKind::Edge, i}));
+}
+
 TEST_CASE("the only piece of a split element that keeps a piece name counts every piece and needs its hint",
           "[naming][propagate][t081a-gate]")
 {

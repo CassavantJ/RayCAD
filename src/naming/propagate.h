@@ -99,4 +99,10 @@ bool onPickedFaces(const ElementMap& map, const kernel::Shape& shape, kernel::Su
 // throws.
 bool holdsHintCentre(const kernel::Shape& shape, kernel::SubId face, const Fingerprint& hint);
 
+// Does edge `edge`, named from its faces (rule 3) before one of those faces was split, run on past one of its vertices
+// as an edge between a piece of that face and the other face (or a piece of it), under another name? Then the edge's
+// name stayed on one stretch of the logical edge and the next stretch is named from the piece (T-081a holdout2 1:7:
+// a resized hole's wall was split, and the edge where it meets a cut's floor is in two named stretches). Never throws.
+bool edgeContinuesUnderOtherName(const ElementMap& map, const kernel::Shape& shape, kernel::SubId edge);
+
 } // namespace ray::naming::detail

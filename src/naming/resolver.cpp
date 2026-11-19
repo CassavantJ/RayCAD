@@ -157,6 +157,10 @@ private:
         // An edge or vertex whose faces are no longer the ones it was picked on is another element (T-081a).
         if (!detail::onPickedFaces(map, body.shape, element, ref))
             return broken("The picked element no longer lies on the faces it was picked on.");
+        if (element.kind == kernel::SubKind::Edge && !now.matches(ref.hint) &&
+            detail::edgeContinuesUnderOtherName(map, body.shape, element))
+            return broken("One of the picked edge's faces was split, and the edge runs on under another name; which "
+                          "stretches are the picked edge cannot be told.");
         // A face or edge that grew is the picked element plus more: Merged, not Exact (consumers review it, as a
         // Split). What it grew over may have been empty, or an element of another feature on the same surface whose
         // name does not survive the edit (T-081a random 6:29: the bottom face of a flange took in the ceiling of a
