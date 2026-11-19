@@ -6,6 +6,7 @@
 #include "../features/extrude_feature.h"
 #include "../features/feature_props.h"
 #include "../features/fillet_feature.h"
+#include "../features/hole_feature.h"
 #include "../features/import_feature.h"
 #include "../features/revolve_feature.h"
 #include "../features/sketch_commands.h"
@@ -81,6 +82,7 @@ Status registerBuiltinCommands(CommandRegistry& registry)
             {features::kRevolveType, features::revolvePropsSchema()},
             {features::kFilletType, features::filletPropsSchema()},
             {features::kChamferType, features::chamferPropsSchema()},
+            {features::kHoleType, features::holePropsSchema()}, // task T-097
         };
         for (const auto& [type, schema] : typed) {
             for (auto& handler : features::makeTypedFeatureCommands(type, schema)) {

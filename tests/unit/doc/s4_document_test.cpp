@@ -40,6 +40,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -176,6 +177,24 @@ std::string datumProps(const o::Frame& fr)
     return {};
 }
 
+// How the script's features become document features: as written, with the round boss F04 as a revolve (T-096), or
+// with every "hole" sweep (circles of one radius) as a hole feature drilling at sketch points (T-097).
+enum class Variant { Plain, RevolveF04, Holes };
+
+// A "hole" sweep the hole feature can make: every loop one circle, all of one radius.
+bool holeSweep(const o::Feature& f)
+{
+    if (f.role != "hole" || f.loops.empty()) {
+        return false;
+    }
+    for (const o::Loop& l : f.loops) {
+        if (l.ents.size() != 1 || l.ents[0].k != 'C' || l.ents[0].r != f.loops[0].ents[0].r) {
+            return false;
+        }
+    }
+    return true;
+}
+
 struct Generated {
     std::vector<ray::doc::Feature> features;
     std::map<std::string, FeatureId> opOf; // script feature -> the doc feature that builds it
@@ -184,7 +203,7 @@ struct Generated {
 // `blendEdges`: script blend id -> the JSON array of its edge references (authored on the baseline); blends without
 // an entry are left out (authoring adds them one at a time).
 Generated generate(const o::Script& script, const Selectors& selectors,
-                   const std::map<std::string, std::string>& blendEdges, bool revolveF04)
+                   const std::map<std::string, std::string>& blendEdges, Variant variant)
 {
     Generated out;
     auto add = [&](const FeatureId& id, const std::string& type, const std::string& name, const std::string& props,
@@ -205,7 +224,33 @@ Generated generate(const o::Script& script, const Selectors& selectors,
             const FeatureId op = fid(f.id, "op");
             out.opOf[f.id] = op;
             const char* operation = f.op == o::BOp::New ? "new" : f.op == o::BOp::Join ? "join" : "cut";
-            if (revolveF04 && f.id == "F04") {
+            if (variant == Variant::Holes && holeSweep(f)) {
+                // Simple flat-bottomed holes at the circle centres; "through" for the script's through cuts.
+                add(datum, "datum_plane", "Datum " + f.id, datumProps(f.frame), f.suppressed);
+                namespace sk = ray::sketch;
+                sk::Sketch s;
+                for (const o::Loop& l : f.loops) {
+                    const o::Ent& c = l.ents[0];
+                    s.entities.push_back(
+                        sk::Entity{entityId(f.id, l.id, entName(c) + "c"), sk::Point{ray::Vec2{c.cx, c.cy}}, false});
+                }
+                std::sort(s.entities.begin(), s.entities.end(),
+                          [](const sk::Entity& a, const sk::Entity& b) { return a.id < b.id; });
+                add(sketch, "sketch", "Sketch " + f.id,
+                    R"({"plane":{"datum":)" + quote(datum.value.toString()) + R"(},"sketch":)" +
+                        ray::doc::json::write(ray::doc::features::sketchToJson(s)) + "}",
+                    f.suppressed);
+                const bool through = f.dist >= 200;
+                add(op, "hole", f.id,
+                    R"({"sketch":)" + quote(sketch.value.toString()) + R"(,"target":)" + body +
+                        R"(,"kind":"simple","diameter":)" + num(2 * f.loops[0].ents[0].r) +
+                        (through ? std::string(R"(,"end":"through")")
+                                 : R"(,"end":"blind","bottom":"flat","depth":)" + num(f.dist)) +
+                        "}",
+                    f.suppressed);
+                continue;
+            }
+            if (variant == Variant::RevolveF04 && f.id == "F04") {
                 // The round boss as a revolve: a rectangle from the axis out to r, H to H + h, turned about a
                 // construction line on the axis, on a plane through the axis parallel to XZ.
                 const o::Ent& c = f.loops.front().ents.front();
@@ -565,7 +610,7 @@ struct Baseline {
 
 // Builds the baseline document feature by feature through the typed add commands, picking blend edges on the
 // document's own build as the harness does on its.
-Baseline author(Env& env, bool revolveF04)
+Baseline author(Env& env, Variant variant)
 {
     Baseline b;
     b.script = o::s4::makeScript(o::s4::baseParams());
@@ -607,7 +652,7 @@ Baseline author(Env& env, bool revolveF04)
         }
         // Add this feature's document features with the typed commands.
         o::Script one{f};
-        const Generated g = generate(one, b.selectors, b.blendEdges, revolveF04);
+        const Generated g = generate(one, b.selectors, b.blendEdges, variant);
         for (const ray::doc::Feature& df : g.features) {
             const std::string args = featureArgs(df, false);
             auto next = runCommand(b.state, "feature." + df.type + ".add", args);
@@ -620,7 +665,7 @@ Baseline author(Env& env, bool revolveF04)
         }
         soFar.push_back(f);
     }
-    b.generated = generate(b.script, b.selectors, b.blendEdges, revolveF04);
+    b.generated = generate(b.script, b.selectors, b.blendEdges, variant);
     auto build = env.build(b.state);
     if (!build) {
         b.problems.push_back("baseline rebuild failed: " + build.error().message);
@@ -670,7 +715,7 @@ struct ScenarioResult {
     long picksSkipped = 0; // blends not built: their picks are not resolved by the document
 };
 
-ScenarioResult runScenario(Env& env, const Baseline& base, const o::s4::Scenario& sc, bool revolveF04,
+ScenarioResult runScenario(Env& env, const Baseline& base, const o::s4::Scenario& sc, Variant variant,
                            const std::string& key)
 {
     ScenarioResult out;
@@ -684,7 +729,7 @@ ScenarioResult runScenario(Env& env, const Baseline& base, const o::s4::Scenario
         sc.s(script);
     }
     // The blends keep their baseline edges; their size comes from the scenario.
-    const Generated g = generate(script, base.selectors, base.blendEdges, revolveF04);
+    const Generated g = generate(script, base.selectors, base.blendEdges, variant);
     const auto start = std::chrono::steady_clock::now();
     auto state = applyDiff(base.state, g.features, &out.commands);
     if (!state) {
@@ -816,11 +861,13 @@ unsigned workerCount()
     return std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
 }
 
-void runAll(bool revolveF04)
+void runAll(Variant variant)
 {
-    const char* label = revolveF04 ? "S4 document, F04 revolved" : "S4 document";
+    const char* label = variant == Variant::RevolveF04 ? "S4 document, F04 revolved"
+                        : variant == Variant::Holes    ? "S4 document, holes as hole features"
+                                                       : "S4 document";
     Env authorEnv(4);
-    const Baseline base = author(authorEnv, revolveF04);
+    const Baseline base = author(authorEnv, variant);
     for (const std::string& p : base.problems) {
         std::printf("baseline problem: %s\n", p.c_str());
     }
@@ -855,7 +902,7 @@ void runAll(bool revolveF04)
         // As in a session: the baseline was built before the edit, so a scenario's rebuild is incremental.
         (void)env->build(base.state);
         for (std::size_t i = next++; i < list.size(); i = next++) {
-            results[i] = runScenario(*env, base, list[i], revolveF04, "S4 " + list[i].id);
+            results[i] = runScenario(*env, base, list[i], variant, "S4 " + list[i].id);
         }
     };
     std::vector<std::thread> threads;
@@ -931,22 +978,32 @@ void runAll(bool revolveF04)
 
 TEST_CASE("geometry goldens: the S4 part as document features", "[golden-geometry]")
 {
-    for (const bool revolve : {false, true}) {
+    const std::pair<Variant, const char*> parts[] = {{Variant::Plain, "s4_document"},
+                                                     {Variant::RevolveF04, "s4_document_revolve"},
+                                                     {Variant::Holes, "s4_document_holes"}};
+    for (const auto& [variant, name] : parts) {
         Env env(4);
-        const Baseline base = author(env, revolve);
+        const Baseline base = author(env, variant);
         REQUIRE(base.problems.empty());
         const ray::doc::BuiltBody* body = bodyIn(*base.build);
         REQUIRE(body != nullptr);
-        ray::doc::test::checkGoldenGeometry(revolve ? "s4_document_revolve" : "s4_document", body->shape, body->map);
+        ray::doc::test::checkGoldenGeometry(name, body->shape, body->map);
     }
 }
 
 TEST_CASE("the S4 part as document features: no reference resolves to a wrong element in the 47 scenarios", "[s4doc]")
 {
-    runAll(false);
+    runAll(Variant::Plain);
 }
 
 TEST_CASE("the S4 part with its round boss revolved: no reference resolves to a wrong element", "[s4doc-revolve]")
 {
-    runAll(true);
+    runAll(Variant::RevolveF04);
+}
+
+// Task T-097: the S4 part with its 11 hole sweeps made by the hole feature (simple, flat-bottomed or through) at
+// sketch points, judged by the same oracle on the same 47 scenarios.
+TEST_CASE("the S4 part with hole features: no reference resolves to a wrong element", "[s4doc-hole]")
+{
+    runAll(Variant::Holes);
 }

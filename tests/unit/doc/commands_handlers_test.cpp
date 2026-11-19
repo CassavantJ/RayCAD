@@ -69,6 +69,8 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.extrude.edit",
                                                         "feature.fillet.add",
                                                         "feature.fillet.edit",
+                                                        "feature.hole.add",
+                                                        "feature.hole.edit",
                                                         "feature.remove",
                                                         "feature.reorder",
                                                         "feature.revolve.add",

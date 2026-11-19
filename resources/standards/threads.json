@@ -1,0 +1,1565 @@
+{
+ "schema": 1,
+ "title": "RayCAD thread standards",
+ "generatedBy": "tools/gen_thread_table.py",
+ "units": "Lengths in mm; unified sizes also give inches in the fields ending in In.",
+ "method": {
+  "profile": "ISO 68-1 / ASME B1.1 basic 60 degree profile: H = sqrt(3)/2 P; the basic internal thread depth is 5/8 H on each side.",
+  "basicMinorDiameter": "D1 = D - 2 x 5/8 H = D - 1.082532 P.",
+  "tapDrillMetric": "d = D - P (about 75 % thread), rounded to the nearest point of a grid of 0.05 mm below 3 mm, 0.1 mm from 3 mm to below 14 mm, 0.25 mm from 14 mm to 25 mm and 0.5 mm above 25 mm; a value half way between two points takes the larger.",
+  "tapDrillUnified": "d = D - 0.974279 P = D - 0.75 x 2 x 3/4 H: the '75 % thread' of the percentage-of-thread rule (which counts 3/4 H = 0.649519 P per side as full depth), rounded to the nearest of the number gauge drills #1 to #80, the letter gauge drills A to Z and fractional drills in 1/64 in steps; a tie would take the larger drill (none occurs in this table).",
+  "note": "Generated values. A shop chart may pick a drill one step away (for example 10.2 mm for M12x1.75, where this rule gives 10.3 mm); check the material and the thread class before tapping."
+ },
+ "sources": [
+  {
+   "title": "ISO metric screw thread (Wikipedia): basic profile, ISO 261/262 preferred sizes and pitches",
+   "url": "https://en.wikipedia.org/wiki/ISO_metric_screw_thread"
+  },
+  {
+   "title": "Unified Thread Standard (Wikipedia): UNC and UNF sizes and threads per inch, number-size formula",
+   "url": "https://en.wikipedia.org/wiki/Unified_Thread_Standard"
+  },
+  {
+   "title": "Drill bit sizes (Wikipedia): number and letter gauge drill diameters, metric drill steps",
+   "url": "https://en.wikipedia.org/wiki/Drill_bit_sizes"
+  },
+  {
+   "title": "Tap and die (Wikipedia): tap drill about major diameter minus pitch for about 75 % thread",
+   "url": "https://en.wikipedia.org/wiki/Tap_and_die"
+  }
+ ],
+ "series": [
+  {
+   "id": "iso_metric_coarse",
+   "name": "ISO metric coarse",
+   "system": "metric",
+   "standard": "ISO 261 / ISO 262 sizes, ISO 68-1 basic profile",
+   "sizes": [
+    {
+     "designation": "M1x0.25",
+     "nominal": "M1",
+     "majorDiameter": 1.0,
+     "pitch": 0.25,
+     "basicMinorDiameter": 0.729367,
+     "tapDrill": {
+      "size": "0.75 mm",
+      "diameter": 0.75
+     }
+    },
+    {
+     "designation": "M1.2x0.25",
+     "nominal": "M1.2",
+     "majorDiameter": 1.2,
+     "pitch": 0.25,
+     "basicMinorDiameter": 0.929367,
+     "tapDrill": {
+      "size": "0.95 mm",
+      "diameter": 0.95
+     }
+    },
+    {
+     "designation": "M1.4x0.3",
+     "nominal": "M1.4",
+     "majorDiameter": 1.4,
+     "pitch": 0.3,
+     "basicMinorDiameter": 1.07524,
+     "tapDrill": {
+      "size": "1.1 mm",
+      "diameter": 1.1
+     }
+    },
+    {
+     "designation": "M1.6x0.35",
+     "nominal": "M1.6",
+     "majorDiameter": 1.6,
+     "pitch": 0.35,
+     "basicMinorDiameter": 1.221114,
+     "tapDrill": {
+      "size": "1.25 mm",
+      "diameter": 1.25
+     }
+    },
+    {
+     "designation": "M1.8x0.35",
+     "nominal": "M1.8",
+     "majorDiameter": 1.8,
+     "pitch": 0.35,
+     "basicMinorDiameter": 1.421114,
+     "tapDrill": {
+      "size": "1.45 mm",
+      "diameter": 1.45
+     }
+    },
+    {
+     "designation": "M2x0.4",
+     "nominal": "M2",
+     "majorDiameter": 2.0,
+     "pitch": 0.4,
+     "basicMinorDiameter": 1.566987,
+     "tapDrill": {
+      "size": "1.6 mm",
+      "diameter": 1.6
+     }
+    },
+    {
+     "designation": "M2.5x0.45",
+     "nominal": "M2.5",
+     "majorDiameter": 2.5,
+     "pitch": 0.45,
+     "basicMinorDiameter": 2.012861,
+     "tapDrill": {
+      "size": "2.05 mm",
+      "diameter": 2.05
+     }
+    },
+    {
+     "designation": "M3x0.5",
+     "nominal": "M3",
+     "majorDiameter": 3.0,
+     "pitch": 0.5,
+     "basicMinorDiameter": 2.458734,
+     "tapDrill": {
+      "size": "2.5 mm",
+      "diameter": 2.5
+     }
+    },
+    {
+     "designation": "M3.5x0.6",
+     "nominal": "M3.5",
+     "majorDiameter": 3.5,
+     "pitch": 0.6,
+     "basicMinorDiameter": 2.850481,
+     "tapDrill": {
+      "size": "2.9 mm",
+      "diameter": 2.9
+     }
+    },
+    {
+     "designation": "M4x0.7",
+     "nominal": "M4",
+     "majorDiameter": 4.0,
+     "pitch": 0.7,
+     "basicMinorDiameter": 3.242228,
+     "tapDrill": {
+      "size": "3.3 mm",
+      "diameter": 3.3
+     }
+    },
+    {
+     "designation": "M5x0.8",
+     "nominal": "M5",
+     "majorDiameter": 5.0,
+     "pitch": 0.8,
+     "basicMinorDiameter": 4.133975,
+     "tapDrill": {
+      "size": "4.2 mm",
+      "diameter": 4.2
+     }
+    },
+    {
+     "designation": "M6x1",
+     "nominal": "M6",
+     "majorDiameter": 6.0,
+     "pitch": 1.0,
+     "basicMinorDiameter": 4.917468,
+     "tapDrill": {
+      "size": "5.0 mm",
+      "diameter": 5.0
+     }
+    },
+    {
+     "designation": "M7x1",
+     "nominal": "M7",
+     "majorDiameter": 7.0,
+     "pitch": 1.0,
+     "basicMinorDiameter": 5.917468,
+     "tapDrill": {
+      "size": "6.0 mm",
+      "diameter": 6.0
+     }
+    },
+    {
+     "designation": "M8x1.25",
+     "nominal": "M8",
+     "majorDiameter": 8.0,
+     "pitch": 1.25,
+     "basicMinorDiameter": 6.646835,
+     "tapDrill": {
+      "size": "6.8 mm",
+      "diameter": 6.8
+     }
+    },
+    {
+     "designation": "M10x1.5",
+     "nominal": "M10",
+     "majorDiameter": 10.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 8.376202,
+     "tapDrill": {
+      "size": "8.5 mm",
+      "diameter": 8.5
+     }
+    },
+    {
+     "designation": "M12x1.75",
+     "nominal": "M12",
+     "majorDiameter": 12.0,
+     "pitch": 1.75,
+     "basicMinorDiameter": 10.105569,
+     "tapDrill": {
+      "size": "10.3 mm",
+      "diameter": 10.3
+     }
+    },
+    {
+     "designation": "M14x2",
+     "nominal": "M14",
+     "majorDiameter": 14.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 11.834936,
+     "tapDrill": {
+      "size": "12.0 mm",
+      "diameter": 12.0
+     }
+    },
+    {
+     "designation": "M16x2",
+     "nominal": "M16",
+     "majorDiameter": 16.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 13.834936,
+     "tapDrill": {
+      "size": "14.0 mm",
+      "diameter": 14.0
+     }
+    },
+    {
+     "designation": "M18x2.5",
+     "nominal": "M18",
+     "majorDiameter": 18.0,
+     "pitch": 2.5,
+     "basicMinorDiameter": 15.293671,
+     "tapDrill": {
+      "size": "15.5 mm",
+      "diameter": 15.5
+     }
+    },
+    {
+     "designation": "M20x2.5",
+     "nominal": "M20",
+     "majorDiameter": 20.0,
+     "pitch": 2.5,
+     "basicMinorDiameter": 17.293671,
+     "tapDrill": {
+      "size": "17.5 mm",
+      "diameter": 17.5
+     }
+    },
+    {
+     "designation": "M22x2.5",
+     "nominal": "M22",
+     "majorDiameter": 22.0,
+     "pitch": 2.5,
+     "basicMinorDiameter": 19.293671,
+     "tapDrill": {
+      "size": "19.5 mm",
+      "diameter": 19.5
+     }
+    },
+    {
+     "designation": "M24x3",
+     "nominal": "M24",
+     "majorDiameter": 24.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 20.752405,
+     "tapDrill": {
+      "size": "21.0 mm",
+      "diameter": 21.0
+     }
+    },
+    {
+     "designation": "M27x3",
+     "nominal": "M27",
+     "majorDiameter": 27.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 23.752405,
+     "tapDrill": {
+      "size": "24.0 mm",
+      "diameter": 24.0
+     }
+    },
+    {
+     "designation": "M30x3.5",
+     "nominal": "M30",
+     "majorDiameter": 30.0,
+     "pitch": 3.5,
+     "basicMinorDiameter": 26.211139,
+     "tapDrill": {
+      "size": "26.5 mm",
+      "diameter": 26.5
+     }
+    },
+    {
+     "designation": "M33x3.5",
+     "nominal": "M33",
+     "majorDiameter": 33.0,
+     "pitch": 3.5,
+     "basicMinorDiameter": 29.211139,
+     "tapDrill": {
+      "size": "29.5 mm",
+      "diameter": 29.5
+     }
+    },
+    {
+     "designation": "M36x4",
+     "nominal": "M36",
+     "majorDiameter": 36.0,
+     "pitch": 4.0,
+     "basicMinorDiameter": 31.669873,
+     "tapDrill": {
+      "size": "32.0 mm",
+      "diameter": 32.0
+     }
+    },
+    {
+     "designation": "M39x4",
+     "nominal": "M39",
+     "majorDiameter": 39.0,
+     "pitch": 4.0,
+     "basicMinorDiameter": 34.669873,
+     "tapDrill": {
+      "size": "35.0 mm",
+      "diameter": 35.0
+     }
+    },
+    {
+     "designation": "M42x4.5",
+     "nominal": "M42",
+     "majorDiameter": 42.0,
+     "pitch": 4.5,
+     "basicMinorDiameter": 37.128607,
+     "tapDrill": {
+      "size": "37.5 mm",
+      "diameter": 37.5
+     }
+    },
+    {
+     "designation": "M45x4.5",
+     "nominal": "M45",
+     "majorDiameter": 45.0,
+     "pitch": 4.5,
+     "basicMinorDiameter": 40.128607,
+     "tapDrill": {
+      "size": "40.5 mm",
+      "diameter": 40.5
+     }
+    },
+    {
+     "designation": "M48x5",
+     "nominal": "M48",
+     "majorDiameter": 48.0,
+     "pitch": 5.0,
+     "basicMinorDiameter": 42.587341,
+     "tapDrill": {
+      "size": "43.0 mm",
+      "diameter": 43.0
+     }
+    },
+    {
+     "designation": "M52x5",
+     "nominal": "M52",
+     "majorDiameter": 52.0,
+     "pitch": 5.0,
+     "basicMinorDiameter": 46.587341,
+     "tapDrill": {
+      "size": "47.0 mm",
+      "diameter": 47.0
+     }
+    },
+    {
+     "designation": "M56x5.5",
+     "nominal": "M56",
+     "majorDiameter": 56.0,
+     "pitch": 5.5,
+     "basicMinorDiameter": 50.046075,
+     "tapDrill": {
+      "size": "50.5 mm",
+      "diameter": 50.5
+     }
+    },
+    {
+     "designation": "M60x5.5",
+     "nominal": "M60",
+     "majorDiameter": 60.0,
+     "pitch": 5.5,
+     "basicMinorDiameter": 54.046075,
+     "tapDrill": {
+      "size": "54.5 mm",
+      "diameter": 54.5
+     }
+    },
+    {
+     "designation": "M64x6",
+     "nominal": "M64",
+     "majorDiameter": 64.0,
+     "pitch": 6.0,
+     "basicMinorDiameter": 57.504809,
+     "tapDrill": {
+      "size": "58.0 mm",
+      "diameter": 58.0
+     }
+    }
+   ]
+  },
+  {
+   "id": "iso_metric_fine",
+   "name": "ISO metric fine",
+   "system": "metric",
+   "standard": "ISO 261 / ISO 262 sizes, ISO 68-1 basic profile",
+   "sizes": [
+    {
+     "designation": "M1x0.2",
+     "nominal": "M1",
+     "majorDiameter": 1.0,
+     "pitch": 0.2,
+     "basicMinorDiameter": 0.783494,
+     "tapDrill": {
+      "size": "0.8 mm",
+      "diameter": 0.8
+     }
+    },
+    {
+     "designation": "M1.2x0.2",
+     "nominal": "M1.2",
+     "majorDiameter": 1.2,
+     "pitch": 0.2,
+     "basicMinorDiameter": 0.983494,
+     "tapDrill": {
+      "size": "1.0 mm",
+      "diameter": 1.0
+     }
+    },
+    {
+     "designation": "M1.4x0.2",
+     "nominal": "M1.4",
+     "majorDiameter": 1.4,
+     "pitch": 0.2,
+     "basicMinorDiameter": 1.183494,
+     "tapDrill": {
+      "size": "1.2 mm",
+      "diameter": 1.2
+     }
+    },
+    {
+     "designation": "M1.6x0.2",
+     "nominal": "M1.6",
+     "majorDiameter": 1.6,
+     "pitch": 0.2,
+     "basicMinorDiameter": 1.383494,
+     "tapDrill": {
+      "size": "1.4 mm",
+      "diameter": 1.4
+     }
+    },
+    {
+     "designation": "M1.8x0.2",
+     "nominal": "M1.8",
+     "majorDiameter": 1.8,
+     "pitch": 0.2,
+     "basicMinorDiameter": 1.583494,
+     "tapDrill": {
+      "size": "1.6 mm",
+      "diameter": 1.6
+     }
+    },
+    {
+     "designation": "M2x0.25",
+     "nominal": "M2",
+     "majorDiameter": 2.0,
+     "pitch": 0.25,
+     "basicMinorDiameter": 1.729367,
+     "tapDrill": {
+      "size": "1.75 mm",
+      "diameter": 1.75
+     }
+    },
+    {
+     "designation": "M2.5x0.35",
+     "nominal": "M2.5",
+     "majorDiameter": 2.5,
+     "pitch": 0.35,
+     "basicMinorDiameter": 2.121114,
+     "tapDrill": {
+      "size": "2.15 mm",
+      "diameter": 2.15
+     }
+    },
+    {
+     "designation": "M3x0.35",
+     "nominal": "M3",
+     "majorDiameter": 3.0,
+     "pitch": 0.35,
+     "basicMinorDiameter": 2.621114,
+     "tapDrill": {
+      "size": "2.65 mm",
+      "diameter": 2.65
+     }
+    },
+    {
+     "designation": "M3.5x0.35",
+     "nominal": "M3.5",
+     "majorDiameter": 3.5,
+     "pitch": 0.35,
+     "basicMinorDiameter": 3.121114,
+     "tapDrill": {
+      "size": "3.2 mm",
+      "diameter": 3.2
+     }
+    },
+    {
+     "designation": "M4x0.5",
+     "nominal": "M4",
+     "majorDiameter": 4.0,
+     "pitch": 0.5,
+     "basicMinorDiameter": 3.458734,
+     "tapDrill": {
+      "size": "3.5 mm",
+      "diameter": 3.5
+     }
+    },
+    {
+     "designation": "M5x0.5",
+     "nominal": "M5",
+     "majorDiameter": 5.0,
+     "pitch": 0.5,
+     "basicMinorDiameter": 4.458734,
+     "tapDrill": {
+      "size": "4.5 mm",
+      "diameter": 4.5
+     }
+    },
+    {
+     "designation": "M6x0.75",
+     "nominal": "M6",
+     "majorDiameter": 6.0,
+     "pitch": 0.75,
+     "basicMinorDiameter": 5.188101,
+     "tapDrill": {
+      "size": "5.3 mm",
+      "diameter": 5.3
+     }
+    },
+    {
+     "designation": "M7x0.75",
+     "nominal": "M7",
+     "majorDiameter": 7.0,
+     "pitch": 0.75,
+     "basicMinorDiameter": 6.188101,
+     "tapDrill": {
+      "size": "6.3 mm",
+      "diameter": 6.3
+     }
+    },
+    {
+     "designation": "M8x1",
+     "nominal": "M8",
+     "majorDiameter": 8.0,
+     "pitch": 1.0,
+     "basicMinorDiameter": 6.917468,
+     "tapDrill": {
+      "size": "7.0 mm",
+      "diameter": 7.0
+     }
+    },
+    {
+     "designation": "M8x0.75",
+     "nominal": "M8",
+     "majorDiameter": 8.0,
+     "pitch": 0.75,
+     "basicMinorDiameter": 7.188101,
+     "tapDrill": {
+      "size": "7.3 mm",
+      "diameter": 7.3
+     }
+    },
+    {
+     "designation": "M10x1.25",
+     "nominal": "M10",
+     "majorDiameter": 10.0,
+     "pitch": 1.25,
+     "basicMinorDiameter": 8.646835,
+     "tapDrill": {
+      "size": "8.8 mm",
+      "diameter": 8.8
+     }
+    },
+    {
+     "designation": "M10x1",
+     "nominal": "M10",
+     "majorDiameter": 10.0,
+     "pitch": 1.0,
+     "basicMinorDiameter": 8.917468,
+     "tapDrill": {
+      "size": "9.0 mm",
+      "diameter": 9.0
+     }
+    },
+    {
+     "designation": "M12x1.5",
+     "nominal": "M12",
+     "majorDiameter": 12.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 10.376202,
+     "tapDrill": {
+      "size": "10.5 mm",
+      "diameter": 10.5
+     }
+    },
+    {
+     "designation": "M12x1.25",
+     "nominal": "M12",
+     "majorDiameter": 12.0,
+     "pitch": 1.25,
+     "basicMinorDiameter": 10.646835,
+     "tapDrill": {
+      "size": "10.8 mm",
+      "diameter": 10.8
+     }
+    },
+    {
+     "designation": "M14x1.5",
+     "nominal": "M14",
+     "majorDiameter": 14.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 12.376202,
+     "tapDrill": {
+      "size": "12.5 mm",
+      "diameter": 12.5
+     }
+    },
+    {
+     "designation": "M16x1.5",
+     "nominal": "M16",
+     "majorDiameter": 16.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 14.376202,
+     "tapDrill": {
+      "size": "14.5 mm",
+      "diameter": 14.5
+     }
+    },
+    {
+     "designation": "M18x2",
+     "nominal": "M18",
+     "majorDiameter": 18.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 15.834936,
+     "tapDrill": {
+      "size": "16.0 mm",
+      "diameter": 16.0
+     }
+    },
+    {
+     "designation": "M18x1.5",
+     "nominal": "M18",
+     "majorDiameter": 18.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 16.376202,
+     "tapDrill": {
+      "size": "16.5 mm",
+      "diameter": 16.5
+     }
+    },
+    {
+     "designation": "M20x2",
+     "nominal": "M20",
+     "majorDiameter": 20.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 17.834936,
+     "tapDrill": {
+      "size": "18.0 mm",
+      "diameter": 18.0
+     }
+    },
+    {
+     "designation": "M20x1.5",
+     "nominal": "M20",
+     "majorDiameter": 20.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 18.376202,
+     "tapDrill": {
+      "size": "18.5 mm",
+      "diameter": 18.5
+     }
+    },
+    {
+     "designation": "M22x2",
+     "nominal": "M22",
+     "majorDiameter": 22.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 19.834936,
+     "tapDrill": {
+      "size": "20.0 mm",
+      "diameter": 20.0
+     }
+    },
+    {
+     "designation": "M22x1.5",
+     "nominal": "M22",
+     "majorDiameter": 22.0,
+     "pitch": 1.5,
+     "basicMinorDiameter": 20.376202,
+     "tapDrill": {
+      "size": "20.5 mm",
+      "diameter": 20.5
+     }
+    },
+    {
+     "designation": "M24x2",
+     "nominal": "M24",
+     "majorDiameter": 24.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 21.834936,
+     "tapDrill": {
+      "size": "22.0 mm",
+      "diameter": 22.0
+     }
+    },
+    {
+     "designation": "M27x2",
+     "nominal": "M27",
+     "majorDiameter": 27.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 24.834936,
+     "tapDrill": {
+      "size": "25.0 mm",
+      "diameter": 25.0
+     }
+    },
+    {
+     "designation": "M30x2",
+     "nominal": "M30",
+     "majorDiameter": 30.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 27.834936,
+     "tapDrill": {
+      "size": "28.0 mm",
+      "diameter": 28.0
+     }
+    },
+    {
+     "designation": "M33x2",
+     "nominal": "M33",
+     "majorDiameter": 33.0,
+     "pitch": 2.0,
+     "basicMinorDiameter": 30.834936,
+     "tapDrill": {
+      "size": "31.0 mm",
+      "diameter": 31.0
+     }
+    },
+    {
+     "designation": "M36x3",
+     "nominal": "M36",
+     "majorDiameter": 36.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 32.752405,
+     "tapDrill": {
+      "size": "33.0 mm",
+      "diameter": 33.0
+     }
+    },
+    {
+     "designation": "M39x3",
+     "nominal": "M39",
+     "majorDiameter": 39.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 35.752405,
+     "tapDrill": {
+      "size": "36.0 mm",
+      "diameter": 36.0
+     }
+    },
+    {
+     "designation": "M42x3",
+     "nominal": "M42",
+     "majorDiameter": 42.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 38.752405,
+     "tapDrill": {
+      "size": "39.0 mm",
+      "diameter": 39.0
+     }
+    },
+    {
+     "designation": "M45x3",
+     "nominal": "M45",
+     "majorDiameter": 45.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 41.752405,
+     "tapDrill": {
+      "size": "42.0 mm",
+      "diameter": 42.0
+     }
+    },
+    {
+     "designation": "M48x3",
+     "nominal": "M48",
+     "majorDiameter": 48.0,
+     "pitch": 3.0,
+     "basicMinorDiameter": 44.752405,
+     "tapDrill": {
+      "size": "45.0 mm",
+      "diameter": 45.0
+     }
+    },
+    {
+     "designation": "M52x4",
+     "nominal": "M52",
+     "majorDiameter": 52.0,
+     "pitch": 4.0,
+     "basicMinorDiameter": 47.669873,
+     "tapDrill": {
+      "size": "48.0 mm",
+      "diameter": 48.0
+     }
+    },
+    {
+     "designation": "M56x4",
+     "nominal": "M56",
+     "majorDiameter": 56.0,
+     "pitch": 4.0,
+     "basicMinorDiameter": 51.669873,
+     "tapDrill": {
+      "size": "52.0 mm",
+      "diameter": 52.0
+     }
+    },
+    {
+     "designation": "M60x4",
+     "nominal": "M60",
+     "majorDiameter": 60.0,
+     "pitch": 4.0,
+     "basicMinorDiameter": 55.669873,
+     "tapDrill": {
+      "size": "56.0 mm",
+      "diameter": 56.0
+     }
+    },
+    {
+     "designation": "M64x4",
+     "nominal": "M64",
+     "majorDiameter": 64.0,
+     "pitch": 4.0,
+     "basicMinorDiameter": 59.669873,
+     "tapDrill": {
+      "size": "60.0 mm",
+      "diameter": 60.0
+     }
+    }
+   ]
+  },
+  {
+   "id": "unc",
+   "name": "Unified coarse (UNC)",
+   "system": "inch",
+   "standard": "ASME B1.1 unified inch screw threads, basic profile",
+   "sizes": [
+    {
+     "designation": "#1-64 UNC",
+     "nominal": "#1",
+     "majorDiameter": 1.8542,
+     "majorDiameterIn": 0.073,
+     "tpi": 64,
+     "pitch": 0.396875,
+     "basicMinorDiameter": 1.42457,
+     "tapDrill": {
+      "size": "#53",
+      "diameter": 1.5113,
+      "diameterIn": 0.0595
+     }
+    },
+    {
+     "designation": "#2-56 UNC",
+     "nominal": "#2",
+     "majorDiameter": 2.1844,
+     "majorDiameterIn": 0.086,
+     "tpi": 56,
+     "pitch": 0.45357142857142857,
+     "basicMinorDiameter": 1.693395,
+     "tapDrill": {
+      "size": "#50",
+      "diameter": 1.778,
+      "diameterIn": 0.07
+     }
+    },
+    {
+     "designation": "#3-48 UNC",
+     "nominal": "#3",
+     "majorDiameter": 2.5146,
+     "majorDiameterIn": 0.099,
+     "tpi": 48,
+     "pitch": 0.5291666666666667,
+     "basicMinorDiameter": 1.94176,
+     "tapDrill": {
+      "size": "#47",
+      "diameter": 1.9939,
+      "diameterIn": 0.0785
+     }
+    },
+    {
+     "designation": "#4-40 UNC",
+     "nominal": "#4",
+     "majorDiameter": 2.8448,
+     "majorDiameterIn": 0.112,
+     "tpi": 40,
+     "pitch": 0.635,
+     "basicMinorDiameter": 2.157392,
+     "tapDrill": {
+      "size": "#43",
+      "diameter": 2.2606,
+      "diameterIn": 0.089
+     }
+    },
+    {
+     "designation": "#5-40 UNC",
+     "nominal": "#5",
+     "majorDiameter": 3.175,
+     "majorDiameterIn": 0.125,
+     "tpi": 40,
+     "pitch": 0.635,
+     "basicMinorDiameter": 2.487592,
+     "tapDrill": {
+      "size": "#38",
+      "diameter": 2.5781,
+      "diameterIn": 0.1015
+     }
+    },
+    {
+     "designation": "#6-32 UNC",
+     "nominal": "#6",
+     "majorDiameter": 3.5052,
+     "majorDiameterIn": 0.138,
+     "tpi": 32,
+     "pitch": 0.79375,
+     "basicMinorDiameter": 2.64594,
+     "tapDrill": {
+      "size": "#36",
+      "diameter": 2.7051,
+      "diameterIn": 0.1065
+     }
+    },
+    {
+     "designation": "#8-32 UNC",
+     "nominal": "#8",
+     "majorDiameter": 4.1656,
+     "majorDiameterIn": 0.164,
+     "tpi": 32,
+     "pitch": 0.79375,
+     "basicMinorDiameter": 3.30634,
+     "tapDrill": {
+      "size": "#29",
+      "diameter": 3.4544,
+      "diameterIn": 0.136
+     }
+    },
+    {
+     "designation": "#10-24 UNC",
+     "nominal": "#10",
+     "majorDiameter": 4.826,
+     "majorDiameterIn": 0.19,
+     "tpi": 24,
+     "pitch": 1.0583333333333333,
+     "basicMinorDiameter": 3.680321,
+     "tapDrill": {
+      "size": "#25",
+      "diameter": 3.7973,
+      "diameterIn": 0.1495
+     }
+    },
+    {
+     "designation": "#12-24 UNC",
+     "nominal": "#12",
+     "majorDiameter": 5.4864,
+     "majorDiameterIn": 0.216,
+     "tpi": 24,
+     "pitch": 1.0583333333333333,
+     "basicMinorDiameter": 4.340721,
+     "tapDrill": {
+      "size": "#16",
+      "diameter": 4.4958,
+      "diameterIn": 0.177
+     }
+    },
+    {
+     "designation": "1/4-20 UNC",
+     "nominal": "1/4",
+     "majorDiameter": 6.35,
+     "majorDiameterIn": 0.25,
+     "tpi": 20,
+     "pitch": 1.27,
+     "basicMinorDiameter": 4.975185,
+     "tapDrill": {
+      "size": "#7",
+      "diameter": 5.1054,
+      "diameterIn": 0.201
+     }
+    },
+    {
+     "designation": "5/16-18 UNC",
+     "nominal": "5/16",
+     "majorDiameter": 7.9375,
+     "majorDiameterIn": 0.3125,
+     "tpi": 18,
+     "pitch": 1.411111111111111,
+     "basicMinorDiameter": 6.409927,
+     "tapDrill": {
+      "size": "F",
+      "diameter": 6.5278,
+      "diameterIn": 0.257
+     }
+    },
+    {
+     "designation": "3/8-16 UNC",
+     "nominal": "3/8",
+     "majorDiameter": 9.525,
+     "majorDiameterIn": 0.375,
+     "tpi": 16,
+     "pitch": 1.5875,
+     "basicMinorDiameter": 7.806481,
+     "tapDrill": {
+      "size": "5/16 in",
+      "diameter": 7.9375,
+      "diameterIn": 0.3125
+     }
+    },
+    {
+     "designation": "7/16-14 UNC",
+     "nominal": "7/16",
+     "majorDiameter": 11.1125,
+     "majorDiameterIn": 0.4375,
+     "tpi": 14,
+     "pitch": 1.8142857142857143,
+     "basicMinorDiameter": 9.148478,
+     "tapDrill": {
+      "size": "U",
+      "diameter": 9.3472,
+      "diameterIn": 0.368
+     }
+    },
+    {
+     "designation": "1/2-13 UNC",
+     "nominal": "1/2",
+     "majorDiameter": 12.7,
+     "majorDiameterIn": 0.5,
+     "tpi": 13,
+     "pitch": 1.9538461538461538,
+     "basicMinorDiameter": 10.584899,
+     "tapDrill": {
+      "size": "27/64 in",
+      "diameter": 10.715625,
+      "diameterIn": 0.421875
+     }
+    },
+    {
+     "designation": "9/16-12 UNC",
+     "nominal": "9/16",
+     "majorDiameter": 14.2875,
+     "majorDiameterIn": 0.5625,
+     "tpi": 12,
+     "pitch": 2.1166666666666667,
+     "basicMinorDiameter": 11.996141,
+     "tapDrill": {
+      "size": "31/64 in",
+      "diameter": 12.303125,
+      "diameterIn": 0.484375
+     }
+    },
+    {
+     "designation": "5/8-11 UNC",
+     "nominal": "5/8",
+     "majorDiameter": 15.875,
+     "majorDiameterIn": 0.625,
+     "tpi": 11,
+     "pitch": 2.309090909090909,
+     "basicMinorDiameter": 13.375336,
+     "tapDrill": {
+      "size": "17/32 in",
+      "diameter": 13.49375,
+      "diameterIn": 0.53125
+     }
+    },
+    {
+     "designation": "3/4-10 UNC",
+     "nominal": "3/4",
+     "majorDiameter": 19.05,
+     "majorDiameterIn": 0.75,
+     "tpi": 10,
+     "pitch": 2.54,
+     "basicMinorDiameter": 16.300369,
+     "tapDrill": {
+      "size": "21/32 in",
+      "diameter": 16.66875,
+      "diameterIn": 0.65625
+     }
+    },
+    {
+     "designation": "7/8-9 UNC",
+     "nominal": "7/8",
+     "majorDiameter": 22.225,
+     "majorDiameterIn": 0.875,
+     "tpi": 9,
+     "pitch": 2.822222222222222,
+     "basicMinorDiameter": 19.169855,
+     "tapDrill": {
+      "size": "49/64 in",
+      "diameter": 19.446875,
+      "diameterIn": 0.765625
+     }
+    },
+    {
+     "designation": "1-8 UNC",
+     "nominal": "1",
+     "majorDiameter": 25.4,
+     "majorDiameterIn": 1.0,
+     "tpi": 8,
+     "pitch": 3.175,
+     "basicMinorDiameter": 21.962962,
+     "tapDrill": {
+      "size": "7/8 in",
+      "diameter": 22.225,
+      "diameterIn": 0.875
+     }
+    },
+    {
+     "designation": "1-1/8-7 UNC",
+     "nominal": "1-1/8",
+     "majorDiameter": 28.575,
+     "majorDiameterIn": 1.125,
+     "tpi": 7,
+     "pitch": 3.6285714285714286,
+     "basicMinorDiameter": 24.646956,
+     "tapDrill": {
+      "size": "63/64 in",
+      "diameter": 25.003125,
+      "diameterIn": 0.984375
+     }
+    },
+    {
+     "designation": "1-1/4-7 UNC",
+     "nominal": "1-1/4",
+     "majorDiameter": 31.75,
+     "majorDiameterIn": 1.25,
+     "tpi": 7,
+     "pitch": 3.6285714285714286,
+     "basicMinorDiameter": 27.821956,
+     "tapDrill": {
+      "size": "1-7/64 in",
+      "diameter": 28.178125,
+      "diameterIn": 1.109375
+     }
+    },
+    {
+     "designation": "1-3/8-6 UNC",
+     "nominal": "1-3/8",
+     "majorDiameter": 34.925,
+     "majorDiameterIn": 1.375,
+     "tpi": 6,
+     "pitch": 4.233333333333333,
+     "basicMinorDiameter": 30.342282,
+     "tapDrill": {
+      "size": "1-7/32 in",
+      "diameter": 30.95625,
+      "diameterIn": 1.21875
+     }
+    },
+    {
+     "designation": "1-1/2-6 UNC",
+     "nominal": "1-1/2",
+     "majorDiameter": 38.1,
+     "majorDiameterIn": 1.5,
+     "tpi": 6,
+     "pitch": 4.233333333333333,
+     "basicMinorDiameter": 33.517282,
+     "tapDrill": {
+      "size": "1-11/32 in",
+      "diameter": 34.13125,
+      "diameterIn": 1.34375
+     }
+    },
+    {
+     "designation": "1-3/4-5 UNC",
+     "nominal": "1-3/4",
+     "majorDiameter": 44.45,
+     "majorDiameterIn": 1.75,
+     "tpi": 5,
+     "pitch": 5.08,
+     "basicMinorDiameter": 38.950739,
+     "tapDrill": {
+      "size": "1-9/16 in",
+      "diameter": 39.6875,
+      "diameterIn": 1.5625
+     }
+    },
+    {
+     "designation": "2-4-1/2 UNC",
+     "nominal": "2",
+     "majorDiameter": 50.8,
+     "majorDiameterIn": 2.0,
+     "tpi": 4.5,
+     "pitch": 5.644444444444444,
+     "basicMinorDiameter": 44.68971,
+     "tapDrill": {
+      "size": "1-25/32 in",
+      "diameter": 45.24375,
+      "diameterIn": 1.78125
+     }
+    }
+   ]
+  },
+  {
+   "id": "unf",
+   "name": "Unified fine (UNF)",
+   "system": "inch",
+   "standard": "ASME B1.1 unified inch screw threads, basic profile",
+   "sizes": [
+    {
+     "designation": "#0-80 UNF",
+     "nominal": "#0",
+     "majorDiameter": 1.524,
+     "majorDiameterIn": 0.06,
+     "tpi": 80,
+     "pitch": 0.3175,
+     "basicMinorDiameter": 1.180296,
+     "tapDrill": {
+      "size": "3/64 in",
+      "diameter": 1.190625,
+      "diameterIn": 0.046875
+     }
+    },
+    {
+     "designation": "#1-72 UNF",
+     "nominal": "#1",
+     "majorDiameter": 1.8542,
+     "majorDiameterIn": 0.073,
+     "tpi": 72,
+     "pitch": 0.35277777777777775,
+     "basicMinorDiameter": 1.472307,
+     "tapDrill": {
+      "size": "#53",
+      "diameter": 1.5113,
+      "diameterIn": 0.0595
+     }
+    },
+    {
+     "designation": "#2-64 UNF",
+     "nominal": "#2",
+     "majorDiameter": 2.1844,
+     "majorDiameterIn": 0.086,
+     "tpi": 64,
+     "pitch": 0.396875,
+     "basicMinorDiameter": 1.75477,
+     "tapDrill": {
+      "size": "#50",
+      "diameter": 1.778,
+      "diameterIn": 0.07
+     }
+    },
+    {
+     "designation": "#3-56 UNF",
+     "nominal": "#3",
+     "majorDiameter": 2.5146,
+     "majorDiameterIn": 0.099,
+     "tpi": 56,
+     "pitch": 0.45357142857142857,
+     "basicMinorDiameter": 2.023595,
+     "tapDrill": {
+      "size": "#45",
+      "diameter": 2.0828,
+      "diameterIn": 0.082
+     }
+    },
+    {
+     "designation": "#4-48 UNF",
+     "nominal": "#4",
+     "majorDiameter": 2.8448,
+     "majorDiameterIn": 0.112,
+     "tpi": 48,
+     "pitch": 0.5291666666666667,
+     "basicMinorDiameter": 2.27196,
+     "tapDrill": {
+      "size": "#42",
+      "diameter": 2.3749,
+      "diameterIn": 0.0935
+     }
+    },
+    {
+     "designation": "#5-44 UNF",
+     "nominal": "#5",
+     "majorDiameter": 3.175,
+     "majorDiameterIn": 0.125,
+     "tpi": 44,
+     "pitch": 0.5772727272727273,
+     "basicMinorDiameter": 2.550084,
+     "tapDrill": {
+      "size": "#37",
+      "diameter": 2.6416,
+      "diameterIn": 0.104
+     }
+    },
+    {
+     "designation": "#6-40 UNF",
+     "nominal": "#6",
+     "majorDiameter": 3.5052,
+     "majorDiameterIn": 0.138,
+     "tpi": 40,
+     "pitch": 0.635,
+     "basicMinorDiameter": 2.817792,
+     "tapDrill": {
+      "size": "#33",
+      "diameter": 2.8702,
+      "diameterIn": 0.113
+     }
+    },
+    {
+     "designation": "#8-36 UNF",
+     "nominal": "#8",
+     "majorDiameter": 4.1656,
+     "majorDiameterIn": 0.164,
+     "tpi": 36,
+     "pitch": 0.7055555555555555,
+     "basicMinorDiameter": 3.401814,
+     "tapDrill": {
+      "size": "#29",
+      "diameter": 3.4544,
+      "diameterIn": 0.136
+     }
+    },
+    {
+     "designation": "#10-32 UNF",
+     "nominal": "#10",
+     "majorDiameter": 4.826,
+     "majorDiameterIn": 0.19,
+     "tpi": 32,
+     "pitch": 0.79375,
+     "basicMinorDiameter": 3.96674,
+     "tapDrill": {
+      "size": "#21",
+      "diameter": 4.0386,
+      "diameterIn": 0.159
+     }
+    },
+    {
+     "designation": "#12-28 UNF",
+     "nominal": "#12",
+     "majorDiameter": 5.4864,
+     "majorDiameterIn": 0.216,
+     "tpi": 28,
+     "pitch": 0.9071428571428571,
+     "basicMinorDiameter": 4.504389,
+     "tapDrill": {
+      "size": "#14",
+      "diameter": 4.6228,
+      "diameterIn": 0.182
+     }
+    },
+    {
+     "designation": "1/4-28 UNF",
+     "nominal": "1/4",
+     "majorDiameter": 6.35,
+     "majorDiameterIn": 0.25,
+     "tpi": 28,
+     "pitch": 0.9071428571428571,
+     "basicMinorDiameter": 5.367989,
+     "tapDrill": {
+      "size": "#3",
+      "diameter": 5.4102,
+      "diameterIn": 0.213
+     }
+    },
+    {
+     "designation": "5/16-24 UNF",
+     "nominal": "5/16",
+     "majorDiameter": 7.9375,
+     "majorDiameterIn": 0.3125,
+     "tpi": 24,
+     "pitch": 1.0583333333333333,
+     "basicMinorDiameter": 6.791821,
+     "tapDrill": {
+      "size": "I",
+      "diameter": 6.9088,
+      "diameterIn": 0.272
+     }
+    },
+    {
+     "designation": "3/8-24 UNF",
+     "nominal": "3/8",
+     "majorDiameter": 9.525,
+     "majorDiameterIn": 0.375,
+     "tpi": 24,
+     "pitch": 1.0583333333333333,
+     "basicMinorDiameter": 8.379321,
+     "tapDrill": {
+      "size": "Q",
+      "diameter": 8.4328,
+      "diameterIn": 0.332
+     }
+    },
+    {
+     "designation": "7/16-20 UNF",
+     "nominal": "7/16",
+     "majorDiameter": 11.1125,
+     "majorDiameterIn": 0.4375,
+     "tpi": 20,
+     "pitch": 1.27,
+     "basicMinorDiameter": 9.737685,
+     "tapDrill": {
+      "size": "25/64 in",
+      "diameter": 9.921875,
+      "diameterIn": 0.390625
+     }
+    },
+    {
+     "designation": "1/2-20 UNF",
+     "nominal": "1/2",
+     "majorDiameter": 12.7,
+     "majorDiameterIn": 0.5,
+     "tpi": 20,
+     "pitch": 1.27,
+     "basicMinorDiameter": 11.325185,
+     "tapDrill": {
+      "size": "29/64 in",
+      "diameter": 11.509375,
+      "diameterIn": 0.453125
+     }
+    },
+    {
+     "designation": "9/16-18 UNF",
+     "nominal": "9/16",
+     "majorDiameter": 14.2875,
+     "majorDiameterIn": 0.5625,
+     "tpi": 18,
+     "pitch": 1.411111111111111,
+     "basicMinorDiameter": 12.759927,
+     "tapDrill": {
+      "size": "33/64 in",
+      "diameter": 13.096875,
+      "diameterIn": 0.515625
+     }
+    },
+    {
+     "designation": "5/8-18 UNF",
+     "nominal": "5/8",
+     "majorDiameter": 15.875,
+     "majorDiameterIn": 0.625,
+     "tpi": 18,
+     "pitch": 1.411111111111111,
+     "basicMinorDiameter": 14.347427,
+     "tapDrill": {
+      "size": "37/64 in",
+      "diameter": 14.684375,
+      "diameterIn": 0.578125
+     }
+    },
+    {
+     "designation": "3/4-16 UNF",
+     "nominal": "3/4",
+     "majorDiameter": 19.05,
+     "majorDiameterIn": 0.75,
+     "tpi": 16,
+     "pitch": 1.5875,
+     "basicMinorDiameter": 17.331481,
+     "tapDrill": {
+      "size": "11/16 in",
+      "diameter": 17.4625,
+      "diameterIn": 0.6875
+     }
+    },
+    {
+     "designation": "7/8-14 UNF",
+     "nominal": "7/8",
+     "majorDiameter": 22.225,
+     "majorDiameterIn": 0.875,
+     "tpi": 14,
+     "pitch": 1.8142857142857143,
+     "basicMinorDiameter": 20.260978,
+     "tapDrill": {
+      "size": "13/16 in",
+      "diameter": 20.6375,
+      "diameterIn": 0.8125
+     }
+    },
+    {
+     "designation": "1-12 UNF",
+     "nominal": "1",
+     "majorDiameter": 25.4,
+     "majorDiameterIn": 1.0,
+     "tpi": 12,
+     "pitch": 2.1166666666666667,
+     "basicMinorDiameter": 23.108641,
+     "tapDrill": {
+      "size": "59/64 in",
+      "diameter": 23.415625,
+      "diameterIn": 0.921875
+     }
+    },
+    {
+     "designation": "1-1/8-12 UNF",
+     "nominal": "1-1/8",
+     "majorDiameter": 28.575,
+     "majorDiameterIn": 1.125,
+     "tpi": 12,
+     "pitch": 2.1166666666666667,
+     "basicMinorDiameter": 26.283641,
+     "tapDrill": {
+      "size": "1-3/64 in",
+      "diameter": 26.590625,
+      "diameterIn": 1.046875
+     }
+    },
+    {
+     "designation": "1-1/4-12 UNF",
+     "nominal": "1-1/4",
+     "majorDiameter": 31.75,
+     "majorDiameterIn": 1.25,
+     "tpi": 12,
+     "pitch": 2.1166666666666667,
+     "basicMinorDiameter": 29.458641,
+     "tapDrill": {
+      "size": "1-11/64 in",
+      "diameter": 29.765625,
+      "diameterIn": 1.171875
+     }
+    },
+    {
+     "designation": "1-3/8-12 UNF",
+     "nominal": "1-3/8",
+     "majorDiameter": 34.925,
+     "majorDiameterIn": 1.375,
+     "tpi": 12,
+     "pitch": 2.1166666666666667,
+     "basicMinorDiameter": 32.633641,
+     "tapDrill": {
+      "size": "1-19/64 in",
+      "diameter": 32.940625,
+      "diameterIn": 1.296875
+     }
+    },
+    {
+     "designation": "1-1/2-12 UNF",
+     "nominal": "1-1/2",
+     "majorDiameter": 38.1,
+     "majorDiameterIn": 1.5,
+     "tpi": 12,
+     "pitch": 2.1166666666666667,
+     "basicMinorDiameter": 35.808641,
+     "tapDrill": {
+      "size": "1-27/64 in",
+      "diameter": 36.115625,
+      "diameterIn": 1.421875
+     }
+    }
+   ]
+  }
+ ]
+}
