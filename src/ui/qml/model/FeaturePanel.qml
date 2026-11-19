@@ -270,9 +270,9 @@ Item {
                     label: qsTr("Angle")
                 }
                 SwitchRow {
-                    visible: root.sweep || root.type === "hole" || root.type === "datum_plane"
+                    visible: root.sweep || root.type === "hole"
                     key: "flip"
-                    text: root.type === "datum_plane" ? qsTr("Flip the normal") : qsTr("Reverse direction")
+                    text: qsTr("Reverse direction")
                 }
                 SwitchRow {
                     visible: root.type === "extrude"
@@ -411,6 +411,11 @@ Item {
                     visible: root.type === "datum_plane"
                     key: "offset"
                     label: qsTr("Offset")
+                }
+                SwitchRow {
+                    visible: root.type === "datum_plane"
+                    key: "flip"
+                    text: qsTr("Flip the normal")
                 }
 
                 // The message about the values that names no field, and the preview's state.

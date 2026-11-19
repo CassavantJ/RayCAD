@@ -609,6 +609,50 @@ TEST_CASE("cancel changes nothing; a failed fillet shows its message in the pane
     const std::string hash = w.stateHash();
     const std::size_t undo = w.document()->undoCount();
 
+    // The extrude's arrow handle: dragging it outwards lengthens the distance (the field and the preview follow).
+    w.tree()->setCurrentIndex(1);
+    REQUIRE(w.run("model.feature.edit"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
+    w.previewed();
+    QQuickItem* knob = nullptr;
+    REQUIRE(QTest::qWaitFor(
+        [&] { return (knob = w.find(QStringLiteral("featureHandle.distance"))) && knob->isVisible(); }, 5000));
+    {
+        const QVariantMap h = w.tool()->handles().front().toMap();
+        const QPointF dir(h.value(QStringLiteral("tipX")).toDouble() - h.value(QStringLiteral("x")).toDouble(),
+                          h.value(QStringLiteral("tipY")).toDouble() - h.value(QStringLiteral("y")).toDouble());
+        const double len = std::hypot(dir.x(), dir.y());
+        REQUIRE(len > 1);
+        w.grab();
+        const QPointF from = knob->mapToScene(QPointF(knob->width() / 2, knob->height() / 2));
+        const QPointF step = dir / len * 8.0;
+        w.sendMouse(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+        w.sendMouse(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        QPointF at = from;
+        for (int i = 0; i < 6; ++i) {
+            at += step;
+            w.sendMouse(QEvent::MouseMove, at, Qt::LeftButton, Qt::LeftButton);
+            QTest::qWait(30);
+        }
+        w.sendMouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+    }
+    const QString dragged = w.tool()->values().value(QStringLiteral("distance")).toString();
+    INFO("distance after the drag: " << dragged.toStdString());
+    CHECK(dragged != QStringLiteral("10 mm"));
+    w.previewed();
+    CHECK(w.tool()->overlay().itemCount() == 1);
+    // Longer than before: the preview's body is taller than 10 mm.
+    {
+        const std::shared_ptr<const kernel::Mesh> mesh = w.tool()->overlay().meshes().front();
+        double zMax = 0;
+        for (std::size_t i = 2; i < mesh->positions.size(); i += 3)
+            zMax = std::max(zMax, static_cast<double>(mesh->positions[i]));
+        CHECK(zMax > 10.5);
+    }
+    w.shot("t098_extrude_handle_drag");
+    w.tool()->cancel();
+    CHECK(w.stateHash() == hash);
+
     // Every tool opened and cancelled: the document is as it was.
     w.tree()->setCurrentIndex(0); // the sketch
     openTool(w, "model.tool.revolve", "revolve");

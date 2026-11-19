@@ -264,7 +264,11 @@ void FeatureToolModel::setSketchTool(SketchModel* sketch)
         const doc::Feature* f = findFeature(*state, *lastSketch_);
         auto regions =
             f ? api::feature_edit::regionsOf(*state, *lastSketch_) : Result<std::vector<api::feature_edit::Region>>();
-        if (f != nullptr && regions && !regions->empty()) {
+        const QString text = idText(lastSketch_->value);
+        const bool used = std::any_of(state->features.begin(), state->features.end(), [&](const doc::Feature& g) {
+            return g.type != "sketch" && jsonObject(g.propsJson).value(QStringLiteral("sketch")).toString() == text;
+        });
+        if (f != nullptr && !used && regions && !regions->empty()) {
             offer_ =
                 QVariantMap{{QStringLiteral("id"), idText(lastSketch_->value)}, {QStringLiteral("name"), qs(f->name)}};
             emit offerChanged();
@@ -347,9 +351,11 @@ void FeatureToolModel::onDocumentChanged()
         close();
         return;
     }
-    // The document changed under the tool (an undo, a rebuild that finished): the preview is built again on the new
-    // state. A change of state() ended the running preview, a finished rebuild did not.
-    if (previewBusy_ && !previewSide_ && !d->previewState() && !d->previewError())
+    // The document's state changed under the tool (an undo, a command from elsewhere): that ended the running
+    // preview, which is built again on the new state. A rebuild of the same state finishing changes nothing here.
+    if (d->state() == previewBase_)
+        return;
+    if (previewBusy_ && !previewSide_)
         previewBusy_ = false;
     emit optionsChanged();
     schedulePreview();
@@ -1344,6 +1350,7 @@ void FeatureToolModel::startPreview()
     }
     rejected_ = false;
     ++previewSerial_;
+    previewBase_ = d->state();
     const auto at = insertIndex();
     if (!at) {
         previewSide_ = false;
@@ -1459,6 +1466,43 @@ void FeatureToolModel::showPreview(const doc::DocState& state, const doc::BuildR
     }
     render::MeshStyle style{render::Token::ModelFace, render::Token::Accent, 1.0f, true, false};
     overlay_->show(std::move(bodies), std::move(hide), all, style);
+    if (type_ == QLatin1String("datum_plane"))
+        showDatumPlane(state, build);
+}
+
+// The new plane as a square around its origin, sized to the model (resolved on a worker: a face needs the kernel).
+void FeatureToolModel::showDatumPlane(const doc::DocState& state, const doc::BuildResult& build)
+{
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    if (jobs == nullptr || !id_)
+        return;
+    auto st = std::make_shared<const doc::DocState>(state);
+    auto bd = std::make_shared<const doc::BuildResult>(build);
+    const std::string planeJson = "{\"datum\":\"" + id_->value.toString() + "\"}";
+    double size = 50;
+    if (render::IRenderViewport* viewport = scene_->viewport()) {
+        if (const auto box = viewport->sceneBounds())
+            size = std::max(10.0, 0.6 * length(sub(box->max, box->min)));
+    }
+    const std::uint64_t serial = previewSerial_;
+    JobHandle<kernel::Plane> job = jobs->submit<kernel::Plane>(
+        JobInfo{"Datum plane preview", JobPriority::Interactive, false},
+        [st, bd, planeJson](JobContext& ctx) { return api::sketch_edit::resolvePlane(*st, bd.get(), planeJson, ctx); });
+    QPointer<FeatureToolModel> self(this);
+    job.then([self, serial, size](Result<kernel::Plane> plane) {
+        if (!self || serial != self->previewSerial_ || !self->active() || !plane)
+            return;
+        const double h = size / 2;
+        std::vector<Vec3> square;
+        for (const Vec2 c : {Vec2{-h, -h}, Vec2{h, -h}, Vec2{h, h}, Vec2{-h, h}, Vec2{-h, -h}})
+            square.push_back(worldOf(*plane, c));
+        std::vector<Vec3> segs;
+        appendPolyline(segs, square);
+        // The normal, from the origin.
+        segs.push_back(plane->origin);
+        segs.push_back(add3(plane->origin, mul(plane->normal, size / 6)));
+        self->lines_->set(QStringLiteral("datum"), std::move(segs), render::Token::Accent, 2.0f);
+    });
 }
 
 // ---------- commit ----------

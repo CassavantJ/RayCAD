@@ -212,6 +212,7 @@ private:
     void startPreview();
     void onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPtr build);
     void showPreview(const doc::DocState& state, const doc::BuildResult& build);
+    void showDatumPlane(const doc::DocState& state, const doc::BuildResult& build);
     void setStatus(const QString& status, const QString& message, const QString& field = QString());
     void updateHighlights();
     void updateHandles();
@@ -284,7 +285,8 @@ private:
     QTimer previewTimer_;
     bool previewBusy_ = false;
     bool previewPending_ = false;
-    bool previewSide_ = false; // the running preview is a side build (rolled back)
+    bool previewSide_ = false;     // the running preview is a side build (rolled back)
+    doc::DocStatePtr previewBase_; // the state the last preview was built on
     std::uint64_t previewSerial_ = 0;
     int previewBuilds_ = 0;
     JobHandle<doc::BuildResultPtr> sideJob_;
