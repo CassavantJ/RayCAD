@@ -25,7 +25,13 @@ add_library(ray_ui STATIC
     viewport_navigation.h
     viewport_navigation.cpp
     palette_schema.h
-    palette_schema.cpp)
+    palette_schema.cpp
+    sketch/sketch_geom.h
+    sketch/sketch_geom.cpp
+    sketch/sketch_tools.h
+    sketch/sketch_tools.cpp
+    sketch/sketch_drag.h
+    sketch/sketch_drag.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -88,7 +94,10 @@ set(RAY_UI_QML_FILES
     qml/controls/ScrollBar.qml
     qml/controls/TreeRow.qml
     qml/controls/SplitterHandle.qml
-    qml/controls/PanelHeader.qml)
+    qml/controls/PanelHeader.qml
+    qml/sketch/SketchLayer.qml
+    qml/sketch/SketchPanel.qml
+    qml/sketch/SketchGlyph.qml)
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -122,12 +131,18 @@ qt_add_qml_module(ray_ui
         measure_model.cpp
         section_model.h
         section_model.cpp
+        sketch/sketch_mode.h
+        sketch/sketch_mode.cpp
+        sketch/sketch_overlay.h
+        sketch/sketch_overlay.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick
         QtQuick.Templates
         QtQuick.Shapes
         QtQuick.Dialogs)
+# The generated type registrations include QML_ELEMENT headers by file name: sketch/ (T-092) must be on the path.
+target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sketch")
 
 # The C++ that qmlcachegen generates from the QML is Qt's code, not ours: its warnings (MSVC C4702 "unreachable
 # code" inside Qt's inline headers) do not fail the build. Our own sources keep warnings as errors.

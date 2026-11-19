@@ -94,7 +94,8 @@ TEST_CASE("the parametric feature commands are actions with their props schemas"
                ContainsSubstring("x-unit") && ContainsSubstring("\"operation\""));
     CHECK(byId["feature.extrude.add"].title == "Extrude");
     for (const char* name : {"sketch.set", "sketch.entity.add", "sketch.entity.remove", "sketch.constraint.add",
-                             "sketch.constraint.remove", "sketch.constraint.set", "sketch.split", "sketch.trim"}) {
+                             "sketch.constraint.remove", "sketch.constraint.set", "sketch.split", "sketch.trim",
+                             "sketch.construction", "sketch.extend", "sketch.offset", "sketch.fillet"}) {
         INFO(name);
         REQUIRE(byId.count(name) == 1);
         CHECK(byId[name].category == "Sketch");

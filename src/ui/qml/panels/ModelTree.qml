@@ -1,6 +1,7 @@
 // The model tree (task T-020): the left panel's content. Sections for the document's features (when a document is
 // attached, T-017/T-019) and for the bodies in the view, each body with a visibility toggle. Clicking a body selects
-// it in the view (Ctrl toggles, Shift adds); a body holding any selected element is highlighted here.
+// it in the view (Ctrl toggles, Shift adds); a body holding any selected element is highlighted here. Double-clicking a
+// sketch opens it for editing (T-092).
 // Rows come from Scene.tree (scene_controller.h); each is a TreeRow.
 import QtQuick
 import QtQuick.Shapes
@@ -35,6 +36,7 @@ Item {
             required property bool rowShown
             required property bool rowSelected
             required property int rowBody
+            required property int rowFeature
             required property string rowDetail
             required property string rowSection
             readonly property bool isBody: rowKind === "body"
@@ -53,6 +55,8 @@ Item {
             rightPadding: rightInset + Theme.spacingS + (isBody ? eye.width + Theme.spacingXs : 0)
 
             onExpandToggled: Scene.tree.toggleSection(rowSection)
+            // T-092: a sketch opens for editing (other features: T-098).
+            onDoubleClicked: if (rowKind === "feature") SketchTool.editFeatureAt(rowFeature)
             onClicked: {
                 if (isBody)
                     Selection.selectBody(rowBody)
