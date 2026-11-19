@@ -37,7 +37,7 @@ bool isAmbiguous(const ElementMap& map, const TopoRef& ref, std::size_t i)
     if (i < ref.ambiguous.size() && ref.ambiguous[i])
         return true;
     const TopoName* record = map.record(ref.names[i]);
-    return record != nullptr && record->ambiguous();
+    return record != nullptr && needsHint(*record);
 }
 
 // Records in `map` of the pieces `name` was split into in this build.
@@ -418,6 +418,48 @@ bool piecesLieAsPicked(const ElementMap& map, const kernel::Shape& shape, const 
     return true;
 }
 
+// The faces around the picked element at pick time, as they are now: the elements its neighbour names lead to, and
+// for a neighbour that was split, all its pieces.
+std::set<SubId> facesAroundPick(const ElementMap& map, const TopoRef& ref)
+{
+    std::set<SubId> out;
+    for (const Hash256& neighbour : ref.neighbourNames) {
+        Walk w;
+        walk(map, neighbour, ref.neighbourNames, 0, w);
+        out.insert(w.elements.begin(), w.elements.end());
+    }
+    return out;
+}
+
+// Do the face pieces of a Split stay on the picked element's side of every feature that bounded it? A piece may meet
+// faces that were around the picked element, faces of the other pieces, and faces of features that did not bound it
+// (the cut that split it). A piece that meets a face, not around the picked element, of a feature one of whose faces
+// WAS around it lies beyond a boundary the picked element had: the part of a chamfer beyond a pocket that bounded it
+// and has moved into its middle (T-081a random 11:12), the part of a boss's start face that now shows above the part
+// where the picked part showed below it (3:42). Such a piece is territory the picked element never had; the module
+// cannot tell how much of it, so the answer is Broken. Edges are not checked (their pieces lie on the same two faces;
+// the reach check of piecesLieAsPicked bounds them).
+bool facePiecesStayInside(const ElementMap& map, const kernel::Shape& shape, const std::vector<SubId>& pieces,
+                          const TopoRef& ref)
+{
+    if (pieces.empty() || pieces.front().kind != SubKind::Face)
+        return true;
+    const std::set<SubId> around = facesAroundPick(map, ref);
+    std::set<FeatureId> bounding;
+    for (const Hash256& neighbour : ref.neighbourNames)
+        if (const TopoName* record = map.record(neighbour))
+            bounding.insert(record->origin);
+    for (const SubId& piece : pieces)
+        for (const SubId& face : kernel::adjacent(shape, piece, SubKind::Face)) {
+            if (around.count(face) != 0 || std::binary_search(pieces.begin(), pieces.end(), face))
+                continue;
+            for (const Hash256& name : map.namesOf(face))
+                if (const TopoName* record = map.record(name); record != nullptr && bounding.count(record->origin) != 0)
+                    return false;
+        }
+    return true;
+}
+
 // Is `candidate` surrounded by exactly the faces the reference's neighbour names resolve to? Each neighbour name
 // must lead to a face around the candidate, and every face around it must be reached by one.
 bool surroundedAsPicked(const ElementMap& map, const kernel::Shape& shape, SubId candidate, const TopoRef& ref)
@@ -592,6 +634,9 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
         }
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
+        if (!facePiecesStayInside(map, shape, elements, ref))
+            return broken("The picked element came apart, and a piece lies beyond a face that bounded it when it was "
+                          "picked.");
         return make(ResolveState::Split, std::move(elements));
     }
 
@@ -622,7 +667,9 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
             if (unusable)
                 continue;
             if (wasAlone && members.size() > 1) {
-                if (!piecesLieAsPicked(map, shape, elements, ref.hint))
+                std::sort(elements.begin(), elements.end());
+                if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
+                    !facePiecesStayInside(map, shape, elements, ref))
                     continue;
                 return make(ResolveState::Split, std::move(elements));
             }

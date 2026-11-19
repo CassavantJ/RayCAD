@@ -461,7 +461,8 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
         return out;
     }
     const Owners owners1 = buildOwners(builtOnly(edited, replay));
-    out.log.maxWrongs = 20;
+    // One sequence on its own (RAYCAD_NAMING_ONLY) is being diagnosed: keep every line.
+    out.log.maxWrongs = std::getenv("RAYCAD_NAMING_ONLY") != nullptr ? 100000 : 20;
     judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
     if ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
         auto describe = [](const Script& s) {
@@ -490,7 +491,9 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
                               "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
         if (std::getenv("RAYCAD_NAMING_ONLY") != nullptr)
             out.log.wrongs.push_back("  baseline edges:\n" + dumpElements(b, **smp0, SubKind::Edge) +
-                                     "  replay edges:\n" + dumpElements(replay, **smp1, SubKind::Edge));
+                                     "  replay edges:\n" + dumpElements(replay, **smp1, SubKind::Edge) +
+                                     "  baseline faces:\n" + dumpElements(b, **smp0, SubKind::Face) +
+                                     "  replay faces:\n" + dumpElements(replay, **smp1, SubKind::Face));
         for (const std::string& f : replay.failed())
             out.log.wrongs.push_back("  replay failure: " + f);
     }

@@ -122,14 +122,26 @@ private:
             if (std::find(ref.names.begin(), ref.names.end(), name) == ref.names.end())
                 return std::nullopt;
         bool ambiguous = false;
+        bool sibling = false;
         for (const std::size_t i : lookup.foundNames) {
             const TopoName* record = map.record(ref.names[i]);
-            ambiguous = ambiguous || (record != nullptr && record->ambiguous()) ||
+            ambiguous = ambiguous || (record != nullptr && detail::needsHint(*record)) ||
                         (i < ref.ambiguous.size() && ref.ambiguous[i]);
+            sibling = sibling || (record != nullptr && record->siblingCount > 1);
         }
-        if (ambiguous && !map.fingerprintOf(element).matches(ref.hint))
-            return broken("The picked element could only be told apart from identical neighbours by its "
-                          "geometry, and that geometry has changed.");
+        const Fingerprint now = map.fingerprintOf(element);
+        if (ambiguous && !now.matches(ref.hint))
+            return broken("The picked element could only be told apart from similar elements by its surroundings or "
+                          "its geometry, and its geometry has changed.");
+        // A piece told apart from its siblings by the faces of the feature that made them (T-081a): it may shrink
+        // (something cut into it), but a piece that grew may have taken in what was a sibling's when it was picked
+        // (random sequence 9:7: the separating cut no longer ran between two pieces of an edge, and one of them took
+        // in most of the other). Whether the extra is new territory or a sibling's cannot be told from the names.
+        if (sibling && element.kind != kernel::SubKind::Vertex && !now.matches(ref.hint) &&
+            static_cast<double>(now.qArea) >
+                static_cast<double>(ref.hint.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta)
+            return broken("The picked element was one of several pieces and has grown since; it may now include what "
+                          "was a separate piece when it was picked.");
         // An edge or vertex whose faces are no longer the ones it was picked on is another element (T-081a).
         if (!detail::onPickedFaces(map, body.shape, element, ref))
             return broken("The picked element no longer lies on the faces it was picked on.");

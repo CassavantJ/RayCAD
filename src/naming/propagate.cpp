@@ -32,6 +32,21 @@ Hash256 loopTagParent(std::uint64_t loopTag)
     return hasher.finish();
 }
 
+Hash256 allFacesDiscriminatorMark()
+{
+    Hasher hasher;
+    hasher.str("ray.naming.discriminator.all-faces.v1");
+    return hasher.finish();
+}
+
+bool needsHint(const TopoName& name)
+{
+    if (name.ambiguous())
+        return true;
+    static const Hash256 mark = allFacesDiscriminatorMark();
+    return name.siblingCount > 1 && std::binary_search(name.discriminator.begin(), name.discriminator.end(), mark);
+}
+
 } // namespace detail
 
 namespace {
@@ -594,6 +609,12 @@ private:
                     discs[k] = discriminator(pending[members[k]], currentOnly);
                     if (discs[k].empty() || !seen.insert(discs[k]).second)
                         distinct = false;
+                }
+                if (!currentOnly) {
+                    // The fallback mode is marked, so that its discriminators never equal those of the first mode.
+                    const Hash256 mark = detail::allFacesDiscriminatorMark();
+                    for (std::vector<Hash256>& d : discs)
+                        d.insert(std::lower_bound(d.begin(), d.end(), mark), mark);
                 }
                 if (distinct)
                     break;
