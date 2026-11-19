@@ -7,9 +7,18 @@ add_library(ray_doc STATIC
     doc_module.cpp
     document.cpp
     expr.cpp
+    features/chamfer_feature.cpp
+    features/datum_plane_feature.cpp
+    features/extrude_feature.cpp
+    features/feature_props.cpp
+    features/fillet_feature.cpp
     features/import_command.cpp
     features/import_feature.cpp
     features/import_props.cpp
+    features/revolve_feature.cpp
+    features/sketch_commands.cpp
+    features/sketch_feature.cpp
+    features/sketch_json.cpp
     json.cpp
     json_number.cpp
     rebuild.cpp

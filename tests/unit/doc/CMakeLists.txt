@@ -7,13 +7,15 @@ add_executable(ray_doc_tests
     expr_test.cpp
     json_test.cpp
     number_test.cpp
+    parametric_test.cpp
     rebuild_document_test.cpp
     rebuild_import_test.cpp
     rebuild_test.cpp
+    sketch_stability_test.cpp
     state_test.cpp
 )
 # The rebuild tests use kernel shapes and element maps directly (PLAN.md 1.1 lets doc depend on kernel and naming).
-target_link_libraries(ray_doc_tests PRIVATE ray_doc ray_kernel ray_naming ray_core Catch2::Catch2WithMain)
+target_link_libraries(ray_doc_tests PRIVATE ray_doc ray_kernel ray_naming ray_sketch ray_core Catch2::Catch2WithMain)
 # json.h, json_number.h, expr.h, document_impl.h, rebuild.h and features/ are private to src/doc; test_dispatcher.h
 # is the UI-thread double.
 target_include_directories(ray_doc_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
