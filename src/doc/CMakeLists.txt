@@ -3,6 +3,7 @@ add_library(ray_doc STATIC
     commands/args.cpp
     commands/command_json.cpp
     commands/model_commands.cpp
+    commands/param_commands.cpp
     commands/registry.cpp
     doc_module.cpp
     document.cpp

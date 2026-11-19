@@ -121,6 +121,8 @@ constexpr CommandText kCommandTexts[] = {
     {"feature.reorder", "Reorder Feature", "Moves a feature to another place in the history"},
     {"feature.suppress", "Suppress Feature", "Suppresses or unsuppresses a feature"},
     {"param.set", "Set Parameter", "Adds or changes a named parameter"},
+    {"param.rename", "Rename Parameter", "Renames a parameter and every expression that uses it"},
+    {"param.remove", "Delete Parameter", "Deletes a parameter that no expression uses"},
     {"body.set", "Edit Body", "Changes a body's name, role, colour or visibility"},
     {"document.import", "Add Import Feature",
      "Adds a prepared import feature and its bodies (file.import reads the file and does this)"},

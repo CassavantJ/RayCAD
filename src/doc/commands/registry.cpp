@@ -71,6 +71,11 @@ Status registerBuiltinCommands(CommandRegistry& registry)
                 return added;
             }
         }
+        for (auto& handler : commands::makeParamCommandHandlers()) { // param.rename, param.remove (T-098)
+            if (auto added = registry.add(std::move(handler)); !added) {
+                return added;
+            }
+        }
         if (auto added = registry.add(features::makeImportCommandHandler()); !added) { // document.import (T-010)
             return added;
         }
