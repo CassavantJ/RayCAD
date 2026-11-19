@@ -157,8 +157,9 @@ public:
         return std::monostate{};
     }
     std::ostream& stream() { return stream_; }
-    // Closes the temporary file and renames it to the target.
-    Status commit(std::string_view where)
+    // Closes the temporary file and renames it to the target, unless `task` was cancelled or abandoned by then
+    // (IoTask::beginCommit): then the temporary file is removed and the result is Cancelled.
+    Status commit(IoTask& task, std::string_view where)
     {
         stream_.flush();
         const bool good = stream_.good();
@@ -167,6 +168,8 @@ public:
             return tl::unexpected(Error{ErrorCode::IoError,
                                         "Writing the file failed (is the disk full?): " + utf8Of(target_),
                                         {std::string(where)}});
+        if (!task.beginCommit())
+            return tl::unexpected(Error{ErrorCode::Cancelled, "Cancelled.", {std::string(where)}});
         std::error_code ec;
         std::filesystem::rename(temp_, target_, ec);
         if (ec)

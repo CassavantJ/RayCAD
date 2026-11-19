@@ -218,10 +218,11 @@ Status runOnIoThread(const std::shared_ptr<IoTask>& task, JobContext& ctx, std::
         }
         if (done)
             break;
-        if (ctx.cancel.cancelled()) {
-            task->requestStop(); // abandoned: the thread stops at OCCT's next poll and cleans up itself
+        // Abandoned: the thread stops at OCCT's next poll and cleans up itself. If it is already committing its
+        // result (an export renaming its file into place), it is waited for instead and its result returned, so a
+        // Cancelled export never leaves a file behind and a file that appeared is never reported as Cancelled.
+        if (ctx.cancel.cancelled() && task->requestStop())
             return tl::unexpected(cancelledError(where));
-        }
     }
     ioThreads().join(task.get());
     return std::monostate{};

@@ -138,7 +138,7 @@ Status writeStep(IoTask& task, const std::filesystem::path& path, const std::vec
         return tl::unexpected(cancelled(where));
     if (written != IFSelect_RetDone)
         return tl::unexpected(failure(ErrorCode::IoError, "Writing the file failed: " + detail::utf8Of(path), where));
-    if (auto committed = out.commit(where); !committed)
+    if (auto committed = out.commit(task, where); !committed)
         return committed;
     task.report(1.0, kStageDone);
     return std::monostate{};
@@ -185,7 +185,7 @@ Status writeIges(IoTask& task, const std::filesystem::path& path, const std::vec
         return tl::unexpected(cancelled(where));
     if (!written)
         return tl::unexpected(failure(ErrorCode::IoError, "Writing the file failed: " + detail::utf8Of(path), where));
-    if (auto committed = out.commit(where); !committed)
+    if (auto committed = out.commit(task, where); !committed)
         return committed;
     task.report(1.0, kStageDone);
     return std::monostate{};
@@ -307,7 +307,7 @@ Status writeStl(IoTask& task, const std::filesystem::path& path, const std::vect
     out.stream().write(triangles.data(), static_cast<std::streamsize>(triangles.size()));
     if (task.stopRequested())
         return tl::unexpected(cancelled(where));
-    if (auto committed = out.commit(where); !committed)
+    if (auto committed = out.commit(task, where); !committed)
         return committed;
     task.report(1.0, kStageDone);
     return std::monostate{};
