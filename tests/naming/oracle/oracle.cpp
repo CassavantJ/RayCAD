@@ -729,13 +729,21 @@ Owners buildOwners(const Script& script)
             const bool fillet = f.type == FType::Fillet;
             for (std::size_t k = 0; k < f.targets.size(); ++k) {
                 const Owner *A = O.get(f.targets[k].a), *B = O.get(f.targets[k].b);
-                if (!A || !B || !A->c.analytic() || !B->c.analytic())
+                const std::string key = f.id + "/b" + std::to_string(k);
+                if (!A || !B || !A->c.analytic() || !B->c.analytic()) {
+                    O.undescribable.insert(key);
                     continue;
+                }
                 Owner o;
-                o.key = f.id + "/b" + std::to_string(k);
+                o.key = key;
                 o.cat = fillet ? "fillet face" : "chamfer face";
-                if (!blendCarrier(*A, *B, fillet, f.targets[k].convex, f.size, o.c))
+                // (A torus whose tube is as wide as its ring is not what the kernel builds: a fillet larger than the
+                // corner arc it rounds gets another surface.)
+                if (!blendCarrier(*A, *B, fillet, f.targets[k].convex, f.size, o.c) ||
+                    (o.c.k == Carrier::K::Torus && !(o.c.r > o.c.r2))) {
+                    O.undescribable.insert(key);
                     continue;
+                }
                 const Owner a = *A, b = *B;
                 const double rho = f.size;
                 // Within the blend size of both carriers, over both extents. The extents get a little more room
@@ -1534,10 +1542,14 @@ bool unmovedMap(const ElemSamples& e, const ElemSamples& mapped)
     return true;
 }
 
-// The anchor tolerance for an element mapped through an edit: exact for a vertex the map left in place.
+// The anchor tolerance for an element mapped through an edit: exact for a vertex the map left in place, and for an
+// edge left in place, the chord slack of the sample mesh (its samples lie on the curve, the other edge's polyline
+// within a chord of it): a short edge 0.03 mm beside the picked one's end is not the picked edge.
 double anchorTolerance(SubKind kind, bool identity)
 {
-    return kind == SubKind::Vertex && identity ? kExactVertexTolerance : kAnchorTolerance;
+    if (!identity || kind == SubKind::Face)
+        return kAnchorTolerance;
+    return kind == SubKind::Vertex ? kExactVertexTolerance : kSampleMesh.chordTol + kExactVertexTolerance;
 }
 
 // Could a point of a face of the new shape lie ON baseline face b? Faces that meet at an angle share only their
@@ -1709,6 +1721,20 @@ std::string listOf(const std::vector<std::uint32_t>& v)
 }
 
 } // namespace
+
+bool coincidesWithAnother(const TruthDesc& d, SubId s, const Owners& owners, const Samples& smp)
+{
+    const auto& E = smp.of(s.kind);
+    const ElemSamples& self = E[s.index];
+    // Both elements are of the same shape, so they are compared exactly (vertices, edges) or within the sample mesh's
+    // chord slack (faces, sampled on triangles).
+    const double tol = s.kind == SubKind::Face ? kAnchorTolerance : kExactVertexTolerance;
+    for (const std::uint32_t other : evalTruth(withoutSeparators(d), owners, smp).elems)
+        if (other != s.index && !E[other].pts.empty() && sameSheet(self, E[other], s.kind) &&
+            overlap(self, E[other], s.kind, tol))
+            return true;
+    return false;
+}
 
 ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& d, const Owners& before,
                        const Owners& after, bool& moved)
@@ -2020,6 +2046,14 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     const TruthDesc& d = pick.truth;
     x.kind = d.kind;
     x.weak = d.weak;
+    // A logical face of the description that the edited script still has but the oracle cannot describe (Owners::
+    // undescribable): where its continuation is cannot be told.
+    for (const Constraint& c : d.cons)
+        for (const std::string& alt : c.alts)
+            if (now.undescribable.count(alt) != 0) {
+                x.noAnchor = "the edited script's " + alt + " has no surface the oracle can describe";
+                return x;
+            }
     x.strict = evalTruth(d, now, smp);
     const TruthEval L = evalTruth(withoutSeparators(d), now, smp);
     std::set_union(L.elems.begin(), L.elems.end(), x.strict.elems.begin(), x.strict.elems.end(),

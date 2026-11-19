@@ -55,7 +55,9 @@ Hash256 allFacesDiscriminatorMark();
 // fingerprint), or a discriminator made from all the faces around it (allFacesDiscriminatorMark)? Faces at the ends
 // of an edge, or the neighbours a piece happens to touch, change with unrelated edits, and a sibling can end up with
 // exactly the surroundings another sibling had (T-081a random 18:48: two lines where a moved boss pierces a
-// cylinder, told apart by the faces they end on, swapped). Such a name is trusted only while the element's
+// cylinder, told apart by the faces they end on, swapped). Every edge or vertex among siblings counts as such: the
+// pieces of an edge keep their end faces while the feature between them moves and they trade territory (random
+// 9:41). Such a name is trusted only while the element's
 // fingerprint still matches the reference's hint, like an ambiguous name (PLAN.md 3.3 rule 4). A name alone in its
 // family, or told apart by faces of the feature that issued the siblings (the walls of the groove that split a
 // face), is not.

@@ -2,8 +2,11 @@
 #include "propagate.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -134,6 +137,86 @@ bool insideBox(const Vec3& p, const Box3& box, double tol)
            p.z >= box.min.z - tol && p.z <= box.max.z + tol;
 }
 
+// Does point p (on the face's plane) lie inside planar face `face`? Even-odd count of the crossings of a ray in the
+// plane with the face's boundary edges, lines and circular arcs (an arc runs counter-clockwise about its axis from
+// its start for length / radius; arcs are walked in short chords). nullopt when an edge is of another kind or its
+// shape cannot be reconstructed: then the question cannot be answered.
+std::optional<bool> insidePlanarFace(const kernel::Shape& shape, SubId face, const Vec3& p,
+                                     const kernel::SurfaceInfo& info)
+{
+    const double n0 = norm(info.axis);
+    if (!(n0 > 0.0))
+        return std::nullopt;
+    const Vec3 n{info.axis.x / n0, info.axis.y / n0, info.axis.z / n0};
+    // A frame (e1, e2) of the plane.
+    const Vec3 t = std::abs(n.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    Vec3 e1{t.y * n.z - t.z * n.y, t.z * n.x - t.x * n.z, t.x * n.y - t.y * n.x};
+    const double l1 = norm(e1);
+    e1 = Vec3{e1.x / l1, e1.y / l1, e1.z / l1};
+    const Vec3 e2{n.y * e1.z - n.z * e1.y, n.z * e1.x - n.x * e1.z, n.x * e1.y - n.y * e1.x};
+    auto uv = [&](const Vec3& q) {
+        const Vec3 d = sub(q, p);
+        return std::array<double, 2>{dot(d, e1), dot(d, e2)};
+    };
+    // Crossings of the ray from p along +e1 (u > 0, v = 0) with segment a-b (half-open in v).
+    int crossings = 0;
+    auto segment = [&](const std::array<double, 2>& a, const std::array<double, 2>& b) {
+        if ((a[1] > 0) == (b[1] > 0))
+            return;
+        const double u = a[0] + (b[0] - a[0]) * (0 - a[1]) / (b[1] - a[1]);
+        if (u > 0)
+            ++crossings;
+    };
+    for (const SubId& edge : kernel::adjacent(shape, face, SubKind::Edge)) {
+        const auto c = kernel::curveInfo(shape, edge);
+        if (!c)
+            return std::nullopt;
+        if (c->type == kernel::CurveType::Line) {
+            segment(uv(c->start), uv(c->end));
+            continue;
+        }
+        if (c->type != kernel::CurveType::Circle) {
+            // An ellipse or B-spline is taken as its chord (the kernel gives its ends only): good enough to tell a
+            // point well inside the face from one outside it, which is what is asked. A closed one has no chord.
+            if (c->closed || norm(sub(c->start, c->end)) <= 1e-9)
+                return std::nullopt;
+            segment(uv(c->start), uv(c->end));
+            continue;
+        }
+        if (!(c->radius > 0.0))
+            return std::nullopt;
+        const double a0 = norm(c->axis);
+        if (!(a0 > 0.0))
+            return std::nullopt;
+        const Vec3 ax{c->axis.x / a0, c->axis.y / a0, c->axis.z / a0};
+        const Vec3 r0 = sub(c->start, c->center);
+        const Vec3 r1{ax.y * r0.z - ax.z * r0.y, ax.z * r0.x - ax.x * r0.z, ax.x * r0.y - ax.y * r0.x};
+        constexpr double kTwoPi = 6.283185307179586476925286766559;
+        double sweep = c->closed ? kTwoPi : c->length / c->radius;
+        auto at = [&](double a) {
+            const double ca = dmath::cos(a), sa = dmath::sin(a);
+            return Vec3{c->center.x + r0.x * ca + r1.x * sa, c->center.y + r0.y * ca + r1.y * sa,
+                        c->center.z + r0.z * ca + r1.z * sa};
+        };
+        // The arc must end where the edge ends, turning one way or the other about the axis; else its shape is not
+        // known.
+        const double endTolerance = 1e-4 * std::max(1.0, c->radius);
+        if (!c->closed && norm(sub(at(sweep), c->end)) > endTolerance) {
+            sweep = -sweep;
+            if (norm(sub(at(sweep), c->end)) > endTolerance)
+                return std::nullopt;
+        }
+        const int steps = std::max(8, static_cast<int>(std::abs(sweep) / 0.05));
+        std::array<double, 2> prev = uv(c->start);
+        for (int i = 1; i <= steps; ++i) {
+            const std::array<double, 2> next = uv(i == steps && !c->closed ? c->end : at(sweep * i / steps));
+            segment(prev, next);
+            prev = next;
+        }
+    }
+    return crossings % 2 == 1;
+}
+
 // Can element `c` contain the element the reference was picked on? Used before a family or split-parent rule
 // answers Merged: the rule says the pieces re-joined, but the same names also appear when a piece vanished and
 // the rest of the element is left whole. This keeps Merged to elements of the same type on the same carrier, at
@@ -160,8 +243,17 @@ bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, cons
             return false;
         const Vec3 axis{info->axis.x / axisLength, info->axis.y / axisLength, info->axis.z / axisLength};
         const Vec3 d = sub(p, info->origin);
-        if (info->type == kernel::SurfaceType::Plane)
-            return std::abs(dot(d, axis)) <= kContainTolerance;
+        if (info->type == kernel::SurfaceType::Plane) {
+            // Inside its outline, not merely inside its box: a face whole again around a hole that now sits where the
+            // picked piece was does not contain the piece (T-081a random 10:34).
+            if (std::abs(dot(d, axis)) > kContainTolerance)
+                return false;
+            const auto inside = insidePlanarFace(shape, c, p, *info);
+            if (std::getenv("RAYCAD_NAMING_DEBUG") != nullptr)
+                std::fprintf(stderr, "canContain face %u p=(%.3f %.3f %.3f) inside=%d\n", c.index, p.x, p.y, p.z,
+                             inside ? (*inside ? 1 : 0) : -1);
+            return inside.has_value() && *inside;
+        }
         if (info->type == kernel::SurfaceType::Cylinder) {
             const double along = dot(d, axis);
             const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};

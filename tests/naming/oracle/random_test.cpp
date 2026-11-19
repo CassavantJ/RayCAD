@@ -791,3 +791,20 @@ TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development
     const BlockResult r = runBlock("Holdout", parts, kHoldoutPerPart, holdout);
     checkGates(r, kHoldoutPerPart);
 }
+
+TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the T-081a gate fixes",
+          "[random-holdout2]")
+{
+    // The first holdout block's failures were looked at while the naming code and the oracle were fixed (T-081a
+    // gate); this block's seeds were not run until those fixes were done, so it is the unseen check.
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x5EC0D000ull;
+    holdout.keyPrefix = "holdout2 ";
+    const BlockResult r = runBlock("Second holdout", parts, kHoldoutPerPart, holdout);
+    checkGates(r, kHoldoutPerPart);
+}

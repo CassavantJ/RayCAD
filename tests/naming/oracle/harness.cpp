@@ -346,6 +346,12 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                     ++(*skipped)[std::string(kindName(kind)) + ": " + d.why];
                 continue;
             }
+            if (coincidesWithAnother(d, s, *owners, *samples)) {
+                if (skipped != nullptr)
+                    ++(*skipped)[std::string(kindName(kind)) + ": coincides with another element it cannot be told "
+                                                              "apart from"];
+                continue;
+            }
             if (b.map().namesOf(s).empty()) {
                 if (skipped != nullptr)
                     ++(*skipped)[std::string(kindName(kind)) + ": element has no name"];

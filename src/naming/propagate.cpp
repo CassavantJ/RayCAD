@@ -43,6 +43,11 @@ bool needsHint(const TopoName& name)
 {
     if (name.ambiguous())
         return true;
+    // An edge or vertex among siblings: what tells it from them are the faces at its ends, and the pieces of an edge
+    // trade territory when the feature between them moves while every piece keeps its end faces (random 9:41, 2:40).
+    // (Names of an imported body are issued once from the imported shape, which edits do not change.)
+    if (name.siblingCount > 1 && name.kind != kernel::SubKind::Face && name.role.rfind("import.", 0) != 0)
+        return true;
     static const Hash256 mark = allFacesDiscriminatorMark();
     return name.siblingCount > 1 && std::binary_search(name.discriminator.begin(), name.discriminator.end(), mark);
 }

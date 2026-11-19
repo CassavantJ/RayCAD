@@ -73,6 +73,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -199,6 +200,10 @@ struct Owners {
     std::vector<Owner> v;
     std::map<std::string, int> ix;
     std::map<std::string, Feature> sweeps; // the sweeps they come from, by id (mapElement: moved features)
+    // Keys of logical faces the script has but the oracle cannot describe: a blend whose analytic surface does not
+    // exist for its parents (a fillet larger than the corner arc it rounds, a torus with its tube wider than its ring).
+    // A reference described by such an owner has no continuation the oracle can tell (expect: noAnchor).
+    std::set<std::string> undescribable;
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);
@@ -280,6 +285,12 @@ private:
     const Samples& samples_;
     std::vector<TruthDesc> faceDesc_;
 };
+
+// Does another element of the same kind lie where element `s` lies (they share territory, oracle.h overlap) and fit
+// its description without separators too? Then nothing the oracle knows tells the two apart: a boolean that leaves two
+// coincident edges along a zero-height wall, or back-to-back faces of the same material side. Such an element is not
+// a reference (TruthBuilder::describe says why), as a pick the oracle cannot vouch for is not.
+bool coincidesWithAnother(const TruthDesc& d, SubId s, const Owners& owners, const Samples& samples);
 
 // The edges of the shape on the logical edge `target`, each with its own description.
 std::vector<std::pair<std::uint32_t, TruthDesc>> pickTarget(const Target& target, const Owners& owners,
