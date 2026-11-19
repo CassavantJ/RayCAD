@@ -32,6 +32,10 @@ add_library(ray_ui STATIC
     sketch/sketch_tools.cpp
     sketch/sketch_drag.h
     sketch/sketch_drag.cpp
+    sketch/dimensions.h
+    sketch/dimensions.cpp
+    sketch/constraints.h
+    sketch/constraints.cpp
     model/model_util.h
     model/preview.h
     model/preview.cpp)
@@ -101,6 +105,9 @@ set(RAY_UI_QML_FILES
     qml/sketch/SketchLayer.qml
     qml/sketch/SketchPanel.qml
     qml/sketch/SketchGlyph.qml
+    qml/sketch/DimensionLayer.qml
+    qml/sketch/ConstraintsLayer.qml
+    qml/sketch/ConstraintsPanel.qml
     qml/model/ModelToolButtons.qml
     qml/model/FeaturePanel.qml
     qml/model/FeatureLayer.qml
@@ -143,6 +150,12 @@ qt_add_qml_module(ray_ui
         sketch/sketch_mode.cpp
         sketch/sketch_overlay.h
         sketch/sketch_overlay.cpp
+        sketch/constraints_rows.h
+        sketch/constraints_rows.cpp
+        sketch/constraints_model.h
+        sketch/constraints_model.cpp
+        sketch/dimensions_overlay.h
+        sketch/dimensions_overlay.cpp
         model/feature_tools.h
         model/feature_tools.cpp
         model/feature_tree.h

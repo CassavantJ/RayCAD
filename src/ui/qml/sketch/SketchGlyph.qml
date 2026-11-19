@@ -1,11 +1,14 @@
 // One inferred-constraint glyph next to the pointer while drawing (task T-092): a small chip with the constraint's
-// symbol (icons.js "glyph-<kind>", drawn for RayCAD). T-093 reuses it for the glyphs of existing constraints.
+// symbol (icons.js "glyph-<kind>", drawn for RayCAD). T-093 reuses it for the glyphs of existing constraints, with
+// its own colours (tint, edge).
 import QtQuick
 import RayCad.Ui
 
 Rectangle {
     id: root
     property string kind: ""
+    property color tint: Theme.accentText
+    property color edge: Theme.accentThinLine
 
     objectName: "sketchGlyph." + kind
     width: Theme.iconSize + Theme.spacingXs
@@ -13,14 +16,14 @@ Rectangle {
     radius: Theme.radiusSmall
     color: Theme.panelBg
     border.width: Theme.borderWidth
-    border.color: Theme.accentThinLine
+    border.color: root.edge
     Accessible.role: Accessible.Graphic
     Accessible.name: kind
 
     Icon {
         anchors.centerIn: parent
         name: "glyph-" + root.kind
-        color: Theme.accentText
+        color: root.tint
         size: Theme.iconSize * 0.75
     }
 }

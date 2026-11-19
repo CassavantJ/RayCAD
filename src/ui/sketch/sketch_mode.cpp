@@ -563,6 +563,7 @@ void SketchModel::enter(FeatureId id, QString name, std::string planeJson, kerne
     hover_ = {};
     typedText_.clear();
     activeField_ = -1;
+    lastGood_.reset();
     subscribe();
     sketch::Sketch model;
     if (!pending) {
@@ -606,6 +607,9 @@ void SketchModel::leave()
     conflictEntities_.clear();
     overlay_ = {};
     glyphs_.clear();
+    lastGood_.reset();
+    externalHighlight_.clear();
+    hintOverride_.clear();
     if (was) {
         emit activeChanged();
         emit toolChanged();
@@ -680,6 +684,20 @@ std::optional<sketch::Sketch> SketchModel::solved() const
     return std::nullopt;
 }
 
+namespace {
+// The same entities (ids and kinds) in the same order: a solved form of one may stand for the other.
+bool sameEntities(const sketch::Sketch& a, const sketch::Sketch& b)
+{
+    if (a.entities.size() != b.entities.size())
+        return false;
+    for (std::size_t i = 0; i < a.entities.size(); ++i) {
+        if (a.entities[i].id != b.entities[i].id || a.entities[i].geom.index() != b.entities[i].geom.index())
+            return false;
+    }
+    return true;
+}
+} // namespace
+
 void SketchModel::refreshDisplay()
 {
     if (dragSketch_)
@@ -687,9 +705,26 @@ void SketchModel::refreshDisplay()
     else if (solved_ && solvedSerial_ == modelSerial_ && solved_->status != sketch::SolveStatus::Failed &&
              solved_->status != sketch::SolveStatus::Conflicting)
         display_ = su::SketchView(solved_->solved);
+    else if (lastGood_ && sameEntities(*lastGood_, model_))
+        display_ = su::SketchView(*lastGood_); // T-093: while solving, and after a failed solve, the last good shape
     else
         display_ = su::SketchView(model_);
     updateOverlay();
+}
+
+const sketch::SolveResult* SketchModel::currentSolve() const
+{
+    return solved_ && solvedSerial_ == modelSerial_ ? &*solved_ : nullptr;
+}
+
+std::optional<sketch::Sketch> SketchModel::shownSolved() const
+{
+    if (const sketch::SolveResult* s = currentSolve();
+        s != nullptr && s->status != sketch::SolveStatus::Failed && s->status != sketch::SolveStatus::Conflicting)
+        return s->solved;
+    if (lastGood_ && sameEntities(*lastGood_, model_))
+        return lastGood_;
+    return std::nullopt;
 }
 
 void SketchModel::setStatus(const QString& status, int dof)
@@ -717,14 +752,17 @@ void SketchModel::requestSolve()
     if (jobs == nullptr)
         return;
     setStatus(QStringLiteral("solving"), freeDof_);
-    JobHandle<sketch::SolveResult> job =
-        jobs->submit<sketch::SolveResult>(JobInfo{"Sketch solve", JobPriority::Interactive, false},
-                                          [model = model_](JobContext& ctx) -> Result<sketch::SolveResult> {
-                                              auto solver = api::sketch_edit::makeSolver();
-                                              if (!solver)
-                                                  return tl::unexpected(Error{ErrorCode::Internal, "No solver", {}});
-                                              return solver->solve(model, ctx);
-                                          });
+    // T-093: dimensions with expressions solve at their values now (the parameters may have changed).
+    doc::Document* d = liveDoc();
+    doc::DocStatePtr state = d != nullptr ? d->state() : nullptr;
+    JobHandle<sketch::SolveResult> job = jobs->submit<sketch::SolveResult>(
+        JobInfo{"Sketch solve", JobPriority::Interactive, false},
+        [model = model_, state](JobContext& ctx) -> Result<sketch::SolveResult> {
+            auto solver = api::sketch_edit::makeSolver();
+            if (!solver)
+                return tl::unexpected(Error{ErrorCode::Internal, "No solver", {}});
+            return solver->solve(state ? api::sketch_edit::withEvaluatedDimensions(*state, model) : model, ctx);
+        });
     QPointer<SketchModel> self(this);
     job.then([self, serial, modelSerial](Result<sketch::SolveResult> r) {
         if (!self || serial != self->solveSerial_ || modelSerial != self->modelSerial_)
@@ -735,9 +773,13 @@ void SketchModel::requestSolve()
             self->solved_.reset();
             self->setStatus(QStringLiteral("failed"), 0);
             self->refreshDisplay();
+            emit self->solveFinished();
             return;
         }
         self->solved_ = std::move(*r);
+        if (self->solved_->status != sketch::SolveStatus::Failed &&
+            self->solved_->status != sketch::SolveStatus::Conflicting)
+            self->lastGood_ = self->solved_->solved;
         QString status;
         switch (self->solved_->status) {
         case sketch::SolveStatus::FullyConstrained:
@@ -764,6 +806,7 @@ void SketchModel::requestSolve()
         }
         self->setStatus(status, self->solved_->freeDof);
         self->refreshDisplay();
+        emit self->solveFinished();
     });
 }
 
@@ -789,21 +832,27 @@ QString SketchModel::statusText() const
 }
 
 // ---------- running steps ----------
-void SketchModel::run(const QString& actionId, std::string argsJson, const QString& label)
+void SketchModel::run(const QString& actionId, std::string argsJson, const QString& label,
+                      std::function<void(bool)> done)
 {
     api::IApp* a = app();
-    if (a == nullptr)
+    if (a == nullptr) {
+        if (done)
+            done(false);
         return;
+    }
     const QByteArray id = actionId.toUtf8();
     JobHandle<api::ActionResult> job = a->actions().invoke(sv(id), argsJson, api::Caller::User);
     if (!job.valid()) {
         if (context_)
             context_->showMessage(trs("%1 could not be started").arg(label), true);
+        if (done)
+            done(false);
         return;
     }
     ++inFlight_;
     QPointer<SketchModel> self(this);
-    job.then([self, label](Result<api::ActionResult> r) {
+    job.then([self, label, done = std::move(done)](Result<api::ActionResult> r) {
         if (!self)
             return;
         --self->inFlight_;
@@ -811,7 +860,58 @@ void SketchModel::run(const QString& actionId, std::string argsJson, const QStri
             self->context_->showMessage(trs("%1 failed: %2").arg(label, qs(r.error().message)), true);
         if (self->inFlight_ == 0)
             self->syncFromDocument();
+        if (done)
+            done(r.has_value());
     });
+}
+
+void SketchModel::runStep(const QString& actionId, std::string argsJson, const QString& label,
+                          std::function<void(bool)> done)
+{
+    if (!active_ || pending_) {
+        if (done)
+            done(false);
+        return;
+    }
+    if (api::OpenDocument* od = document(); od != nullptr && od->readOnly) {
+        if (context_)
+            context_->showMessage(trs("The document is read-only"), true);
+        if (done)
+            done(false);
+        return;
+    }
+    run(actionId, std::move(argsJson), label, std::move(done));
+}
+
+void SketchModel::selectEntities(const std::vector<SketchEntId>& ids)
+{
+    std::set<SketchEntId> next;
+    for (const SketchEntId& id : ids) {
+        if (display_.pointEntry(id) != nullptr || display_.curve(id) != nullptr)
+            next.insert(id);
+    }
+    if (next == selected_)
+        return;
+    selected_ = std::move(next);
+    emit selectionChanged();
+    updateOverlay();
+}
+
+void SketchModel::setHighlight(const std::vector<SketchEntId>& ids)
+{
+    std::set<SketchEntId> next(ids.begin(), ids.end());
+    if (next == externalHighlight_)
+        return;
+    externalHighlight_ = std::move(next);
+    updateOverlay();
+}
+
+void SketchModel::setHintOverride(const QString& hint)
+{
+    if (hint == hintOverride_)
+        return;
+    hintOverride_ = hint;
+    updateHint();
 }
 
 void SketchModel::apply(const su::Action& action)
@@ -917,8 +1017,10 @@ QString SketchModel::tool() const
 void SketchModel::setTool(const QString& name)
 {
     const su::ToolKind kind = su::toolFromName(name.toStdString());
-    if (kind == engine_.kind() && !engine_.busy())
+    if (kind == engine_.kind() && !engine_.busy()) {
+        emit toolChanged(); // T-093: picking the tool again still leaves the smart dimension tool
         return;
+    }
     engine_.setKind(kind);
     typedText_.clear();
     activeField_ = -1;
@@ -947,6 +1049,8 @@ QString SketchModel::hint() const
         return trs("Pick the plane to sketch on, or select a planar face in the view");
     if (!active_)
         return {};
+    if (!hintOverride_.isEmpty())
+        return hintOverride_;
     const bool started = engine_.busy();
     switch (engine_.kind()) {
     case su::ToolKind::Select:
@@ -1102,6 +1206,8 @@ void SketchModel::pointerMove(QPointF pos, Qt::KeyboardModifiers mods)
 {
     if (!active_)
         return;
+    if (inputHook_.move && !dragging_ && inputHook_.move(pos, mods))
+        return;
     // Qt Quick repeats a hover at the same place after frames: answering it would ask for the next frame.
     if (pointerIn_ && pos == pointer_ && !press_.down && !dragging_)
         return;
@@ -1148,6 +1254,8 @@ void SketchModel::pointerPress(QPointF pos, Qt::KeyboardModifiers mods)
 {
     if (!active_)
         return;
+    if (inputHook_.press && !dragging_ && inputHook_.press(pos, mods))
+        return;
     pointer_ = pos;
     press_ = {};
     press_.down = true;
@@ -1160,6 +1268,8 @@ void SketchModel::pointerPress(QPointF pos, Qt::KeyboardModifiers mods)
 void SketchModel::pointerRelease(QPointF pos, Qt::KeyboardModifiers mods)
 {
     if (!active_)
+        return;
+    if (inputHook_.release && !dragging_ && !press_.down && inputHook_.release(pos, mods))
         return;
     const Pending press = press_;
     press_ = {};
@@ -1203,8 +1313,10 @@ void SketchModel::pointerRelease(QPointF pos, Qt::KeyboardModifiers mods)
     afterToolInput();
 }
 
-void SketchModel::pointerDoubleClick(QPointF pos, Qt::KeyboardModifiers)
+void SketchModel::pointerDoubleClick(QPointF pos, Qt::KeyboardModifiers mods)
 {
+    if (active_ && inputHook_.doubleClick && inputHook_.doubleClick(pos, mods))
+        return;
     if (!active_ || engine_.kind() != su::ToolKind::Select)
         return;
     const auto uv = toPlane(pos);
@@ -1240,6 +1352,8 @@ void SketchModel::startDrag(const su::SketchView::Hit& hit, Vec2 at)
     if (model_.entities.empty())
         return;
     sketch::Sketch model = model_;
+    if (doc::Document* d = liveDoc()) // T-093: dimension expressions at their values now
+        model = api::sketch_edit::withEvaluatedDimensions(*d->state(), std::move(model));
     SketchEntId point;
     dragTempPoint_.reset();
     dragTempConstraint_.reset();
@@ -1321,6 +1435,7 @@ void SketchModel::onDrag(const su::SketchDrag::Update& update)
         emit draggingChanged();
         if (!result.entities.empty() && !pending_) {
             run(QStringLiteral("sketch.set"), api::sketch_edit::sketchSetArgs(feature_, result), trs("Drag"));
+            lastGood_ = result; // shown until its solve is back, not the shape before the drag
             setModel(std::move(result));
         } else {
             refreshDisplay();
@@ -1345,6 +1460,8 @@ bool SketchModel::wantsKey(const QKeyEvent* e) const
 {
     if (!active_)
         return false;
+    if (inputHook_.wantsKey && inputHook_.wantsKey(e))
+        return true;
     const int key = e->key();
     const bool typing = activeField_ >= 0;
     const bool hasFields = !engine_.fields().empty();
@@ -1366,6 +1483,8 @@ bool SketchModel::keyPress(QKeyEvent* e)
 {
     if (!active_)
         return false;
+    if (inputHook_.keyPress && inputHook_.keyPress(e))
+        return true;
     const int key = e->key();
     const std::vector<su::FieldSpec> specs = engine_.fields();
     const bool typing = activeField_ >= 0;
@@ -1478,7 +1597,7 @@ void SketchModel::updateOverlay()
             return S::Selected;
         if (hover_.kind != su::SketchView::Hit::Kind::None && hover_.id == id)
             return S::Hovered;
-        if (highlight.count(id))
+        if (highlight.count(id) || externalHighlight_.count(id))
             return S::Highlight;
         if (conflictEntities_.count(id))
             return S::Conflict;

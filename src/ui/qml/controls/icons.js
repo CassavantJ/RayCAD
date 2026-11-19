@@ -84,7 +84,19 @@ var paths = {
     "glyph-vertical": { d: "M 8 2.5 V 13.5 M 5.5 2.5 H 10.5 M 5.5 13.5 H 10.5" },
     "glyph-tangent": { d: "M 11.5 10 A 3.5 3.5 0 1 1 4.5 10 A 3.5 3.5 0 1 1 11.5 10 Z M 1.5 6.5 H 14.5" },
     "glyph-dimension": { d: "M 2.5 8 H 13.5 M 2.5 5 V 11 M 13.5 5 V 11 M 4.5 6.5 L 2.5 8 L 4.5 9.5 "
-                            + "M 11.5 6.5 L 13.5 8 L 11.5 9.5" }
+                            + "M 11.5 6.5 L 13.5 8 L 11.5 9.5" },
+    // T-093: the other constraint glyphs (also the constraint toolbar's icons), driven dimensions, deleting.
+    "glyph-parallel": { d: "M 3 12.5 L 8.5 3 M 7.5 13 L 13 3.5" },
+    "glyph-perpendicular": { d: "M 2.5 13 H 13.5 M 8 13 V 2.5 M 8 10 H 11 V 13" },
+    "glyph-equal": { d: "M 3 6 H 13 M 3 10 H 13" },
+    "glyph-concentric": { d: "M 13.5 8 A 5.5 5.5 0 1 1 2.5 8 A 5.5 5.5 0 1 1 13.5 8 Z "
+                             + "M 10.5 8 A 2.5 2.5 0 1 1 5.5 8 A 2.5 2.5 0 1 1 10.5 8 Z" },
+    "glyph-collinear": { d: "M 2 14 L 6.5 9.5 M 9.5 6.5 L 14 2 M 8 8 V 8.01" },
+    "glyph-symmetric": { d: "M 8 2 V 3.5 M 8 5.5 V 7 M 8 9 V 10.5 M 8 12.5 V 14 "
+                            + "M 5.5 5 L 2 8 L 5.5 11 M 10.5 5 L 14 8 L 10.5 11" },
+    "glyph-fix": { d: "M 4.5 7.5 H 11.5 V 13.5 H 4.5 Z M 6 7.5 V 5.5 A 2 2 0 0 1 10 5.5 V 7.5" },
+    "driven": { d: "M 5 3 Q 2.5 8 5 13 M 11 3 Q 13.5 8 11 13 M 6.5 8 H 9.5" },
+    "delete": { d: "M 3 4.5 H 13 M 6.5 4.5 V 3 H 9.5 V 4.5 M 4.5 4.5 L 5.25 13.5 H 10.75 L 11.5 4.5" }
 };
 
 function path(name) {

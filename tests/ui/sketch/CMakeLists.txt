@@ -2,7 +2,9 @@
 # The tests draw through the viewport, so they need a scene graph with QRhi; where there is none they skip.
 find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui Qml Quick Test)
 
-add_executable(ray_ui_sketch_tests sketch_test.cpp sketch_tools_test.cpp)
+add_executable(ray_ui_sketch_tests sketch_test.cpp sketch_tools_test.cpp
+    # T-093: constraints and dimensions.
+    constraints_test.cpp constraints_unit_test.cpp)
 target_link_libraries(ray_ui_sketch_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
                                                   Qt6::Test Catch2::Catch2)
 # The private headers of src/ui (AppHost, SketchModel, the tool engine, ...).

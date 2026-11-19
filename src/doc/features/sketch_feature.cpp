@@ -22,6 +22,9 @@ const std::string& schema()
         return objectSchema(
             R"("plane","sketch")",
             R"("plane":)" + planeSchema() +
+                // T-093: where the dimensions' value labels sit (offsets in mm from their anchors; display only).
+                R"(,"labels":{"type":"object","additionalProperties":{"type":"object","additionalProperties":false,)"
+                R"("required":["x","y"],"properties":{"x":{"type":"number"},"y":{"type":"number"}}}})"
                 R"(,"sketch":{"type":"object","additionalProperties":false,"properties":{"schema":{"const":1},)"
                 R"("entities":{"type":"array","items":{"type":"object","required":["id","type"],"properties":{"id":)" +
                 u + R"(,"type":{"enum":["point","line","arc","circle","spline","slot"]},)" +
@@ -59,7 +62,7 @@ Result<SketchProps> parse(const Feature& f, bool strict)
     }
     const PropsReader r(where, *root);
     if (strict) {
-        if (auto ok = r.onlyKeys({"plane", "sketch"}); !ok) {
+        if (auto ok = r.onlyKeys({"labels", "plane", "sketch"}); !ok) {
             return tl::unexpected(ok.error());
         }
     }

@@ -31,6 +31,15 @@ Item {
         Accessible.name: qsTr("Sketch %1").arg(SketchTool.sketchName)
     }
 
+    // T-093: the constraint glyphs, then the dimensions with their labels and value field.
+    ConstraintsLayer {
+        anchors.fill: parent
+    }
+    DimensionLayer {
+        anchors.fill: parent
+        focusTarget: overlay
+    }
+
     Connections {
         target: SketchTool
         function onActiveChanged() {

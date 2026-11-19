@@ -40,6 +40,17 @@
 //                            rounds the corner where exactly two lines share `point` with a tangent arc: the lines
 //                            end at the tangent points (tangent constraints added), the corner point is removed
 //                            unless a constraint still names it
+// Added for constraints and dimensions (task T-093):
+//   sketch.constraint.add / .remove / .set   also take "solved"?: the caller's solved form of the same model (a sketch
+//                            model, same entities): its point coordinates, circle radii and slot widths are stored
+//                            with the change, so the rebuild solves on from the shape that is shown
+//   sketch.constraint.add    also takes "labels"?: {"<dimension id>": {"x", "y"}}: where the new dimensions' value
+//                            labels go (same step)
+//   sketch.dimension.place   {"id", "constraint", "offset": {"x", "y"} | null}
+//                            moves a dimension's value label: the offset (mm in the sketch plane) from the anchor the
+//                            UI measures it from; null forgets it. Stored in the feature's props as
+//                            "labels": {"<dimension id>": {"x", "y"}}; every sketch command drops the labels of
+//                            dimensions that are gone. Labels change no geometry.
 // Keeping ids through trims and splits keeps the names of the faces swept from the entity (PLAN.md 3.3 rule 1).
 #pragma once
 
