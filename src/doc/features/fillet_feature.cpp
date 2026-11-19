@@ -111,8 +111,8 @@ private:
                                           (kind_.fillet ? "filleted" : "chamfered"));
             }
             if (!out.edges.empty() && ref->body != out.edges.front().body) {
-                return r.error(field, "is on another body; one " + std::string(kind_.type) +
-                                          " blends edges of one body only");
+                return r.error(field,
+                               "is on another body; one " + std::string(kind_.type) + " blends edges of one body only");
             }
             out.edges.push_back(std::move(*ref));
         }
@@ -190,7 +190,8 @@ private:
             picked.push_back(kernel::SubId{kernel::SubKind::Edge, e});
         }
         JobContext job{ctx.job.cancel, ctx.job.progress.sub(0.9)};
-        auto op = kind_.fillet ? kernel::fillet(*shape, picked, *size, job) : kernel::chamfer(*shape, picked, *size, job);
+        auto op =
+            kind_.fillet ? kernel::fillet(*shape, picked, *size, job) : kernel::chamfer(*shape, picked, *size, job);
         if (!op) {
             if (op.error().code == ErrorCode::Cancelled) {
                 return tl::unexpected(op.error());

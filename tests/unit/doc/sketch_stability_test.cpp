@@ -266,15 +266,15 @@ TEST_CASE("sketch.trim and sketch.split keep ids and join at existing points", "
     SECTION("splitting at an end is refused")
     {
         const ICommandHandler* split = builtinCommandRegistry()->find("sketch.split");
-        auto r = split->apply(m.state, R"({"id":")" + uuid('f', 2) + R"(","entity":")" + ent(9) +
-                                           R"(","at":{"x":0,"y":0}})");
+        auto r = split->apply(m.state,
+                              R"({"id":")" + uuid('f', 2) + R"(","entity":")" + ent(9) + R"(","at":{"x":0,"y":0}})");
         REQUIRE(!r);
         CHECK(r.error().message == "sketch.split: 'at' is at an end of the entity; there is nothing to split");
     }
     SECTION("removing a line removes its end points and their constraints")
     {
-        m.run(cmd("sketch.constraint.add", R"({"id":")" + uuid('f', 2) + R"(","constraints":[{"id":")" +
-                                               uuid('c', 1) + R"(","type":"fix","refs":[")" + ent(1) + R"("]}]})"));
+        m.run(cmd("sketch.constraint.add", R"({"id":")" + uuid('f', 2) + R"(","constraints":[{"id":")" + uuid('c', 1) +
+                                               R"(","type":"fix","refs":[")" + ent(1) + R"("]}]})"));
         m.run(cmd("sketch.entity.remove", R"({"id":")" + uuid('f', 2) + R"(","entities":[")" + ent(3) + R"("]})"));
         const sketch::Sketch t = m.sketchModel(2);
         CHECK(!hasEntity(t, 1));

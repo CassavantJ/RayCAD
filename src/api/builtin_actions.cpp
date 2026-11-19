@@ -127,11 +127,10 @@ constexpr CommandText kCommandTexts[] = {
     {"feature.datum_plane.add", "Datum Plane", "Adds a plane offset from a principal plane, a datum or a planar face",
      "Model"},
     {"feature.datum_plane.edit", "Edit Datum Plane", "Changes a datum plane's base, offset or direction", "Model"},
-    {"feature.sketch.add", "New Sketch", "Adds a sketch on a principal plane, a datum plane or a planar face",
-     "Model"},
+    {"feature.sketch.add", "New Sketch", "Adds a sketch on a principal plane, a datum plane or a planar face", "Model"},
     {"feature.sketch.edit", "Edit Sketch Feature", "Changes a sketch feature's plane or replaces its props", "Model"},
-    {"feature.extrude.add", "Extrude",
-     "Extrudes sketch regions into a new body, or joins, cuts or intersects a body", "Model"},
+    {"feature.extrude.add", "Extrude", "Extrudes sketch regions into a new body, or joins, cuts or intersects a body",
+     "Model"},
     {"feature.extrude.edit", "Edit Extrude", "Changes an extrude's distance, direction, draft, regions or operation",
      "Model"},
     {"feature.revolve.add", "Revolve",
@@ -372,9 +371,9 @@ Value topoRefJson(const naming::TopoRef& ref)
 // model.reference: a persistent reference to an element of the latest build of a document (T-096).
 Status addModelActions(AppImpl& app)
 {
-    Value kind = Value::object({{"enum", Value::array({Value::string("face"), Value::string("edge"),
-                                                       Value::string("vertex")})},
-                                {"description", Value::string("The kind of element")}});
+    Value kind =
+        Value::object({{"enum", Value::array({Value::string("face"), Value::string("edge"), Value::string("vertex")})},
+                       {"description", Value::string("The kind of element")}});
     Value index = prop("integer", "The element's index in the body's latest build (as a viewport pick gives it)");
     index.set("minimum", Value::integer(0));
     Value body = prop("string", "The body id");
@@ -393,45 +392,46 @@ Status addModelActions(AppImpl& app)
                     false,
                     false,
                     false};
-    return app.actions().add(std::move(info), [&app](std::string_view argsJson, Caller, JobContext&)
-                                                  -> Result<ActionResult> {
-        auto args = parseArgs(argsJson);
-        if (!args) {
-            return tl::unexpected<Error>(args.error());
-        }
-        auto entry = app.resolve(args->stringOr("document", ""));
-        if (!entry) {
-            return tl::unexpected<Error>(entry.error());
-        }
-        const doc::BuildResultPtr build = (*entry)->od.document->build();
-        if (!build) {
-            return fail(ErrorCode::NotFound, "The document has not been built yet; try again when the rebuild ends");
-        }
-        const BodyId bodyId{Uuid::fromString(args->stringOr("body", ""))};
-        const auto it = build->bodies.find(bodyId);
-        if (it == build->bodies.end() || it->second.shape.isNull()) {
-            return fail(ErrorCode::NotFound, "The latest build has no body " + bodyId.value.toString());
-        }
-        const std::string kindName = args->stringOr("kind", "");
-        const kernel::SubKind k = kindName == "face"   ? kernel::SubKind::Face
-                                  : kindName == "edge" ? kernel::SubKind::Edge
-                                                       : kernel::SubKind::Vertex;
-        const double i = args->numberOr("index", -1);
-        if (!(i >= 0) || i >= static_cast<double>(it->second.shape.count(k))) {
-            return fail(ErrorCode::InvalidArgument, "The body has no " + kindName + " " +
-                                                        std::to_string(static_cast<long long>(i)) + " (it has " +
-                                                        std::to_string(it->second.shape.count(k)) + ")");
-        }
-        auto resolver = naming::makeResolver({naming::ResolverBody{bodyId, it->second.map, it->second.shape}});
-        if (!resolver) {
-            return fail(ErrorCode::Internal, "Out of memory");
-        }
-        const naming::TopoRef ref = resolver->makeRef(bodyId, kernel::SubId{k, static_cast<std::uint32_t>(i)});
-        if (ref.names.empty()) {
-            return fail(ErrorCode::NotFound, "That element has no persistent name in this build");
-        }
-        return result(Value::object({{"ref", topoRefJson(ref)}}));
-    });
+    return app.actions().add(
+        std::move(info), [&app](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+            auto args = parseArgs(argsJson);
+            if (!args) {
+                return tl::unexpected<Error>(args.error());
+            }
+            auto entry = app.resolve(args->stringOr("document", ""));
+            if (!entry) {
+                return tl::unexpected<Error>(entry.error());
+            }
+            const doc::BuildResultPtr build = (*entry)->od.document->build();
+            if (!build) {
+                return fail(ErrorCode::NotFound,
+                            "The document has not been built yet; try again when the rebuild ends");
+            }
+            const BodyId bodyId{Uuid::fromString(args->stringOr("body", ""))};
+            const auto it = build->bodies.find(bodyId);
+            if (it == build->bodies.end() || it->second.shape.isNull()) {
+                return fail(ErrorCode::NotFound, "The latest build has no body " + bodyId.value.toString());
+            }
+            const std::string kindName = args->stringOr("kind", "");
+            const kernel::SubKind k = kindName == "face"   ? kernel::SubKind::Face
+                                      : kindName == "edge" ? kernel::SubKind::Edge
+                                                           : kernel::SubKind::Vertex;
+            const double i = args->numberOr("index", -1);
+            if (!(i >= 0) || i >= static_cast<double>(it->second.shape.count(k))) {
+                return fail(ErrorCode::InvalidArgument, "The body has no " + kindName + " " +
+                                                            std::to_string(static_cast<long long>(i)) + " (it has " +
+                                                            std::to_string(it->second.shape.count(k)) + ")");
+            }
+            auto resolver = naming::makeResolver({naming::ResolverBody{bodyId, it->second.map, it->second.shape}});
+            if (!resolver) {
+                return fail(ErrorCode::Internal, "Out of memory");
+            }
+            const naming::TopoRef ref = resolver->makeRef(bodyId, kernel::SubId{k, static_cast<std::uint32_t>(i)});
+            if (ref.names.empty()) {
+                return fail(ErrorCode::NotFound, "That element has no persistent name in this build");
+            }
+            return result(Value::object({{"ref", topoRefJson(ref)}}));
+        });
 }
 
 } // namespace

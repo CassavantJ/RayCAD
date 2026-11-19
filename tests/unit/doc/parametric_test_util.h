@@ -54,8 +54,7 @@ public:
     }
     SketchJson& circle(std::uint64_t id, std::uint64_t center, double r)
     {
-        add(R"({"id":")" + ent(id) + R"(","type":"circle","center":")" + ent(center) + R"(","radius":)" + num(r) +
-            "}");
+        add(R"({"id":")" + ent(id) + R"(","type":"circle","center":")" + ent(center) + R"(","radius":)" + num(r) + "}");
         return *this;
     }
     SketchJson& arc(std::uint64_t id, std::uint64_t center, std::uint64_t start, std::uint64_t end, bool ccw = true)
@@ -127,8 +126,8 @@ inline std::string ids(const std::vector<std::uint64_t>& entities)
 inline Command addFeature(const std::string& type, std::uint64_t n, const std::string& props,
                           const std::string& extra = {})
 {
-    return cmd("feature." + type + ".add",
-               R"({"id":")" + uuid('f', n) + R"(","props":)" + props + extra + "}", "Add " + type);
+    return cmd("feature." + type + ".add", R"({"id":")" + uuid('f', n) + R"(","props":)" + props + extra + "}",
+               "Add " + type);
 }
 
 inline Command editFeature(const std::string& type, std::uint64_t n, const std::string& props)

@@ -137,9 +137,9 @@ TEST_CASE("a part made through actions (sketch, extrude, fillet by model.referen
             }
         }
         REQUIRE(edge >= 0);
-        const auto reference = json::parse(invoke(
-            *app, "model.reference",
-            R"({"body":")" + body + R"(","kind":"edge","index":)" + std::to_string(edge) + "}"));
+        const auto reference =
+            json::parse(invoke(*app, "model.reference",
+                               R"({"body":")" + body + R"(","kind":"edge","index":)" + std::to_string(edge) + "}"));
         REQUIRE(reference);
         const json::Value* ref = reference->find("ref");
         REQUIRE(ref != nullptr);
@@ -192,10 +192,10 @@ TEST_CASE("model.reference explains what it cannot reference", "[api][features]"
     invoke(*app, "file.new", "{}");
     OpenDocument* od = app->active();
     REQUIRE(app->waitForBuild(*od, kWait));
-    auto none = app->wait(
-        app->actions().invoke("model.reference", R"({"body":")" + id('b', 1) + R"(","kind":"face","index":0})",
-                              Caller::User),
-        kWait);
+    auto none =
+        app->wait(app->actions().invoke("model.reference",
+                                        R"({"body":")" + id('b', 1) + R"(","kind":"face","index":0})", Caller::User),
+                  kWait);
     REQUIRE_FALSE(none);
     CHECK(none.error().code == ErrorCode::NotFound);
     CHECK_THAT(none.error().message, ContainsSubstring("no body"));

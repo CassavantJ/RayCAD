@@ -130,8 +130,8 @@ ray::sketch::Sketch sketchOf(const o::Feature& f)
     for (const o::Loop& l : f.loops) {
         const std::size_t n = l.ents.size();
         auto corner = [&](std::size_t i) { // the point where ent i ends and ent i+1 starts
-            return entityId(f.id, l.id, "p" + std::to_string(l.ents[i].tag) + "_" +
-                                            std::to_string(l.ents[(i + 1) % n].tag));
+            return entityId(f.id, l.id,
+                            "p" + std::to_string(l.ents[i].tag) + "_" + std::to_string(l.ents[(i + 1) % n].tag));
         };
         for (std::size_t i = 0; i < n; ++i) {
             const o::Ent& e = l.ents[i];
@@ -209,11 +209,13 @@ Generated generate(const o::Script& script, const Selectors& selectors,
                 // construction line on the axis, on a plane through the axis parallel to XZ.
                 const o::Ent& c = f.loops.front().ents.front();
                 const double z0 = f.frame.o.z, h = f.dist;
-                add(datum, "datum_plane", "Datum " + f.id,
-                    R"({"base":{"principal":"xz"},"offset":)" + num(-c.cy) + "}", f.suppressed);
+                add(datum, "datum_plane", "Datum " + f.id, R"({"base":{"principal":"xz"},"offset":)" + num(-c.cy) + "}",
+                    f.suppressed);
                 namespace sk = ray::sketch;
                 sk::Sketch s;
-                auto pid = [&](const char* n) { return entityId(f.id, 1, n); };
+                auto pid = [&](const char* n) {
+                    return entityId(f.id, 1, n);
+                };
                 const double x0 = c.cx, x1 = c.cx + c.r;
                 s.entities.push_back(sk::Entity{pid("p0"), sk::Point{{x0, z0}}, false});
                 s.entities.push_back(sk::Entity{pid("p1"), sk::Point{{x1, z0}}, false});
@@ -230,10 +232,9 @@ Generated generate(const o::Script& script, const Selectors& selectors,
                     R"({"plane":{"datum":)" + quote(datum.value.toString()) + R"(},"sketch":)" +
                         ray::doc::json::write(ray::doc::features::sketchToJson(s)) + "}",
                     f.suppressed);
-                const std::string region = "[" + quote(pid("bottom").value.toString()) + "," +
-                                           quote(pid("side").value.toString()) + "," +
-                                           quote(pid("top").value.toString()) + "," +
-                                           quote(pid("inner").value.toString()) + "]";
+                const std::string region =
+                    "[" + quote(pid("bottom").value.toString()) + "," + quote(pid("side").value.toString()) + "," +
+                    quote(pid("top").value.toString()) + "," + quote(pid("inner").value.toString()) + "]";
                 add(op, "revolve", f.id,
                     R"({"sketch":)" + quote(sketch.value.toString()) + R"(,"regions":[)" + region +
                         R"(],"axis":{"entity":)" + quote(pid("axis").value.toString()) + R"(},"operation":")" +
@@ -349,16 +350,15 @@ ray::Result<DocStatePtr> applyDiff(DocStatePtr state, const std::vector<ray::doc
     }
     for (std::size_t i = 0; i < to.size(); ++i) {
         if (state->features[i].id != to[i].id) {
-            if (auto st = run("feature.reorder",
-                              R"({"id":)" + quote(to[i].id.value.toString()) + R"(,"index":)" + std::to_string(i) + "}");
+            if (auto st = run("feature.reorder", R"({"id":)" + quote(to[i].id.value.toString()) + R"(,"index":)" +
+                                                     std::to_string(i) + "}");
                 !st) {
                 return tl::unexpected(st.error());
             }
         }
         if (state->features[i].suppressed != to[i].suppressed) {
-            if (auto st = run("feature.suppress", R"({"id":)" + quote(to[i].id.value.toString()) +
-                                                      R"(,"suppressed":)" + (to[i].suppressed ? "true" : "false") +
-                                                      "}");
+            if (auto st = run("feature.suppress", R"({"id":)" + quote(to[i].id.value.toString()) + R"(,"suppressed":)" +
+                                                      (to[i].suppressed ? "true" : "false") + "}");
                 !st) {
                 return tl::unexpected(st.error());
             }
@@ -484,7 +484,7 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
                                 : res.state == ray::naming::ResolveState::Split    ? "Split"
                                 : res.state == ray::naming::ResolveState::Merged   ? "Merged"
                                 : res.state == ray::naming::ResolveState::Repaired ? "Repaired"
-                                                                                    : "Broken") +
+                                                                                   : "Broken") +
                                " " + list(answered);
     auto addWrong = [&](const std::string& line) {
         if (log.wrongs.size() < log.maxWrongs) {
@@ -497,9 +497,9 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
         if (it != o::reviewedTerritory().end()) {
             ++tally.acceptedReviewed;
         }
-        log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
-                            (it != o::reviewedTerritory().end() ? " [reviewed: " + it->second + "]"
-                                                                : " [NOT REVIEWED]"));
+        log.notes.push_back(
+            "ACCEPTED " + id + ": " + rr.judgement.accepted +
+            (it != o::reviewedTerritory().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
@@ -507,10 +507,10 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
         if (it != o::reviewedConflicts().end()) {
             ++tally.conflictsReviewed;
         }
-        log.notes.push_back("CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) +
-                            ", oracle expects " + list(rr.expected) + ", resolver " + answer +
-                            (it != o::reviewedConflicts().end() ? " [reviewed: " + it->second + "]"
-                                                                : " [NOT REVIEWED]"));
+        log.notes.push_back(
+            "CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) + ", oracle expects " +
+            list(rr.expected) + ", resolver " + answer +
+            (it != o::reviewedConflicts().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
     }
     if (rr.conflict == 2) {
         ++tally.conflictsOther;
@@ -537,8 +537,8 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
     }
     if (o::isWrong(v) || v == o::Verdict::Unjudged) {
         addWrong(id + ": " + answer + " (" + res.reason + "), oracle expects " + list(rr.expected) +
-                 (rr.merged ? " merged" : "") + (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") +
-                 ", congruent " + std::to_string(rr.congruent) + "\n" + detail);
+                 (rr.merged ? " merged" : "") + (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") + ", congruent " +
+                 std::to_string(rr.congruent) + "\n" + detail);
     }
 }
 
@@ -597,8 +597,8 @@ Baseline author(Env& env, bool revolveF04)
                     const ray::naming::TopoRef ref = resolver->makeRef(partBody(), edge);
                     b.picks[f.id].push_back(Pick{k, ref, o::PickRecord{edge, desc, *samples, owners}});
                     if (seen.insert(e).second) {
-                        edges += (edges.empty() ? "" : ",") +
-                                 ray::doc::json::write(ray::doc::features::topoRefToJson(ref));
+                        edges +=
+                            (edges.empty() ? "" : ",") + ray::doc::json::write(ray::doc::features::topoRefToJson(ref));
                     }
                 }
             }
@@ -727,10 +727,11 @@ ScenarioResult runScenario(Env& env, const Baseline& base, const o::s4::Scenario
         }
         std::string detail;
         if (o::isWrong(rr.judgement.verdict) || rr.judgement.verdict == o::Verdict::Unjudged) {
-            detail = "    " + o::explain(r.record.truth, owners, **samples,
-                                         rr.congruent >= 0       ? rr.congruent
-                                         : !res.elements.empty() ? static_cast<long>(res.elements[0].index)
-                                                                 : -1) +
+            detail = "    " +
+                     o::explain(r.record.truth, owners, **samples,
+                                rr.congruent >= 0       ? rr.congruent
+                                : !res.elements.empty() ? static_cast<long>(res.elements[0].index)
+                                                        : -1) +
                      "\n    picked names [" + r.names + "]";
             for (const SubId& e : res.elements) {
                 detail += "\n    answer " + std::to_string(e.index) + " [" + roleNames(body->map, e) + "]";
@@ -832,9 +833,8 @@ void runAll(bool revolveF04)
     }
     std::printf("\n%s baseline: %zu document features from %zu script features (%d commands), %u faces, %u edges, "
                 "%u vertices; %zu references, %ld blend picks\n",
-                label, base.state->features.size(), base.script.size(), base.commands,
-                body->shape.count(SubKind::Face), body->shape.count(SubKind::Edge), body->shape.count(SubKind::Vertex),
-                base.refs.size(), nPicks);
+                label, base.state->features.size(), base.script.size(), base.commands, body->shape.count(SubKind::Face),
+                body->shape.count(SubKind::Edge), body->shape.count(SubKind::Vertex), base.refs.size(), nPicks);
     CHECK(base.refs.size() >= 600);
 
     std::vector<o::s4::Scenario> list = o::s4::scenarios();
@@ -875,17 +875,16 @@ void runAll(bool revolveF04)
         total.merge(t);
         const bool below = t.existing > 0 && 100 * t.existingOk < 95 * t.existing;
         char row[512];
-        std::snprintf(row, sizeof row,
-                      "| %s | %d/%d | %zu | %d | %.2f | %ld | %s | %s | %s | %s | %s | %ld / %ld | %s%s | %ld | %ld | "
-                      "%ld | %ld |\n",
-                      list[i].id.c_str(), results[i].built, results[i].features, results[i].failed.size(),
-                      results[i].commands, results[i].seconds, t.n, o::percent(t.state[0], t.n).c_str(),
-                      o::percent(t.state[1], t.n).c_str(), o::percent(t.state[2], t.n).c_str(),
-                      o::percent(t.state[3], t.n).c_str(), o::percent(t.state[4], t.n).c_str(),
-                      t.verdict[static_cast<std::size_t>(o::Verdict::BrokenGone)],
-                      t.verdict[static_cast<std::size_t>(o::Verdict::Missed)],
-                      o::percent(t.existingOk, t.existing).c_str(), below ? " BELOW" : "", t.wrong(), t.unjudged(),
-                      t.conflicts, t.accepted);
+        std::snprintf(
+            row, sizeof row,
+            "| %s | %d/%d | %zu | %d | %.2f | %ld | %s | %s | %s | %s | %s | %ld / %ld | %s%s | %ld | %ld | "
+            "%ld | %ld |\n",
+            list[i].id.c_str(), results[i].built, results[i].features, results[i].failed.size(), results[i].commands,
+            results[i].seconds, t.n, o::percent(t.state[0], t.n).c_str(), o::percent(t.state[1], t.n).c_str(),
+            o::percent(t.state[2], t.n).c_str(), o::percent(t.state[3], t.n).c_str(),
+            o::percent(t.state[4], t.n).c_str(), t.verdict[static_cast<std::size_t>(o::Verdict::BrokenGone)],
+            t.verdict[static_cast<std::size_t>(o::Verdict::Missed)], o::percent(t.existingOk, t.existing).c_str(),
+            below ? " BELOW" : "", t.wrong(), t.unjudged(), t.conflicts, t.accepted);
         table += row;
     }
     std::printf("%s", table.c_str());
@@ -941,8 +940,7 @@ TEST_CASE("geometry goldens: the S4 part as document features", "[golden-geometr
     }
 }
 
-TEST_CASE("the S4 part as document features: no reference resolves to a wrong element in the 47 scenarios",
-          "[s4doc]")
+TEST_CASE("the S4 part as document features: no reference resolves to a wrong element in the 47 scenarios", "[s4doc]")
 {
     runAll(false);
 }

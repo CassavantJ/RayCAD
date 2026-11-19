@@ -85,8 +85,8 @@ public:
         if (!props) {
             return tl::unexpected(props.error());
         }
-        if (auto ok = checkNumeric(props->offset, documentParams(state), Parameter::Kind::Length, featureLabel(f),
-                                   "offset");
+        if (auto ok =
+                checkNumeric(props->offset, documentParams(state), Parameter::Kind::Length, featureLabel(f), "offset");
             !ok) {
             return ok;
         }

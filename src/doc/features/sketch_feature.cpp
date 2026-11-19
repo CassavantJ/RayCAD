@@ -204,22 +204,21 @@ public:
                 if (solved.error().code == ErrorCode::Cancelled) {
                     return tl::unexpected(solved.error());
                 }
-                return failed(ErrorCode::SolverFailed, where + ": the sketch cannot be solved: " +
-                                                           solved.error().message);
+                return failed(ErrorCode::SolverFailed,
+                              where + ": the sketch cannot be solved: " + solved.error().message);
             }
             switch (solved->status) {
             case sketch::SolveStatus::Conflicting:
-                return failed(ErrorCode::Overconstrained,
-                              where + ": the constraints conflict (" + idList(solved->conflicting) +
-                                  "); remove one of them or change a dimension.");
+                return failed(ErrorCode::Overconstrained, where + ": the constraints conflict (" +
+                                                              idList(solved->conflicting) +
+                                                              "); remove one of them or change a dimension.");
             case sketch::SolveStatus::Failed:
                 return failed(ErrorCode::SolverFailed,
                               where + ": the constraints cannot all be met with these dimensions (the solver did not "
                                       "converge); check the dimensions you changed last.");
             case sketch::SolveStatus::OverConstrained: {
                 std::vector<Uuid> redundant = solved->redundant;
-                redundant.insert(redundant.end(), solved->partiallyRedundant.begin(),
-                                 solved->partiallyRedundant.end());
+                redundant.insert(redundant.end(), solved->partiallyRedundant.begin(), solved->partiallyRedundant.end());
                 out.warnings.push_back(where + ": redundant constraints (" + idList(redundant) +
                                        "); the sketch solves, but removing them makes edits more predictable.");
                 break;
@@ -275,7 +274,9 @@ public:
 double profileLoopArea2(const kernel::ProfileLoop& loop)
 {
     double sum = 0;
-    const auto cross = [](Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; };
+    const auto cross = [](Vec2 a, Vec2 b) {
+        return a.x * b.y - a.y * b.x;
+    };
     for (const kernel::ProfileCurve& c : loop.curves) {
         switch (c.kind) {
         case kernel::ProfileCurve::Kind::Line:

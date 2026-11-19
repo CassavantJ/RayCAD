@@ -28,23 +28,22 @@ std::string hashesSchema()
 
 std::string lengthSchema(std::string_view description)
 {
-    return R"({"type":["number","string"],"minLength":1,"x-unit":"length","description":")" +
-           std::string(description) +
+    return R"({"type":["number","string"],"minLength":1,"x-unit":"length","description":")" + std::string(description) +
            R"json( (a number in mm, or an expression such as \"12 mm\", \"0.5 in\" or \"width / 2\")"})json";
 }
 
 std::string angleSchema(std::string_view description)
 {
-    return R"({"type":["number","string"],"minLength":1,"x-unit":"angle","description":")" +
-           std::string(description) + R"json( (a number in radians, or an expression such as \"30 deg\")"})json";
+    return R"({"type":["number","string"],"minLength":1,"x-unit":"angle","description":")" + std::string(description) +
+           R"json( (a number in radians, or an expression such as \"30 deg\")"})json";
 }
 
 std::string topoRefSchema()
 {
     return R"({"type":"object","additionalProperties":false,"required":["body","kind","names"],"properties":{"body":)" +
-           uuidSchema() + R"(,"kind":{"enum":["face","edge","vertex"]},"names":)" + hashesSchema() +
-           R"(,"families":)" + hashesSchema() + R"(,"ambiguous":{"type":"array","items":{"type":"boolean"}},)" +
-           R"("splitParents":)" + hashesSchema() + R"(,"neighbourNames":)" + hashesSchema() +
+           uuidSchema() + R"(,"kind":{"enum":["face","edge","vertex"]},"names":)" + hashesSchema() + R"(,"families":)" +
+           hashesSchema() + R"(,"ambiguous":{"type":"array","items":{"type":"boolean"}},)" + R"("splitParents":)" +
+           hashesSchema() + R"(,"neighbourNames":)" + hashesSchema() +
            R"(,"hint":{"type":"object"},"repairConfirmed":{"type":"boolean"}},)" +
            R"j("description":"A persistent reference to a face, edge or vertex (made by the model.reference action)"})j";
 }
@@ -258,7 +257,8 @@ Value integer(std::int64_t v)
     return Value::string(std::to_string(v));
 }
 
-Result<std::int64_t> readInteger(const PropsReader& r, const Value& hint, std::string_view key, const std::string& field)
+Result<std::int64_t> readInteger(const PropsReader& r, const Value& hint, std::string_view key,
+                                 const std::string& field)
 {
     const Value* v = hint.find(key);
     if (v == nullptr) {
@@ -463,10 +463,11 @@ Result<naming::TopoRef> topoRefFromJson(const PropsReader& r, const Value& value
         };
         std::int64_t type = static_cast<std::int64_t>(kernel::SurfaceType::Other);
         std::int64_t neighbourCount = 0;
-        const Slot slots[] = {{"type", &type},           {"area", &out.hint.qArea},    {"cx", &out.hint.qCx},
-                              {"cy", &out.hint.qCy},     {"cz", &out.hint.qCz},        {"radius", &out.hint.qRadius},
-                              {"ax", &out.hint.qAxisX},  {"ay", &out.hint.qAxisY},     {"az", &out.hint.qAxisZ},
-                              {"neighbours", &neighbourCount}};
+        const Slot slots[] = {{"type", &type},          {"area", &out.hint.qArea},
+                              {"cx", &out.hint.qCx},    {"cy", &out.hint.qCy},
+                              {"cz", &out.hint.qCz},    {"radius", &out.hint.qRadius},
+                              {"ax", &out.hint.qAxisX}, {"ay", &out.hint.qAxisY},
+                              {"az", &out.hint.qAxisZ}, {"neighbours", &neighbourCount}};
         for (const Slot& s : slots) {
             auto v = readInteger(r, *hint, s.key, at);
             if (!v) {

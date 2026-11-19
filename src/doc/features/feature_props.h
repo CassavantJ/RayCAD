@@ -55,7 +55,8 @@ public:
     Result<std::optional<Uuid>> optUuid(std::string_view key, std::string_view field) const;
     Result<bool> optBool(std::string_view key, std::string_view field, bool fallback) const;
     // One of `choices`; `fallback` when absent (nullopt fallback: required).
-    Result<std::string> choice(std::string_view key, std::string_view field, std::initializer_list<std::string_view> choices,
+    Result<std::string> choice(std::string_view key, std::string_view field,
+                               std::initializer_list<std::string_view> choices,
                                std::optional<std::string_view> fallback) const;
     // A number (mm or rad) or an expression string, kept unevaluated. `fallback` when absent (nullopt: required).
     Result<json::Value> numeric(std::string_view key, std::string_view field,
@@ -93,8 +94,8 @@ Result<naming::TopoRef> topoRefFromJson(const PropsReader& r, const json::Value&
 const char* subKindName(kernel::SubKind kind);
 
 // Whether a feature rebuild may use a resolution (PLAN.md 3.3): Exact, Split and Merged; Repaired only when the user
-// confirmed it (TopoRef::repairConfirmed). Resolved::usable() does not see the confirmation yet (src/naming/resolver.cpp
-// leaves that to T-081), so the reference's flag is checked here.
+// confirmed it (TopoRef::repairConfirmed). Resolved::usable() does not see the confirmation yet
+// (src/naming/resolver.cpp leaves that to T-081), so the reference's flag is checked here.
 bool consumable(const naming::Resolved& resolved, const naming::TopoRef& ref);
 
 // ---------- Frames ----------

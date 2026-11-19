@@ -88,8 +88,12 @@ void collectNames(const json::Value& value, std::set<std::string>& out)
 {
     if (value.isString()) {
         const std::string& s = value.asString();
-        const auto letter = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; };
-        const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+        const auto letter = [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+        };
+        const auto digit = [](char c) {
+            return c >= '0' && c <= '9';
+        };
         std::size_t i = 0;
         while (i < s.size()) {
             if (letter(s[i]) && (i == 0 || !(letter(s[i - 1]) || digit(s[i - 1]) || s[i - 1] == '.'))) {
@@ -494,10 +498,9 @@ private:
             }
             if (recorder.blocked()) {
                 report.status = FeatureStatus::NotBuilt;
-                report.message =
-                    recorder.blockedByArtifact()
-                        ? "Not built: it uses a sketch or datum that an earlier failure left unbuilt."
-                        : "Not built: it needs a body that an earlier failed feature should have built.";
+                report.message = recorder.blockedByArtifact()
+                                     ? "Not built: it uses a sketch or datum that an earlier failure left unbuilt."
+                                     : "Not built: it needs a body that an earlier failed feature should have built.";
                 poisonAffected(feature, type, reads, bodies, poisoned, false);
                 result->reports.push_back(std::move(report));
                 continue;

@@ -78,8 +78,8 @@ Result<double> finiteNumber(const PropsReader& r, const Value& item, std::string
         return r.error(field + "." + std::string(key), "is required");
     }
     if (!v->isNumber() || !std::isfinite(v->asNumber()) || (positive && !(v->asNumber() > 0))) {
-        return r.error(field + "." + std::string(key), positive ? "must be a number greater than 0 (mm)"
-                                                                : "must be a finite number (mm)");
+        return r.error(field + "." + std::string(key),
+                       positive ? "must be a number greater than 0 (mm)" : "must be a finite number (mm)");
     }
     return v->asNumber();
 }
@@ -396,9 +396,8 @@ Result<Sketch> sketchFromJson(const PropsReader& r, const Value& value, const st
     for (const Entity& e : out.entities) {
         for (const SketchEntId& p : pointRefs(e)) {
             if (points.count(p.value) == 0) {
-                return r.error(field + ".entities",
-                               "the entity " + e.id.value.toString() + " uses " + p.value.toString() +
-                                   ", which is not a point of this sketch");
+                return r.error(field + ".entities", "the entity " + e.id.value.toString() + " uses " +
+                                                        p.value.toString() + ", which is not a point of this sketch");
             }
         }
     }
@@ -416,11 +415,12 @@ Result<Sketch> sketchFromJson(const PropsReader& r, const Value& value, const st
                 return r.error(at + ".id", "is used twice (" + c->id.toString() + ")");
             }
             for (const SketchEntId& ref : c->refs) {
-                const bool entity = std::any_of(out.entities.begin(), out.entities.end(),
-                                                [&](const Entity& e) { return e.id == ref; });
+                const bool entity =
+                    std::any_of(out.entities.begin(), out.entities.end(), [&](const Entity& e) { return e.id == ref; });
                 if (!entity) {
-                    return r.error(at + ".refs", "names " + ref.value.toString() + ", which is not an entity of "
-                                                                                   "this sketch");
+                    return r.error(at + ".refs", "names " + ref.value.toString() +
+                                                     ", which is not an entity of "
+                                                     "this sketch");
                 }
             }
             out.constraints.push_back(std::move(*c));

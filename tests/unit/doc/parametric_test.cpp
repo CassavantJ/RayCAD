@@ -119,16 +119,14 @@ TEST_CASE("the curve tags of the doc match those closedLoops gives", "[doc][para
 {
     sketch::Sketch s;
     auto pt = [&](std::uint64_t n, double x, double y) {
-        s.entities.push_back(
-            sketch::Entity{SketchEntId{Uuid::fromString(ent(n))}, sketch::Point{Vec2{x, y}}, false});
+        s.entities.push_back(sketch::Entity{SketchEntId{Uuid::fromString(ent(n))}, sketch::Point{Vec2{x, y}}, false});
     };
     pt(1, 0, 0);
     pt(2, 10, 0);
     pt(3, 30, 0);
-    s.entities.push_back(sketch::Entity{SketchEntId{Uuid::fromString(ent(4))},
-                                        sketch::Slot{SketchEntId{Uuid::fromString(ent(1))},
-                                                     SketchEntId{Uuid::fromString(ent(2))}, 4.0},
-                                        false});
+    s.entities.push_back(sketch::Entity{
+        SketchEntId{Uuid::fromString(ent(4))},
+        sketch::Slot{SketchEntId{Uuid::fromString(ent(1))}, SketchEntId{Uuid::fromString(ent(2))}, 4.0}, false});
     s.entities.push_back(sketch::Entity{SketchEntId{Uuid::fromString(ent(5))},
                                         sketch::Circle{SketchEntId{Uuid::fromString(ent(3))}, 3.0}, false});
     auto loops = sketch::closedLoops(s);
@@ -435,11 +433,11 @@ TEST_CASE("sketch failures, suppression and reordering leave defined states", "[
     block(m);
     SECTION("conflicting dimensions fail the sketch; the extrude is not built")
     {
-        m.run(cmd("sketch.constraint.add",
-                  R"({"id":")" + uuid('f', 2) + R"(","constraints":[{"id":")" + uuid('c', 1) +
-                      R"(","type":"distanceX","refs":[")" + ent(1) + R"(",")" + ent(2) +
-                      R"("],"value":40},{"id":")" + uuid('c', 2) + R"(","type":"distanceX","refs":[")" + ent(1) +
-                      R"(",")" + ent(2) + R"("],"value":30}]})"));
+        m.run(cmd("sketch.constraint.add", R"({"id":")" + uuid('f', 2) + R"(","constraints":[{"id":")" + uuid('c', 1) +
+                                               R"(","type":"distanceX","refs":[")" + ent(1) + R"(",")" + ent(2) +
+                                               R"("],"value":40},{"id":")" + uuid('c', 2) +
+                                               R"(","type":"distanceX","refs":[")" + ent(1) + R"(",")" + ent(2) +
+                                               R"("],"value":30}]})"));
         const BuildResultPtr b = m.build();
         CHECK(report(*b, 2).status == FeatureStatus::Failed);
         CHECK(report(*b, 2).message.find("the constraints conflict") != std::string::npos);
@@ -470,11 +468,10 @@ TEST_CASE("sketch failures, suppression and reordering leave defined states", "[
     }
     SECTION("curves outside a closed outline are a warning")
     {
-        m.run(cmd("sketch.entity.add", R"({"id":")" + uuid('f', 2) + R"(","entities":[)" +
-                                           R"({"id":")" + ent(30) + R"(","type":"point","x":50,"y":0},)" +
-                                           R"({"id":")" + ent(31) + R"(","type":"point","x":60,"y":5},)" +
-                                           R"({"id":")" + ent(32) + R"(","type":"line","a":")" + ent(30) +
-                                           R"(","b":")" + ent(31) + R"("}]})"));
+        m.run(cmd("sketch.entity.add", R"({"id":")" + uuid('f', 2) + R"(","entities":[)" + R"({"id":")" + ent(30) +
+                                           R"(","type":"point","x":50,"y":0},)" + R"({"id":")" + ent(31) +
+                                           R"(","type":"point","x":60,"y":5},)" + R"({"id":")" + ent(32) +
+                                           R"(","type":"line","a":")" + ent(30) + R"(","b":")" + ent(31) + R"("}]})"));
         const BuildResultPtr b = m.build();
         CHECK(report(*b, 2).status == FeatureStatus::Warning);
         CHECK(report(*b, 2).message.find("1 curve is not part of a closed outline") != std::string::npos);
@@ -486,7 +483,9 @@ TEST_CASE("the typed commands check props with messages that name the field", "[
 {
     Model m;
     block(m);
-    auto message = [&](const Command& c) { return m.fails(c).message; };
+    auto message = [&](const Command& c) {
+        return m.fails(c).message;
+    };
     CHECK(message(addFeature("extrude", 4, extrudeProps(2, "\"10 mm\"", "join", 'b', R"(,"colour":1)"))) ==
           "Extrude 2: 'colour' is not a property of this feature");
     CHECK(message(addFeature("extrude", 4, extrudeProps(2, "\"depth\"", "join", 'b')))

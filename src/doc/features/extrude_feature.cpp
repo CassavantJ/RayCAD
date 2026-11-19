@@ -52,8 +52,8 @@ Result<ExtrudeProps> parse(const Feature& f, bool strict)
     }
     const PropsReader r(where, *root);
     if (strict) {
-        if (auto ok = r.onlyKeys({"direction", "distance", "draft", "operation", "regions", "sketch", "symmetric",
-                                  "target"});
+        if (auto ok =
+                r.onlyKeys({"direction", "distance", "draft", "operation", "regions", "sketch", "symmetric", "target"});
             !ok) {
             return tl::unexpected(ok.error());
         }
@@ -107,7 +107,7 @@ public:
     {
         auto props = parse(f, false);
         return props && props->common.operation == "new" ? std::vector<BodyId>{props->common.target}
-                                                          : std::vector<BodyId>{};
+                                                         : std::vector<BodyId>{};
     }
 
     Status validate(const DocState& state, std::size_t index, const Feature& f) const override
@@ -255,8 +255,7 @@ std::uint64_t regionTag(std::vector<SketchEntId> entities)
 }
 
 Result<std::vector<std::vector<kernel::ProfileLoop>>> selectRegions(const SketchArtifact& sketch,
-                                                                    const SweepCommon& props,
-                                                                    const std::string& where,
+                                                                    const SweepCommon& props, const std::string& where,
                                                                     const std::string& sketchName)
 {
     if (sketch.regions.empty()) {
@@ -358,8 +357,9 @@ Result<std::shared_ptr<const SketchArtifact>> sketchFor(const Feature& self, Reb
 }
 
 Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const SweepCommon& props,
-                                 const kernel::Plane& plane, const std::vector<std::vector<kernel::ProfileLoop>>& regions,
-                                 std::string_view role, const SweepOne& sweepOne)
+                                 const kernel::Plane& plane,
+                                 const std::vector<std::vector<kernel::ProfileLoop>>& regions, std::string_view role,
+                                 const SweepOne& sweepOne)
 {
     const std::string where = featureLabel(self);
     const std::string featureRole(role);
@@ -371,9 +371,9 @@ Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const
         auto target = ctx.shapeOf(props.target);
         if (!target) {
             return failed(target.error().code, where + ": the body it " +
-                                                   (props.operation == "join" ? "joins" : props.operation == "cut"
-                                                                                              ? "cuts"
-                                                                                              : "intersects") +
+                                                   (props.operation == "join"  ? "joins"
+                                                    : props.operation == "cut" ? "cuts"
+                                                                               : "intersects") +
                                                    " is not available: " + target.error().message);
         }
         shape = *target;

@@ -216,9 +216,9 @@ void removeEntities(Sketch& s, std::set<SketchEntId> removed)
         }
     }
     removed.insert(candidates.begin(), candidates.end());
-    s.entities.erase(std::remove_if(s.entities.begin(), s.entities.end(),
-                                    [&](const Entity& e) { return removed.count(e.id) != 0; }),
-                     s.entities.end());
+    s.entities.erase(
+        std::remove_if(s.entities.begin(), s.entities.end(), [&](const Entity& e) { return removed.count(e.id) != 0; }),
+        s.entities.end());
     s.constraints.erase(std::remove_if(s.constraints.begin(), s.constraints.end(),
                                        [&](const Constraint& c) {
                                            return std::any_of(c.refs.begin(), c.refs.end(), [&](const SketchEntId& r) {
@@ -243,10 +243,9 @@ Uuid derivedId(const Sketch& s, const FeatureId& feature, const SketchEntId& ent
         std::copy_n(d.bytes.begin(), id.bytes.size(), id.bytes.begin());
         id.bytes[6] = static_cast<std::uint8_t>((id.bytes[6] & 0x0F) | 0x40);
         id.bytes[8] = static_cast<std::uint8_t>((id.bytes[8] & 0x3F) | 0x80);
-        const bool used = std::any_of(s.entities.begin(), s.entities.end(),
-                                      [&](const Entity& e) { return e.id.value == id; }) ||
-                          std::any_of(s.constraints.begin(), s.constraints.end(),
-                                      [&](const Constraint& c) { return c.id == id; });
+        const bool used =
+            std::any_of(s.entities.begin(), s.entities.end(), [&](const Entity& e) { return e.id.value == id; }) ||
+            std::any_of(s.constraints.begin(), s.constraints.end(), [&](const Constraint& c) { return c.id == id; });
         if (!used) {
             return id;
         }
@@ -261,7 +260,8 @@ Result<SketchEntId> newIdArg(const Args& args, std::string_view key, const Sketc
         return SketchEntId{derivedId(s, feature, entity, purpose)};
     }
     RAY_TRY(id, args.id(key));
-    const bool used = std::any_of(s.entities.begin(), s.entities.end(), [&](const Entity& e) { return e.id.value == *id; });
+    const bool used =
+        std::any_of(s.entities.begin(), s.entities.end(), [&](const Entity& e) { return e.id.value == *id; });
     if (used) {
         return args.error(key, "is already used by an entity of the sketch");
     }
@@ -300,12 +300,12 @@ double normAngle(double a) // to [0, 2pi)
 // A line, arc or circle of the sketch with its geometry.
 struct Curve {
     enum class K { Line, Arc, Circle } k;
-    Vec2 a, b;          // line ends; arc start and end
-    Vec2 c;             // arc / circle centre
-    double r = 0;       // arc / circle radius
-    bool ccw = true;    // arc
-    double start = 0;   // arc: angle of a
-    double sweep = 0;   // arc: angle travelled from a to b (> 0), in the arc's direction
+    Vec2 a, b;        // line ends; arc start and end
+    Vec2 c;           // arc / circle centre
+    double r = 0;     // arc / circle radius
+    bool ccw = true;  // arc
+    double start = 0; // arc: angle of a
+    double sweep = 0; // arc: angle travelled from a to b (> 0), in the arc's direction
     double length() const { return k == K::Line ? len2(sub2(b, a)) : r * sweep; }
 };
 
@@ -533,8 +533,8 @@ Result<DocStatePtr> constraintRemove(const DocState& before, std::string_view ar
     RAY_TRY(ids, idList(*args, "constraints"));
     Sketch model = e->model;
     for (const Uuid& id : *ids) {
-        const auto it =
-            std::find_if(model.constraints.begin(), model.constraints.end(), [&](const Constraint& c) { return c.id == id; });
+        const auto it = std::find_if(model.constraints.begin(), model.constraints.end(),
+                                     [&](const Constraint& c) { return c.id == id; });
         if (it == model.constraints.end()) {
             return args->error("constraints", "names " + id.toString() + ", which is not a constraint of the sketch");
         }
@@ -555,8 +555,8 @@ Result<DocStatePtr> constraintSet(const DocState& before, std::string_view argsJ
         return args->error("nothing to change: give 'expression', 'value' or 'driven'");
     }
     Sketch model = e->model;
-    const auto it =
-        std::find_if(model.constraints.begin(), model.constraints.end(), [&](const Constraint& c) { return c.id == *id; });
+    const auto it = std::find_if(model.constraints.begin(), model.constraints.end(),
+                                 [&](const Constraint& c) { return c.id == *id; });
     if (it == model.constraints.end()) {
         return args->error("constraint", "names no constraint of the sketch (" + id->toString() + ")");
     }
@@ -791,7 +791,8 @@ using ApplyFn = Result<DocStatePtr> (*)(const DocState&, std::string_view);
 
 class SketchCommand final : public ICommandHandler {
 public:
-    SketchCommand(std::string_view name, std::string schema, ApplyFn fn) : name_(name), schema_(std::move(schema)), fn_(fn)
+    SketchCommand(std::string_view name, std::string schema, ApplyFn fn)
+        : name_(name), schema_(std::move(schema)), fn_(fn)
     {
     }
     std::string_view name() const override { return name_; }
@@ -833,10 +834,9 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
     const std::string objects = R"({"type":"array","minItems":1,"items":{"type":"object"}})";
     std::vector<std::unique_ptr<ICommandHandler>> out;
     out.push_back(std::make_unique<SketchCommand>(
-        kSet, schemaOf(R"("sketch":{"type":"object"},"plane":)" + planeSchema(), R"("id","sketch")"),
-        &sketchSet));
-    out.push_back(std::make_unique<SketchCommand>(kEntityAdd, schemaOf(R"("entities":)" + objects, R"("id","entities")"),
-                                                  &entityAdd));
+        kSet, schemaOf(R"("sketch":{"type":"object"},"plane":)" + planeSchema(), R"("id","sketch")"), &sketchSet));
+    out.push_back(std::make_unique<SketchCommand>(
+        kEntityAdd, schemaOf(R"("entities":)" + objects, R"("id","entities")"), &entityAdd));
     out.push_back(std::make_unique<SketchCommand>(kEntityRemove, schemaOf(R"("entities":)" + ids, R"("id","entities")"),
                                                   &entityRemove));
     out.push_back(std::make_unique<SketchCommand>(
@@ -845,10 +845,11 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
         kConstraintRemove, schemaOf(R"("constraints":)" + ids, R"("id","constraints")"), &constraintRemove));
     out.push_back(std::make_unique<SketchCommand>(
         kConstraintSet,
-        schemaOf(R"("constraint":)" + uuid +
-                     R"(,"expression":{"type":"string","description":"An expression such as \"12 mm\" or \"width / 2\"; )"
-                     R"(\"\" removes it"},"value":{"type":"number"},"driven":{"type":"boolean"})",
-                 R"("id","constraint")"),
+        schemaOf(
+            R"("constraint":)" + uuid +
+                R"(,"expression":{"type":"string","description":"An expression such as \"12 mm\" or \"width / 2\"; )"
+                R"(\"\" removes it"},"value":{"type":"number"},"driven":{"type":"boolean"})",
+            R"("id","constraint")"),
         &constraintSet));
     out.push_back(std::make_unique<SketchCommand>(
         kSplit,

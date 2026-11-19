@@ -72,8 +72,8 @@ std::string topDatum()
 
 void makePart(Part& p)
 {
-    p.run(cmd("param.set",
-              R"({"id":")" + uuid('a', 1) + R"(","name":"plate_w","expression":"300 mm","kind":"length"})"));
+    p.run(
+        cmd("param.set", R"({"id":")" + uuid('a', 1) + R"(","name":"plate_w","expression":"300 mm","kind":"length"})"));
     SketchJson plate;
     plate.rect(1, 0, 0, 300, 200)
         .constraint(1, "fix", {1})
@@ -90,8 +90,7 @@ void makePart(Part& p)
         const std::uint64_t s = pocketSketch(i);
         const double x0 = pocketX(i), y0 = pocketY(i);
         p.run(addFeature("sketch", s, sketchProps(topDatum(), SketchJson().rect(1, x0, y0, x0 + 30, y0 + 25))));
-        p.run(addFeature("extrude", s + 1,
-                         extrudeProps(s, "\"6 mm\"", "cut", 'b', R"(,"direction":"reverse")")));
+        p.run(addFeature("extrude", s + 1, extrudeProps(s, "\"6 mm\"", "cut", 'b', R"(,"direction":"reverse")")));
         const BuildResultPtr b = p.build();
         REQUIRE(report(*b, s + 1).status == FeatureStatus::Ok);
         const auto edge = findEdge(bodyOf(*b, 'b').shape, [&](const kernel::CurveInfo& c) {
@@ -175,18 +174,16 @@ TEST_CASE("a 100-feature part rebuilds incrementally after an early, a middle an
     std::vector<Edit> edits = {
         {"early: plate width (parameter plate_w, a dimension of sketch 1)",
          [](int run) {
-             return cmd("param.set", R"({"id":")" + uuid('a', 1) + R"(","expression":")" + num(301 + run) +
-                                         R"( mm"})");
+             return cmd("param.set", R"({"id":")" + uuid('a', 1) + R"(","expression":")" + num(301 + run) + R"( mm"})");
          },
          63},
         {"middle: depth of the cut that is feature 50",
-         [mid](int run) { return editFeature("extrude", mid, R"({"distance":)" + num(6.1 + 0.1 * run) + "}"); },
-         31},
+         [mid](int run) { return editFeature("extrude", mid, R"({"distance":)" + num(6.1 + 0.1 * run) + "}"); }, 31},
         {"late: radius of the last hole (sketch 98)",
          [lastHole](int run) {
-             return cmd("sketch.set", R"({"id":")" + uuid('f', lastHole) + R"(","sketch":)" +
-                                          SketchJson().circleAt(1, 22 + (kHoles - 1) * 23, 188, 4.1 + 0.1 * run).json() +
-                                          "}");
+             return cmd("sketch.set",
+                        R"({"id":")" + uuid('f', lastHole) + R"(","sketch":)" +
+                            SketchJson().circleAt(1, 22 + (kHoles - 1) * 23, 188, 4.1 + 0.1 * run).json() + "}");
          },
          3},
     };
@@ -232,8 +229,8 @@ TEST_CASE("geometry goldens: small reference parts", "[golden-geometry]")
                    near(c.start.y, 20) && near(c.end.y, 20);
         });
         const auto top = findEdge(shape, [](const kernel::CurveInfo& c) {
-            return c.type == kernel::CurveType::Line && near(c.start.y, 0) && near(c.end.y, 0) &&
-                   near(c.start.z, 10) && near(c.end.z, 10);
+            return c.type == kernel::CurveType::Line && near(c.start.y, 0) && near(c.end.y, 0) && near(c.start.z, 10) &&
+                   near(c.end.z, 10);
         });
         REQUIRE(vertical);
         REQUIRE(top);

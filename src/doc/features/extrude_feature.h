@@ -51,8 +51,7 @@ std::uint64_t regionTag(std::vector<SketchEntId> entities);
 
 // The regions to sweep, each as profile loops (outer first, its tag set by regionTag).
 Result<std::vector<std::vector<kernel::ProfileLoop>>> selectRegions(const SketchArtifact& sketch,
-                                                                    const SweepCommon& props,
-                                                                    const std::string& where,
+                                                                    const SweepCommon& props, const std::string& where,
                                                                     const std::string& sketchName);
 
 // The sketch artifact a sweep uses (checks the sketch comes earlier, is a sketch and is not suppressed).
@@ -63,8 +62,9 @@ Result<std::shared_ptr<const SketchArtifact>> sketchFor(const Feature& self, Reb
 // step. `role` is the naming role ("extrude", "revolve").
 using SweepOne = std::function<Result<kernel::SweepResult>(const kernel::Profile&, JobContext&)>;
 Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const SweepCommon& props,
-                                 const kernel::Plane& plane, const std::vector<std::vector<kernel::ProfileLoop>>& regions,
-                                 std::string_view role, const SweepOne& sweepOne);
+                                 const kernel::Plane& plane,
+                                 const std::vector<std::vector<kernel::ProfileLoop>>& regions, std::string_view role,
+                                 const SweepOne& sweepOne);
 
 // Schema fragments shared by both.
 std::string regionsSchema();

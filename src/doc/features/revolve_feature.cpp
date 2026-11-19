@@ -91,8 +91,9 @@ Result<RevolveProps> parse(const Feature& f, bool strict)
 Result<std::pair<Vec3, Vec3>> axisOf(const RevolveProps& props, const SketchArtifact& sketch, const std::string& where)
 {
     if (!props.axisPrincipal.empty()) {
-        const Vec3 dir = props.axisPrincipal == "x" ? Vec3{1, 0, 0} : props.axisPrincipal == "y" ? Vec3{0, 1, 0}
-                                                                                                 : Vec3{0, 0, 1};
+        const Vec3 dir = props.axisPrincipal == "x"   ? Vec3{1, 0, 0}
+                         : props.axisPrincipal == "y" ? Vec3{0, 1, 0}
+                                                      : Vec3{0, 0, 1};
         return std::pair<Vec3, Vec3>{Vec3{0, 0, 0}, dir};
     }
     const sketch::Entity* line = nullptr;
@@ -153,7 +154,7 @@ public:
     {
         auto props = parse(f, false);
         return props && props->common.operation == "new" ? std::vector<BodyId>{props->common.target}
-                                                          : std::vector<BodyId>{};
+                                                         : std::vector<BodyId>{};
     }
 
     Status validate(const DocState& state, std::size_t index, const Feature& f) const override
@@ -162,8 +163,8 @@ public:
         if (!props) {
             return tl::unexpected(props.error());
         }
-        if (auto ok = checkNumeric(props->angle, documentParams(state), Parameter::Kind::Angle, featureLabel(f),
-                                   "angle");
+        if (auto ok =
+                checkNumeric(props->angle, documentParams(state), Parameter::Kind::Angle, featureLabel(f), "angle");
             !ok) {
             return ok;
         }
