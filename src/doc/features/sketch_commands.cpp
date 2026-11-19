@@ -473,7 +473,7 @@ Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson)
     if (*sketchValue == nullptr) {
         return args->error("sketch", "is required");
     }
-    const PropsReader r(std::string(kSet), Value::object({}));
+    const PropsReader r(std::string(kSet), **sketchValue);
     RAY_TRY(model, sketchFromJson(r, **sketchValue, "sketch"));
     RAY_TRY(plane, args->optValue("plane"));
     if (*plane != nullptr) {

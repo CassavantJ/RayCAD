@@ -9,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <string>
 
