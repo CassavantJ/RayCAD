@@ -547,3 +547,88 @@ TEST_CASE("Strict judge: a face that a lengthened slot cuts in two needs both pi
                 (o.resolved.state == naming::ResolveState::Split || o.resolved.state == naming::ResolveState::Broken));
         }
 }
+
+// ---------------------------------------------------------------- regressions of the Linux findings (T-081a)
+// Sequences 6:6, 6:21 and 7:28 of the randomised test gave wrong-element answers on Linux only (B-rep results differ
+// in the last bits between platforms, so the random paths differ). The geometry of 7:28 (a resized boss's wall/cap
+// edge appearing in a second, separate piece) is rebuilt below; without the resolver's Split check
+// (piecesLieAsPicked) the resolver answers Split with the separate piece, on every platform.
+namespace {
+
+// A rounded rectangle: tags 1 bottom (y = y0), 2 right, 3 top, 4 left as rect(), corner arcs 5 to 8.
+Loop roundedRect(double x0, double y0, double x1, double y1, double r)
+{
+    return Loop{1,
+                {line(x0 + r, y0, x1 - r, y0, 1), arc(x1 - r, y0, x1, y0 + r, x1 - r, y0 + r, r, 5),
+                 line(x1, y0 + r, x1, y1 - r, 2), arc(x1, y1 - r, x1 - r, y1, x1 - r, y1 - r, r, 6),
+                 line(x1 - r, y1, x0 + r, y1, 3), arc(x0 + r, y1, x0, y1 - r, x0 + r, y1 - r, r, 7),
+                 line(x0, y1 - r, x0, y0 + r, 4), arc(x0, y0 + r, x0 + r, y0, x0 + r, y0 + r, r, 8)}};
+}
+
+} // namespace
+
+TEST_CASE("A fillet that now runs on round tangent corners keeps only its own face", "[naming][acceptance]")
+{
+    // The fillet of the block's front top edge is one face. With rounded corners in the block's profile, the same
+    // fillet runs on along the tangent corners: the faces it makes there (tori, and the other sides' cylinders) are
+    // not pieces of the picked face, which lies on the front edge's cylinder. (The kind of answer Linux sequence 6:21
+    // gave: the family rule split a fillet face's name over faces of another surface. Its exact geometry depends on
+    // the last bits of the B-rep and could not be rebuilt here; the cross-hole scenario above fails without the
+    // check that fixed it, on every platform.)
+    auto script = [](double corner) {
+        Script s{
+            sweep("F01", BOp::New, top(0), corner > 0 ? roundedRect(0, 0, 100, 60, corner) : rect(0, 0, 100, 60), 20)};
+        Feature f;
+        f.id = "R1";
+        f.type = FType::Fillet;
+        f.role = "fillet";
+        f.targets = {Target{"F01/s1", "F01/c1/1", true, true}};
+        if (corner > 0)
+            for (const char* side : {"F01/s5", "F01/s8"})
+                f.targets.push_back(Target{side, "F01/c1/1", true, false});
+        f.size = 2;
+        s.push_back(f);
+        return s;
+    };
+    const Run r = run(script(0), script(10));
+    checkNoneWrong(r);
+    const auto fillet = [](const Outcome& o) {
+        return faceOf(o, "R1/b0");
+    };
+    REQUIRE(count(r.out, fillet) == 1);
+    for (const Outcome& o : r.out)
+        if (fillet(o)) {
+            INFO("resolver " << o.resolved.reason);
+            for (const SubId& e : o.resolved.elements)
+                CHECK(std::binary_search(o.expected.elems.begin(), o.expected.elems.end(), e.index));
+        }
+}
+
+TEST_CASE("Regression (Linux 7:28): a boss widened over a second opening; the cap edge there is not a piece",
+          "[naming][acceptance]")
+{
+    // A block with two pockets in its x = 0 side, and a boss on that side over the first one: where the boss's
+    // bottom cap spans the opening, its lower wall meets the cap in an edge. Widened over the second opening, the
+    // same wall and cap meet there too, in a separate edge that was never part of the picked one.
+    auto script = [](double width) {
+        Script s = block(100, 60, 40);
+        Frame side;
+        side.o = {0, 0, 0};
+        side.xd = {0, -1, 0};
+        side.n = {-1, 0, 0};
+        s.push_back(sweep("P1", BOp::Cut, side, rect(-20, 10, -10, 30), 20));
+        s.push_back(sweep("P2", BOp::Cut, side, rect(-50, 10, -40, 30), 20));
+        s.push_back(sweep("B1", BOp::Join, side, rect(-5 - width, 15, -5, 25), 10));
+        return s;
+    };
+    const Run r = run(script(20), script(50));
+    checkNoneWrong(r);
+    const auto capEdge = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && about(o, "B1/s1") && about(o, "B1/c0/1");
+    };
+    INFO("references about the boss's lower wall:" << refsAbout(r, "B1/s1"));
+    REQUIRE(count(r.out, capEdge) == 1);
+    for (const Outcome& o : r.out)
+        if (capEdge(o))
+            checkSeparateParts(r, o);
+}
