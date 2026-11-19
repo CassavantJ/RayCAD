@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -100,6 +102,8 @@ void appendError(std::vector<unsigned char>& out, const Error& error)
     out.push_back(0);
     out.push_back(static_cast<unsigned char>(error.code));
     appendText(out, error.message);
+    for (const std::string& line : error.context)
+        appendText(out, line);
 }
 
 void appendOp(std::vector<unsigned char>& out, const Result<OpResult>& op)
@@ -115,11 +119,64 @@ void appendOp(std::vector<unsigned char>& out, const Result<OpResult>& op)
         appendText(out, w);
 }
 
-// Queries, meshes and exports of `shape`, appended to `out`.
-void probe(const Shape& shape, const std::string& name, const fs::path& dir, Watch& watch,
-           std::vector<unsigned char>& out)
+// What a chain produced, step by step (a call or a group of queries each), so that two chains that differ can
+// say where they first differ.
+class Trace {
+public:
+    // Starts a step; what is appended to the returned bytes belongs to it. The reference stays valid.
+    std::vector<unsigned char>& step(std::string label)
+    {
+        steps_.emplace_back(std::move(label), std::vector<unsigned char>{});
+        return steps_.back().second;
+    }
+    std::size_t size() const { return steps_.size(); }
+    bool operator==(const Trace& other) const { return steps_ == other.steps_; }
+
+    // Empty if equal; else the first step that differs, with a hash of its bytes in each trace.
+    std::string firstDifference(const Trace& other) const
+    {
+        const std::size_t n = std::max(steps_.size(), other.steps_.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i < steps_.size() && i < other.steps_.size() && steps_[i] == other.steps_[i])
+                continue;
+            const auto describe = [i](const Trace& t) -> std::string {
+                if (i >= t.steps_.size())
+                    return "(no such step)";
+                std::uint64_t h = 1469598103934665603ull;
+                for (const unsigned char c : t.steps_[i].second)
+                    h = (h ^ c) * 1099511628211ull;
+                std::string text(t.steps_[i].second.begin(), t.steps_[i].second.end());
+                for (char& c : text)
+                    if (static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) >= 0x7F)
+                        c = '.';
+                char hash[17];
+                std::snprintf(hash, sizeof hash, "%016llx", static_cast<unsigned long long>(h));
+                return "'" + t.steps_[i].first + "' " + std::to_string(t.steps_[i].second.size()) + " bytes, hash " +
+                       hash + ", text [" + text.substr(0, 1200) + "]";
+            };
+            return "step " + std::to_string(i) + ": " + describe(*this) + " versus " + describe(other);
+        }
+        return {};
+    }
+
+private:
+    std::deque<std::pair<std::string, std::vector<unsigned char>>> steps_;
+};
+
+void appendStatus(std::vector<unsigned char>& out, const Status& status)
+{
+    if (status) {
+        out.push_back(1);
+        return;
+    }
+    appendError(out, status.error());
+}
+
+// Queries, meshes and exports of `shape`, one step each.
+void probe(const Shape& shape, const std::string& name, const fs::path& dir, Watch& watch, Trace& trace)
 {
     JobContext ctx;
+    std::vector<unsigned char>& out = trace.step("queries on " + name);
     const Box3 box = bounds(shape);
     appendBits(out, box.min);
     appendBits(out, box.max);
@@ -149,22 +206,24 @@ void probe(const Shape& shape, const std::string& name, const fs::path& dir, Wat
     watch.after("queries on " + name);
 
     if (auto mesh = tessellate(shape, MeshOptions{0.2, 0.5}, ctx)) {
-        appendBits(out, static_cast<double>(mesh->positions.size()));
-        appendBits(out, static_cast<double>(mesh->indices.size()));
+        std::vector<unsigned char>& m = trace.step("tessellate on " + name);
+        appendBits(m, static_cast<double>(mesh->positions.size()));
+        appendBits(m, static_cast<double>(mesh->indices.size()));
     }
     watch.after("tessellate on " + name);
     if (auto soup = triangulateExact(shape, 0.05, ctx)) {
-        appendBits(out, static_cast<double>(soup->positions.size()));
-        appendBits(out, static_cast<double>(soup->indices.size()));
+        std::vector<unsigned char>& m = trace.step("triangulateExact on " + name);
+        appendBits(m, static_cast<double>(soup->positions.size()));
+        appendBits(m, static_cast<double>(soup->indices.size()));
     }
     watch.after("triangulateExact on " + name);
 
     const std::span<const Shape> one(&shape, 1);
-    out.push_back(exportStep((dir / "probe.step").string(), one, ctx).has_value() ? 1 : 0);
+    appendStatus(trace.step("exportStep of " + name), exportStep((dir / "probe.step").string(), one, ctx));
     watch.after("exportStep of " + name);
-    out.push_back(exportIges((dir / "probe.igs").string(), one, ctx).has_value() ? 1 : 0);
+    appendStatus(trace.step("exportIges of " + name), exportIges((dir / "probe.igs").string(), one, ctx));
     watch.after("exportIges of " + name);
-    out.push_back(exportStl((dir / "probe.stl").string(), one, 0.1, ctx).has_value() ? 1 : 0);
+    appendStatus(trace.step("exportStl of " + name), exportStl((dir / "probe.stl").string(), one, 0.1, ctx));
     watch.after("exportStl of " + name);
 }
 
@@ -225,11 +284,11 @@ void blendCandidates(const Shape& shape, std::vector<SubId>& lines, std::vector<
 }
 
 // The chain: cut, boss, fillet, chamfer, move, intersect, with queries, meshes and exports of every shape in between.
-// Returns every result and error as bytes. With `watch` checking, every call is followed by a check of every shape
-// seen so far. No Catch2 assertion inside (safe on worker threads).
-std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& watch)
+// Returns every result and error, step by step. With `watch` checking, every call is followed by a check of every
+// shape seen so far. No Catch2 assertion inside (safe on worker threads).
+Trace chain(const Shape& base, const fs::path& dir, Watch& watch)
 {
-    std::vector<unsigned char> out;
+    Trace out;
     JobContext ctx;
     watch.add("the input", base);
     probe(base, "the input", dir, watch, out);
@@ -250,7 +309,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
     Shape current = base;
     auto cut = boolean(BoolOp::Cut, current, tool1->op.shape, ctx);
     watch.after("the cut");
-    appendOp(out, cut);
+    appendOp(out.step("the cut"), cut);
     if (cut) {
         current = cut->shape;
         watch.add("the cut result", current);
@@ -266,7 +325,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
         watch.add("the boss", tool2->op.shape);
         auto fused = boolean(BoolOp::Union, current, tool2->op.shape, ctx);
         watch.after("the union");
-        appendOp(out, fused);
+        appendOp(out.step("the union"), fused);
         if (fused) {
             current = fused->shape;
             watch.add("the union result", current);
@@ -293,7 +352,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
                 const std::string what = std::string(isFillet ? "fillet " : "chamfer ") + std::to_string(blendIndex++);
                 auto blended = isFillet ? fillet(current, pick, s, ctx) : chamfer(current, pick, s, ctx);
                 watch.after(what);
-                appendOp(out, blended);
+                appendOp(out.step(what), blended);
                 if (blended)
                     watch.add("the " + what + " result", blended->shape);
             }
@@ -307,7 +366,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
                 if (auto again = chamfer(current, std::vector<SubId>{circles.front()}, 0.3, ctx)) {
                     // A blend on a blend result: the circle's SubId is not kept, so this may pick another edge.
                     watch.after("a chamfer after the fillet");
-                    appendOp(out, again);
+                    appendOp(out.step("a chamfer after the fillet"), again);
                     watch.add("the chamfer after the fillet", again->shape);
                 }
         }
@@ -318,7 +377,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
     const double s = std::sin(0.3);
     auto moved = transformed(current, Xform{{c, -s, 0, 5, s, c, 0, -3, 0, 0, 1, 2}});
     watch.after("transformed");
-    appendOp(out, moved);
+    appendOp(out.step("transformed"), moved);
     if (moved) {
         watch.add("the moved body", moved->shape);
         const Box3 mb = bounds(moved->shape);
@@ -328,7 +387,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
             watch.add("the trim box", *trim);
             auto common = boolean(BoolOp::Intersect, moved->shape, *trim, ctx);
             watch.after("the intersection");
-            appendOp(out, common);
+            appendOp(out.step("the intersection"), common);
             if (common) {
                 watch.add("the intersection result", common->shape);
                 probe(common->shape, "the intersection result", dir, watch, out);
@@ -337,7 +396,7 @@ std::vector<unsigned char> chain(const Shape& base, const fs::path& dir, Watch& 
     }
     // Serialisation round trip of the final shape is itself a call on an input.
     if (auto back = deserialize(serialize(current)))
-        appendHash(out, *back);
+        appendHash(out.step("serialize"), *back);
     watch.after("serialize");
     return out;
 }
@@ -382,23 +441,23 @@ void checkChain(const Shape& base, const std::string& name)
     INFO(name);
     TempDir dir("raycad immutability");
     Watch first(true);
-    const std::vector<unsigned char> reference = chain(base, dir.path(), first);
-    REQUIRE(reference.size() > 64);
+    const Trace reference = chain(base, dir.path(), first);
+    REQUIRE(reference.size() > 10);
     for (const std::string& change : first.changes)
         UNSCOPED_INFO(change);
     CHECK(first.changes.empty());
 
     Watch second(true);
-    const bool sameAgain = chain(base, dir.path(), second) == reference;
-    CHECK(sameAgain);
+    const std::string again = reference.firstDifference(chain(base, dir.path(), second));
+    CHECK(again == std::string());
     for (const std::string& change : second.changes)
         UNSCOPED_INFO(change);
     CHECK(second.changes.empty());
 
     const Shape copy = take(deserialize(serialize(base)));
     Watch none(false);
-    const bool sameOnCopy = chain(copy, dir.path(), none) == reference;
-    CHECK(sameOnCopy);
+    const std::string onCopy = reference.firstDifference(chain(copy, dir.path(), none));
+    CHECK(onCopy == std::string());
 }
 
 } // namespace
@@ -430,18 +489,16 @@ TEST_CASE("chains on one shared shape in parallel give the serial results and le
     const std::string rawBefore = testing::rawState(base);
     TempDir dir("raycad immutability threads");
     Watch none(false);
-    const std::vector<unsigned char> reference = chain(base, dir.path(), none);
+    const Trace reference = chain(base, dir.path(), none);
     constexpr int kThreads = 4;
-    std::vector<std::vector<unsigned char>> results(kThreads);
+    std::vector<Trace> results(kThreads);
     runOnThreads(kThreads, [&](int t) {
         TempDir mine("raycad immutability thread " + std::to_string(t));
         Watch off(false);
         results[static_cast<std::size_t>(t)] = chain(base, mine.path(), off);
     });
-    for (const auto& r : results) {
-        const bool same = r == reference;
-        CHECK(same);
-    }
+    for (const Trace& r : results)
+        CHECK(reference.firstDifference(r) == std::string());
     const bool canonicalKept = serialize(base) == before;
     CHECK(canonicalKept);
     const bool rawKept = testing::rawState(base) == rawBefore;

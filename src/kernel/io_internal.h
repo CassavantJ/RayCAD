@@ -9,9 +9,12 @@
 // kernel-owned I/O thread (runOnIoThread below), and the calling thread only waits, forwarding progress and
 // polling the CancelToken every 10 ms. On cancel the calling thread asks the I/O thread to stop and returns
 // Error{Cancelled} at once; the I/O thread finishes the OCCT call it is in (aborting at OCCT's next poll),
-// throws its result away and exits. Everything it touches is owned by the shared IoTask: copies of the path,
-// the options and the input Shapes (immutable, shared_ptr), its own file handles and its own progress state.
-// It never touches the caller's JobContext, Progress or listener, so the caller's stack may be gone.
+// throws its result away and exits. The one exception is an export that is already renaming its finished file
+// into place (IoTask::beginCommit): the caller then waits for that rename and returns the export's own result, so
+// the caller's answer and the file on disk always agree. Everything the I/O thread touches is owned by the shared
+// IoTask: copies of the path, the options and the input Shapes (immutable, shared_ptr), its own file handles and its
+// own progress state. It never touches the caller's JobContext, Progress or listener, so the caller's stack may be
+// gone.
 //
 // For T-010 / T-019 (callers): submit the call as an ordinary job and do nothing special:
 //
@@ -56,12 +59,34 @@ public:
 
     // I/O thread side. True once the caller cancelled or abandoned the task; long loops and OCCT progress
     // indicators poll this.
-    bool stopRequested() const noexcept { return stop_.load(std::memory_order_acquire) || cancel_.cancelled(); }
+    bool stopRequested() const noexcept
+    {
+        return phase_.load(std::memory_order_acquire) == kStopped || cancel_.cancelled();
+    }
+    // I/O thread side, just before an export makes its result visible (renames its file into place). True if the
+    // task may go on: it has not been cancelled, and from now on it cannot be abandoned (requestStop() returns false
+    // and the caller waits for the task instead). False if it was cancelled or abandoned: the export must then
+    // leave nothing behind and report Cancelled. Without this a cancel arriving after the last stopRequested() poll
+    // made the caller report Cancelled while the abandoned thread still wrote the file.
+    bool beginCommit() noexcept
+    {
+        if (cancel_.cancelled())
+            return false;
+        int expected = kRunning;
+        return phase_.compare_exchange_strong(expected, kCommitting, std::memory_order_acq_rel);
+    }
     // Progress of the whole task in [0, 1] and the stage name (a string literal). Thread-safe; cheap.
     void report(double fraction01, std::string_view stage) noexcept;
 
-    // Caller side.
-    void requestStop() noexcept { stop_.store(true, std::memory_order_release); }
+    // Caller side. Abandons the task; false if it can no longer be abandoned because it is committing its result
+    // (beginCommit() won): the caller must then wait for it, which takes no longer than renaming a file.
+    bool requestStop() noexcept
+    {
+        int expected = kRunning;
+        if (phase_.compare_exchange_strong(expected, kStopped, std::memory_order_acq_rel))
+            return true;
+        return expected == kStopped;
+    }
     struct Snapshot {
         double fraction;
         std::string_view stage;
@@ -78,8 +103,11 @@ protected:
     virtual void run() noexcept = 0; // stores the result and releases every input before it returns
 
 private:
+    static constexpr int kRunning = 0;
+    static constexpr int kStopped = 1;    // abandoned by the caller
+    static constexpr int kCommitting = 2; // making its result visible; can no longer be abandoned
     CancelToken cancel_;
-    std::atomic<bool> stop_{false};
+    std::atomic<int> phase_{kRunning};
     mutable std::mutex mutex_;
     mutable std::condition_variable doneSignal_;
     double fraction_ = 0.0;  // guarded by mutex_

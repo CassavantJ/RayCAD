@@ -1,0 +1,52 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: ChFi3d_Builder::PerformSetOfKGen, in the twist reprocessing of a fillet stripe, reads the 3D line of the
+neighbouring SurfData (DStr.Curve(previntf.LineIndex()).Curve() and the same for the next one) and calls D1 on it
+without checking it. Fail the stripe with Standard_Failure (status ChFiDS_TwistedSurface, as the other failures of
+this block do) when either line is missing, instead of dereferencing a null handle.
+
+Why: ChFi3d_Purge (same file, called from PerformSetOfSurfOnElSpine) collapses a SurfData at the end of a stripe onto
+a vertex: it sets IndexOfS<n> to 0 and the interference's line index to 0, and keeps the SurfData in the stripe.
+When the SurfData next to it was flagged twisted by the walking, the reprocessing compares face indices
+(samesurfon is false because the purged neighbour has index 0), takes the "3D tangents of neighbours" branch and
+asks the data structure for curve 0. TopOpeBRepDS_DataStructure::Curve returns its empty curve for an index that
+is not bound (curves are numbered from 1), so the handle is null and D1 is called through it. Seen in RayCAD's
+naming random test (sequence 18:37, a size-search trial fillet of 0.156 mm on a valid body): an access violation
+on Windows, SIGSEGV on Linux. ChFi3d_Builder::Compute catches Standard_Failure per stripe and reports the contour
+as failed, so callers see an ordinary fillet failure. Nothing else changes: the guard only fires where the code
+would otherwise have dereferenced null.
+
+Upstream: not fixed in OCCT master as of 2026-11-18 (no check on these handles; the later ChFi3d crash fixes, #1407
+in StartSol and #1620, do not touch this code). Not reported upstream yet.
+
+diff --git a/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_2.cxx b/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_2.cxx
+--- a/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_2.cxx
++++ b/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_2.cxx
+@@ -3545,6 +3545,13 @@
+           // here the base is on 3D tangents of neighbors.
+           const occ::handle<Geom_Curve>& c3dprev1 = DStr.Curve(previntf1.LineIndex()).Curve();
+           const occ::handle<Geom_Curve>& c3dnext1 = DStr.Curve(nextintf1.LineIndex()).Curve();
++          if (c3dprev1.IsNull() || c3dnext1.IsNull())
++          {
++            // A neighbour without a 3D line (ChFi3d_Purge collapses an end SurfData onto a
++            // vertex and sets its line index to 0): fail the stripe instead of dereferencing null.
++            Spine->SetErrorStatus(ChFiDS_TwistedSurface);
++            throw Standard_Failure("adjustment by reprocessing the non-written points: no 3D curve");
++          }
+           gp_Pnt                         Pdeb1, Pfin1;
+           gp_Vec                         Vdeb1, Vfin1;
+           c3dprev1->D1(prevpar1, Pdeb1, Vdeb1);
+@@ -3616,6 +3623,13 @@
+           // here the base is on 3D tangents of neighbors.
+           const occ::handle<Geom_Curve>& c3dprev2 = DStr.Curve(previntf2.LineIndex()).Curve();
+           const occ::handle<Geom_Curve>& c3dnext2 = DStr.Curve(nextintf2.LineIndex()).Curve();
++          if (c3dprev2.IsNull() || c3dnext2.IsNull())
++          {
++            // A neighbour without a 3D line (ChFi3d_Purge collapses an end SurfData onto a
++            // vertex and sets its line index to 0): fail the stripe instead of dereferencing null.
++            Spine->SetErrorStatus(ChFiDS_TwistedSurface);
++            throw Standard_Failure("adjustment by reprocessing the non-written points: no 3D curve");
++          }
+           gp_Pnt                         Pdeb2, Pfin2;
+           gp_Vec                         Vdeb2, Vfin2;
+           c3dprev2->D1(prevpar2, Pdeb2, Vdeb2);

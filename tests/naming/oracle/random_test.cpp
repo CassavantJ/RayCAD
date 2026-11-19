@@ -17,6 +17,8 @@
 
 #include "harness.h"
 
+#include <shape_testing.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -771,7 +773,11 @@ TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference reso
         INFO(p.path << ": " << p.error);
         REQUIRE(p.base != nullptr);
     }
+    // No OCCT call may fault: on Windows the kernel's guard counts the access violations it catches (a caught one
+    // may leave OCCT state corrupt; off Windows it ends the process).
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Randomised", parts, kSequencesPerPart, SequenceOptions{});
+    CHECK(kernel::testing::structuredExceptions() == guardBefore);
     checkGates(r, kSequencesPerPart);
 }
 
