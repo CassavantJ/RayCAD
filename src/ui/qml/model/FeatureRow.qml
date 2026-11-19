@@ -39,6 +39,13 @@ Item {
     implicitHeight: main.height + (details.visible ? details.implicitHeight + Theme.spacingXs : 0)
     opacity: rolledBack ? 0.45 : 1
 
+    // Ends the name editing; the field gives up the focus (inside the tree's focus scope it would otherwise get it
+    // back, hidden, the next time the tree is focused).
+    function endRename() {
+        renaming = false
+        nameField.focus = false
+    }
+
     function startRename() {
         renaming = true
         nameField.text = featureName
@@ -129,7 +136,7 @@ Item {
         }
         TextField {
             id: nameField
-            objectName: "featureRename"
+            objectName: "featureRename." + row.index
             visible: row.renaming
             anchors.left: icon.right
             anchors.leftMargin: Theme.spacingXs
@@ -137,12 +144,24 @@ Item {
             anchors.rightMargin: Theme.spacingS
             anchors.verticalCenter: parent.verticalCenter
             Accessible.name: qsTr("New name of %1").arg(row.featureName)
-            onAccepted: {
+            // Enter is taken here, so the tree under it does not also open the feature for editing.
+            function accept() {
                 FeatureTree.rename(row.index, text)
-                row.renaming = false
+                row.endRename()
             }
-            Keys.onEscapePressed: row.renaming = false
-            onActiveFocusChanged: if (!activeFocus) row.renaming = false
+            Keys.onReturnPressed: event => {
+                accept()
+                event.accepted = true
+            }
+            Keys.onEnterPressed: event => {
+                accept()
+                event.accepted = true
+            }
+            Keys.onEscapePressed: event => {
+                row.endRename()
+                event.accepted = true
+            }
+            onActiveFocusChanged: if (!activeFocus && row.renaming) row.endRename()
         }
 
         Row {

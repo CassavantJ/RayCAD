@@ -721,6 +721,46 @@ TEST_CASE("parameters: a rename rewrites the expressions that use it; a used par
     REQUIRE(QTest::qWaitFor([&] { return w.document()->undoCount() == undo + 1; }, kTimeoutMs));
     w.settle();
     CHECK(w.volume() == Approx(40.0 * 25 * 5).epsilon(1e-6));
+
+    // ---- The tree: rename (F2), suppress, delete (the Delete key), each one undo step ----
+    w.tree()->setCurrentIndex(1);
+    REQUIRE(w.run("model.feature.rename"));
+    QQuickItem* rename = nullptr;
+    REQUIRE(QTest::qWaitFor(
+        [&] { return (rename = w.find(QStringLiteral("featureRename.1"))) && rename->hasActiveFocus(); }, 5000));
+    for (const char c : {'B', 'a', 's', 'e'})
+        QTest::keyClick(w.window(), c);
+    undo = w.document()->undoCount();
+    QTest::keyClick(w.window(), Qt::Key_Return);
+    REQUIRE(QTest::qWaitFor([&] { return w.document()->undoCount() == undo + 1; }, kTimeoutMs));
+    CHECK(w.document()->state()->features[1].name == "Base");
+    w.settle();
+
+    REQUIRE(w.tree()->setSuppressed(1, true));
+    REQUIRE(QTest::qWaitFor([&] { return w.document()->undoCount() == undo + 2; }, kTimeoutMs));
+    w.settle();
+    CHECK(w.status(1) == QStringLiteral("suppressed"));
+    CHECK(w.host->scene()->bodyCount() == 0);
+    w.undo();
+    w.settle();
+    CHECK(w.host->scene()->bodyCount() == 1);
+
+    QQuickItem* list = w.find(QStringLiteral("featureList"));
+    REQUIRE(list != nullptr);
+    list->forceActiveFocus();
+    w.tree()->setCurrentIndex(1);
+    INFO("active focus " << (w.window()->activeFocusItem() ? w.window()->activeFocusItem()->objectName().toStdString()
+                                                           : std::string("none"))
+                         << ", list focus " << list->hasActiveFocus());
+    QTest::keyClick(w.window(), Qt::Key_Delete);
+    const bool deleted = QTest::qWaitFor([&] { return w.document()->state()->features.size() == 1; }, 10000);
+    INFO("tree message '" << w.tree()->message().toStdString() << "', current " << w.tree()->currentIndex()
+                          << ", features " << w.document()->state()->features.size());
+    REQUIRE(deleted);
+    w.undo();
+    w.settle();
+    CHECK(w.document()->state()->features.size() == 2);
+    CHECK(w.volume() == Approx(40.0 * 25 * 5).epsilon(1e-6));
     w.checkNoWarnings();
 }
 

@@ -306,9 +306,20 @@ void FeatureTreeModel::sync()
             rows.push_back(std::move(row));
         }
     }
-    beginResetModel();
-    rows_ = std::move(rows);
-    endResetModel();
+    // The same features in the same order (a rebuild finished, a rename, a suppress): the rows change in place, so the
+    // tree keeps its delegates (and a name being edited).
+    const bool sameRows =
+        rows.size() == rows_.size() &&
+        std::equal(rows.begin(), rows.end(), rows_.begin(), [](const Row& a, const Row& b) { return a.id == b.id; });
+    if (sameRows) {
+        rows_ = std::move(rows);
+        if (!rows_.empty())
+            emit dataChanged(index(0), index(count() - 1));
+    } else {
+        beginResetModel();
+        rows_ = std::move(rows);
+        endResetModel();
+    }
     ++revision_;
     if (rollback_ >= count() - 1 && rollback_ >= 0) {
         rollback_ = -1;

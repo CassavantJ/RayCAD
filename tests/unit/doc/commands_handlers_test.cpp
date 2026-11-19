@@ -2,6 +2,7 @@
 #include "commands_test_util.h"
 #include "json.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -78,6 +79,8 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.sketch.add",
                                                         "feature.sketch.edit",
                                                         "feature.suppress",
+                                                        "param.remove",
+                                                        "param.rename",
                                                         "param.set",
                                                         "sketch.constraint.add",
                                                         "sketch.constraint.remove",
@@ -229,6 +232,47 @@ TEST_CASE("feature edits keep unknown keys read from a file", "[doc][commands]")
     REQUIRE(s);
     CHECK((*s)->features[0].extraJson == R"({"futureKey":[1,2]})");
     CHECK((*s)->features[0].type == "future_type");
+}
+
+TEST_CASE("param.rename rewrites every use in one step; param.remove refuses a used parameter", "[doc][commands]")
+{
+    DocFixture f;
+    const std::string w = uuid('b', 1);
+    const std::string h = uuid('b', 2);
+    const std::string e = uuid('b', 3);
+    const std::string sketch = uuid('b', 4);
+    const std::string body = uuid('b', 5);
+    f.run(cmd("param.set", R"({"id":")" + w + R"(","name":"width","expression":"4 in","kind":"length"})"));
+    f.run(cmd("param.set", R"({"id":")" + h + R"(","name":"height","expression":"width / 2","kind":"length"})"));
+    // An extrude whose distance uses the name (its schema marks "distance" with x-unit); ids that are not
+    // expressions are left alone.
+    f.run(cmd("feature.add", R"({"id":")" + e + R"(","type":"extrude","name":"Extrude 1","props":{"sketch":")" +
+                                 sketch + R"(","distance":"width*2 + 1 mm","operation":"new","target":")" + body +
+                                 R"("}})"));
+    const auto undo = f.doc->undoCount();
+    auto s = f.run(cmd("param.rename", R"({"id":")" + w + R"(","name":"breadth"})"));
+    CHECK(f.doc->undoCount() == undo + 1);
+    CHECK(s->parameters[0].name == "breadth");
+    CHECK(s->parameters[1].expression == "breadth / 2");
+    const auto props = ray::doc::json::parse(s->features[0].propsJson);
+    REQUIRE(props);
+    CHECK(props->find("distance")->asString() == "breadth*2 + 1 mm");
+    CHECK(props->find("sketch")->asString() == sketch);
+    CHECK(props->find("operation")->asString() == "new");
+    auto values = ray::doc::evaluateParameters(s->parameters);
+    REQUIRE(values);
+    CHECK(values->at("height") == Catch::Approx(50.8));
+
+    rejects(f, "param.rename", R"({"id":")" + h + R"(","name":"breadth"})", "'name'"); // taken
+    rejects(f, "param.rename", R"({"id":")" + h + R"(","name":"deg"})", "'name'");     // reserved
+    rejects(f, "param.remove", R"({"id":")" + w + R"("})", "Extrude 1 (distance)");    // used by the extrude
+    f.run(cmd("feature.remove", R"({"id":")" + e + R"("})"));
+    rejects(f, "param.remove", R"({"id":")" + w + R"("})", "parameter height"); // still used by height
+    s = f.run(cmd("param.remove", R"({"id":")" + h + R"("})"));
+    CHECK(s->parameters.size() == 1);
+    s = f.run(cmd("param.remove", R"({"id":")" + w + R"("})"));
+    CHECK(s->parameters.empty());
+    rejects(f, "param.remove", R"({"id":")" + w + R"("})", "'id'"); // gone
 }
 
 TEST_CASE("param.set adds and changes parameters and keeps them evaluable", "[doc][commands]")
