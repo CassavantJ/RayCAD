@@ -15,6 +15,8 @@ add_executable(ray_naming_oracle_tests
 target_link_libraries(ray_naming_oracle_tests PRIVATE ray_naming_oracle ray_naming ray_kernel ray_core
     Catch2::Catch2WithMain)
 target_compile_definitions(ray_naming_oracle_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
+# shape_testing.h (private to src/kernel, no OCCT header): the count of OCCT faults the kernel guard caught.
+target_include_directories(ray_naming_oracle_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
 set_property(TARGET ray_naming_oracle_tests PROPERTY FOLDER "tests")
 
 # The scripted acceptance scenarios (seconds).

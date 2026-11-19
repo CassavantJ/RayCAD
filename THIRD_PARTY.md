@@ -15,7 +15,7 @@ come from vcpkg. Versions of vcpkg ports are those of the baseline pinned in `vc
 
 | Component | vcpkg port | Version | Licence (SPDX) | Source | How it is used |
 |-|-|-|-|-|-|
-| Open CASCADE Technology (OCCT) | `opencascade` | 8.0.1 | `LGPL-2.1-only WITH OCCT-exception-1.0` | https://github.com/Open-Cascade-SAS/OCCT | Dynamically linked, from `src/kernel` only. Ship the licence text, offer the source, allow relinking. |
+| Open CASCADE Technology (OCCT) | `opencascade` | 8.0.1 | `LGPL-2.1-only WITH OCCT-exception-1.0` | https://github.com/Open-Cascade-SAS/OCCT | Dynamically linked, from `src/kernel` only. Ship the licence text, offer the source, allow relinking. Modified: built from the overlay port `ports/opencascade` (the baseline port, port-version 2) with one RayCAD patch, `0006-chfi3d-null-neighbour-curve.patch` (the fillet builder fails a stripe instead of dereferencing a null curve; the patch header says why). The offered source must include that patch; it is under OCCT's own licence. |
 | Qt (Core, Gui, Qml, Quick and the Qt libraries they load) | - | 6.12.0 | `LGPL-3.0-only` | https://download.qt.io/official_releases/qt/6.12/ | Dynamically linked, from `src/ui` and `src/render` only. Prebuilt binaries, not built by vcpkg. Ship the licence text and notice, offer the source, allow replacing the Qt libraries. |
 | Qt build tools (moc, rcc, qmlcachegen, qmltyperegistrar) | - | 6.12.0 | `GPL-3.0-only WITH Qt-GPL-exception-1.0` | https://download.qt.io/official_releases/qt/6.12/ | Build tool only: run at build time; their output is not covered by the GPL. Not shipped. |
 | tl::expected | `tl-expected` | 1.3.1 | `CC0-1.0` | https://github.com/TartanLlama/expected | Header-only; `ray::Result` in `include/ray/core.h`. |

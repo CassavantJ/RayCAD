@@ -11,6 +11,8 @@
 
 #include "harness.h"
 
+#include <shape_testing.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -510,6 +512,9 @@ TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference reso
         for (int s = 0; s < kSequencesPerPart; ++s)
             if (onlyPart < 0 || (p == onlyPart && (s == onlySeq || onlySeq < 0)))
                 jobs.push_back({p, s});
+    // No OCCT call may fault: on Windows the kernel's guard counts the access violations it catches (a caught one
+    // may leave OCCT state corrupt; off Windows it ends the process).
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     std::vector<SequenceResult> results(jobs.size());
     std::atomic<std::size_t> next{0};
     std::mutex progress;
@@ -590,5 +595,6 @@ TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference reso
         CHECK(sequences >= 950);
     CHECK(total.mutantsCaught == total.mutants);
     CHECK(total.repairedUsable == 0);
+    CHECK(kernel::testing::structuredExceptions() == guardBefore);
     REQUIRE(total.wrong() == 0);
 }
