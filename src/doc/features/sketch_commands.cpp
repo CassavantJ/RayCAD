@@ -464,6 +464,10 @@ constexpr std::string_view kConstraintRemove = "sketch.constraint.remove";
 constexpr std::string_view kConstraintSet = "sketch.constraint.set";
 constexpr std::string_view kSplit = "sketch.split";
 constexpr std::string_view kTrim = "sketch.trim";
+constexpr std::string_view kConstruction = "sketch.construction";
+constexpr std::string_view kExtend = "sketch.extend";
+constexpr std::string_view kOffset = "sketch.offset";
+constexpr std::string_view kFillet = "sketch.fillet";
 
 Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson)
 {
@@ -493,10 +497,15 @@ Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson)
 
 Result<DocStatePtr> entityAdd(const DocState& before, std::string_view argsJson)
 {
-    RAY_TRY(args, Args::parse(kEntityAdd, argsJson, {"entities", "id"}));
+    RAY_TRY(args, Args::parse(kEntityAdd, argsJson, {"constraints", "entities", "id"}));
     RAY_TRY(e, open(*args, before));
     RAY_TRY(entities, arrayArg(*args, "entities"));
-    RAY_TRY(model, merged(e->model, *entities, nullptr, std::string(kEntityAdd)));
+    // T-092: the constraints a drawing tool inferred go in with the entities, as the same undo step.
+    RAY_TRY(constraints, args->optValue("constraints"));
+    if (*constraints != nullptr && !(*constraints)->isArray()) {
+        return args->error("constraints", "must be an array");
+    }
+    RAY_TRY(model, merged(e->model, *entities, *constraints, std::string(kEntityAdd)));
     return commit(*e, *model, std::string(kEntityAdd));
 }
 
@@ -785,6 +794,479 @@ Result<DocStatePtr> trim(const DocState& before, std::string_view argsJson)
     return commit(*e, model, std::string(kTrim));
 }
 
+// ---------- T-092: construction, extend, offset, corner fillet ----------
+
+bool pointUsedElsewhere(const Sketch& s, const SketchEntId& point, const SketchEntId& except)
+{
+    for (const Entity& x : s.entities) {
+        if (x.id == except) {
+            continue;
+        }
+        for (const SketchEntId& p : pointsUsed(x)) {
+            if (p == point) {
+                return true;
+            }
+        }
+    }
+    return std::any_of(s.constraints.begin(), s.constraints.end(), [&](const Constraint& c) {
+        return std::find(c.refs.begin(), c.refs.end(), point) != c.refs.end();
+    });
+}
+
+Result<DocStatePtr> construction(const DocState& before, std::string_view argsJson)
+{
+    RAY_TRY(args, Args::parse(kConstruction, argsJson, {"construction", "entities", "id"}));
+    RAY_TRY(e, open(*args, before));
+    RAY_TRY(ids, idList(*args, "entities"));
+    RAY_TRY(on, args->boolean("construction"));
+    Sketch model = e->model;
+    for (const Uuid& id : *ids) {
+        Entity* x = findEntity(model, SketchEntId{id});
+        if (x == nullptr) {
+            return args->error("entities", "names " + id.toString() + ", which is not an entity of the sketch");
+        }
+        x->construction = *on;
+    }
+    return commit(*e, model, std::string(kConstruction));
+}
+
+Result<DocStatePtr> extend(const DocState& before, std::string_view argsJson)
+{
+    RAY_TRY(args, Args::parse(kExtend, argsJson, {"at", "entity", "id", "newPoint"}));
+    RAY_TRY(e, open(*args, before));
+    RAY_TRY(entityId, args->id("entity"));
+    RAY_TRY(at, pointArg(*args, "at"));
+    Sketch model = e->model;
+    const SketchEntId id{*entityId};
+    const Entity* entity = findEntity(model, id);
+    if (entity == nullptr) {
+        return args->error("entity", "names no entity of the sketch");
+    }
+    const auto cv = curveOf(model, *entity);
+    if (!cv || cv->k == Curve::K::Circle) {
+        return args->error("entity", "must be a line or an arc");
+    }
+    // The end nearest `at` grows along the curve's carrier to the first crossing with another curve.
+    const bool atEnd = len2(sub2(*at, cv->b)) < len2(sub2(*at, cv->a));
+    const double length = cv->length();
+    const double eps = std::max(1e-7, length * 1e-9);
+    std::optional<double> best; // distance travelled beyond the end
+    Vec2 target{};
+    std::optional<SketchEntId> joint;
+    for (const Entity& other : model.entities) {
+        if (other.id == id || other.construction) {
+            continue;
+        }
+        const auto oc = curveOf(model, other);
+        if (!oc) {
+            continue;
+        }
+        for (const Vec2& p : carrierCrossings(*cv, *oc)) {
+            if (!onCurve(*oc, p, eps)) {
+                continue;
+            }
+            double beyond = 0;
+            if (cv->k == Curve::K::Line) {
+                const double t = paramOf(*cv, p);
+                beyond = atEnd ? t - length : -t;
+            } else {
+                // Along the arc's direction from its start; past the end lies in (sweep, 2 pi r).
+                const double t = paramOf(*cv, p);
+                const double full = kTwoPi * cv->r;
+                if (t <= length + eps || t >= full - eps) {
+                    continue;
+                }
+                beyond = atEnd ? t - length : full - t;
+            }
+            if (beyond <= eps || (best && beyond >= *best)) {
+                continue;
+            }
+            best = beyond;
+            target = p;
+            joint.reset();
+            for (const SketchEntId& q : pointsUsed(other)) {
+                const auto qp = pointOf(model, q);
+                if (qp && len2(sub2(*qp, p)) <= eps && !std::holds_alternative<Circle>(other.geom)) {
+                    joint = q;
+                }
+            }
+        }
+    }
+    if (!best) {
+        return args->error("entity", "has no curve to extend to beyond that end");
+    }
+    const SketchEntId end = [&] {
+        if (const auto* l = std::get_if<Line>(&entity->geom)) {
+            return atEnd ? l->b : l->a;
+        }
+        const auto& a = std::get<Arc>(entity->geom);
+        return atEnd ? a.end : a.start;
+    }();
+    SketchEntId moved = end;
+    if (joint) {
+        moved = *joint;
+    } else if (pointUsedElsewhere(model, end, id)) {
+        // The end is shared (a joint, a constraint): the extended entity gets a point of its own.
+        RAY_TRY(newPoint, newIdArg(*args, "newPoint", model, e->feature, id, "extend.point"));
+        model.entities.push_back(Entity{*newPoint, Point{target}, false});
+        moved = *newPoint;
+    } else {
+        std::get<Point>(findEntity(model, end)->geom).p = target;
+    }
+    Entity* x = findEntity(model, id);
+    if (auto* l = std::get_if<Line>(&x->geom)) {
+        (atEnd ? l->b : l->a) = moved;
+    } else if (auto* a = std::get_if<Arc>(&x->geom)) {
+        (atEnd ? a->end : a->start) = moved;
+    }
+    if (moved != end && !pointUsedElsewhere(model, end, SketchEntId{})) {
+        removeEntities(model, {end});
+    }
+    return commit(*e, model, std::string(kExtend));
+}
+
+// One curve of an offset chain, walked from `from` to `to` (its own points; for a circle both are its centre).
+struct ChainPart {
+    SketchEntId entity;
+    Curve cv;
+    bool reversed = false; // walked from the curve's end to its start
+    SketchEntId from, to;
+};
+
+Vec2 partStart(const ChainPart& p)
+{
+    return p.reversed ? p.cv.b : p.cv.a;
+}
+Vec2 partEnd(const ChainPart& p)
+{
+    return p.reversed ? p.cv.a : p.cv.b;
+}
+
+// Unit left normal of the walking direction at the part's start (a line: constant).
+Vec2 leftNormalAt(const ChainPart& p, Vec2 at)
+{
+    if (p.cv.k == Curve::K::Line) {
+        Vec2 d = p.reversed ? sub2(p.cv.a, p.cv.b) : sub2(p.cv.b, p.cv.a);
+        const double l = len2(d);
+        return l > 0 ? Vec2{-d.y / l, d.x / l} : Vec2{0, 0};
+    }
+    // Circular: walking counter-clockwise, left is towards the centre.
+    const bool ccw = p.cv.k == Curve::K::Circle ? true : (p.cv.ccw != p.reversed);
+    Vec2 r = sub2(p.cv.c, at);
+    const double l = len2(r);
+    r = l > 0 ? Vec2{r.x / l, r.y / l} : Vec2{0, 0};
+    return ccw ? r : Vec2{-r.x, -r.y};
+}
+
+Vec2 nearestOn(const Curve& cv, Vec2 p)
+{
+    if (cv.k == Curve::K::Line) {
+        return pointAt(cv, std::clamp(paramOf(cv, p), 0.0, cv.length()));
+    }
+    const double d = len2(sub2(p, cv.c));
+    const Vec2 onCircle = d > 0 ? Vec2{cv.c.x + (p.x - cv.c.x) * cv.r / d, cv.c.y + (p.y - cv.c.y) * cv.r / d}
+                                : Vec2{cv.c.x + cv.r, cv.c.y};
+    if (cv.k == Curve::K::Circle || paramOf(cv, onCircle) <= cv.length()) {
+        return onCircle;
+    }
+    return len2(sub2(p, cv.a)) < len2(sub2(p, cv.b)) ? cv.a : cv.b;
+}
+
+Result<DocStatePtr> offset(const DocState& before, std::string_view argsJson)
+{
+    RAY_TRY(args, Args::parse(kOffset, argsJson, {"distance", "entities", "id", "side"}));
+    RAY_TRY(e, open(*args, before));
+    RAY_TRY(ids, idList(*args, "entities"));
+    RAY_TRY(side, pointArg(*args, "side"));
+    RAY_TRY(distanceValue, args->optValue("distance"));
+    if (*distanceValue == nullptr || !(*distanceValue)->isNumber() || !((*distanceValue)->asNumber() > 0) ||
+        !std::isfinite((*distanceValue)->asNumber())) {
+        return args->error("distance", "must be a positive number of mm");
+    }
+    const double d = (*distanceValue)->asNumber();
+    Sketch model = e->model;
+    // The curves, in the order given, gathered into chains that share end points.
+    std::vector<ChainPart> pool;
+    for (const Uuid& id : *ids) {
+        const Entity* x = findEntity(model, SketchEntId{id});
+        if (x == nullptr) {
+            return args->error("entities", "names " + id.toString() + ", which is not an entity of the sketch");
+        }
+        const auto cv = curveOf(model, *x);
+        if (!cv) {
+            return args->error("entities", "names " + id.toString() + ", which is not a line, an arc or a circle");
+        }
+        ChainPart part{x->id, *cv, false, {}, {}};
+        if (const auto* l = std::get_if<Line>(&x->geom)) {
+            part.from = l->a;
+            part.to = l->b;
+        } else if (const auto* a = std::get_if<Arc>(&x->geom)) {
+            part.from = a->start;
+            part.to = a->end;
+        } else {
+            part.from = part.to = std::get<Circle>(x->geom).center;
+        }
+        pool.push_back(part);
+    }
+    std::vector<std::vector<ChainPart>> chains;
+    std::vector<bool> used(pool.size(), false);
+    for (std::size_t seed = 0; seed < pool.size(); ++seed) {
+        if (used[seed]) {
+            continue;
+        }
+        used[seed] = true;
+        std::vector<ChainPart> chain{pool[seed]};
+        if (pool[seed].cv.k != Curve::K::Circle) {
+            // Grow forwards from the end, then backwards from the start.
+            for (const bool forward : {true, false}) {
+                bool grew = true;
+                while (grew) {
+                    grew = false;
+                    const SketchEntId tip = forward ? chain.back().to : chain.front().from;
+                    for (std::size_t k = 0; k < pool.size(); ++k) {
+                        if (used[k] || pool[k].cv.k == Curve::K::Circle) {
+                            continue;
+                        }
+                        ChainPart next = pool[k];
+                        if (next.from == tip || next.to == tip) {
+                            const bool startsAtTip = next.from == tip;
+                            if (forward != startsAtTip) {
+                                next.reversed = true;
+                                std::swap(next.from, next.to);
+                            }
+                            used[k] = true;
+                            if (forward) {
+                                chain.push_back(next);
+                            } else {
+                                chain.insert(chain.begin(), next);
+                            }
+                            grew = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        chains.push_back(std::move(chain));
+    }
+    std::size_t serial = 0;
+    auto newId = [&](std::string_view what) {
+        return derivedId(model, e->feature, SketchEntId{(*ids)[0]},
+                         std::string("offset.") + std::string(what) + "." + std::to_string(serial++));
+    };
+    for (const std::vector<ChainPart>& chain : chains) {
+        // Which side: that of `side` at the part nearest to it.
+        std::size_t nearest = 0;
+        double bestDistance = -1;
+        for (std::size_t k = 0; k < chain.size(); ++k) {
+            const double dist = len2(sub2(nearestOn(chain[k].cv, *side), *side));
+            if (bestDistance < 0 || dist < bestDistance) {
+                bestDistance = dist;
+                nearest = k;
+            }
+        }
+        const Vec2 foot = nearestOn(chain[nearest].cv, *side);
+        const double sign = dot2(sub2(*side, foot), leftNormalAt(chain[nearest], foot)) >= 0 ? 1.0 : -1.0;
+        // The offset curves, as copies whose points are moved.
+        struct Piece {
+            Curve cv;
+            Vec2 start, end; // in walking order
+        };
+        std::vector<Piece> pieces;
+        for (const ChainPart& p : chain) {
+            Piece piece{p.cv, partStart(p), partEnd(p)};
+            if (p.cv.k == Curve::K::Line) {
+                const Vec2 n = leftNormalAt(p, piece.start);
+                const Vec2 shift{n.x * d * sign, n.y * d * sign};
+                piece.cv.a = {p.cv.a.x + shift.x, p.cv.a.y + shift.y};
+                piece.cv.b = {p.cv.b.x + shift.x, p.cv.b.y + shift.y};
+            } else {
+                const bool ccw = p.cv.k == Curve::K::Circle ? true : (p.cv.ccw != p.reversed);
+                // Left of a counter-clockwise walk is the centre: the radius shrinks.
+                const double r = p.cv.r + (ccw ? -1.0 : 1.0) * d * sign;
+                if (!(r > 1e-9)) {
+                    return args->error("distance", "is larger than the radius of an arc or circle on that side");
+                }
+                const auto scale = [&](Vec2 q) {
+                    const Vec2 v = sub2(q, p.cv.c);
+                    const double l = len2(v);
+                    return l > 0 ? Vec2{p.cv.c.x + v.x * r / l, p.cv.c.y + v.y * r / l} : q;
+                };
+                piece.cv.r = r;
+                piece.cv.a = scale(p.cv.a);
+                piece.cv.b = scale(p.cv.b);
+            }
+            piece.start = p.reversed ? piece.cv.b : piece.cv.a;
+            piece.end = p.reversed ? piece.cv.a : piece.cv.b;
+            pieces.push_back(piece);
+        }
+        // Joints: neighbours that met meet again, at the crossing of their offset carriers nearest the gap.
+        const bool closed = chain.size() > 1 && chain.front().from == chain.back().to;
+        const std::size_t joints = chain.size() > 1 ? (closed ? chain.size() : chain.size() - 1) : 0;
+        std::vector<std::optional<Vec2>> jointAt(chain.size()); // the joint after part k
+        for (std::size_t k = 0; k < joints; ++k) {
+            Piece& p = pieces[k];
+            Piece& q = pieces[(k + 1) % pieces.size()];
+            const Vec2 gap{(p.end.x + q.start.x) / 2, (p.end.y + q.start.y) / 2};
+            Vec2 meet = gap;
+            if (len2(sub2(p.end, q.start)) > 1e-9) {
+                std::optional<Vec2> bestCrossing;
+                for (const Vec2& c : carrierCrossings(p.cv, q.cv)) {
+                    if (!bestCrossing || len2(sub2(c, gap)) < len2(sub2(*bestCrossing, gap))) {
+                        bestCrossing = c;
+                    }
+                }
+                if (bestCrossing) {
+                    meet = *bestCrossing;
+                }
+            }
+            jointAt[k] = meet;
+            p.end = meet;
+            q.start = meet;
+        }
+        // New entities: shared joint points, the curves (arcs and circles keep the original centre: concentric).
+        std::vector<SketchEntId> jointIds(chain.size());
+        for (std::size_t k = 0; k < joints; ++k) {
+            jointIds[k] = SketchEntId{newId("point")};
+            model.entities.push_back(Entity{jointIds[k], Point{*jointAt[k]}, false});
+        }
+        for (std::size_t k = 0; k < chain.size(); ++k) {
+            const ChainPart& part = chain[k];
+            const Piece& piece = pieces[k];
+            // Copied out: pushing entities below moves them.
+            const Entity original = *findEntity(model, part.entity);
+            const bool construction = original.construction;
+            if (part.cv.k == Curve::K::Circle) {
+                const SketchEntId c = std::get<Circle>(original.geom).center;
+                model.entities.push_back(Entity{SketchEntId{newId("circle")}, Circle{c, piece.cv.r}, construction});
+                continue;
+            }
+            const bool hasPrev = k > 0 || closed;
+            const bool hasNext = k < joints;
+            SketchEntId startId, endId;
+            if (hasPrev) {
+                startId = jointIds[(k + chain.size() - 1) % chain.size()];
+            } else {
+                startId = SketchEntId{newId("point")};
+                model.entities.push_back(Entity{startId, Point{piece.start}, false});
+            }
+            if (hasNext) {
+                endId = jointIds[k];
+            } else {
+                endId = SketchEntId{newId("point")};
+                model.entities.push_back(Entity{endId, Point{piece.end}, false});
+            }
+            // Back to the curve's own direction.
+            const SketchEntId a = part.reversed ? endId : startId;
+            const SketchEntId b = part.reversed ? startId : endId;
+            const SketchEntId curveId{newId("curve")};
+            if (part.cv.k == Curve::K::Line) {
+                model.entities.push_back(Entity{curveId, Line{a, b}, construction});
+                model.constraints.push_back(
+                    Constraint{newId("parallel"), ConstraintType::Parallel, {part.entity, curveId}, {}, 0, false});
+            } else {
+                const auto& arc = std::get<Arc>(original.geom);
+                model.entities.push_back(Entity{curveId, Arc{arc.center, a, b, arc.ccw}, construction});
+            }
+        }
+    }
+    std::sort(model.entities.begin(), model.entities.end(),
+              [](const Entity& x, const Entity& y) { return x.id < y.id; });
+    return commit(*e, model, std::string(kOffset));
+}
+
+Result<DocStatePtr> fillet(const DocState& before, std::string_view argsJson)
+{
+    RAY_TRY(args, Args::parse(kFillet, argsJson, {"id", "newEntity", "point", "radius"}));
+    RAY_TRY(e, open(*args, before));
+    RAY_TRY(pointId, args->id("point"));
+    RAY_TRY(radiusValue, args->optValue("radius"));
+    if (*radiusValue == nullptr || !(*radiusValue)->isNumber() || !((*radiusValue)->asNumber() > 0) ||
+        !std::isfinite((*radiusValue)->asNumber())) {
+        return args->error("radius", "must be a positive number of mm");
+    }
+    const double r = (*radiusValue)->asNumber();
+    Sketch model = e->model;
+    const SketchEntId corner{*pointId};
+    const auto p = pointOf(model, corner);
+    if (!p) {
+        return args->error("point", "names no point of the sketch");
+    }
+    // The two lines that meet there.
+    std::vector<SketchEntId> lines;
+    for (const Entity& x : model.entities) {
+        for (const SketchEntId& q : pointsUsed(x)) {
+            if (q == corner) {
+                if (!std::holds_alternative<Line>(x.geom)) {
+                    return args->error("point", "is the end of a curve that is not a line; a corner fillet joins two "
+                                                "lines");
+                }
+                lines.push_back(x.id);
+                break;
+            }
+        }
+    }
+    if (lines.size() != 2) {
+        return args->error("point",
+                           "must be the corner of exactly two lines (it joins " + std::to_string(lines.size()) + ")");
+    }
+    Vec2 far[2];
+    for (int i = 0; i < 2; ++i) {
+        const auto& l = std::get<Line>(findEntity(model, lines[static_cast<std::size_t>(i)])->geom);
+        far[i] = *pointOf(model, l.a == corner ? l.b : l.a);
+    }
+    const Vec2 v1 = sub2(far[0], *p), v2 = sub2(far[1], *p);
+    const double l1 = len2(v1), l2 = len2(v2);
+    if (!(l1 > 0) || !(l2 > 0)) {
+        return args->error("point", "joins a line of zero length");
+    }
+    const Vec2 u1{v1.x / l1, v1.y / l1}, u2{v2.x / l2, v2.y / l2};
+    const double cosAngle = std::clamp(dot2(u1, u2), -1.0, 1.0);
+    const double angle = dmath::acos(cosAngle);
+    if (angle < 1e-6 || angle > kTwoPi / 2 - 1e-6) {
+        return args->error("point", "joins two lines that are in line; there is no corner to round");
+    }
+    const double half = angle / 2;
+    const double t = r / dmath::tan(half);
+    if (t >= l1 || t >= l2) {
+        return args->error("radius", "is too large for these lines (the fillet would reach past an end)");
+    }
+    const Vec2 t1{p->x + u1.x * t, p->y + u1.y * t};
+    const Vec2 t2{p->x + u2.x * t, p->y + u2.y * t};
+    Vec2 bis{u1.x + u2.x, u1.y + u2.y};
+    const double bl = len2(bis);
+    bis = {bis.x / bl, bis.y / bl};
+    const double h = r / dmath::sin(half);
+    const Vec2 c{p->x + bis.x * h, p->y + bis.y * h};
+    const bool ccw = cross2(sub2(t1, c), sub2(t2, c)) > 0;
+    RAY_TRY(arcId, newIdArg(*args, "newEntity", model, e->feature, corner, "fillet.arc"));
+    const SketchEntId p1{derivedId(model, e->feature, corner, "fillet.start")};
+    model.entities.push_back(Entity{p1, Point{t1}, false});
+    const SketchEntId p2{derivedId(model, e->feature, corner, "fillet.end")};
+    model.entities.push_back(Entity{p2, Point{t2}, false});
+    const SketchEntId pc{derivedId(model, e->feature, corner, "fillet.center")};
+    model.entities.push_back(Entity{pc, Point{c}, false});
+    model.entities.push_back(Entity{*arcId, Arc{pc, p1, p2, ccw}, false});
+    for (int i = 0; i < 2; ++i) {
+        auto& l = std::get<Line>(findEntity(model, lines[static_cast<std::size_t>(i)])->geom);
+        (l.a == corner ? l.a : l.b) = i == 0 ? p1 : p2;
+        model.constraints.push_back(
+            Constraint{derivedId(model, e->feature, corner, "fillet.tangent." + std::to_string(i)),
+                       ConstraintType::Tangent,
+                       {lines[static_cast<std::size_t>(i)], *arcId, i == 0 ? p1 : p2},
+                       {},
+                       0,
+                       false});
+    }
+    // Something may still name the corner (a dimension, a constraint): then it stays as a free point.
+    if (!pointUsedElsewhere(model, corner, SketchEntId{})) {
+        removeEntities(model, {corner});
+    }
+    std::sort(model.entities.begin(), model.entities.end(),
+              [](const Entity& x, const Entity& y) { return x.id < y.id; });
+    return commit(*e, model, std::string(kFillet));
+}
+
 #undef RAY_TRY
 
 using ApplyFn = Result<DocStatePtr> (*)(const DocState&, std::string_view);
@@ -836,7 +1318,10 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
     out.push_back(std::make_unique<SketchCommand>(
         kSet, schemaOf(R"("sketch":{"type":"object"},"plane":)" + planeSchema(), R"("id","sketch")"), &sketchSet));
     out.push_back(std::make_unique<SketchCommand>(
-        kEntityAdd, schemaOf(R"("entities":)" + objects, R"("id","entities")"), &entityAdd));
+        kEntityAdd,
+        schemaOf(R"("entities":)" + objects + R"(,"constraints":{"type":"array","items":{"type":"object"}})",
+                 R"("id","entities")"),
+        &entityAdd));
     out.push_back(std::make_unique<SketchCommand>(kEntityRemove, schemaOf(R"("entities":)" + ids, R"("id","entities")"),
                                                   &entityRemove));
     out.push_back(std::make_unique<SketchCommand>(
@@ -862,6 +1347,25 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
                      R"(,"newPoints":{"type":"array","minItems":1,"maxItems":2,"items":)" + uuid + "}",
                  R"("id","entity","at")"),
         &trim));
+    // T-092
+    out.push_back(std::make_unique<SketchCommand>(
+        kConstruction,
+        schemaOf(R"("entities":)" + ids + R"(,"construction":{"type":"boolean"})", R"("id","entities","construction")"),
+        &construction));
+    out.push_back(std::make_unique<SketchCommand>(
+        kExtend,
+        schemaOf(R"("entity":)" + uuid + R"(,"at":)" + point + R"(,"newPoint":)" + uuid, R"("id","entity","at")"),
+        &extend));
+    out.push_back(std::make_unique<SketchCommand>(
+        kOffset,
+        schemaOf(R"("entities":)" + ids + R"(,"distance":{"type":"number","exclusiveMinimum":0},"side":)" + point,
+                 R"("id","entities","distance","side")"),
+        &offset));
+    out.push_back(std::make_unique<SketchCommand>(
+        kFillet,
+        schemaOf(R"("point":)" + uuid + R"(,"radius":{"type":"number","exclusiveMinimum":0},"newEntity":)" + uuid,
+                 R"("id","point","radius")"),
+        &fillet));
     return out;
 }
 

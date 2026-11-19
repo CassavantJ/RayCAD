@@ -4,7 +4,9 @@
 // same ids. Coordinates are mm in the sketch plane. None of them solves: the rebuild does.
 //
 //   sketch.set               {"id", "sketch", "plane"?}         replaces the whole model (and the plane)
-//   sketch.entity.add        {"id", "entities": [...]}          adds entities (sketch_json.h form)
+//   sketch.entity.add        {"id", "entities": [...], "constraints"?: [...]}
+//                                                               adds entities (sketch_json.h form), and with them the
+//                                                               constraints a drawing tool inferred (one undo step)
 //   sketch.entity.remove     {"id", "entities": ["<id>", ...]}  removes them, the curves that use a removed point,
 //                                                               end points no curve uses any more, and every
 //                                                               constraint on something removed
@@ -21,6 +23,23 @@
 //                            shortens the entity, which keeps its id; a piece in the middle splits it (the entity
 //                            keeps its id and its start, the new entity has the far part); a circle becomes an arc
 //                            with the same id. With no crossing the entity is removed.
+// Added for the drawing tools (task T-092):
+//   sketch.construction      {"id", "entities": ["<id>", ...], "construction": true | false}
+//                            marks entities as construction geometry (or as profile geometry again)
+//   sketch.extend            {"id", "entity", "at": {"x", "y"}, "newPoint"?}
+//                            grows the end of a line or arc nearest `at` along its carrier to the first crossing with
+//                            another curve (not construction). The end point moves; when it is shared with another
+//                            curve or named by a constraint the entity gets a new end point instead, and a crossing at
+//                            an end point of the other curve joins it there
+//   sketch.offset            {"id", "entities": ["<id>", ...], "distance": mm, "side": {"x", "y"}}
+//                            copies lines, arcs and circles at `distance` on the side of `side`. Entities that share
+//                            end points form chains, offset as a whole: neighbours meet again at the crossing of their
+//                            offset carriers. New lines are parallel to their originals (constraint); new arcs and
+//                            circles share the original centre point
+//   sketch.fillet            {"id", "point", "radius", "newEntity"?}
+//                            rounds the corner where exactly two lines share `point` with a tangent arc: the lines
+//                            end at the tangent points (tangent constraints added), the corner point is removed
+//                            unless a constraint still names it
 // Keeping ids through trims and splits keeps the names of the faces swept from the entity (PLAN.md 3.3 rule 1).
 #pragma once
 
