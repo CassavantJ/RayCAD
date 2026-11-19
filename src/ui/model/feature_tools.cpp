@@ -1,4 +1,4 @@
-#include "features.h"
+#include "feature_tools.h"
 
 #include "../app_context.h"
 #include "../palette_commands.h"

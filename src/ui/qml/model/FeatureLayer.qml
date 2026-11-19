@@ -95,6 +95,8 @@ Item {
                     id: knobArea
                     anchors.fill: parent
                     anchors.margins: -Theme.spacingXs
+                    // Never over a sketch drag (a hover-enabled area would take its release).
+                    enabled: !SketchTool.active
                     hoverEnabled: true
                     preventStealing: true
                     cursorShape: Qt.SizeAllCursor

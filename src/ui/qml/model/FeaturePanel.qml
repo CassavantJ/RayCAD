@@ -1,4 +1,4 @@
-// The property panel of the open feature tool (task T-098; FeatureTool, model/features.h) in the shell's
+// The property panel of the open feature tool (task T-098; FeatureTool, model/feature_tools.h) in the shell's
 // viewportArea, to the right of the model tools column. One panel for every tool: the rows of the open tool's type
 // are shown. Numeric fields take numbers in the display unit, numbers with units, expressions and parameter names;
 // each change rebuilds the preview, and the document's message about the values shows under the field it names (or

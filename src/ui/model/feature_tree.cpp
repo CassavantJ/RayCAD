@@ -5,7 +5,7 @@
 #include "../session.h"
 #include "../sketch/sketch_geom.h"
 #include "../sketch/sketch_mode.h"
-#include "features.h"
+#include "feature_tools.h"
 #include "model_util.h"
 
 #include <ray_api/feature_edit.h>

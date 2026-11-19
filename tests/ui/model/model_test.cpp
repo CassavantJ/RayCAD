@@ -21,7 +21,7 @@
 #include "app_options.h"
 #include "files.h"
 #include "model/feature_tree.h"
-#include "model/features.h"
+#include "model/feature_tools.h"
 #include "model/params.h"
 #include "palette_commands.h"
 #include "scene_controller.h"
@@ -805,6 +805,47 @@ TEST_CASE("parameters: a rename rewrites the expressions that use it; a used par
     w.settle();
     CHECK(w.document()->state()->features.size() == 2);
     CHECK(w.volume() == Approx(40.0 * 25 * 5).epsilon(1e-6));
+
+    // ---- Drag to reorder: a datum plane dragged to the top moves; the extrude dragged above its sketch does not ----
+    REQUIRE(w.invoke("feature.datum_plane.add", api::sketch_edit::datumAddArgs(FeatureId{Uuid::generate()},
+                                                                                 "Datum 1", "{\"principal\":\"xy\"}", 5)));
+    w.settle();
+    const auto dragRow = [&](int from, int to) {
+        QQuickItem* a = nullptr;
+        QQuickItem* b = nullptr;
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                a = w.find(QStringLiteral("featureRow.%1").arg(from));
+                b = w.find(QStringLiteral("featureRow.%1").arg(to));
+                return a && b && a->isVisible() && b->isVisible();
+            },
+            5000));
+        w.grab();
+        const QPointF start = a->mapToScene(QPointF(a->width() / 2, a->height() / 2));
+        const QPointF end = b->mapToScene(QPointF(b->width() / 2, b->height() * 0.25));
+        w.sendMouse(QEvent::MouseMove, start, Qt::NoButton, Qt::NoButton);
+        w.sendMouse(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) {
+            w.sendMouse(QEvent::MouseMove, start + (end - start) * (i / 8.0), Qt::LeftButton, Qt::LeftButton);
+            QTest::qWait(20);
+        }
+        w.sendMouse(QEvent::MouseButtonRelease, end, Qt::LeftButton, Qt::NoButton);
+        QCoreApplication::processEvents();
+    };
+    undo = w.document()->undoCount();
+    dragRow(2, 0);
+    const bool moved = QTest::qWaitFor([&] { return w.document()->undoCount() == undo + 1; }, 20000);
+    INFO("tree message '" << w.tree()->message().toStdString() << "', checking " << w.tree()->checking()
+                          << ", current " << w.tree()->currentIndex());
+    REQUIRE(moved);
+    CHECK(w.featureTypes() == std::vector<std::string>{"datum_plane", "sketch", "extrude"});
+    w.settle();
+    w.tree()->dismissMessage();
+    dragRow(2, 0);
+    REQUIRE(QTest::qWaitFor([&] { return !w.tree()->message().isEmpty() && !w.tree()->checking(); }, kTimeoutMs));
+    CHECK(w.featureTypes() == std::vector<std::string>{"datum_plane", "sketch", "extrude"});
+    CHECK(w.document()->undoCount() == undo + 1);
+    w.shot("t098_reorder_refused");
     w.checkNoWarnings();
 }
 

@@ -143,8 +143,8 @@ qt_add_qml_module(ray_ui
         sketch/sketch_mode.cpp
         sketch/sketch_overlay.h
         sketch/sketch_overlay.cpp
-        model/features.h
-        model/features.cpp
+        model/feature_tools.h
+        model/feature_tools.cpp
         model/feature_tree.h
         model/feature_tree.cpp
         model/params.h
