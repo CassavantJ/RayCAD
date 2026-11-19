@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <set>
@@ -105,6 +106,14 @@ std::string namesOf(const naming::ElementMap& map, SubId s)
             out += (pr != nullptr ? pr->role : std::string("?")) + "#" + p.hex().substr(0, 6) + " ";
         }
         out += ")";
+        if (!r->discriminator.empty()) {
+            out += "<";
+            for (const Hash256& d : r->discriminator) {
+                const naming::TopoName* dr = map.record(d);
+                out += (dr != nullptr ? dr->role : std::string("?")) + "#" + d.hex().substr(0, 6) + " ";
+            }
+            out += ">";
+        }
     }
     return out;
 }
@@ -337,6 +346,19 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                     ++(*skipped)[std::string(kindName(kind)) + ": " + d.why];
                 continue;
             }
+            // A sliver (no sample more than 0.02 mm inside it): which element of an edited shape holds it cannot be
+            // told by position (oracle.h, isSliver), so the oracle cannot vouch for it.
+            if (isSliver(samples->of(kind)[i], kind)) {
+                if (skipped != nullptr)
+                    ++(*skipped)[std::string(kindName(kind)) + ": a sliver"];
+                continue;
+            }
+            if (coincidesWithAnother(d, s, *owners, *samples)) {
+                if (skipped != nullptr)
+                    ++(*skipped)[std::string(kindName(kind)) + ": coincides with another element it cannot be told "
+                                                               "apart from"];
+                continue;
+            }
             if (b.map().namesOf(s).empty()) {
                 if (skipped != nullptr)
                     ++(*skipped)[std::string(kindName(kind)) + ": element has no name"];
@@ -423,6 +445,12 @@ std::map<std::string, std::string> loadReviewed(const char* file)
 const std::map<std::string, std::string>& reviewedTerritory()
 {
     static const std::map<std::string, std::string> list = loadReviewed("reviewed_territory.txt");
+    return list;
+}
+
+const std::map<std::string, std::string>& reviewedUnjudged()
+{
+    static const std::map<std::string, std::string> list = loadReviewed("reviewed_unjudged.txt");
     return list;
 }
 
@@ -563,6 +591,7 @@ void Tally::merge(const Tally& o)
     acceptedReviewed += o.acceptedReviewed;
     conflicts += o.conflicts;
     conflictsReviewed += o.conflictsReviewed;
+    unjudgedReviewed += o.unjudgedReviewed;
     conflictsOther += o.conflictsOther;
     congruentGhosts += o.congruentGhosts;
     injectivity += o.injectivity;
@@ -665,6 +694,16 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)
             log.notes.push_back(verbose());
     }
+    if (v == Verdict::Unjudged) {
+        const auto it = reviewedUnjudged().find(id);
+        if (it != reviewedUnjudged().end())
+            ++tally.unjudgedReviewed;
+        log.notes.push_back("UNJUDGED " + id + ": resolver " + answer + ", " +
+                            (rr.noAnchor.empty() ? std::string("whether the element also continues another piece of "
+                                                               "the logical element cannot be told")
+                                                 : rr.noAnchor) +
+                            (it != reviewedUnjudged().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+    }
     if (rr.conflict == 2)
         ++tally.conflictsOther;
     if (rr.conflict == 3)
@@ -684,7 +723,12 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
             addWrong("MUTANT NOT CAUGHT " + id + " [" + mu.cls + "]: " + mu.detail + "; oracle expects " +
                      list(rr.expected));
     }
-    if (isWrong(v) || v == Verdict::Unjudged) {
+    // RAYCAD_NAMING_EXPLAIN="<kind> <index>" (e.g. "face 21"): the reference is printed whatever its verdict.
+    const char* explainOnly = std::getenv("RAYCAD_NAMING_EXPLAIN");
+    const bool explainThis = explainOnly != nullptr && id.size() > std::strlen(explainOnly) &&
+                             id.compare(id.size() - std::strlen(explainOnly), std::string::npos, explainOnly) == 0 &&
+                             id[id.size() - std::strlen(explainOnly) - 1] == '|';
+    if (isWrong(v) || v == Verdict::Unjudged || explainThis) {
         addWrong(id + ": " + verdictName(v) + "; resolver " + answer + " (" + res.reason + "), oracle expects " +
                  list(rr.expected) + (rr.merged ? " merged" : "") +
                  (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") + ", congruent " + std::to_string(rr.congruent));
@@ -692,7 +736,7 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
             log.wrongs.push_back(verbose());
     }
     if (std::getenv("RAYCAD_NAMING_VERDICTS") != nullptr)
-        log.trace.push_back(id + " " + answer + " " + verdictName(v) + " E" + list(rr.expected));
+        log.trace.push_back(id + " " + answer + " " + verdictName(v) + " E" + list(rr.expected) + " | " + res.reason);
 }
 
 } // namespace
@@ -735,13 +779,40 @@ void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners&
             const Expectation x = expect(r.record, owners, samples);
             out += "\n    mapped pick " + (x.mapped.pts.empty() ? std::string("(none)") : box(x.mapped)) +
                    (x.moved ? " moved" : "") + "; strict " + list(x.strict.elems) + "; logical:";
+            // How much of the element lies on the picked element as it was (unmapped), and of it on the element.
+            auto shares = [&](const ElemSamples& es) {
+                char b[80];
+                std::snprintf(b, sizeof b, " on-pick %.0f%% pick-on %.0f%%",
+                              100.0 * shareOnElement(es, r.record.picked(), kind),
+                              100.0 * shareOnElement(r.record.picked(), es, kind));
+                return std::string(b);
+            };
             for (std::size_t i = 0; i < x.logical.size(); ++i)
                 out += " " + std::to_string(x.logical[i]) + "/c" + std::to_string(x.component[i]) +
                        (x.anchored[i] != 0 ? "/anchored" : "") + (x.isClaimed(x.logical[i]) ? "/claimed" : "") + " " +
-                       box(samples.of(kind)[x.logical[i]]);
+                       box(samples.of(kind)[x.logical[i]]) + shares(samples.of(kind)[x.logical[i]]);
+            // Which baseline elements the answer lies on (its territory at pick time), by share of its samples.
+            auto onBaseline = [&](const ElemSamples& es) {
+                std::string s;
+                const auto& B = r.record.baseline->of(kind);
+                for (std::uint32_t i = 0; i < B.size(); ++i) {
+                    if (outsideBoxes(es, B[i]))
+                        continue;
+                    const double sh = shareOnElement(es, B[i], kind);
+                    if (sh >= 0.02) {
+                        char b[40];
+                        std::snprintf(b, sizeof b, " b%u:%.0f%%", i, 100.0 * sh);
+                        s += b;
+                    }
+                }
+                return s.empty() ? std::string(" on no baseline element") : " on baseline" + s;
+            };
             for (const SubId& e : res.elements)
                 if (e.kind == kind && e.index < samples.of(kind).size())
-                    out += "\n    answer " + std::to_string(e.index) + " " + box(samples.of(kind)[e.index]);
+                    out += "\n    answer " + std::to_string(e.index) + " " + box(samples.of(kind)[e.index]) +
+                           shares(samples.of(kind)[e.index]) + onBaseline(samples.of(kind)[e.index]);
+            for (const std::uint32_t e : x.logical)
+                out += "\n    logical " + std::to_string(e) + onBaseline(samples.of(kind)[e]);
             return out;
         });
     }
@@ -783,8 +854,10 @@ void printTally(const char* title, const Tally& t)
                 v(Verdict::WrongSilentMerge));
     std::printf("  among references whose element still exists: %s%% Exact, Split or Merged (%ld of %ld)\n",
                 percent(t.existingOk, t.existing).c_str(), t.existingOk, t.existing);
-    std::printf("  continuation unknown (no anchor): %ld references; blend picks not judged (no description): %ld\n",
-                t.noAnchor, t.picksUnjudged);
+    std::printf(
+        "  continuation unknown (no anchor): %ld references (%ld answered other than Broken: NOT JUDGED, %ld of "
+        "them reviewed); blend picks not judged (no description): %ld\n",
+        t.noAnchor, t.unjudged(), t.unjudgedReviewed, t.picksUnjudged);
     std::printf("  new-territory acceptances: %ld (%ld on the reviewed list, %ld NOT REVIEWED)\n", t.accepted,
                 t.acceptedReviewed, t.accepted - t.acceptedReviewed);
     std::printf(

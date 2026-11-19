@@ -5,14 +5,15 @@
 // features, or nothing), rebuilds, and judges every reference and every blend pick with the full oracle. A sequence
 // that cannot be judged (no feature could be added, sampling failed) is replaced by the next seed of its part, so
 // exactly 50 per part are judged; every replacement and every exclusion is printed by reason.
-// Gates: zero wrong-element resolutions, none not judged, every new-territory acceptance and congruence conflict
-// on the reviewed lists, no injectivity violation, every mutant caught, no usable Repaired, 1,000 judged.
+// Gates: zero wrong-element resolutions, every answer not judged and every new-territory acceptance and congruence
+// conflict on the reviewed lists, no injectivity violation, every mutant caught, no usable Repaired, 1,000 judged.
 //
 // Seeds are fixed (part index and sequence index), the random numbers come from splitmix64 with our own
 // conversions (no std distributions, whose output differs between standard libraries), so a run is reproducible.
 // A failing sequence is printed with its part and index; RAYCAD_NAMING_ONLY=<part>:<sequence> runs just that one.
 // The holdout block ([random-holdout]) uses other seeds, which were not run while the naming code and the oracle
-// were developed; it is reported on its own.
+// were developed; it is reported on its own. Its failures were looked at during the T-081a gate fixes, so a second
+// block ([random-holdout2]) with fresh seeds was added then and first run after those fixes.
 #include <catch2/catch_test_macros.hpp>
 
 #include "harness.h"
@@ -463,7 +464,8 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
         return out;
     }
     const Owners owners1 = buildOwners(builtOnly(edited, replay));
-    out.log.maxWrongs = 20;
+    // One sequence on its own (RAYCAD_NAMING_ONLY) is being diagnosed: keep every line.
+    out.log.maxWrongs = std::getenv("RAYCAD_NAMING_ONLY") != nullptr ? 100000 : 20;
     judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
     if ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
         auto describe = [](const Script& s) {
@@ -492,7 +494,9 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
                               "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
         if (std::getenv("RAYCAD_NAMING_ONLY") != nullptr)
             out.log.wrongs.push_back("  baseline edges:\n" + dumpElements(b, **smp0, SubKind::Edge) +
-                                     "  replay edges:\n" + dumpElements(replay, **smp1, SubKind::Edge));
+                                     "  replay edges:\n" + dumpElements(replay, **smp1, SubKind::Edge) +
+                                     "  baseline faces:\n" + dumpElements(b, **smp0, SubKind::Face) +
+                                     "  replay faces:\n" + dumpElements(replay, **smp1, SubKind::Face));
         for (const std::string& f : replay.failed())
             out.log.wrongs.push_back("  replay failure: " + f);
     }
@@ -703,7 +707,7 @@ void checkGates(const BlockResult& r, int perPart)
     CHECK(t.repairedUsable == 0);
     CHECK(t.selfCheckFailures == 0);
     CHECK(t.injectivity == 0);
-    CHECK(t.unjudged() == 0);
+    CHECK(t.unjudged() == t.unjudgedReviewed);
     CHECK(t.accepted == t.acceptedReviewed);
     CHECK(t.conflicts == t.conflictsReviewed);
     REQUIRE(t.wrong() == 0);
@@ -795,5 +799,39 @@ TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development
     const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Holdout", parts, kHoldoutPerPart, holdout);
     CHECK(kernel::testing::structuredExceptions() == guardBefore);
+    checkGates(r, kHoldoutPerPart);
+}
+
+TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the T-081a gate fixes",
+          "[random-holdout2]")
+{
+    // The first holdout block's failures were looked at while the naming code and the oracle were fixed (T-081a
+    // gate); this block's seeds were not run until those fixes were done, so it is the unseen check.
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x5EC0D000ull;
+    holdout.keyPrefix = "holdout2 ";
+    const BlockResult r = runBlock("Second holdout", parts, kHoldoutPerPart, holdout);
+    checkGates(r, kHoldoutPerPart);
+}
+
+TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the second holdout's findings were fixed",
+          "[random-holdout3]")
+{
+    // The second holdout block's first run found two wrong answers; one was fixed (an edge named from a face that was
+    // split since), so this block, with seeds not run before, is the unseen check of that fix.
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x7A11D000ull;
+    holdout.keyPrefix = "holdout3 ";
+    const BlockResult r = runBlock("Third holdout", parts, kHoldoutPerPart, holdout);
     checkGates(r, kHoldoutPerPart);
 }

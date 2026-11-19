@@ -2,8 +2,10 @@
 #include "propagate.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -37,7 +39,7 @@ bool isAmbiguous(const ElementMap& map, const TopoRef& ref, std::size_t i)
     if (i < ref.ambiguous.size() && ref.ambiguous[i])
         return true;
     const TopoName* record = map.record(ref.names[i]);
-    return record != nullptr && record->ambiguous();
+    return record != nullptr && needsHint(*record);
 }
 
 // Records in `map` of the pieces `name` was split into in this build.
@@ -134,6 +136,86 @@ bool insideBox(const Vec3& p, const Box3& box, double tol)
            p.z >= box.min.z - tol && p.z <= box.max.z + tol;
 }
 
+// Does point p (on the face's plane) lie inside planar face `face`? Even-odd count of the crossings of a ray in the
+// plane with the face's boundary edges, lines and circular arcs (an arc runs counter-clockwise about its axis from
+// its start for length / radius; arcs are walked in short chords). nullopt when an edge is of another kind or its
+// shape cannot be reconstructed: then the question cannot be answered.
+std::optional<bool> insidePlanarFace(const kernel::Shape& shape, SubId face, const Vec3& p,
+                                     const kernel::SurfaceInfo& info)
+{
+    const double n0 = norm(info.axis);
+    if (!(n0 > 0.0))
+        return std::nullopt;
+    const Vec3 n{info.axis.x / n0, info.axis.y / n0, info.axis.z / n0};
+    // A frame (e1, e2) of the plane.
+    const Vec3 t = std::abs(n.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    Vec3 e1{t.y * n.z - t.z * n.y, t.z * n.x - t.x * n.z, t.x * n.y - t.y * n.x};
+    const double l1 = norm(e1);
+    e1 = Vec3{e1.x / l1, e1.y / l1, e1.z / l1};
+    const Vec3 e2{n.y * e1.z - n.z * e1.y, n.z * e1.x - n.x * e1.z, n.x * e1.y - n.y * e1.x};
+    auto uv = [&](const Vec3& q) {
+        const Vec3 d = sub(q, p);
+        return std::array<double, 2>{dot(d, e1), dot(d, e2)};
+    };
+    // Crossings of the ray from p along +e1 (u > 0, v = 0) with segment a-b (half-open in v).
+    int crossings = 0;
+    auto segment = [&](const std::array<double, 2>& a, const std::array<double, 2>& b) {
+        if ((a[1] > 0) == (b[1] > 0))
+            return;
+        const double u = a[0] + (b[0] - a[0]) * (0 - a[1]) / (b[1] - a[1]);
+        if (u > 0)
+            ++crossings;
+    };
+    for (const SubId& edge : kernel::adjacent(shape, face, SubKind::Edge)) {
+        const auto c = kernel::curveInfo(shape, edge);
+        if (!c)
+            return std::nullopt;
+        if (c->type == kernel::CurveType::Line) {
+            segment(uv(c->start), uv(c->end));
+            continue;
+        }
+        if (c->type != kernel::CurveType::Circle) {
+            // An ellipse or B-spline is taken as its chord (the kernel gives its ends only): good enough to tell a
+            // point well inside the face from one outside it, which is what is asked. A closed one has no chord.
+            if (c->closed || norm(sub(c->start, c->end)) <= 1e-9)
+                return std::nullopt;
+            segment(uv(c->start), uv(c->end));
+            continue;
+        }
+        if (!(c->radius > 0.0))
+            return std::nullopt;
+        const double a0 = norm(c->axis);
+        if (!(a0 > 0.0))
+            return std::nullopt;
+        const Vec3 ax{c->axis.x / a0, c->axis.y / a0, c->axis.z / a0};
+        const Vec3 r0 = sub(c->start, c->center);
+        const Vec3 r1{ax.y * r0.z - ax.z * r0.y, ax.z * r0.x - ax.x * r0.z, ax.x * r0.y - ax.y * r0.x};
+        constexpr double kTwoPi = 6.283185307179586476925286766559;
+        double sweep = c->closed ? kTwoPi : c->length / c->radius;
+        auto at = [&](double a) {
+            const double ca = dmath::cos(a), sa = dmath::sin(a);
+            return Vec3{c->center.x + r0.x * ca + r1.x * sa, c->center.y + r0.y * ca + r1.y * sa,
+                        c->center.z + r0.z * ca + r1.z * sa};
+        };
+        // The arc must end where the edge ends, turning one way or the other about the axis; else its shape is not
+        // known.
+        const double endTolerance = 1e-4 * std::max(1.0, c->radius);
+        if (!c->closed && norm(sub(at(sweep), c->end)) > endTolerance) {
+            sweep = -sweep;
+            if (norm(sub(at(sweep), c->end)) > endTolerance)
+                return std::nullopt;
+        }
+        const int steps = std::max(8, static_cast<int>(std::abs(sweep) / 0.05));
+        std::array<double, 2> prev = uv(c->start);
+        for (int i = 1; i <= steps; ++i) {
+            const std::array<double, 2> next = uv(i == steps && !c->closed ? c->end : at(sweep * i / steps));
+            segment(prev, next);
+            prev = next;
+        }
+    }
+    return crossings % 2 == 1;
+}
+
 // Can element `c` contain the element the reference was picked on? Used before a family or split-parent rule
 // answers Merged: the rule says the pieces re-joined, but the same names also appear when a piece vanished and
 // the rest of the element is left whole. This keeps Merged to elements of the same type on the same carrier, at
@@ -160,8 +242,14 @@ bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, cons
             return false;
         const Vec3 axis{info->axis.x / axisLength, info->axis.y / axisLength, info->axis.z / axisLength};
         const Vec3 d = sub(p, info->origin);
-        if (info->type == kernel::SurfaceType::Plane)
-            return std::abs(dot(d, axis)) <= kContainTolerance;
+        if (info->type == kernel::SurfaceType::Plane) {
+            // Inside its outline, not merely inside its box: a face whole again around a hole that now sits where the
+            // picked piece was does not contain the piece (T-081a random 10:34).
+            if (std::abs(dot(d, axis)) > kContainTolerance)
+                return false;
+            const auto inside = insidePlanarFace(shape, c, p, *info);
+            return inside.has_value() && *inside;
+        }
         if (info->type == kernel::SurfaceType::Cylinder) {
             const double along = dot(d, axis);
             const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};
@@ -257,8 +345,10 @@ bool onHintCarrier(const ElementMap& map, const kernel::Shape& shape, SubId c, c
             const double t = dot(w, u);
             const Vec3 off{w.x - t * u.x, w.y - t * u.y, w.z - t * u.z};
             const double half = 0.5 * q(hint.qArea); // the picked segment runs from t - half to t + half
-            return norm(off) <= kContainTolerance && t + half >= -kContainTolerance &&
-                   t - half <= length + kContainTolerance;
+            // The piece must share a stretch of the picked segment, not merely touch its end: a separate segment
+            // on the same line that starts where the picked one ended is not a piece of it (T-081a random 6:21).
+            const double shared = std::min(length, t + half) - std::max(0.0, t - half);
+            return norm(off) <= kContainTolerance && shared > std::max(kContainTolerance, 0.01 * 2.0 * half);
         }
         if (info->type == kernel::CurveType::Circle) {
             const double axisLength = norm(info->axis);
@@ -277,8 +367,50 @@ bool onHintCarrier(const ElementMap& map, const kernel::Shape& shape, SubId c, c
             // An arc: no point of the picked arc is further than half its length from its chord's midpoint, so a
             // piece of it has an end that near (the other arc where a plane meets a torus on the far side has not).
             const double reach = 0.5 * q(hint.qArea) + kContainTolerance;
-            return norm(d) <= info->radius + kContainTolerance &&
-                   std::min(norm(sub(info->start, p)), norm(sub(info->end, p))) <= reach;
+            if (!(norm(d) <= info->radius + kContainTolerance &&
+                  std::min(norm(sub(info->start, p)), norm(sub(info->end, p))) <= reach))
+                return false;
+            // And it must share a stretch of the picked arc, not merely touch its end (T-081a random 6:21). The picked
+            // arc runs `half` radians either side of the direction of its chord's midpoint; the piece is walked in
+            // short steps from its start, turning whichever way about the axis ends at its end.
+            const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};
+            const double rl = norm(radial);
+            if (!(rl > kContainTolerance) || !(info->radius > 0.0))
+                return false;
+            const double half = 0.5 * q(hint.qArea) / info->radius;
+            // The chord's midpoint lies towards the arc's middle for an arc shorter than half the circle, away from
+            // it for a longer one.
+            constexpr double kHalfTurn = 3.14159265358979323846;
+            const double towards = half > 0.5 * kHalfTurn ? -1.0 : 1.0;
+            const Vec3 m{towards * radial.x / rl, towards * radial.y / rl, towards * radial.z / rl};
+            const Vec3 r0 = sub(info->start, info->center);
+            const Vec3 r1{axis.y * r0.z - axis.z * r0.y, axis.z * r0.x - axis.x * r0.z, axis.x * r0.y - axis.y * r0.x};
+            auto at = [&](double a) {
+                const double ca = dmath::cos(a), sa = dmath::sin(a);
+                return Vec3{r0.x * ca + r1.x * sa, r0.y * ca + r1.y * sa, r0.z * ca + r1.z * sa};
+            };
+            double sweep = info->length / info->radius;
+            const Vec3 endRadial = sub(info->end, info->center);
+            if (norm(sub(at(sweep), endRadial)) > 1e-4 * std::max(1.0, info->radius)) {
+                sweep = -sweep;
+                if (norm(sub(at(sweep), endRadial)) > 1e-4 * std::max(1.0, info->radius))
+                    return false;
+            }
+            constexpr double kPi = 3.14159265358979323846;
+            const double margin = kContainTolerance / info->radius;
+            if (half - margin >= kPi)
+                return true;
+            const double cosLimit = dmath::cos(std::max(0.0, half - margin));
+            constexpr int kSteps = 64;
+            int inside = 0;
+            for (int i = 0; i < kSteps; ++i) {
+                const Vec3 v = at(sweep * (i + 0.5) / kSteps);
+                const double vl = norm(v);
+                if (vl > 0.0 && dot(v, m) / vl > cosLimit)
+                    ++inside;
+            }
+            const double shared = info->length * inside / kSteps;
+            return shared > std::max(kContainTolerance, 0.01 * q(hint.qArea));
         }
         return false;
     }
@@ -414,7 +546,102 @@ bool piecesLieAsPicked(const ElementMap& map, const kernel::Shape& shape, const 
             for (std::size_t j = i + 1; j < ends.size(); ++j)
                 if (norm(sub(ends[i], ends[j])) > reach + kContainTolerance)
                     return false;
+        // On a circle, within a chord of each other is not enough (on a small circle every point is within its
+        // diameter of every other): the pieces must fit in an arc no longer than the picked one, about their mean
+        // direction (T-081a holdout 18:5: the floor rim of a moved hole in two arcs, one where the picked arc went,
+        // the other on the far side of the rim).
+        // (A whole circle was picked when its length is the circumference, as onHintCarrier tells it.)
+        if (!line && radius > 0.0 && 2.0 * kPi * radius - length > 1e-3 * std::max(1.0, radius)) {
+            const auto first = kernel::curveInfo(shape, elements.front());
+            const double al = first ? norm(first->axis) : 0.0;
+            if (!first || !(al > 0.0))
+                return false;
+            const Vec3 axis{first->axis.x / al, first->axis.y / al, first->axis.z / al};
+            const Vec3 centre = first->center;
+            std::vector<Vec3> dirs;
+            for (const SubId& s : elements) {
+                const auto info = kernel::curveInfo(shape, s);
+                if (!info || !(info->radius > 0.0))
+                    return false;
+                const Vec3 r0 = sub(info->start, centre);
+                const Vec3 r1{axis.y * r0.z - axis.z * r0.y, axis.z * r0.x - axis.x * r0.z,
+                              axis.x * r0.y - axis.y * r0.x};
+                auto at = [&](double a) {
+                    const double ca = dmath::cos(a), sa = dmath::sin(a);
+                    return Vec3{r0.x * ca + r1.x * sa, r0.y * ca + r1.y * sa, r0.z * ca + r1.z * sa};
+                };
+                double sweep = info->closed ? 2.0 * kPi : info->length / info->radius;
+                if (norm(sub(at(sweep), sub(info->end, centre))) > 1e-4 * std::max(1.0, info->radius)) {
+                    sweep = -sweep;
+                    if (norm(sub(at(sweep), sub(info->end, centre))) > 1e-4 * std::max(1.0, info->radius))
+                        return false;
+                }
+                for (int k = 0; k <= 16; ++k) {
+                    const Vec3 v = at(sweep * k / 16.0);
+                    const double vl = norm(v);
+                    if (!(vl > 0.0))
+                        return false;
+                    dirs.push_back(Vec3{v.x / vl, v.y / vl, v.z / vl});
+                }
+            }
+            Vec3 mean{0, 0, 0};
+            for (const Vec3& v : dirs)
+                mean = Vec3{mean.x + v.x, mean.y + v.y, mean.z + v.z};
+            const double ml = norm(mean);
+            if (!(ml > 1e-9))
+                return false;
+            mean = Vec3{mean.x / ml, mean.y / ml, mean.z / ml};
+            const double half = 0.5 * length / radius + kContainTolerance / radius;
+            if (half < kPi) {
+                const double cosLimit = dmath::cos(half);
+                for (const Vec3& v : dirs)
+                    if (dot(v, mean) < cosLimit)
+                        return false;
+            }
+        }
     }
+    return true;
+}
+
+// The faces around the picked element at pick time, as they are now: the elements its neighbour names lead to, and
+// for a neighbour that was split, all its pieces.
+std::set<SubId> facesAroundPick(const ElementMap& map, const TopoRef& ref)
+{
+    std::set<SubId> out;
+    for (const Hash256& neighbour : ref.neighbourNames) {
+        Walk w;
+        walk(map, neighbour, ref.neighbourNames, 0, w);
+        out.insert(w.elements.begin(), w.elements.end());
+    }
+    return out;
+}
+
+// Do the face pieces of a Split stay on the picked element's side of every feature that bounded it? A piece may meet
+// faces that were around the picked element, faces of the other pieces, and faces of features that did not bound it
+// (the cut that split it). A piece that meets a face, not around the picked element, of a feature one of whose faces
+// WAS around it lies beyond a boundary the picked element had: the part of a chamfer beyond a pocket that bounded it
+// and has moved into its middle (T-081a random 11:12), the part of a boss's start face that now shows above the part
+// where the picked part showed below it (3:42). Such a piece is territory the picked element never had; the module
+// cannot tell how much of it, so the answer is Broken. Edges are not checked (their pieces lie on the same two faces;
+// the reach check of piecesLieAsPicked bounds them).
+bool facePiecesStayInside(const ElementMap& map, const kernel::Shape& shape, const std::vector<SubId>& pieces,
+                          const TopoRef& ref)
+{
+    if (pieces.empty() || pieces.front().kind != SubKind::Face)
+        return true;
+    const std::set<SubId> around = facesAroundPick(map, ref);
+    std::set<FeatureId> bounding;
+    for (const Hash256& neighbour : ref.neighbourNames)
+        if (const TopoName* record = map.record(neighbour))
+            bounding.insert(record->origin);
+    for (const SubId& piece : pieces)
+        for (const SubId& face : kernel::adjacent(shape, piece, SubKind::Face)) {
+            if (around.count(face) != 0 || std::binary_search(pieces.begin(), pieces.end(), face))
+                continue;
+            for (const Hash256& name : map.namesOf(face))
+                if (const TopoName* record = map.record(name); record != nullptr && bounding.count(record->origin) != 0)
+                    return false;
+        }
     return true;
 }
 
@@ -592,6 +819,9 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
         }
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
+        if (!facePiecesStayInside(map, shape, elements, ref))
+            return broken("The picked element came apart, and a piece lies beyond a face that bounded it when it was "
+                          "picked.");
         return make(ResolveState::Split, std::move(elements));
     }
 
@@ -622,7 +852,9 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
             if (unusable)
                 continue;
             if (wasAlone && members.size() > 1) {
-                if (!piecesLieAsPicked(map, shape, elements, ref.hint))
+                std::sort(elements.begin(), elements.end());
+                if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
+                    !facePiecesStayInside(map, shape, elements, ref))
                     continue;
                 return make(ResolveState::Split, std::move(elements));
             }
@@ -656,6 +888,74 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
 }
 
 } // namespace
+
+bool edgeContinuesUnderOtherName(const ElementMap& map, const kernel::Shape& shape, kernel::SubId edge)
+{
+    try {
+        if (edge.kind != SubKind::Edge || !map.impl)
+            return false;
+        // The face names each name of the edge was made from, and the pieces those faces were split into since.
+        std::set<Hash256> own, pieces;
+        for (const Hash256& name : map.namesOf(edge)) {
+            const TopoName* record = map.record(name);
+            if (record == nullptr || record->role != "nb.edge")
+                continue;
+            for (const Hash256& parent : record->parents) {
+                own.insert(parent);
+                for (const TopoName* child : splitChildren(map, parent))
+                    pieces.insert(child->id);
+            }
+        }
+        if (pieces.empty())
+            return false;
+        auto holds = [&](SubId face, const std::set<Hash256>& set) {
+            for (const Hash256& n : map.namesOf(face))
+                if (set.count(n) != 0)
+                    return true;
+            return false;
+        };
+        std::set<Hash256> ownOrPieces = own;
+        ownOrPieces.insert(pieces.begin(), pieces.end());
+        for (const SubId& vertex : kernel::adjacent(shape, edge, SubKind::Vertex))
+            for (const SubId& other : kernel::adjacent(shape, vertex, SubKind::Edge)) {
+                if (other == edge)
+                    continue;
+                const std::vector<SubId> faces = kernel::adjacent(shape, other, SubKind::Face);
+                if (faces.size() != 2)
+                    continue;
+                // One face a piece of a face the edge was named from, the other that face's partner or a piece of it.
+                const bool a = holds(faces[0], pieces) && holds(faces[1], ownOrPieces);
+                const bool b = holds(faces[1], pieces) && holds(faces[0], ownOrPieces);
+                if (a || b)
+                    return true;
+            }
+        return false;
+    } catch (...) {
+        return true;
+    }
+}
+
+bool holdsHintCentre(const kernel::Shape& shape, kernel::SubId face, const Fingerprint& hint)
+{
+    try {
+        if (face.kind != SubKind::Face)
+            return false;
+        const auto info = kernel::surfaceInfo(shape, face);
+        if (!info || info->type != kernel::SurfaceType::Plane)
+            return false;
+        const double n = norm(info->axis);
+        if (!(n > 0.0))
+            return false;
+        const Vec3 p{q(hint.qCx), q(hint.qCy), q(hint.qCz)};
+        const Vec3 axis{info->axis.x / n, info->axis.y / n, info->axis.z / n};
+        if (std::abs(dot(sub(p, info->origin), axis)) > kContainTolerance)
+            return false;
+        const auto inside = insidePlanarFace(shape, face, p, *info);
+        return inside.has_value() && *inside;
+    } catch (...) {
+        return false;
+    }
+}
 
 bool onPickedFaces(const ElementMap& map, const kernel::Shape& shape, kernel::SubId element, const TopoRef& ref)
 {
