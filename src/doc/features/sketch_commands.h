@@ -1,7 +1,11 @@
 // The sketch editing commands (task T-096), private to src/doc and its tests. Each edits the model of one sketch
 // feature ("id" is the sketch feature's id) and is one undo step. Ids of new entities may be given by the caller; when
 // they are not, they are derived from the sketch feature, the entity and the sketch's size, so a replay gives the
-// same ids. Coordinates are mm in the sketch plane. None of them solves: the rebuild does.
+// same ids. Coordinates are mm in the sketch plane. Each stores the sketch with its coordinates solved, in the same
+// undo step (sketch_feature.h, storedSketch): one pass over the constraints when they hold already (a drag's result,
+// a caller's "solved"), else a full solve on the calling thread; a failed or conflicting solve keeps the coordinates
+// the command produced and the rebuild reports it. Trim, extend, offset, split and fillet therefore compute on the
+// shape that is shown.
 //
 //   sketch.set               {"id", "sketch", "plane"?}         replaces the whole model (and the plane)
 //   sketch.entity.add        {"id", "entities": [...], "constraints"?: [...]}
@@ -42,8 +46,9 @@
 //                            unless a constraint still names it
 // Added for constraints and dimensions (task T-093):
 //   sketch.constraint.add / .remove / .set   also take "solved"?: the caller's solved form of the same model (a sketch
-//                            model, same entities): its point coordinates, circle radii and slot widths are stored
-//                            with the change, so the rebuild solves on from the shape that is shown
+//                            model, same entities): its point coordinates, circle radii and slot widths are where the
+//                            change is solved from (the shape that is shown); stored as given when they satisfy the
+//                            changed constraints already
 //   sketch.constraint.add    also takes "labels"?: {"<dimension id>": {"x", "y"}}: where the new dimensions' value
 //                            labels go (same step)
 //   sketch.dimension.place   {"id", "constraint", "offset": {"x", "y"} | null}

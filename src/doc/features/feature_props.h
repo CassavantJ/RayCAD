@@ -145,6 +145,13 @@ public:
     // Bodies the feature creates (an extrude or revolve with operation "new"): the add command lists them in the
     // document's bodies.
     virtual std::vector<BodyId> createdBodies(const Feature&) const { return {}; }
+    // The props the add and edit commands store for `feature`, checked by validate() as it stands in `state`: by
+    // default its props unchanged. A sketch stores its coordinates solved (sketch_feature.h, storedSketch).
+    virtual Result<std::string> storedProps(const DocState& state, const Feature& feature) const
+    {
+        (void)state;
+        return feature.propsJson;
+    }
     // The user-facing title of the type: "Extrude", "Sketch", ...
     virtual std::string_view title() const = 0;
 };

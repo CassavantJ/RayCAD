@@ -686,6 +686,11 @@ private:
         if (auto ok = type->validate(*next, at, feature); !ok) {
             return tl::unexpected(ok.error());
         }
+        auto stored = type->storedProps(*next, feature);
+        if (!stored) {
+            return tl::unexpected(stored.error());
+        }
+        next->features[at].propsJson = std::move(*stored);
         const std::vector<BodyId> created = type->createdBodies(feature);
         if (auto ok = checkCreatedBodies(*next, feature, created, name_); !ok) {
             return tl::unexpected(ok.error());
@@ -754,6 +759,11 @@ private:
         if (auto ok = type->validate(*next, at, feature); !ok) {
             return tl::unexpected(ok.error());
         }
+        auto stored = type->storedProps(*next, feature);
+        if (!stored) {
+            return tl::unexpected(stored.error());
+        }
+        feature.propsJson = std::move(*stored);
         const std::vector<BodyId> created = type->createdBodies(feature);
         if (auto ok = checkCreatedBodies(*next, feature, created, name_); !ok) {
             return tl::unexpected(ok.error());

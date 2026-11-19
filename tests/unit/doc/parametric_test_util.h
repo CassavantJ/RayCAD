@@ -63,6 +63,22 @@ public:
             R"(","end":")" + ent(end) + R"(","ccw":)" + (ccw ? "true" : "false") + "}");
         return *this;
     }
+    SketchJson& spline(std::uint64_t id, const std::vector<std::uint64_t>& points, int degree = 3)
+    {
+        std::string p;
+        for (std::uint64_t point : points) {
+            p += (p.empty() ? "\"" : ",\"") + ent(point) + "\"";
+        }
+        add(R"({"id":")" + ent(id) + R"(","type":"spline","points":[)" + p + R"(],"degree":)" + std::to_string(degree) +
+            "}");
+        return *this;
+    }
+    SketchJson& slot(std::uint64_t id, std::uint64_t a, std::uint64_t b, double width)
+    {
+        add(R"({"id":")" + ent(id) + R"(","type":"slot","a":")" + ent(a) + R"(","b":")" + ent(b) + R"(","width":)" +
+            num(width) + "}");
+        return *this;
+    }
     // A rectangle: points base..base+3 counter-clockwise from (x0, y0), lines base+4 (bottom), +5 (right), +6 (top),
     // +7 (left).
     SketchJson& rect(std::uint64_t base, double x0, double y0, double x1, double y1)

@@ -15,6 +15,7 @@ add_executable(ray_doc_tests
     sketch_stability_test.cpp
     sketch_tool_commands_test.cpp
     sketch_dimension_commands_test.cpp
+    sketch_solved_store_test.cpp
     state_test.cpp
 )
 # The rebuild tests use kernel shapes and element maps directly (PLAN.md 1.1 lets doc depend on kernel and naming).

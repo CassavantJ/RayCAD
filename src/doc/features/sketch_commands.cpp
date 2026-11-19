@@ -57,7 +57,10 @@ Result<Editing> open(const Args& args, const DocState& before)
     Editing out;
     out.next = std::make_shared<DocState>(before);
     out.index = static_cast<std::size_t>(it - before.features.begin());
-    out.model = std::move(*model);
+    // The shape as it is shown now: a parameter edit (param.set) changes a dimensioned sketch without a sketch
+    // command, and a file from before stored sketches solved holds other coordinates; trim, extend, offset, split
+    // and fillet compute on this model. Already solved (the usual case): one pass over the constraints.
+    out.model = storedSketch(before, std::move(*model));
     out.feature = FeatureId{*id};
     return out;
 }
@@ -115,11 +118,12 @@ Result<std::string> withLabels(const std::string& where, const std::string& prop
     return json::write(Value::object(std::move(members)));
 }
 
-// Writes `model` into the feature and checks it as the sketch type does for its own commands.
+// Writes `model` into the feature, its coordinates solved (storedSketch: the document holds the shape the rebuild
+// shows, in the same undo step), and checks it as the sketch type does for its own commands.
 Result<DocStatePtr> commit(Editing& e, const Sketch& model, const std::string& command, const LabelEdits& labels = {})
 {
     Feature& feature = e.next->features[e.index];
-    RAY_TRY(props, withSketch(feature, model));
+    RAY_TRY(props, withSketch(feature, storedSketch(*e.next, model)));
     RAY_TRY(labelled, withLabels(command, *props, model, labels));
     feature.propsJson = std::move(*labelled);
     const auto registry = builtinFeatureRegistry();
@@ -625,8 +629,10 @@ Result<LabelEdits> labelArg(const Args& args, std::string_view key, const Sketch
 }
 
 // T-093: "solved" is the caller's solved form of the same model (sketch_json.h form): its coordinates (points, circle
-// radii, slot widths) replace the stored ones, so the stored shape is the one the person sees and the rebuild solves
-// on from there (a solve from stale coordinates can land on another solution, e.g. a point on the far side of a line).
+// radii, slot widths) replace the stored ones before the change is solved (commit), so the solve starts from the
+// shape the person sees. When they already satisfy the changed constraints (the caller solved the result) commit
+// stores them without solving; otherwise they are only the starting point and the stored sketch is solved from them.
+// Either way what is stored satisfies the constraints, so a caller's "solved" cannot leave the document unsolved.
 Status takeSolved(const Args& args, Sketch& model)
 {
     RAY_TRY(value, args.optValue("solved"));

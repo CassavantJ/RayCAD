@@ -4,7 +4,8 @@
 //         "sketch": <sketch model, sketch_json.h>,
 //         "labels"?: {"<dimension id>": {"x", "y"}}}   (T-093: dimension label offsets, display only)
 // The model is stored in the feature itself (not as a separate object): the feature object is content-addressed
-// already, and a sketch is small. Its point coordinates are the last solved ones, so a file opens without a solve.
+// already, and a sketch is small. Its point coordinates are the solved ones (storedSketch: every command that writes a
+// sketch stores it solved), so a rebuild or a reload solves to the shape that was shown.
 //
 // Rebuild: resolves the plane at this point of the history (a face as it is just before the sketch), evaluates the
 // dimension expressions, solves (sketch::ISketchSolver), finds the closed regions (sketch::closedLoops) and publishes
@@ -59,5 +60,23 @@ double profileLoopArea2(const kernel::ProfileLoop& loop);
 Result<sketch::Sketch> sketchOfFeature(const Feature& feature, bool strict);
 // The props of a sketch feature with its model replaced.
 Result<std::string> withSketch(const Feature& feature, const sketch::Sketch& model);
+
+// What storedSketch did with a model.
+enum class StoredSketch {
+    AsGiven,   // every constraint held at the given coordinates already (or there is nothing to solve): no solve
+    Solved,    // the coordinates were replaced by a solve's
+    NotSolved, // the solve failed, the constraints conflict, or an expression does not evaluate: kept as given
+};
+// The model as a command stores it (every sketch.* command, feature.sketch.add and .edit): with the coordinates the
+// rebuild's solve gives (points, circle radii), so the document holds the shape the person sees and every later solve
+// (a new constraint, a dimension edit, a drag, a drawing step on this geometry, a reload) starts from it. A solve from
+// other coordinates can land on another solution (a tangent arc the other way round, a point on the far side of a
+// line), and the tools that compute on the stored geometry (trim, extend, offset, fillet) would act on a shape that
+// is not shown. Dimension expressions are evaluated over `state`'s parameters for the solve only; the constraints are
+// stored as given. A model whose constraints hold at its coordinates already is returned unchanged without a solve
+// (sketch::constraintsHold), so a commit of an already solved shape (a drag, a caller's "solved") costs one pass
+// over the constraints. A failed or conflicting solve never replaces the coordinates: they stay as given and the
+// rebuild reports the status.
+sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredSketch* outcome = nullptr);
 
 } // namespace ray::doc::features

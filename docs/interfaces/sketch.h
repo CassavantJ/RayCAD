@@ -90,6 +90,12 @@ public:
 };
 std::unique_ptr<ISketchSolver> makePlaneGcsSolver();
 
+// True when every driving constraint (and the rule that keeps an arc's ends on its circle) already holds at the
+// sketch's coordinates, to the tolerance a solve accepts, so solve() would move nothing beyond it. No diagnosis and
+// no iteration: one pass over the constraints, cheap enough for the UI thread. A sketch solve() cannot translate
+// gives the same error. Used by the document to store sketches solved without solving twice.
+Result<bool> constraintsHold(const Sketch&);
+
 // Auto-constraint suggestions while drawing (snap tolerance in screen-independent mm).
 std::vector<Constraint> inferConstraints(const Sketch&, SketchEntId newEntity, double tolerance);
 

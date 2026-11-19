@@ -4,7 +4,9 @@
 #include "sketch_json.h"
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
+#include <map>
 #include <new>
 #include <set>
 #include <utility>
@@ -181,6 +183,20 @@ public:
             }
         }
         return {};
+    }
+
+    Result<std::string> storedProps(const DocState& state, const Feature& f) const override
+    {
+        auto props = parse(f, false);
+        if (!props) {
+            return tl::unexpected(props.error());
+        }
+        StoredSketch outcome = StoredSketch::AsGiven;
+        sketch::Sketch model = storedSketch(state, std::move(props->model), &outcome);
+        if (outcome != StoredSketch::Solved) {
+            return f.propsJson;
+        }
+        return withSketch(f, model);
     }
 
     Result<FeatureOutput> rebuild(const Feature& f, RebuildContext& ctx) const override
@@ -378,6 +394,68 @@ Result<std::string> withSketch(const Feature& feature, const sketch::Sketch& mod
     }
     members.push_back({"sketch", sketchToJson(model)});
     return json::write(Value::object(std::move(members)));
+}
+
+sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredSketch* outcome)
+{
+    const auto report = [&](StoredSketch o) {
+        if (outcome != nullptr) {
+            *outcome = o;
+        }
+    };
+    report(StoredSketch::AsGiven);
+    if (model.entities.empty()) {
+        return model;
+    }
+    sketch::Sketch evaluated = model;
+    if (!evaluateDimensions(evaluated, documentParams(state).values, "sketch")) {
+        report(StoredSketch::NotSolved); // the command's own check names the expression
+        return model;
+    }
+    const Result<bool> holds = sketch::constraintsHold(evaluated);
+    if (!holds) {
+        report(StoredSketch::NotSolved); // cannot be translated; the rebuild reports why
+        return model;
+    }
+    if (*holds) {
+        return model;
+    }
+    JobContext ctx;
+    const auto solver = sketch::makePlaneGcsSolver();
+    auto solved = solver->solve(evaluated, ctx);
+    if (!solved || solved->status == sketch::SolveStatus::Failed ||
+        solved->status == sketch::SolveStatus::Conflicting) {
+        report(StoredSketch::NotSolved);
+        return model;
+    }
+    std::map<SketchEntId, const sketch::Entity*> byId;
+    for (const sketch::Entity& e : solved->solved.entities) {
+        byId.emplace(e.id, &e);
+    }
+    sketch::Sketch out = model;
+    for (sketch::Entity& e : out.entities) {
+        const auto it = byId.find(e.id);
+        if (it == byId.end()) {
+            continue;
+        }
+        if (auto* p = std::get_if<sketch::Point>(&e.geom)) {
+            const auto* q = std::get_if<sketch::Point>(&it->second->geom);
+            if (q == nullptr || !std::isfinite(q->p.x) || !std::isfinite(q->p.y)) {
+                report(StoredSketch::NotSolved);
+                return model;
+            }
+            p->p = q->p;
+        } else if (auto* c = std::get_if<sketch::Circle>(&e.geom)) {
+            const auto* d = std::get_if<sketch::Circle>(&it->second->geom);
+            if (d == nullptr || !std::isfinite(d->radius) || !(d->radius > 0)) {
+                report(StoredSketch::NotSolved); // the props need a positive radius
+                return model;
+            }
+            c->radius = d->radius;
+        }
+    }
+    report(StoredSketch::Solved);
+    return out;
 }
 
 std::unique_ptr<IFeatureType> makeSketchFeatureType()

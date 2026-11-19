@@ -191,4 +191,26 @@ std::unique_ptr<ISketchSolver> makePlaneGcsSolver()
     return std::make_unique<PlaneGcsSolver>();
 }
 
+Result<bool> constraintsHold(const Sketch& sketch)
+{
+    detail::pinEigenCacheSizes();
+    auto built = detail::buildModel(sketch);
+    if (!built) {
+        return tl::unexpected(built.error());
+    }
+    // The same objects solve() hands to PlaneGCS (redundant ones included), evaluated where they are, against the
+    // test solve() applies to its own result: a solve from here starts with residuals it would accept as solved,
+    // so it moves nothing beyond them (System::solve_DL stops before its first step below DL_tolf).
+    std::vector<std::unique_ptr<GCS::Constraint>> owned;
+    std::vector<GCS::Constraint*> objects;
+    const Status emitted = detail::emitConstraints(**built, [&](GCS::Constraint* c) {
+        owned.emplace_back(c);
+        objects.push_back(c);
+    });
+    if (!emitted) {
+        return tl::unexpected(emitted.error());
+    }
+    return detail::maxConstraintError(objects) <= detail::kHoldTolerance;
+}
+
 } // namespace ray::sketch
