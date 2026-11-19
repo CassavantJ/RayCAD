@@ -448,6 +448,12 @@ const std::map<std::string, std::string>& reviewedTerritory()
     return list;
 }
 
+const std::map<std::string, std::string>& reviewedUnjudged()
+{
+    static const std::map<std::string, std::string> list = loadReviewed("reviewed_unjudged.txt");
+    return list;
+}
+
 const std::map<std::string, std::string>& reviewedConflicts()
 {
     static const std::map<std::string, std::string> list = loadReviewed("reviewed_conflicts.txt");
@@ -585,6 +591,7 @@ void Tally::merge(const Tally& o)
     acceptedReviewed += o.acceptedReviewed;
     conflicts += o.conflicts;
     conflictsReviewed += o.conflictsReviewed;
+    unjudgedReviewed += o.unjudgedReviewed;
     conflictsOther += o.conflictsOther;
     congruentGhosts += o.congruentGhosts;
     injectivity += o.injectivity;
@@ -686,6 +693,16 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
                             (it != reviewedConflicts().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)
             log.notes.push_back(verbose());
+    }
+    if (v == Verdict::Unjudged) {
+        const auto it = reviewedUnjudged().find(id);
+        if (it != reviewedUnjudged().end())
+            ++tally.unjudgedReviewed;
+        log.notes.push_back("UNJUDGED " + id + ": resolver " + answer + ", " +
+                            (rr.noAnchor.empty() ? std::string("whether the element also continues another piece of "
+                                                               "the logical element cannot be told")
+                                                 : rr.noAnchor) +
+                            (it != reviewedUnjudged().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
     }
     if (rr.conflict == 2)
         ++tally.conflictsOther;
@@ -837,8 +854,9 @@ void printTally(const char* title, const Tally& t)
                 v(Verdict::WrongSilentMerge));
     std::printf("  among references whose element still exists: %s%% Exact, Split or Merged (%ld of %ld)\n",
                 percent(t.existingOk, t.existing).c_str(), t.existingOk, t.existing);
-    std::printf("  continuation unknown (no anchor): %ld references; blend picks not judged (no description): %ld\n",
-                t.noAnchor, t.picksUnjudged);
+    std::printf("  continuation unknown (no anchor): %ld references (%ld answered other than Broken: NOT JUDGED, %ld of "
+                "them reviewed); blend picks not judged (no description): %ld\n",
+                t.noAnchor, t.unjudged(), t.unjudgedReviewed, t.picksUnjudged);
     std::printf("  new-territory acceptances: %ld (%ld on the reviewed list, %ld NOT REVIEWED)\n", t.accepted,
                 t.acceptedReviewed, t.accepted - t.acceptedReviewed);
     std::printf(

@@ -27,6 +27,10 @@
 //     discriminator, the sorted names of the faces around the element that are not among its own faces or its
 //     parents (for a face: its neighbours; for an edge: the faces at its end vertices; for a vertex: the faces at
 //     the far ends of its edges). Names made by the current feature are tried first, then all names.
+//     A discriminator made from all names carries allFacesDiscriminatorMark (naming_internal.h), so it never equals
+//     one made from the current feature's names. The only piece of a split element that gets a piece name while
+//     others do not (they left the element's faces) is issued with the number of pieces as its sibling count and that
+//     mark: which piece it is is not said by the name.
 //     Only siblings with identical discriminators get an ordinal (1-based, by fingerprint, ties share it). The
 //     sibling count, hashed into the name, is the size of the family when it was issued (as nameImported does), so
 //     a resolver can tell that a family it finds is incomplete: a member that was later split or deleted is
@@ -72,10 +76,13 @@ Hash256 loopTagParent(std::uint64_t loopTag);
 //  4. Repaired: exactly one element matches the hint, and the faces around it are exactly the faces the
 //     reference's neighbour names resolve to.
 // Every Split (stage 2 or 3) must also pass a geometric check of its pieces against the hint: together no larger
-// than the picked element, and each on the picked element's carrier near where it was (or touching such a piece
-// on the same carrier), or all on one carrier within the picked element's length of each other (it moved, then
-// came apart); else Broken. A separate element on the same faces (a cross hole's exit loop, a hole's other
-// breakout line, a piece of the face that a smaller cut brings back) is not a piece.
+// than the picked element, and each on the picked element's carrier near where it was, sharing a stretch of a picked
+// line or arc (or touching such a piece on the same carrier), or all on one carrier within the picked element's
+// length of each other (it moved, then came apart); else Broken. A separate element on the same faces (a cross hole's
+// exit loop, a hole's other breakout line, a piece of the face that a smaller cut brings back) is not a piece. A face
+// piece must also not meet a face, not around the picked element, of a feature that had a face around it (it would
+// lie beyond a boundary the picked element had: facePiecesStayInside). A Merged by the family or split-parent rule
+// onto a planar face needs the picked centroid inside the face's outline, not only its box.
 // Every edge or vertex answer must also pass onPickedFaces. nullopt means none applies (the caller reports
 // Broken). A name the reference holds that is ambiguous is never followed past the Exact stage (its element
 // could have been a sibling). Never throws.

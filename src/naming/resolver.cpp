@@ -157,14 +157,13 @@ private:
         // An edge or vertex whose faces are no longer the ones it was picked on is another element (T-081a).
         if (!detail::onPickedFaces(map, body.shape, element, ref))
             return broken("The picked element no longer lies on the faces it was picked on.");
-        // A planar face that grew where it was picked holds what was picked plus more: Merged, not Exact. What it grew
-        // over may have been empty, or a face of another feature on the same plane whose name does not survive the
-        // edit (T-081a random 6:29: the bottom face of a flange took in the ceiling of a slot that cut into a boss
-        // under it, once the boss was suppressed); the names cannot tell which.
-        if (element.kind == kernel::SubKind::Face && !now.matches(ref.hint) &&
+        // A face or edge that grew is the picked element plus more: Merged, not Exact (consumers review it, as a
+        // Split). What it grew over may have been empty, or an element of another feature on the same surface whose
+        // name does not survive the edit (T-081a random 6:29: the bottom face of a flange took in the ceiling of a
+        // slot that cut into a boss under it, once the boss was suppressed); the names cannot tell which.
+        if (element.kind != kernel::SubKind::Vertex && !now.matches(ref.hint) &&
             static_cast<double>(now.qArea) >
-                static_cast<double>(ref.hint.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta &&
-            detail::holdsHintCentre(body.shape, element, ref.hint))
+                static_cast<double>(ref.hint.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta)
             return Resolved{ResolveState::Merged, {element}, {}};
         return Resolved{ResolveState::Exact, {element}, {}};
     }

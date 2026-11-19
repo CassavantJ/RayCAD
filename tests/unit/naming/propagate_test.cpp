@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <optional>
 #include <thread>
 #include <utility>
@@ -455,4 +456,98 @@ TEST_CASE("propagate output is byte-identical across runs and thread counts", "[
         t.join();
     for (const auto& r : results)
         CHECK(r == reference);
+}
+
+// ---------------------------------------------------------------- T-081a gate regressions (mechanisms)
+
+TEST_CASE("siblings told apart by all faces around them are marked and need their hint; by the issuing feature's "
+          "faces they are not",
+          "[naming][propagate][t081a-gate]")
+{
+    // Random sequence 19:1: two pieces of a cut wall, told apart by the cutting feature's faces in one build and by
+    // all faces in the next, swapped names because the two modes gave equal discriminators. Here: a rectangle whose
+    // bottom and top lines share a sketch tag, so their side faces are siblings that only all-around faces (which are
+    // the same for both) could tell apart: the fallback mode, marked.
+    JobContext ctx;
+    kernel::ProfileLoop loop = rectangle(0, 0, 100, 60, 1, 1);
+    loop.curves[2].tag = loop.curves[0].tag;
+    auto sweep = take(kernel::extrude(kernel::Profile{xy(0), {loop}}, 20, 0.0, ctx));
+    const NamingInput in{kBase, "extrude", {}, nullptr, &sweep.op.shape, sweep.origins};
+    const NamingOutput out = take(propagate(in));
+    const Hash256 mark = naming::detail::allFacesDiscriminatorMark();
+    int marked = 0;
+    for (std::uint32_t i = 0; i < sweep.op.shape.count(SubKind::Face); ++i)
+        for (const Hash256& n : out.map.namesOf(SubId{SubKind::Face, i})) {
+            const TopoName* r = out.map.record(n);
+            REQUIRE(r != nullptr);
+            const bool hasMark = std::binary_search(r->discriminator.begin(), r->discriminator.end(), mark);
+            if (r->siblingCount > 1) {
+                CHECK(hasMark);
+                CHECK(naming::detail::needsHint(*r));
+                ++marked;
+            } else {
+                CHECK_FALSE(hasMark);
+            }
+        }
+    CHECK(marked == 2);
+    // Pieces of a face split by a cut, told apart by the cut's own walls: not marked, and a face piece does not need
+    // its hint (spike S4 V34 must stay Exact when an unrelated cut shrinks one piece).
+    const Body cut = boolean(block(), kCut, kernel::BoolOp::Cut, xy(15), rectangle(40, -5, 60, 70, 11, 2), 10);
+    int pieces = 0;
+    for (const SubId s : test::allElements(cut.shape))
+        for (const Hash256& n : cut.map.namesOf(s)) {
+            const TopoName* r = cut.map.record(n);
+            REQUIRE(r != nullptr);
+            if (r->role != "split" || s.kind != SubKind::Face)
+                continue;
+            ++pieces;
+            CHECK_FALSE(std::binary_search(r->discriminator.begin(), r->discriminator.end(), mark));
+            CHECK_FALSE(naming::detail::needsHint(*r));
+        }
+    CHECK(pieces >= 2);
+}
+
+TEST_CASE("the only piece of a split element that keeps a piece name counts every piece and needs its hint",
+          "[naming][propagate][t081a-gate]")
+{
+    // Random sequence 3:10: an edge came out of a boolean in two pieces, one of which no longer lay on the edge's
+    // faces and was named from its own; the other got a piece name issued "alone", the same name whichever piece it
+    // was, and in the next build it was a piece on another line. Here a history says edge e0 of a block became itself
+    // and an edge on none of its faces.
+    const Body b = block();
+    const auto facesOf = [&](SubId e) {
+        return kernel::adjacent(b.shape, e, SubKind::Face);
+    };
+    const SubId e0{SubKind::Edge, 0};
+    SubId other{};
+    bool found = false;
+    for (std::uint32_t i = 1; i < b.shape.count(SubKind::Edge) && !found; ++i) {
+        const SubId e{SubKind::Edge, i};
+        std::vector<SubId> common;
+        const auto a = facesOf(e0), c = facesOf(e);
+        std::set_intersection(a.begin(), a.end(), c.begin(), c.end(), std::back_inserter(common));
+        if (common.empty()) {
+            other = e;
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    kernel::ShapeHistory h;
+    for (const SubId s : test::allElements(b.shape)) {
+        std::vector<SubId> results{s};
+        if (s == e0)
+            results = {e0, other};
+        std::sort(results.begin(), results.end());
+        h.entries.push_back({kernel::HistoryEntry::Relation::Modified, 0, s, results});
+    }
+    const std::array<const ElementMap*, 1> maps{&b.map};
+    const NamingInput in{kCut, "extrude", maps, &h, &b.shape, {}};
+    const NamingOutput out = take(propagate(in));
+    const auto names = out.map.namesOf(e0);
+    REQUIRE(names.size() == 1);
+    const TopoName* r = out.map.record(names[0]);
+    REQUIRE(r != nullptr);
+    CHECK(r->role == "split");
+    CHECK(r->siblingCount == 2);
+    CHECK(naming::detail::needsHint(*r));
 }

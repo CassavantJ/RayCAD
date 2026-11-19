@@ -737,22 +737,31 @@ Owners buildOwners(const Script& script)
                 Owner o;
                 o.key = key;
                 o.cat = fillet ? "fillet face" : "chamfer face";
-                // (A torus whose tube is as wide as its ring is not what the kernel builds: a fillet larger than the
-                // corner arc it rounds gets another surface.)
-                if (!blendCarrier(*A, *B, fillet, f.targets[k].convex, f.size, o.c) ||
-                    (o.c.k == Carrier::K::Torus && !(o.c.r > o.c.r2))) {
+                if (!blendCarrier(*A, *B, fillet, f.targets[k].convex, f.size, o.c)) {
                     O.undescribable.insert(key);
                     continue;
                 }
+                // A torus whose tube is as wide as its ring (a fillet at least as large as the corner arc it rounds)
+                // may or may not be what the kernel builds (Owners::degenerate).
+                if (o.c.k == Carrier::K::Torus && !(o.c.r > o.c.r2))
+                    O.degenerate.insert(key);
                 const Owner a = *A, b = *B;
                 const double rho = f.size;
                 // Within the blend size of both carriers, over both extents. The extents get a little more room
                 // (5 % of the size): where a blend runs onto another blend, the parents' own extents are
-                // approximations at their ends.
+                // approximations at their ends. Along a parent, a blend reaches past the parent's own face by as much
+                // as the largest other blend on that parent cut its end back (a fillet that runs into a larger
+                // chamfer at a corner, random 16:15); it stays within its own size of both carriers in any case.
                 const double slack = 0.01 + 0.05 * rho;
+                double reach = rho;
+                for (const Feature& g : script)
+                    if (!g.suppressed && &g != &f && (g.type == FType::Fillet || g.type == FType::Chamfer))
+                        for (const Target& t : g.targets)
+                            if (t.a == a.key || t.b == a.key || t.a == b.key || t.b == b.key)
+                                reach = std::max(reach, g.size);
                 o.in = [=](const Vec3& p, double m) {
                     return std::abs(a.c.dist(p)) <= rho + m + 1e-3 && std::abs(b.c.dist(p)) <= rho + m + 1e-3 &&
-                           a.in(p, m + rho + slack) && b.in(p, m + rho + slack);
+                           a.in(p, m + reach + slack) && b.in(p, m + reach + slack);
                 };
                 addOwner(std::move(o));
             }
@@ -1672,6 +1681,14 @@ std::string featureOfOwner(const std::string& key)
     return key.substr(0, key.find('/'));
 }
 
+// similarMap backwards: the point of sweep a's frame that similarMap(a, b, k, .) carries to p.
+Vec3 similarUnmap(const Feature& a, const Feature& b, double k, const Vec3& p)
+{
+    const Vec3 d = sub(p, b.frame.o);
+    const double u = dot(d, b.frame.xd), v = dot(d, b.frame.yd()), h = dot(d, b.frame.n);
+    return add(add(add(a.frame.o, mul(a.frame.xd, u / k)), mul(a.frame.yd(), v / k)), mul(a.frame.n, h));
+}
+
 // Is p inside the volume sweep f swept, at least m from its boundary? (A point on the boundary lies on the sweep's
 // own faces, which move by their own carriers.)
 bool insideSweep(const Feature& f, const Vec3& p, double m)
@@ -1833,6 +1850,18 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
     const Feature* simA = nullptr;
     const Feature* simB = nullptr;
     double simK = 1;
+    auto useSimilarity = [&](const std::string& feature, bool requireChange) {
+        const auto a = before.sweeps.find(feature);
+        const auto b = after.sweeps.find(feature);
+        if (a == before.sweeps.end() || b == after.sweeps.end())
+            return;
+        const auto k = profileScale(a->second, b->second);
+        if (!k || (requireChange && *k == 1.0 && norm(sub(a->second.frame.o, b->second.frame.o)) <= 1e-12))
+            return;
+        simA = &a->second;
+        simB = &b->second;
+        simK = *k;
+    };
     if (ownChanged) {
         std::set<std::string> changedFeatures;
         for (const Constraint& c : d.cons)
@@ -1842,15 +1871,23 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
                 if (o0 != nullptr && o1 != nullptr && carrierChanged(o0->c, o1->c))
                     changedFeatures.insert(featureOfOwner(alt));
             }
-        if (changedFeatures.size() == 1) {
-            const auto a = before.sweeps.find(*changedFeatures.begin());
-            const auto b = after.sweeps.find(*changedFeatures.begin());
-            if (a != before.sweeps.end() && b != after.sweeps.end())
-                if (const auto k = profileScale(a->second, b->second)) {
-                    simA = &a->second;
-                    simB = &b->second;
-                    simK = *k;
-                }
+        if (changedFeatures.size() == 1)
+            useSimilarity(*changedFeatures.begin(), false);
+    } else {
+        // Every face of the element is a face of one sweep that moved or was scaled, though none of their carriers
+        // changed (a start cap on the face the sweep was sketched on, a wall along the direction of the move): the
+        // element is part of that sweep and moves with it (random 14:46: a boss's start face, the boss moved by its
+        // width along the face).
+        std::set<std::string> features;
+        for (const Constraint& c : d.cons)
+            for (const auto& alt : c.alts)
+                features.insert(featureOfOwner(alt));
+        if (features.size() == 1) {
+            useSimilarity(*features.begin(), true);
+            if (simA != nullptr) {
+                ownChanged = true;
+                moved = true;
+            }
         }
     }
     auto mapPoint = [&](const Vec3& p, Vec3& q) {
@@ -2086,6 +2123,15 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     const TruthEval L = evalTruth(withoutSeparators(d), now, smp);
     std::set_union(L.elems.begin(), L.elems.end(), x.strict.elems.begin(), x.strict.elems.end(),
                    std::back_inserter(x.logical));
+    // A description using a degenerate blend surface that nothing of the edited shape fits: the kernel built another
+    // surface, and where the blend went cannot be told (Owners::degenerate).
+    if (x.logical.empty())
+        for (const Constraint& c : d.cons)
+            for (const std::string& alt : c.alts)
+                if (now.degenerate.count(alt) != 0) {
+                    x.noAnchor = "the edited script's " + alt + " is a degenerate blend that no element fits";
+                    return x;
+                }
     x.component = componentsOf(x.logical, x.kind, smp);
     x.anchored.resize(x.logical.size(), 0);
     for (std::size_t i = 0; i < x.logical.size(); ++i)
@@ -2119,11 +2165,13 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     }
     const auto cong = congruent(pick.picked(), x.kind, smp, overlapTolerance(x.kind));
     x.congruentIndex = cong.size() == 1 ? static_cast<long>(cong[0]) : -1;
-    // Nothing the picked element depends on changed, and one element of the logical element lies exactly where it
-    // was with the same extent: that element is its continuation, all of it and nothing else. (Overlap alone would
+    // Nothing the picked edge or vertex depends on changed, and one element of the logical element lies exactly where
+    // it was with the same extent: that element is its continuation, all of it and nothing else. (Overlap alone would
     // also take in a short edge that leaves the picked one's end at a small angle, sharing a stretch within the
-    // tolerance.)
-    if (!x.moved && x.congruentIndex >= 0 && x.inLogical(static_cast<std::uint32_t>(x.congruentIndex)) &&
+    // tolerance.) Not for faces: congruence of faces is judged within the sample mesh's slack, and a strip narrower
+    // than that, split off the picked face, would pass for nothing.
+    if (x.kind != SubKind::Face && !x.moved && x.congruentIndex >= 0 &&
+        x.inLogical(static_cast<std::uint32_t>(x.congruentIndex)) &&
         !sliver(N[static_cast<std::size_t>(x.congruentIndex)], x.kind)) {
         x.expected = TruthEval{};
         x.expected.elems = {static_cast<std::uint32_t>(x.congruentIndex)};
@@ -2159,13 +2207,41 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         FitMasks masks;
         evalTruthImpl(d, now, smp, &masks);
         const auto& B = pick.baseline->of(x.kind);
+        // (On a baseline element other than the picked one: where the picked element itself was is not something else's
+        // territory, also when the picked element moved away from it.)
         auto onBaseline = [&](const Vec3& p, const ElemSamples& of) {
-            for (const ElemSamples& b : B)
-                if (!b.pts.empty() && sameSheet(of, b, x.kind) &&
+            for (std::uint32_t i = 0; i < B.size(); ++i) {
+                const ElemSamples& b = B[i];
+                if (i != pick.base.index && !b.pts.empty() && sameSheet(of, b, x.kind) &&
                     nearInterior(p, b, x.kind, kAnchorTolerance, besideMargin(b, x.kind)))
                     return true;
+            }
             return false;
         };
+        // When every face of the description is one sweep's and that sweep moved or was scaled (profileScale), the
+        // picked element moved with it, and so did everything else of that sweep: a point is checked where it was
+        // (elements that did not move) and where the sweep's map brings it from (elements that moved with it). A part
+        // on neither is new territory (the floor of a moved pocket where a suppressed cut had taken a corner of it).
+        const Feature* fa = nullptr;
+        const Feature* fb = nullptr;
+        double fk = 1;
+        {
+            std::set<std::string> features;
+            for (const Constraint& c : d.cons)
+                for (const auto& alt : c.alts)
+                    features.insert(featureOfOwner(alt));
+            if (features.size() == 1) {
+                const auto a = pick.owners->sweeps.find(*features.begin());
+                const auto b = now.sweeps.find(*features.begin());
+                if (a != pick.owners->sweeps.end() && b != now.sweeps.end())
+                    if (const auto k = profileScale(a->second, b->second)) {
+                        fa = &a->second;
+                        fb = &b->second;
+                        fk = *k;
+                    }
+            }
+        }
+        const bool movedWithSweep = x.moved && fa != nullptr;
         std::vector<std::uint32_t> still;
         for (const std::uint32_t e : te.partial) {
             const std::vector<char>* mask = nullptr;
@@ -2183,6 +2259,8 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                     continue; // on what was picked
                 if (!x.moved && !onBaseline(p, N[e]))
                     continue; // new territory
+                if (movedWithSweep && !onBaseline(p, N[e]) && !onBaseline(similarUnmap(*fa, *fb, fk, p), N[e]))
+                    continue; // new territory of an element that moved with its sweep
                 merged = true;
                 if (std::getenv("RAYCAD_ORACLE_DEBUG") != nullptr)
                     std::fprintf(stderr, "ownTerritory: element %u sample (%.4f %.4f %.4f) moved %d\n", e, p.x, p.y,
@@ -2222,6 +2300,16 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     x.expected.merged = !x.expected.partial.empty();
     withoutSlivers(x.expected);
     ownTerritory(x.expected);
+    // A weak reference that moved, whose mapped pick and the mapped position of another piece of its logical element
+    // both fall on one element: the map is only good to the anchor tolerance, and a vertex where a moved wall meets
+    // an unmoved curved face slides along it, so whether that element continues both (a merge) or only one cannot be
+    // told.
+    // A Merged answer with exactly E is right either way; only an Exact one cannot be judged (Expectation::
+    // mergeUnknown).
+    if (x.weak && x.moved)
+        for (const std::uint32_t e : x.expected.elems)
+            if (x.isAnchored(e) && x.isClaimed(e))
+                x.mergeUnknown = true;
     if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
         x.twins = true;
         const Vec3 p = N[x.expected.elems.front()].nodes.front();
@@ -2366,12 +2454,16 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
         else if (answer == Answer::Exact || answer == Answer::Repaired) {
             // The one piece that continues the pick; an element that also continues another baseline piece is a
             // merge, and with two or more pieces the pick came apart.
-            if (X.size() != 1)
+            if (X.size() != 1) {
                 j.verdict = Verdict::WrongOther;
-            else if (X != E)
+            } else if (X != E) {
                 j.verdict = Verdict::WrongIncomplete;
-            else
+            } else if (x.mergeUnknown) {
+                j.verdict = Verdict::Unjudged;
+                j.unjudged = true;
+            } else {
                 j.verdict = x.expected.merged ? Verdict::WrongSilentMerge : Verdict::Correct;
+            }
         } else
             j.verdict = X == E ? Verdict::Correct : Verdict::WrongIncomplete;
         return j;

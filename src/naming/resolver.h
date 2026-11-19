@@ -3,9 +3,12 @@
 // ResolverBody and makeResolver are declared in the public naming.h (moved there by T-010 for the document
 // rebuilder). The stages resolve() runs:
 //  1. Exact: every name of the reference is found, all on the same element of the right kind, and that element
-//     holds no other name; for any of them that is ambiguous, the element's fingerprint must still match the
+//     holds no other name; for any of them that needs its hint (detail::needsHint: an ordinal, a discriminator made
+//     from all faces around, an edge or vertex among siblings), the element's fingerprint must still match the
 //     reference's hint, and an edge or vertex must still lie on the faces it was picked on
-//     (detail::onPickedFaces), else Broken.
+//     (detail::onPickedFaces), else Broken. Further (T-081a gate): a stub of under 1e-3 mm left by a cut is Broken; a
+//     face or edge among siblings that grew is Broken; a face among siblings whose geometry changed must still hold
+//     its picked centroid (detail::holdsHintCentre), else Broken; a face or edge that grew is Merged, not Exact.
 //  2. (T-081a) names followed through the current build: Split / Merged.
 //  3. (T-081a) family rule and split parent: Split / Merged.
 //  4. (T-081a) Repaired: one fingerprint match surrounded by exactly the faces the neighbour names resolve to.

@@ -1,0 +1,4 @@
+# Answers the naming oracle could not judge (oracle.h, CONTINUATION: no anchor) that have been looked at, by hand,
+# against the geometry printed with RAYCAD_NAMING_ONLY / RAYCAD_NAMING_VERBOSE / RAYCAD_NAMING_EXPLAIN.
+# One per line: <key> => <one-line geometric justification of the answer>. The key is printed by the test
+# ("UNJUDGED <key>: ..."). The tests fail on any answer not judged that is not listed here.

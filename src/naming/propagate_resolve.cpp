@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <set>
@@ -249,9 +248,6 @@ bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, cons
             if (std::abs(dot(d, axis)) > kContainTolerance)
                 return false;
             const auto inside = insidePlanarFace(shape, c, p, *info);
-            if (std::getenv("RAYCAD_NAMING_DEBUG") != nullptr)
-                std::fprintf(stderr, "canContain face %u p=(%.3f %.3f %.3f) inside=%d\n", c.index, p.x, p.y, p.z,
-                             inside ? (*inside ? 1 : 0) : -1);
             return inside.has_value() && *inside;
         }
         if (info->type == kernel::SurfaceType::Cylinder) {
@@ -381,8 +377,12 @@ bool onHintCarrier(const ElementMap& map, const kernel::Shape& shape, SubId c, c
             const double rl = norm(radial);
             if (!(rl > kContainTolerance) || !(info->radius > 0.0))
                 return false;
-            const Vec3 m{radial.x / rl, radial.y / rl, radial.z / rl};
             const double half = 0.5 * q(hint.qArea) / info->radius;
+            // The chord's midpoint lies towards the arc's middle for an arc shorter than half the circle, away from
+            // it for a longer one.
+            constexpr double kHalfTurn = 3.14159265358979323846;
+            const double towards = half > 0.5 * kHalfTurn ? -1.0 : 1.0;
+            const Vec3 m{towards * radial.x / rl, towards * radial.y / rl, towards * radial.z / rl};
             const Vec3 r0 = sub(info->start, info->center);
             const Vec3 r1{axis.y * r0.z - axis.z * r0.y, axis.z * r0.x - axis.x * r0.z, axis.x * r0.y - axis.y * r0.x};
             auto at = [&](double a) {
@@ -546,6 +546,59 @@ bool piecesLieAsPicked(const ElementMap& map, const kernel::Shape& shape, const 
             for (std::size_t j = i + 1; j < ends.size(); ++j)
                 if (norm(sub(ends[i], ends[j])) > reach + kContainTolerance)
                     return false;
+        // On a circle, within a chord of each other is not enough (on a small circle every point is within its
+        // diameter of every other): the pieces must fit in an arc no longer than the picked one, about their mean
+        // direction (T-081a holdout 18:5: the floor rim of a moved hole in two arcs, one where the picked arc went,
+        // the other on the far side of the rim).
+        // (A whole circle was picked when its length is the circumference, as onHintCarrier tells it.)
+        if (!line && radius > 0.0 && 2.0 * kPi * radius - length > 1e-3 * std::max(1.0, radius)) {
+            const auto first = kernel::curveInfo(shape, elements.front());
+            const double al = first ? norm(first->axis) : 0.0;
+            if (!first || !(al > 0.0))
+                return false;
+            const Vec3 axis{first->axis.x / al, first->axis.y / al, first->axis.z / al};
+            const Vec3 centre = first->center;
+            std::vector<Vec3> dirs;
+            for (const SubId& s : elements) {
+                const auto info = kernel::curveInfo(shape, s);
+                if (!info || !(info->radius > 0.0))
+                    return false;
+                const Vec3 r0 = sub(info->start, centre);
+                const Vec3 r1{axis.y * r0.z - axis.z * r0.y, axis.z * r0.x - axis.x * r0.z,
+                              axis.x * r0.y - axis.y * r0.x};
+                auto at = [&](double a) {
+                    const double ca = dmath::cos(a), sa = dmath::sin(a);
+                    return Vec3{r0.x * ca + r1.x * sa, r0.y * ca + r1.y * sa, r0.z * ca + r1.z * sa};
+                };
+                double sweep = info->closed ? 2.0 * kPi : info->length / info->radius;
+                if (norm(sub(at(sweep), sub(info->end, centre))) > 1e-4 * std::max(1.0, info->radius)) {
+                    sweep = -sweep;
+                    if (norm(sub(at(sweep), sub(info->end, centre))) > 1e-4 * std::max(1.0, info->radius))
+                        return false;
+                }
+                for (int k = 0; k <= 16; ++k) {
+                    const Vec3 v = at(sweep * k / 16.0);
+                    const double vl = norm(v);
+                    if (!(vl > 0.0))
+                        return false;
+                    dirs.push_back(Vec3{v.x / vl, v.y / vl, v.z / vl});
+                }
+            }
+            Vec3 mean{0, 0, 0};
+            for (const Vec3& v : dirs)
+                mean = Vec3{mean.x + v.x, mean.y + v.y, mean.z + v.z};
+            const double ml = norm(mean);
+            if (!(ml > 1e-9))
+                return false;
+            mean = Vec3{mean.x / ml, mean.y / ml, mean.z / ml};
+            const double half = 0.5 * length / radius + kContainTolerance / radius;
+            if (half < kPi) {
+                const double cosLimit = dmath::cos(half);
+                for (const Vec3& v : dirs)
+                    if (dot(v, mean) < cosLimit)
+                        return false;
+            }
+        }
     }
     return true;
 }
