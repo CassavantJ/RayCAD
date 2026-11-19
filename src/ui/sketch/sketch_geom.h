@@ -40,8 +40,8 @@ double distance(Vec2 a, Vec2 b);
 Vec2 unit(Vec2 a); // (0, 0) for a zero vector
 Vec2 perpLeft(Vec2 a);
 Vec2 polar(Vec2 center, double radius, double angle);
-double angleOf(Vec2 v);      // atan2, radians
-double normAngle(double a);  // to [0, 2 pi)
+double angleOf(Vec2 v);     // atan2, radians
+double normAngle(double a); // to [0, 2 pi)
 
 constexpr double kPi = 3.14159265358979323846;
 
@@ -58,13 +58,13 @@ struct ViewCurve {
     enum class Kind { Line, Arc, Circle, Spline, Slot } kind = Kind::Line;
     SketchEntId id;
     bool construction = false;
-    Vec2 a, b, c;              // line ends; arc start, end; arc / circle centre; slot centres a, b
-    double r = 0;              // arc / circle radius; slot half width
-    bool ccw = true;           // arc direction
-    double start = 0;          // arc: angle of a
-    double sweep = 0;          // arc: angle from a to b in its direction (> 0)
+    Vec2 a, b, c;                    // line ends; arc start, end; arc / circle centre; slot centres a, b
+    double r = 0;                    // arc / circle radius; slot half width
+    bool ccw = true;                 // arc direction
+    double start = 0;                // arc: angle of a
+    double sweep = 0;                // arc: angle from a to b in its direction (> 0)
     std::vector<SketchEntId> points; // the point entities it uses
-    std::vector<Vec2> poly;    // the curve as a polyline (closed curves repeat their first point)
+    std::vector<Vec2> poly;          // the curve as a polyline (closed curves repeat their first point)
 };
 
 class SketchView {

@@ -32,8 +32,8 @@ public:
         enum class Kind { Started, Step, Final, Failed } kind = Kind::Step;
         sketch::Sketch sketch; // Step: the solved geometry; Final: what end() returned
         sketch::SolveStatus status = sketch::SolveStatus::UnderConstrained;
-        std::string error;     // Failed
-        double stepMs = 0;     // Step: how long move() took
+        std::string error; // Failed
+        double stepMs = 0; // Step: how long move() took
     };
     using Sink = std::function<void(const Update&)>; // runs on the thread of `context`
 

@@ -165,15 +165,27 @@ SketchModel* SketchModel::create(QQmlEngine* qml, QJSEngine*)
     return model; // owned by the engine
 }
 
+void SketchModel::setUnits(UnitsObject* units)
+{
+    units_ = units;
+}
+
+void SketchModel::setTheme(ThemeObject* theme)
+{
+    theme_ = theme;
+}
+
 void SketchModel::setCommands(CommandCatalog* commands)
 {
     commands_ = commands;
     if (!commands_)
         return;
     QPointer<SketchModel> self(this);
-    const CommandCatalog::UiHandler handler{
-        [self](const QString& id) { return self ? self->commandReason(id) : trs("The sketch tools are not available"); },
-        [self](const QString& id) { return self && self->runCommand(id); }};
+    const CommandCatalog::UiHandler handler{[self](const QString& id) {
+                                                return self ? self->commandReason(id)
+                                                            : trs("The sketch tools are not available");
+                                            },
+                                            [self](const QString& id) { return self && self->runCommand(id); }};
     for (const char* prefix : {"sketch.tool.", "sketch.mode.", "feature.sketch.add"})
         commands_->setUiHandler(QString::fromLatin1(prefix), handler);
 }
@@ -361,14 +373,15 @@ void SketchModel::placeOn(const QString& key, const QString& offsetText)
         const FeatureId datum{Uuid::generate()};
         const QByteArray args = QByteArray::fromStdString(api::sketch_edit::datumAddArgs(
             datum, self->nextName("Plane", "datum_plane").toStdString(), planeJson, offset));
-        JobHandle<api::ActionResult> job = app->actions().invoke("feature.datum_plane.add", sv(args), api::Caller::User);
+        JobHandle<api::ActionResult> job =
+            app->actions().invoke("feature.datum_plane.add", sv(args), api::Caller::User);
         job.then([self, serial, datum](Result<api::ActionResult> r) {
             if (!self || serial != self->placeSerial_)
                 return;
             if (!r) {
                 if (self->context_)
-                    self->context_->showMessage(trs("The datum plane could not be added: %1").arg(qs(r.error().message)),
-                                                true);
+                    self->context_->showMessage(
+                        trs("The datum plane could not be added: %1").arg(qs(r.error().message)), true);
                 return;
             }
             self->placeResolved("{\"datum\":\"" + datum.value.toString() + "\"}");
@@ -397,8 +410,8 @@ void SketchModel::placeOn(const QString& key, const QString& offsetText)
             return;
         }
         const std::uint32_t index = face->sub ? face->sub->index : face->hit.subIndex;
-        const std::string args = "{\"body\":\"" + body->id.value.toString() + "\",\"kind\":\"face\",\"index\":" +
-                                 std::to_string(index) + "}";
+        const std::string args = "{\"body\":\"" + body->id.value.toString() +
+                                 "\",\"kind\":\"face\",\"index\":" + std::to_string(index) + "}";
         JobHandle<api::ActionResult> job = a->actions().invoke("model.reference", args, api::Caller::User);
         job.then([self, serial, withOffset](Result<api::ActionResult> r) {
             if (!self || serial != self->placeSerial_)
@@ -451,8 +464,9 @@ void SketchModel::placeResolved(std::string planeJson)
         return;
     const std::uint64_t serial = placeSerial_;
     JobHandle<kernel::Plane> job = jobs->submit<kernel::Plane>(
-        JobInfo{"Sketch plane", JobPriority::Interactive, false},
-        [state, build, planeJson](JobContext& ctx) { return api::sketch_edit::resolvePlane(*state, build.get(), planeJson, ctx); });
+        JobInfo{"Sketch plane", JobPriority::Interactive, false}, [state, build, planeJson](JobContext& ctx) {
+            return api::sketch_edit::resolvePlane(*state, build.get(), planeJson, ctx);
+        });
     QPointer<SketchModel> self(this);
     job.then([self, serial, id, name, planeJson](Result<kernel::Plane> plane) {
         if (!self || serial != self->placeSerial_)
@@ -503,11 +517,9 @@ bool SketchModel::editFeature(const QString& featureId)
     const doc::BuildResultPtr build = od->document->build();
     const std::string pj = *planeJson;
     const std::uint64_t serial = placeSerial_;
-    JobHandle<kernel::Plane> job =
-        jobs->submit<kernel::Plane>(JobInfo{"Sketch plane", JobPriority::Interactive, false},
-                                    [state, build, pj](JobContext& ctx) {
-                                        return api::sketch_edit::resolvePlane(*state, build.get(), pj, ctx);
-                                    });
+    JobHandle<kernel::Plane> job = jobs->submit<kernel::Plane>(
+        JobInfo{"Sketch plane", JobPriority::Interactive, false},
+        [state, build, pj](JobContext& ctx) { return api::sketch_edit::resolvePlane(*state, build.get(), pj, ctx); });
     QPointer<SketchModel> self(this);
     job.then([self, serial, id, name, pj](Result<kernel::Plane> plane) {
         if (!self || serial != self->placeSerial_)
@@ -1202,9 +1214,10 @@ void SketchModel::pointerDoubleClick(QPointF pos, Qt::KeyboardModifiers)
     if (h.kind == su::SketchView::Hit::Kind::None)
         return;
     for (const sketch::Constraint& c : model_.constraints) {
-        const bool dimension = c.type == sketch::ConstraintType::Distance || c.type == sketch::ConstraintType::DistanceX ||
-                               c.type == sketch::ConstraintType::DistanceY || c.type == sketch::ConstraintType::Radius ||
-                               c.type == sketch::ConstraintType::Diameter || c.type == sketch::ConstraintType::Angle;
+        const bool dimension =
+            c.type == sketch::ConstraintType::Distance || c.type == sketch::ConstraintType::DistanceX ||
+            c.type == sketch::ConstraintType::DistanceY || c.type == sketch::ConstraintType::Radius ||
+            c.type == sketch::ConstraintType::Diameter || c.type == sketch::ConstraintType::Angle;
         if (dimension && std::find(c.refs.begin(), c.refs.end(), h.id) != c.refs.end()) {
             emit constraintEditRequested(qs(c.id.toString()));
             return;
@@ -1283,9 +1296,10 @@ void SketchModel::onDrag(const su::SketchDrag::Update& update)
                              s.entities.end());
         }
         if (dragTempConstraint_) {
-            s.constraints.erase(std::remove_if(s.constraints.begin(), s.constraints.end(),
-                                               [&](const sketch::Constraint& c) { return c.id == *dragTempConstraint_; }),
-                                s.constraints.end());
+            s.constraints.erase(
+                std::remove_if(s.constraints.begin(), s.constraints.end(),
+                               [&](const sketch::Constraint& c) { return c.id == *dragTempConstraint_; }),
+                s.constraints.end());
         }
         return s;
     };
@@ -1338,7 +1352,8 @@ bool SketchModel::wantsKey(const QKeyEvent* e) const
         return true;
     if (hasFields && startsNumber(e))
         return true;
-    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && (typing || engine_.busy()))
+    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && !(e->modifiers() & Qt::ControlModifier) &&
+        (typing || engine_.busy()))
         return true;
     if (key == Qt::Key_Escape)
         return typing || engine_.busy() || engine_.kind() != su::ToolKind::Select || !selected_.empty();
@@ -1380,7 +1395,7 @@ bool SketchModel::keyPress(QKeyEvent* e)
         emit fieldsChanged();
         return true;
     }
-    if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && !(e->modifiers() & Qt::ControlModifier)) {
         if (!typing && !engine_.busy())
             return false;
         applyTyped();
@@ -1438,7 +1453,9 @@ void SketchModel::updateOverlay()
     }
     const render::Camera cam = view_->camera();
     const double w = view_->width(), h = view_->height();
-    const auto project = [&](Vec2 p) { return nav::project(cam, worldOf(plane_, p), w, h); };
+    const auto project = [&](Vec2 p) {
+        return nav::project(cam, worldOf(plane_, p), w, h);
+    };
     const auto polyline = [&](const std::vector<Vec2>& pts, SketchOverlayScene::Style style, bool dashed) {
         SketchOverlayScene::Line line{style, {}, dashed};
         line.points.reserve(pts.size());
@@ -1451,7 +1468,7 @@ void SketchModel::updateOverlay()
         scene.lines.push_back(std::move(line));
     };
     using S = SketchOverlayScene::Style;
-    const S base = status_ == QLatin1String("full")                                         ? S::Constrained
+    const S base = status_ == QLatin1String("full")                                           ? S::Constrained
                    : status_ == QLatin1String("over") || status_ == QLatin1String("conflict") ? S::Conflict
                                                                                               : S::Geometry;
     const su::Draft& draft = engine_.draft();

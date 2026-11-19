@@ -82,7 +82,8 @@ int count(const sketch::Sketch& s, sketch::ConstraintType type)
     return n;
 }
 
-template <class T> int countOf(const sketch::Sketch& s)
+template <class T>
+int countOf(const sketch::Sketch& s)
 {
     int n = 0;
     for (const sketch::Entity& e : s.entities) {
@@ -109,10 +110,10 @@ TEST_CASE("sketch.entity.add takes the inferred constraints in the same step", "
 
     SECTION("a constraint on an entity that does not exist is refused, and nothing is added")
     {
-        const Error e = m.refused(cmd("sketch.entity.add", R"({"id":")" + sk() + R"(","entities":[{"id":")" + ent(4) +
-                                                               R"(","type":"point","x":1,"y":1}],"constraints":[{"id":")" +
-                                                               uuid('c', 2) + R"(","type":"fix","refs":[")" + ent(99) +
-                                                               R"("]}]})"));
+        const Error e = m.refused(
+            cmd("sketch.entity.add", R"({"id":")" + sk() + R"(","entities":[{"id":")" + ent(4) +
+                                         R"(","type":"point","x":1,"y":1}],"constraints":[{"id":")" + uuid('c', 2) +
+                                         R"(","type":"fix","refs":[")" + ent(99) + R"("]}]})"));
         CHECK(e.code == ErrorCode::InvalidArgument);
     }
 }
@@ -123,14 +124,14 @@ TEST_CASE("sketch.construction marks and unmarks entities", "[doc][sketch][tools
     SketchJson s;
     s.point(1, 0, 0).point(2, 10, 0).line(3, 1, 2);
     m.run(addFeature("sketch", 2, sketchProps(R"({"principal":"xy"})", s)));
-    m.run(cmd("sketch.construction",
-              R"({"id":")" + sk() + R"(","entities":[")" + ent(3) + R"("],"construction":true})"));
+    m.run(
+        cmd("sketch.construction", R"({"id":")" + sk() + R"(","entities":[")" + ent(3) + R"("],"construction":true})"));
     CHECK(find(m.sketch(), ent(3))->construction);
     m.run(cmd("sketch.construction",
               R"({"id":")" + sk() + R"(","entities":[")" + ent(3) + R"("],"construction":false})"));
     CHECK(!find(m.sketch(), ent(3))->construction);
-    CHECK(m.refused(cmd("sketch.construction", R"({"id":")" + sk() + R"(","entities":[")" + ent(9) +
-                                                   R"("],"construction":true})"))
+    CHECK(m.refused(cmd("sketch.construction",
+                        R"({"id":")" + sk() + R"(","entities":[")" + ent(9) + R"("],"construction":true})"))
               .code == ErrorCode::InvalidArgument);
 }
 
@@ -166,8 +167,8 @@ TEST_CASE("sketch.extend grows a line or an arc to the next curve", "[doc][sketc
     }
     SECTION("the start end grows backwards; nothing to reach is refused")
     {
-        const Error e =
-            m.refused(cmd("sketch.extend", R"({"id":")" + sk() + R"(","entity":")" + ent(6) + R"(","at":{"x":1,"y":0}})"));
+        const Error e = m.refused(
+            cmd("sketch.extend", R"({"id":")" + sk() + R"(","entity":")" + ent(6) + R"(","at":{"x":1,"y":0}})"));
         CHECK(e.message.find("no curve to extend to") != std::string::npos);
     }
     SECTION("an arc grows along its circle")
@@ -212,8 +213,8 @@ TEST_CASE("sketch.offset copies a chain on one side, joined at the corners", "[d
     }
     SECTION("a circle grows on the outside and shares its centre")
     {
-        m.run(cmd("sketch.offset", R"({"id":")" + sk() + R"(","entities":[")" + ent(7) +
-                                       R"("],"distance":1.5,"side":{"x":40,"y":0}})"));
+        m.run(cmd("sketch.offset",
+                  R"({"id":")" + sk() + R"(","entities":[")" + ent(7) + R"("],"distance":1.5,"side":{"x":40,"y":0}})"));
         const sketch::Sketch t = m.sketch();
         REQUIRE(countOf<sketch::Circle>(t) == 2);
         for (const sketch::Entity& e : t.entities) {

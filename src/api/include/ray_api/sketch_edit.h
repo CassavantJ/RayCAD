@@ -28,8 +28,8 @@ Result<std::string> planeJsonOf(const doc::DocState& state, const FeatureId& id)
 // that base's own, recursively); a face as it is in `build` (the latest build: the face as it is now), with the
 // outward normal, the origin nearest the world origin and x the world X projected onto the plane. A face needs kernel
 // queries: run it on a worker. Errors name what is wrong (ReferenceBroken, InvalidArgument).
-Result<kernel::Plane> resolvePlane(const doc::DocState& state, const doc::BuildResult* build, std::string_view planeJson,
-                                   JobContext& ctx);
+Result<kernel::Plane> resolvePlane(const doc::DocState& state, const doc::BuildResult* build,
+                                   std::string_view planeJson, JobContext& ctx);
 
 // ---------- Arguments of the commands (canonical JSON objects) ----------
 // sketch.entity.add {"id", "entities", "constraints"?}.

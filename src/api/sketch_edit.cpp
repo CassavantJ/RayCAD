@@ -25,8 +25,8 @@ tl::unexpected<Error> fail(ErrorCode code, std::string message)
 
 const doc::Feature* findFeature(const doc::DocState& state, const FeatureId& id)
 {
-    const auto it = std::find_if(state.features.begin(), state.features.end(),
-                                 [&](const doc::Feature& f) { return f.id == id; });
+    const auto it =
+        std::find_if(state.features.begin(), state.features.end(), [&](const doc::Feature& f) { return f.id == id; });
     return it == state.features.end() ? nullptr : &*it;
 }
 
@@ -104,8 +104,8 @@ Result<kernel::Plane> planeOfRef(PlaneContext& pc, const features::PlaneRef& ref
     }
     const doc::Feature* datum = findFeature(pc.state, *ref.datum);
     if (datum == nullptr || datum->type != "datum_plane") {
-        return fail(ErrorCode::ReferenceBroken, "The datum plane " + ref.datum->value.toString() +
-                                                    " is not in the document any more");
+        return fail(ErrorCode::ReferenceBroken,
+                    "The datum plane " + ref.datum->value.toString() + " is not in the document any more");
     }
     const std::string where = features::featureLabel(*datum);
     auto root = features::PropsReader::parse(where, datum->propsJson);
@@ -166,7 +166,8 @@ Result<sketch::Sketch> modelOf(const doc::DocState& state, const FeatureId& id)
         return fail(ErrorCode::NotFound, "The document has no feature " + id.value.toString());
     }
     if (f->type != features::kSketchType) {
-        return fail(ErrorCode::InvalidArgument, "'" + features::featureLabel(*f) + "' is a " + f->type + ", not a sketch");
+        return fail(ErrorCode::InvalidArgument,
+                    "'" + features::featureLabel(*f) + "' is a " + f->type + ", not a sketch");
     }
     try {
         return features::sketchOfFeature(*f, false);
@@ -192,8 +193,8 @@ Result<std::string> planeJsonOf(const doc::DocState& state, const FeatureId& id)
     return json::write(*plane);
 }
 
-Result<kernel::Plane> resolvePlane(const doc::DocState& state, const doc::BuildResult* build, std::string_view planeJson,
-                                   JobContext& ctx)
+Result<kernel::Plane> resolvePlane(const doc::DocState& state, const doc::BuildResult* build,
+                                   std::string_view planeJson, JobContext& ctx)
 {
     try {
         auto plane = json::parse(planeJson);

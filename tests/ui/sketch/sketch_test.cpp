@@ -86,8 +86,8 @@ struct Window {
     ui::ViewportItem* view() const { return host->viewport(); }
     SketchModel* sketch() const
     {
-        auto* s = host->engine()->singletonInstance<SketchModel*>(QStringLiteral("RayCad.Ui"),
-                                                                  QStringLiteral("SketchTool"));
+        auto* s =
+            host->engine()->singletonInstance<SketchModel*>(QStringLiteral("RayCad.Ui"), QStringLiteral("SketchTool"));
         REQUIRE(s != nullptr);
         return s;
     }
@@ -228,7 +228,8 @@ int count(const sketch::Sketch& s, sketch::ConstraintType type)
     return n;
 }
 
-template <class T> int countOf(const sketch::Sketch& s)
+template <class T>
+int countOf(const sketch::Sketch& s)
 {
     int n = 0;
     for (const sketch::Entity& e : s.entities)
@@ -419,9 +420,8 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
     }
     for (int i = 0; i < 200; ++i) {
         const SketchEntId line{Uuid::generate()};
-        chain.entities.push_back(
-            sketch::Entity{line, sketch::Line{points[static_cast<std::size_t>(i)], points[static_cast<std::size_t>(i + 1)]},
-                           false});
+        chain.entities.push_back(sketch::Entity{
+            line, sketch::Line{points[static_cast<std::size_t>(i)], points[static_cast<std::size_t>(i + 1)]}, false});
         sketch::Constraint d;
         d.id = Uuid::generate();
         d.type = sketch::ConstraintType::Distance;
@@ -481,9 +481,9 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
     tick.stop();
     INFO("worst UI-thread gap " << worst << " ms; drag steps solved " << w.sketch()->dragSteps() << ", slowest "
                                 << w.sketch()->slowestDragStepMs() << " ms");
-    WARN("UI-thread watchdog while dragging a 200-curve sketch: worst gap " << worst << " ms, " << w.sketch()->dragSteps()
-                                                                           << " steps, slowest step "
-                                                                           << w.sketch()->slowestDragStepMs() << " ms");
+    WARN("UI-thread watchdog while dragging a 200-curve sketch: worst gap "
+         << worst << " ms, " << w.sketch()->dragSteps() << " steps, slowest step " << w.sketch()->slowestDragStepMs()
+         << " ms");
     CHECK(worst < 50);
     CHECK(w.sketch()->dragSteps() > 0);
 
@@ -506,11 +506,11 @@ TEST_CASE("the sketch commands are in the palette; their keys do not clash", "[s
     RAY_REQUIRE_RHI();
     Window w;
     ui::CommandCatalog& commands = *w.host->commands();
-    for (const char* id : {"sketch.mode.new", "sketch.mode.finish", "sketch.tool.line", "sketch.tool.rectangle",
-                           "sketch.tool.circle", "sketch.tool.arc3", "sketch.tool.arcCenter", "sketch.tool.arcTangent",
-                           "sketch.tool.slot", "sketch.tool.spline", "sketch.tool.construction", "sketch.tool.trim",
-                           "sketch.tool.extend", "sketch.tool.offset", "sketch.tool.fillet", "sketch.extend",
-                           "sketch.offset", "sketch.fillet"}) {
+    for (const char* id :
+         {"sketch.mode.new", "sketch.mode.finish", "sketch.tool.line", "sketch.tool.rectangle", "sketch.tool.circle",
+          "sketch.tool.arc3", "sketch.tool.arcCenter", "sketch.tool.arcTangent", "sketch.tool.slot",
+          "sketch.tool.spline", "sketch.tool.construction", "sketch.tool.trim", "sketch.tool.extend",
+          "sketch.tool.offset", "sketch.tool.fillet", "sketch.extend", "sketch.offset", "sketch.fillet"}) {
         INFO(id);
         CHECK(commands.find(QString::fromLatin1(id)).has_value());
     }

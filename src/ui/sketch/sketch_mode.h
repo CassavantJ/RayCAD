@@ -118,8 +118,8 @@ public:
     static SketchModel* create(QQmlEngine* qml, QJSEngine* js);
 
     void setCommands(CommandCatalog* commands);
-    void setUnits(UnitsObject* units) { units_ = units; }
-    void setTheme(ThemeObject* theme) { theme_ = theme; }
+    void setUnits(UnitsObject* units);
+    void setTheme(ThemeObject* theme);
 
     bool active() const { return active_; }
     bool placing() const { return placing_; }
@@ -231,7 +231,6 @@ private:
     void apply(const sketchui::Action& action);
     void afterToolInput();
     void updateOverlay();
-    void updateGlyphs();
     void updateHint();
     double snapTolerance(QPointF pos) const;
     double snapPixels() const;

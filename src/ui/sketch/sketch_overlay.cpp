@@ -23,9 +23,9 @@ using Vertex = QSGGeometry::Point2D;
 
 // Line widths and sizes, derived from the theme's metrics (no sizes of their own).
 struct Metrics {
-    double curve = 2;      // half of it either side of the curve
+    double curve = 2; // half of it either side of the curve
     double thin = 1.5;
-    double point = 6;      // side of a point's square
+    double point = 6; // side of a point's square
     double dash = 6, gap = 4;
 };
 
@@ -200,15 +200,16 @@ QSGNode* SketchOverlay::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
     const SketchOverlayScene& scene = tool_->overlay();
     const Metrics m = metricsOf(theme_);
     // Back to front: guides, construction, geometry, highlights, preview, then the points.
-    const Style order[] = {Style::Guide,    Style::Construction, Style::Geometry, Style::Constrained, Style::Conflict,
-                           Style::Highlight, Style::Hovered,     Style::Selected, Style::Preview};
+    const Style order[] = {Style::Guide,     Style::Construction, Style::Geometry, Style::Constrained, Style::Conflict,
+                           Style::Highlight, Style::Hovered,      Style::Selected, Style::Preview};
     std::map<int, std::vector<Vertex>> byStyle;
     for (const SketchOverlayScene::Line& line : scene.lines) {
         const bool thinLine = line.style == Style::Guide || line.style == Style::Construction;
-        const double width = thinLine ? m.thin : (line.style == Style::Hovered || line.style == Style::Selected ||
-                                                   line.style == Style::Highlight)
-                                                     ? m.curve * 1.5
-                                                     : m.curve;
+        const double width =
+            thinLine ? m.thin
+            : (line.style == Style::Hovered || line.style == Style::Selected || line.style == Style::Highlight)
+                ? m.curve * 1.5
+                : m.curve;
         strip(byStyle[static_cast<int>(line.style)], line.points, width / 2, line.dashed, m.dash, m.gap);
     }
     std::map<int, std::vector<Vertex>> points;
@@ -240,8 +241,7 @@ QSGNode* SketchOverlay::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
 
 void SketchOverlay::mousePressEvent(QMouseEvent* event)
 {
-    if (!tool_ || !tool_->active() || event->button() != Qt::LeftButton ||
-        (event->modifiers() & Qt::AltModifier)) {
+    if (!tool_ || !tool_->active() || event->button() != Qt::LeftButton || (event->modifiers() & Qt::AltModifier)) {
         event->ignore();
         return;
     }
@@ -311,8 +311,7 @@ void SketchOverlay::keyPressEvent(QKeyEvent* event)
 
 bool SketchOverlay::event(QEvent* event)
 {
-    if (event->type() == QEvent::ShortcutOverride && tool_ &&
-        tool_->wantsKey(static_cast<QKeyEvent*>(event))) {
+    if (event->type() == QEvent::ShortcutOverride && tool_ && tool_->wantsKey(static_cast<QKeyEvent*>(event))) {
         event->accept();
         return true;
     }

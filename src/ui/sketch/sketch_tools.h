@@ -23,7 +23,21 @@
 
 namespace ray::ui::sketchui {
 
-enum class ToolKind { Select, Line, Rectangle, Circle, Arc3, ArcCenter, ArcTangent, Slot, Spline, Trim, Extend, Offset, Fillet };
+enum class ToolKind {
+    Select,
+    Line,
+    Rectangle,
+    Circle,
+    Arc3,
+    ArcCenter,
+    ArcTangent,
+    Slot,
+    Spline,
+    Trim,
+    Extend,
+    Offset,
+    Fillet
+};
 
 // "line", "rectangle", ...; ToolKind::Select for an unknown name.
 ToolKind toolFromName(const std::string& name);
@@ -38,12 +52,12 @@ const char* glyphName(Glyph::Kind kind);
 struct Snap {
     enum class Kind { Free, Point, Midpoint, OnCurve } kind = Kind::Free;
     Vec2 p{};
-    SketchEntId ref;     // Point: the point; Midpoint, OnCurve: the curve
-    bool center = false; // Point: an arc or circle centre
+    SketchEntId ref;             // Point: the point; Midpoint, OnCurve: the curve
+    bool center = false;         // Point: an arc or circle centre
     bool curveConstrains = true; // OnCurve: the curve takes a PointOnCurve (lines, arcs, circles)
     enum class Axis { None, Horizontal, Vertical } axis = Axis::None; // from the anchor
-    std::optional<SketchEntId> alignH, alignV; // the point it lines up with (same y / same x)
-    std::vector<std::pair<Vec2, Vec2>> guides; // dashed inference lines
+    std::optional<SketchEntId> alignH, alignV;                        // the point it lines up with (same y / same x)
+    std::vector<std::pair<Vec2, Vec2>> guides;                        // dashed inference lines
 };
 
 struct SnapOptions {
@@ -62,25 +76,25 @@ struct Batch {
 struct Action {
     enum class Kind { None, Add, Command } kind = Kind::None;
     Batch batch;
-    std::string command;    // "sketch.trim", ...
-    std::string argsJson;   // its arguments without "id" (the sketch mode adds it): a JSON object
-    std::string label;      // for the status line
+    std::string command;  // "sketch.trim", ...
+    std::string argsJson; // its arguments without "id" (the sketch mode adds it): a JSON object
+    std::string label;    // for the status line
 };
 
 // What a tool shows now, in mm on the sketch plane.
 struct Draft {
-    std::vector<std::vector<Vec2>> curves;            // the geometry it would make
-    std::vector<std::pair<Vec2, Vec2>> guides;        // dashed inference lines
-    std::vector<Vec2> points;                         // the points it would make or use
-    std::vector<Glyph> glyphs;                        // the constraints it would add
-    std::vector<SketchEntId> highlight;               // existing entities it acts on (trim, extend, offset, fillet)
-    std::optional<Vec2> labelAt;                      // where the value chips go
+    std::vector<std::vector<Vec2>> curves;     // the geometry it would make
+    std::vector<std::pair<Vec2, Vec2>> guides; // dashed inference lines
+    std::vector<Vec2> points;                  // the points it would make or use
+    std::vector<Glyph> glyphs;                 // the constraints it would add
+    std::vector<SketchEntId> highlight;        // existing entities it acts on (trim, extend, offset, fillet)
+    std::optional<Vec2> labelAt;               // where the value chips go
 };
 
 // A value the user can type while drawing (Tab moves between them, Enter commits).
 struct FieldSpec {
-    std::string key;   // "length", "angle", "width", "height", "diameter", "radius", "distance"
-    std::string label; // English, translated by the caller
+    std::string key;    // "length", "angle", "width", "height", "diameter", "radius", "distance"
+    std::string label;  // English, translated by the caller
     bool angle = false; // degrees on screen, radians here
     double value = 0;   // live value from the pointer (mm or rad)
 };
@@ -136,7 +150,7 @@ private:
 
     ToolKind kind_ = ToolKind::Select;
     bool construction_ = false;
-    std::vector<Placed> placed_;   // points placed in this operation
+    std::vector<Placed> placed_;            // points placed in this operation
     std::optional<SketchEntId> chainStart_; // line chain: its first point (closing it ends the chain)
     std::optional<SketchEntId> lastCurve_;  // the last curve of a chain (tangent arc continues from it)
     Vec2 cursor_{};
@@ -144,7 +158,7 @@ private:
     double tol_ = 1;
     Snap snap_;
     std::optional<SketchEntId> tangentFrom_; // line: the curve the segment leaves tangentially
-    double arcWinding_ = 0;   // centre-start-end arc: the angle the pointer turned through
+    double arcWinding_ = 0;                  // centre-start-end arc: the angle the pointer turned through
     double lastAngle_ = 0;
     SketchView::Hit hovered_; // trim, extend, fillet, offset
     std::vector<SketchEntId> offsetChain_;

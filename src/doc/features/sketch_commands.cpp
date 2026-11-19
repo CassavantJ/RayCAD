@@ -1051,8 +1051,8 @@ Result<DocStatePtr> offset(const DocState& before, std::string_view argsJson)
     }
     std::size_t serial = 0;
     auto newId = [&](std::string_view what) {
-        return derivedId(model, e->feature, SketchEntId{(*ids)[0]}, std::string("offset.") + std::string(what) + "." +
-                                                                       std::to_string(serial++));
+        return derivedId(model, e->feature, SketchEntId{(*ids)[0]},
+                         std::string("offset.") + std::string(what) + "." + std::to_string(serial++));
     };
     for (const std::vector<ChainPart>& chain : chains) {
         // Which side: that of `side` at the part nearest to it.
@@ -1170,7 +1170,8 @@ Result<DocStatePtr> offset(const DocState& before, std::string_view argsJson)
             }
         }
     }
-    std::sort(model.entities.begin(), model.entities.end(), [](const Entity& x, const Entity& y) { return x.id < y.id; });
+    std::sort(model.entities.begin(), model.entities.end(),
+              [](const Entity& x, const Entity& y) { return x.id < y.id; });
     return commit(*e, model, std::string(kOffset));
 }
 
@@ -1206,8 +1207,8 @@ Result<DocStatePtr> fillet(const DocState& before, std::string_view argsJson)
         }
     }
     if (lines.size() != 2) {
-        return args->error("point", "must be the corner of exactly two lines (it joins " +
-                                        std::to_string(lines.size()) + ")");
+        return args->error("point",
+                           "must be the corner of exactly two lines (it joins " + std::to_string(lines.size()) + ")");
     }
     Vec2 far[2];
     for (int i = 0; i < 2; ++i) {
@@ -1249,18 +1250,20 @@ Result<DocStatePtr> fillet(const DocState& before, std::string_view argsJson)
     for (int i = 0; i < 2; ++i) {
         auto& l = std::get<Line>(findEntity(model, lines[static_cast<std::size_t>(i)])->geom);
         (l.a == corner ? l.a : l.b) = i == 0 ? p1 : p2;
-        model.constraints.push_back(Constraint{derivedId(model, e->feature, corner, "fillet.tangent." + std::to_string(i)),
-                                               ConstraintType::Tangent,
-                                               {lines[static_cast<std::size_t>(i)], *arcId, i == 0 ? p1 : p2},
-                                               {},
-                                               0,
-                                               false});
+        model.constraints.push_back(
+            Constraint{derivedId(model, e->feature, corner, "fillet.tangent." + std::to_string(i)),
+                       ConstraintType::Tangent,
+                       {lines[static_cast<std::size_t>(i)], *arcId, i == 0 ? p1 : p2},
+                       {},
+                       0,
+                       false});
     }
     // Something may still name the corner (a dimension, a constraint): then it stays as a free point.
     if (!pointUsedElsewhere(model, corner, SketchEntId{})) {
         removeEntities(model, {corner});
     }
-    std::sort(model.entities.begin(), model.entities.end(), [](const Entity& x, const Entity& y) { return x.id < y.id; });
+    std::sort(model.entities.begin(), model.entities.end(),
+              [](const Entity& x, const Entity& y) { return x.id < y.id; });
     return commit(*e, model, std::string(kFillet));
 }
 
@@ -1346,10 +1349,12 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
         &trim));
     // T-092
     out.push_back(std::make_unique<SketchCommand>(
-        kConstruction, schemaOf(R"("entities":)" + ids + R"(,"construction":{"type":"boolean"})", R"("id","entities","construction")"),
+        kConstruction,
+        schemaOf(R"("entities":)" + ids + R"(,"construction":{"type":"boolean"})", R"("id","entities","construction")"),
         &construction));
     out.push_back(std::make_unique<SketchCommand>(
-        kExtend, schemaOf(R"("entity":)" + uuid + R"(,"at":)" + point + R"(,"newPoint":)" + uuid, R"("id","entity","at")"),
+        kExtend,
+        schemaOf(R"("entity":)" + uuid + R"(,"at":)" + point + R"(,"newPoint":)" + uuid, R"("id","entity","at")"),
         &extend));
     out.push_back(std::make_unique<SketchCommand>(
         kOffset,

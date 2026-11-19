@@ -17,10 +17,18 @@ struct NamedTool {
     const char* name;
 };
 constexpr NamedTool kTools[] = {
-    {ToolKind::Select, "select"},     {ToolKind::Line, "line"},           {ToolKind::Rectangle, "rectangle"},
-    {ToolKind::Circle, "circle"},     {ToolKind::Arc3, "arc3"},           {ToolKind::ArcCenter, "arcCenter"},
-    {ToolKind::ArcTangent, "arcTangent"}, {ToolKind::Slot, "slot"},       {ToolKind::Spline, "spline"},
-    {ToolKind::Trim, "trim"},         {ToolKind::Extend, "extend"},       {ToolKind::Offset, "offset"},
+    {ToolKind::Select, "select"},
+    {ToolKind::Line, "line"},
+    {ToolKind::Rectangle, "rectangle"},
+    {ToolKind::Circle, "circle"},
+    {ToolKind::Arc3, "arc3"},
+    {ToolKind::ArcCenter, "arcCenter"},
+    {ToolKind::ArcTangent, "arcTangent"},
+    {ToolKind::Slot, "slot"},
+    {ToolKind::Spline, "spline"},
+    {ToolKind::Trim, "trim"},
+    {ToolKind::Extend, "extend"},
+    {ToolKind::Offset, "offset"},
     {ToolKind::Fillet, "fillet"},
 };
 
@@ -336,7 +344,6 @@ std::optional<double> typedValue(const std::map<std::string, double>& typed, con
     return it == typed.end() ? std::nullopt : std::optional<double>(it->second);
 }
 
-
 } // namespace
 
 Vec2 ToolEngine::target() const
@@ -480,8 +487,8 @@ void ToolEngine::hover(const SketchView& view, Vec2 q, double tol, bool snapping
         hovered_ = view.hitPoint(q, tol);
         if (hovered_.kind != SketchView::Hit::Kind::None) {
             const auto at = view.curvesAt(hovered_.id);
-            const bool corner = at.size() == 2 && at[0]->kind == ViewCurve::Kind::Line &&
-                                at[1]->kind == ViewCurve::Kind::Line;
+            const bool corner =
+                at.size() == 2 && at[0]->kind == ViewCurve::Kind::Line && at[1]->kind == ViewCurve::Kind::Line;
             if (!corner)
                 hovered_ = {};
         }
@@ -667,8 +674,7 @@ void ToolEngine::rebuildDraft(const SketchView& view)
             d.curves.push_back({pts[0], t});
         } else if (pts.size() == 2) {
             const auto w = typedValue(typed_, "width");
-            const double half =
-                w ? *w / 2 : std::abs(cross(unit(sub(pts[1], pts[0])), sub(cursor_, pts[0])));
+            const double half = w ? *w / 2 : std::abs(cross(unit(sub(pts[1], pts[0])), sub(cursor_, pts[0])));
             if (half > kTiny)
                 d.curves.push_back(slotPolyline(pts[0], pts[1], half));
             d.guides.emplace_back(pts[0], pts[1]);
@@ -844,7 +850,8 @@ Action ToolEngine::click(const SketchView& view)
         std::string ids;
         for (const SketchEntId& id : offsetChain_)
             ids += (ids.empty() ? "\"" : ",\"") + id.value.toString() + "\"";
-        a.argsJson = "{\"entities\":[" + ids + "],\"distance\":" + jsonNumber(dist) + ",\"side\":" + jsonPoint(raw_) + "}";
+        a.argsJson =
+            "{\"entities\":[" + ids + "],\"distance\":" + jsonNumber(dist) + ",\"side\":" + jsonPoint(raw_) + "}";
         offsetChain_.clear();
         resetTyped();
         return a;
@@ -893,7 +900,8 @@ Action ToolEngine::click(const SketchView& view)
         return {};
     }
     // Rectangle, circle, arcs, slot: points until the last one commits.
-    const std::size_t needed = kind_ == ToolKind::Arc3 || kind_ == ToolKind::ArcCenter || kind_ == ToolKind::Slot ? 3 : 2;
+    const std::size_t needed =
+        kind_ == ToolKind::Arc3 || kind_ == ToolKind::ArcCenter || kind_ == ToolKind::Slot ? 3 : 2;
     if (placed_.size() + 1 < needed) {
         Placed p;
         p.snap = snap_;
