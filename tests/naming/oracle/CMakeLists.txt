@@ -39,3 +39,11 @@ set_tests_properties(ray_naming_session PROPERTIES TIMEOUT 3600)
 add_test(NAME ray_naming_random_holdout COMMAND ray_naming_oracle_tests "[random-holdout]")
 ray_test_runtime_path(ray_naming_random_holdout)
 set_tests_properties(ray_naming_random_holdout PROPERTIES TIMEOUT 7200)
+# A second holdout block whose seeds were first run after the T-081a gate fixes (the first block was looked at).
+add_test(NAME ray_naming_random_holdout2 COMMAND ray_naming_oracle_tests "[random-holdout2]")
+ray_test_runtime_path(ray_naming_random_holdout2)
+set_tests_properties(ray_naming_random_holdout2 PROPERTIES TIMEOUT 7200)
+# A third block, first run after the second block's findings were fixed.
+add_test(NAME ray_naming_random_holdout3 COMMAND ray_naming_oracle_tests "[random-holdout3]")
+ray_test_runtime_path(ray_naming_random_holdout3)
+set_tests_properties(ray_naming_random_holdout3 PROPERTIES TIMEOUT 7200)

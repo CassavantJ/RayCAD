@@ -24,14 +24,31 @@
 // of a hole, a piece on the far side of a cut). The picked element is mapped through the edit (each point moved with
 // its owners' carriers and projected onto their edited carriers, mapElement) and only the connected parts of the
 // logical element that overlap it continue the reference (expect). A reference whose continuation cannot be told is
-// counted ("no anchor") and any non-Broken answer to it is not judged; the tests gate that count.
+// counted ("no anchor") and any non-Broken answer to it is not judged; the tests gate that count (each such answer
+// must be on the reviewed list tests/naming/oracle/reviewed_unjudged.txt).
+// Refinements of the T-081a gate (each has a scripted test, acceptance_test.cpp [oracle-gate] and [t081a-gate]):
+//  - An element that holds 90 % of the mapped pick (inside it) continues it, however small a part of it the pick is
+//    (the 2 % floor of evalTruth is for overlaps); it runs past the description, so it is merged.
+//  - When nothing the picked edge or vertex depends on changed, the one element congruent in place with it is E; a
+//    vertex or edge the map leaves in place is anchored within 1e-3 mm (edge: plus the sample chord), not 0.05.
+//  - "Merged" means the element took in another element's territory: a part outside the description that lies on
+//    the mapped pick, or (nothing moved, or the pick moved with its sweep) on no other baseline element, does not
+//    make it merged (ownTerritory).
+//  - Each face of an edge's or vertex's description needs a face of its own.
+//  - A weak reference that moved, whose mapped pick and a mapped sibling piece fall on one element: an Exact answer
+//    is not judged (Expectation::mergeUnknown).
+//  - A blend owner whose analytic surface cannot be built (Owners::undescribable), or is degenerate and fitted by
+//    nothing (Owners::degenerate), leaves the reference without an anchor.
+//  - An element that coincides at pick time with another one the description cannot tell from it (coincidesWith
+//    Another), and a sliver at pick time, are not references (recordReferences counts them by reason).
 //
 // NEW TERRITORY. An answer that differs from E may still be right when the extra part did not exist at pick time
 // (a face that a suppressed cut no longer splits runs on into territory that was nothing). judgeAnswer accepts it
 // only when the picked element did not move, the answer holds every expected element, every extra element is
 // connected to an answered element that overlaps the mapped pick, and no extra part lies on any element of the
 // baseline or on a baseline sibling mapped through the edit. Every acceptance is reported; the tests fail unless it
-// is on the reviewed list tests/naming/oracle/accepted_territory.txt.
+// is on the reviewed list tests/naming/oracle/reviewed_territory.txt. (New territory on an expected element itself
+// is handled by the merged rule below and needs no review.)
 //
 // WHAT IT CAN MISS (the tests print every bucket; their log is the record of a run):
 //  - It shares the script's idea of identity: "the same element" means the same sketch entity, cap, blended edge
@@ -53,9 +70,13 @@
 //    its carrier by up to ten times the tolerance (boolean edges are often less precise; strict mode: none). A face
 //    the mesher leaves without triangles is sampled on its edges and vertices.
 //  - The edit map is a shift of each owner's reference point followed by projection onto the edited carriers (an
-//    element whose own carriers did not change moves with the features bounding it, if they moved alike); a
-//    rotation of a feature is not modelled (the scripts make none). A point that does not settle within 0.01 mm of
-//    every carrier is dropped.
+//    element whose own carriers did not change moves with the features bounding it, if they moved alike). A sweep
+//    edited by a similarity of its profile (move, resize: profileScale) carries its own faces' points exactly, and an
+//    element all of whose owners are that sweep's moves with it; an element none of whose carriers changed stays
+//    where it is. A rotation of a feature is not modelled (the scripts make none: their edits move, scale, deepen,
+//    suppress, insert and reorder). A point that does not settle within 0.01 mm of every carrier is dropped. Where a
+//    moved wall meets an unmoved curved face, the map slides along their intersection (such references can end up
+//    without an anchor).
 //  - Only the carriers listed above. A blend between faces that are not plane/plane or plane/coaxial cylinder has
 //    no owner, so its faces cannot be described and are never used as references; scripts avoid them.
 //
@@ -73,6 +94,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -199,6 +221,14 @@ struct Owners {
     std::vector<Owner> v;
     std::map<std::string, int> ix;
     std::map<std::string, Feature> sweeps; // the sweeps they come from, by id (mapElement: moved features)
+    // Keys of logical faces the script has but the oracle cannot describe: a blend whose analytic surface does not
+    // exist for its parents (a fillet larger than the corner arc it rounds, a torus with its tube wider than its ring).
+    // A reference described by such an owner has no continuation the oracle can tell (expect: noAnchor).
+    std::set<std::string> undescribable;
+    // Keys of blends whose analytic surface is degenerate (a torus whose tube is as wide as its ring: a fillet at least
+    // as large as the corner arc it rounds). The kernel may build that surface or another one; where no element of the
+    // edited shape fits a description using such an owner, its continuation cannot be told (expect: noAnchor).
+    std::set<std::string> degenerate;
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);
@@ -281,6 +311,12 @@ private:
     std::vector<TruthDesc> faceDesc_;
 };
 
+// Does another element of the same kind lie where element `s` lies (they share territory, oracle.h overlap) and fit
+// its description without separators too? Then nothing the oracle knows tells the two apart: a boolean that leaves two
+// coincident edges along a zero-height wall, or back-to-back faces of the same material side. Such an element is not
+// a reference (TruthBuilder::describe says why), as a pick the oracle cannot vouch for is not.
+bool coincidesWithAnother(const TruthDesc& d, SubId s, const Owners& owners, const Samples& samples);
+
 // The edges of the shape on the logical edge `target`, each with its own description.
 std::vector<std::pair<std::uint32_t, TruthDesc>> pickTarget(const Target& target, const Owners& owners,
                                                             const Samples& samples);
@@ -353,6 +389,10 @@ struct Expectation {
     TruthEval expected;       // E: the strict elements in components that continue the pick
     std::string noAnchor;     // why the continuation cannot be told (then E is not trusted)
     long congruentIndex = -1; // the one element congruent in place with the pick, or -1
+    // A weak reference that moved, whose mapped pick and another piece's mapped position fall on one element of E:
+    // whether that element continues both (merged) cannot be told, so an Exact answer is not judged (a Merged or Split
+    // answer of exactly E is right either way).
+    bool mergeUnknown = false;
     bool inLogical(std::uint32_t e) const;
     bool isAnchored(std::uint32_t e) const;
     bool isClaimed(std::uint32_t e) const;

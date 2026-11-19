@@ -144,7 +144,7 @@ TEST_CASE("S4 part: no reference resolves to a wrong element in the 47 edit scen
     CHECK(total.repairedUsable == 0);
     CHECK(total.selfCheckFailures == 0);
     CHECK(total.injectivity == 0);
-    CHECK(total.unjudged() == 0);
+    CHECK(total.unjudged() == total.unjudgedReviewed);
     CHECK(total.accepted == total.acceptedReviewed);
     CHECK(total.conflicts == total.conflictsReviewed);
     // The no-op rebuild resolves everything Exact (determinism).
