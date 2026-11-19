@@ -5,7 +5,7 @@
 //                    planar face; an offset makes a datum plane on it first.
 //   sketchToolbar    while sketching: the drawing tools (the same commands as their keys and the palette), the
 //                    construction toggle and Finish.
-//   sketchStatus     the sketch's name, how constrained it is (in the status colours) and what the tool wants next.
+//   sketchStatus     (top centre) the sketch's name, how constrained it is (in the status colours) and what the tool wants next.
 import QtQuick
 import RayCad.Ui
 
@@ -178,8 +178,9 @@ Item {
         id: status
         objectName: "sketchStatus"
         visible: SketchTool.active
-        anchors.left: parent.left
-        anchors.bottom: parent.bottom
+        // Top centre: where the selection filter is outside the sketch (it is hidden while sketching).
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - 2 * Theme.spacingL, statusColumn.implicitWidth + 2 * Theme.spacingM)
         height: statusColumn.implicitHeight + 2 * Theme.spacingS
 

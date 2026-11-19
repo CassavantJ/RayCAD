@@ -113,6 +113,10 @@ void SketchDrag::run(sketch::Sketch model, SketchEntId point)
                 Update u;
                 u.kind = Update::Kind::Final;
                 u.sketch = (*session)->end();
+                // The solver system is freed here, before the hand-off: the UI thread then joins a thread that has
+                // nothing left to do.
+                session->reset();
+                solver.reset();
                 post(std::move(u));
                 return;
             }

@@ -141,6 +141,8 @@ qt_add_qml_module(ray_ui
         QtQuick.Templates
         QtQuick.Shapes
         QtQuick.Dialogs)
+# The generated type registrations include QML_ELEMENT headers by file name: sketch/ (T-092) must be on the path.
+target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sketch")
 
 # The C++ that qmlcachegen generates from the QML is Qt's code, not ours: its warnings (MSVC C4702 "unreachable
 # code" inside Qt's inline headers) do not fail the build. Our own sources keep warnings as errors.

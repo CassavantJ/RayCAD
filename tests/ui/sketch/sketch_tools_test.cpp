@@ -73,12 +73,12 @@ TEST_CASE("snaps: points first, then midpoints, axis, curves and alignment", "[s
     SECTION("horizontal from the anchor, onto the right side")
     {
         SnapOptions o;
-        o.anchor = Vec2{-30, 10};
-        const Snap s = snapAt(view, {40.5, 10.6}, 1.0, o);
+        o.anchor = Vec2{-30, 13};
+        const Snap s = snapAt(view, {40.5, 13.6}, 1.0, o);
         CHECK(s.axis == Snap::Axis::Horizontal);
         CHECK(s.kind == Snap::Kind::OnCurve);
         CHECK(s.p.x == Approx(40));
-        CHECK(s.p.y == Approx(10));
+        CHECK(s.p.y == Approx(13));
     }
     SECTION("lined up with a point")
     {

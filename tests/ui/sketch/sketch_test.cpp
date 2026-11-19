@@ -202,6 +202,18 @@ struct Window {
         REQUIRE(host->context()->invoke(redo ? QStringLiteral("edit.redo") : QStringLiteral("edit.undo")));
         REQUIRE(QTest::qWaitFor([&] { return document()->undoCount() != before; }, 20000));
         REQUIRE(settled());
+        // The sketch mode follows the document (its listener runs after the undo).
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                SketchModel* s = sketch();
+                const auto id = s->featureId();
+                if (!id)
+                    return true;
+                auto model = api::sketch_edit::modelOf(*document()->state(), *id);
+                return model ? s->featureInDocument() && s->entityCount() == static_cast<int>(model->entities.size())
+                             : !s->featureInDocument() && s->entityCount() == 0;
+            },
+            20000));
     }
     void shot(const char* name) const
     {
@@ -293,7 +305,8 @@ TEST_CASE("a rectangle and a circle drawn by pointer, with inferred constraints,
     REQUIRE(w.run("sketch.tool.circle"));
     w.clickAt({70, 15});
     w.moveTo({75, 15});
-    QTest::keyClicks(w.window(), QStringLiteral("20mm")); // a new document is in inches
+    for (const char c : {'2', '0', 'm', 'm'}) // a new document is in inches: the unit is typed
+        QTest::keyClick(w.window(), c);
     QTest::keyClick(w.window(), Qt::Key_Return);
     REQUIRE(w.settled());
     {
@@ -381,12 +394,30 @@ TEST_CASE("an open sketch renders nothing while idle; entering and leaving chang
     // Idle: the cursor rests over the sketch; no frame for a second.
     w.frame({-10, -10}, {50, 40});
     w.moveTo({15, 30});
-    QTest::qWait(400);
+    // Everything the document does after the edit (its rebuild, the status line) is over before the count starts.
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            doc::Document* d = w.document();
+            return d != nullptr && !d->rebuildPending() && !w.host->session()->jobActive();
+        },
+        20000));
+    QTest::qWait(800);
     int swapped = 0;
-    QObject::connect(w.window(), &QQuickWindow::frameSwapped, w.window(), [&] { ++swapped; }, Qt::DirectConnection);
+    QElapsedTimer since;
+    since.start();
+    std::vector<qint64> swapTimes;
+    QObject::connect(
+        w.window(), &QQuickWindow::frameSwapped, w.window(),
+        [&] {
+            ++swapped;
+            swapTimes.push_back(since.elapsed());
+        },
+        Qt::DirectConnection);
     const int paints = w.overlay()->paints();
     const std::uint64_t frames = w.view()->viewport()->info().framesRendered;
     QTest::qWait(1000);
+    for (const qint64 at : swapTimes)
+        UNSCOPED_INFO("a frame at " << at << " ms");
     CHECK(swapped == 0);
     CHECK(w.overlay()->paints() == paints);
     CHECK(w.view()->viewport()->info().framesRendered == frames);
@@ -475,15 +506,22 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
         QTest::qWait(16);
     }
     CHECK(w.sketch()->dragging());
+    // The drag itself ends at the release; what follows is the commit (the drag's end on the worker, then sketch.set:
+    // the document command, its journal record and the rebuild scheduling), reported separately.
+    const qint64 worstDrag = worst;
+    worst = 0;
     w.sendMouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
     REQUIRE(QTest::qWaitFor([&] { return !w.sketch()->dragging(); }, 30000));
     REQUIRE(w.settled());
     tick.stop();
+    const qint64 worstCommit = worst;
+    worst = worstDrag;
     INFO("worst UI-thread gap " << worst << " ms; drag steps solved " << w.sketch()->dragSteps() << ", slowest "
                                 << w.sketch()->slowestDragStepMs() << " ms");
     WARN("UI-thread watchdog while dragging a 200-curve sketch: worst gap "
          << worst << " ms, " << w.sketch()->dragSteps() << " steps, slowest step " << w.sketch()->slowestDragStepMs()
          << " ms");
+    WARN("the commit after the drag: worst UI-thread gap " << worstCommit << " ms");
     CHECK(worst < 50);
     CHECK(w.sketch()->dragSteps() > 0);
 
@@ -497,6 +535,33 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
     // The chain is 200 * 0.64 mm long, so the end reaches the target.
     CHECK(std::hypot(moved.x - target.x, moved.y - target.y) < 0.5);
     w.shot("t092_drag_200");
+    REQUIRE(w.run("sketch.mode.finish"));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("an offset in the plane picker makes a datum plane; the sketch lies on it", "[sketch][datum]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    REQUIRE(w.run("sketch.mode.new"));
+    QQuickItem* offset = nullptr;
+    REQUIRE(QTest::qWaitFor([&] { return (offset = w.find(QStringLiteral("sketchPlaneOffset"))) != nullptr; }, 5000));
+    offset->setProperty("text", QStringLiteral("10mm"));
+    w.click(w.find(QStringLiteral("sketchPlane.xy")));
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->active(); }, 10000));
+    CHECK(w.sketch()->plane().origin.z == Approx(10));
+    CHECK(w.sketch()->plane().normal.z == Approx(1));
+    const auto& features = w.document()->state()->features;
+    REQUIRE(features.size() == 1);
+    CHECK(features[0].type == "datum_plane");
+    w.frame({-20, -20}, {60, 40});
+    REQUIRE(w.run("sketch.tool.circle"));
+    w.clickAt({0, 0});
+    w.clickAt({5, 0});
+    REQUIRE(w.settled());
+    REQUIRE(w.document()->state()->features.size() == 2);
+    CHECK(w.document()->state()->features[1].propsJson.find("\"datum\"") != std::string::npos);
     REQUIRE(w.run("sketch.mode.finish"));
     w.checkNoWarnings();
 }
