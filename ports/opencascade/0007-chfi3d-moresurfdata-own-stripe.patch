@@ -1,0 +1,39 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: ChFi3d_Builder::PerformMoreSurfdata, at "determination of neighbor surface", reads SurfData anInd of
+myListStripe.First() although anInd was computed for the stripe at the current vertex (aStripe, whose sequence
+is aSeqSurfData and is used everywhere else in the function). Read it from aSeqSurfData.
+
+Why: when the vertex belongs to another stripe than the first one, the code reads the wrong stripe. If the first
+stripe is shorter than anInd, NCollection_Sequence::Value is out of range; release builds have no range check, so
+Find returns the last node and Value then leaves the sequence's cached position (myCurrentIndex) past its end. The
+next lookup in that sequence walks off the list and dereferences a null node: ChFi3d_StripeEdgeInter in
+ChFi3d_Builder::Compute (access violation on Windows, SIGSEGV on Linux). Seen in RayCAD's naming random test (holdout
+sequence 18:3, a 0.707 mm chamfer of two edges, BRepFilletAPI_MakeChamfer). When the first stripe is long enough,
+the old code silently took the neighbour face from an unrelated SurfData. When the vertex's stripe is the first
+one (every single-stripe blend) the two expressions are the same object, so nothing changes there.
+
+Upstream: not fixed in OCCT master as of 2026-11-18 (the same two lines are still there). Not reported upstream yet.
+
+diff --git a/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx b/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx
+--- a/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx
++++ b/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx
+@@ -3898,14 +3898,16 @@ void ChFi3d_Builder::PerformMoreSurfdata(const int Index)
+   }
+ 
+   // determination of neighbor surface
++  // anInd indexes the SurfData of the stripe at this vertex (aSeqSurfData), which need not be the
++  // first stripe of the builder.
+   int indSurface;
+   if (is1stCP1OnArc)
+   {
+-    indSurface = myListStripe.First()->SetOfSurfData()->Value(anInd)->IndexOfS1();
++    indSurface = aSeqSurfData.Value(anInd)->IndexOfS1();
+   }
+   else
+   {
+-    indSurface = myListStripe.First()->SetOfSurfData()->Value(anInd)->IndexOfS2();
++    indSurface = aSeqSurfData.Value(anInd)->IndexOfS2();
+   }
+ 
+   aNeighborFace = TopoDS::Face(myDS->Shape(indSurface));
