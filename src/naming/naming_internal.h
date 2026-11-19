@@ -44,6 +44,29 @@ Hash256 nameId(const TopoName& name);
 Hash256 familyId(kernel::SubKind kind, const FeatureId& origin, std::string_view role,
                  std::span<const Hash256> parents);
 
+// A discriminator made in propagate()'s fallback mode, from the names of ALL the faces around a sibling (rule 4,
+// propagate.h), carries this extra entry; one made from the faces of the feature that issued the siblings does not.
+// So a discriminator of one mode never equals one of the other mode: a sibling whose faces of the current feature
+// are, say, {A} and another sibling whose faces of every feature are {A} get different names (spike S4 V34 and the
+// T-081a random sequence 19:1, where the two pieces of a cut wall swapped names this way).
+Hash256 allFacesDiscriminatorMark();
+
+// Does the name tell its element from its siblings only by surroundings that need not move with it: an ordinal (by
+// fingerprint), or a discriminator made from all the faces around it (allFacesDiscriminatorMark)? Faces at the ends
+// of an edge, or the neighbours a piece happens to touch, change with unrelated edits, and a sibling can end up with
+// exactly the surroundings another sibling had (T-081a random 18:48: two lines where a moved boss pierces a
+// cylinder, told apart by the faces they end on, swapped). Every edge or vertex among siblings counts as such: the
+// pieces of an edge keep their end faces while the feature between them moves and they trade territory (random
+// 9:41). Such a name is trusted only while the element's
+// fingerprint still matches the reference's hint, like an ambiguous name (PLAN.md 3.3 rule 4). A name alone in its
+// family, or told apart by faces of the feature that issued the siblings (the walls of the groove that split a
+// face), is not.
+bool needsHint(const TopoName& name);
+
+// How much a piece's quantised size (Fingerprint::qArea: area or length) may exceed its hint before it counts as
+// grown: a few quanta of rounding (1e-4 mm, 1e-4 mm^2 each).
+inline constexpr double kGrowthSlackQuanta = 20.0;
+
 // Checks the table (sorted, every name has a record, ids and families recomputed, kinds agree) and builds
 // the derived indexes. A table that breaks a rule is an Internal error, or FormatError when `fromFile`.
 Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile);

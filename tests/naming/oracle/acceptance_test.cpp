@@ -632,3 +632,392 @@ TEST_CASE("Regression (Linux 7:28): a boss widened over a second opening; the ca
         if (capEdge(o))
             checkSeparateParts(r, o);
 }
+
+// ---------------------------------------------------------------- regressions of the T-081a gate (naming errors)
+// Each scenario rebuilds, on a block, the kind of wrong-element answer the randomised test found on a corpus part, and
+// fails without the naming rule that fixed it: the oracle judges the old answer wrong, and the resolver must not give
+// it.
+namespace {
+
+Feature blendOn(const std::string& id, bool fillet, Target t, double size)
+{
+    Feature f;
+    f.id = id;
+    f.type = fillet ? FType::Fillet : FType::Chamfer;
+    f.role = fillet ? "fillet" : "chamfer";
+    f.targets = {std::move(t)};
+    f.size = size;
+    return f;
+}
+
+// The wrong answer `bad` is judged wrong by the oracle, the resolver's answer is not, and it is not `bad`.
+void checkNotAnswered(const Run& r, const Outcome& o, Answer bad, const std::vector<std::uint32_t>& badElements)
+{
+    INFO("reference " << o.ref.record.base.index << " [" << o.ref.record.truth.cat << "]: resolver "
+                      << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), oracle expects"
+                      << text(o.expected.elems));
+    CHECK(isWrong(judgeOther(r, o, bad, badElements).verdict));
+    CHECK_FALSE(isWrong(o.verdict));
+    std::vector<std::uint32_t> got;
+    for (const SubId& e : o.resolved.elements)
+        got.push_back(e.index);
+    CHECK_FALSE((answerOf(o.resolved.state) == bad && got == badElements));
+}
+
+} // namespace
+
+TEST_CASE("Regression (random 11:12): a Split piece beyond a pocket that bounded the picked face is not a piece",
+          "[naming][acceptance][t081a-gate]")
+{
+    // The chamfer of the block's front top edge, cut short at x = 90 by a pocket over the right end. The pocket then
+    // moves to x = 80..96: the chamfer is in two pieces, and the piece beyond the pocket (x 96..100) lies where the
+    // pocket was when the chamfer was picked. Without the rule that a Split piece must not lie beyond a face of a
+    // feature that bounded the picked element (facePiecesStayInside), the resolver answers Split with both pieces.
+    auto script = [](double x0) {
+        Script s = block(100, 60, 20);
+        s.push_back(blendOn("R1", false, Target{"F01/s1", "F01/c1/1", true, true}, 2));
+        s.push_back(sweep("P1", BOp::Cut, top(20), rect(x0, -5, x0 + 16, 10), 5));
+        return s;
+    };
+    const Run r = run(script(90), script(80));
+    checkNoneWrong(r);
+    const auto chamfer = [](const Outcome& o) {
+        return faceOf(o, "R1/b0");
+    };
+    REQUIRE(count(r.out, chamfer) == 1);
+    for (const Outcome& o : r.out)
+        if (chamfer(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            REQUIRE(all.size() == 2);
+            checkNotAnswered(r, o, Answer::Split, all);
+        }
+}
+
+TEST_CASE("Regression (random 10:34): a piece whose face is whole again round a notch where the piece was is not "
+          "Merged into it",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A slot through the block's right end splits its x = 100 side into a piece y 0..38 and a piece y 40..60. With the
+    // slot suppressed and a notch over the second piece's place (y 39..61, from the top down to 0.3 mm above the
+    // bottom), the side is one face again, L-shaped: its box still holds the second piece's centre (y 50, z 10), the
+    // face does not, and only a strip 0.3 mm high of the piece's place is left on it. Without the outline check in
+    // canContain, the split-parent rule answers Merged with the whole side.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("A1", BOp::Cut, top(20), rect(90, 38, 105, 40), 25));
+    Script edited = base;
+    edited[1].suppressed = true;
+    edited.push_back(sweep("N1", BOp::Cut, top(20), rect(90, 39, 105, 61), 19.7));
+    const Run r = run(base, edited);
+    checkNoneWrong(r);
+    const auto middle = [&](const Outcome& o) {
+        if (!faceOf(o, "F01/s2"))
+            return false;
+        const ElemSamples& p = o.ref.record.picked();
+        return p.boxMin.y > 39;
+    };
+    INFO("references about the right side:" << refsAbout(r, "F01/s2"));
+    REQUIRE(count(r.out, middle) == 1);
+    for (const Outcome& o : r.out)
+        if (middle(o)) {
+            const std::vector<std::uint32_t> side = logicalElements(r, o);
+            REQUIRE(side.size() == 1);
+            checkNotAnswered(r, o, Answer::Merged, side);
+        }
+}
+
+TEST_CASE("Regression (random 6:21): an edge piece that only touches the picked edge's end is not a piece of it",
+          "[naming][acceptance][t081a-gate]")
+{
+    // The block's front top edge, cut short at x = 90 by a pocket over its right end, is one edge. The pocket then
+    // moves to x = 74..90: the edge is in two pieces, and the right one starts exactly where the picked edge ended.
+    // Without the check that a piece shares a stretch of the picked segment (onHintCarrier), the resolver answers
+    // Split with both pieces.
+    auto script = [](double x0) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("P1", BOp::Cut, top(20), rect(x0, -5, x0 + 16, 10), 5));
+        return s;
+    };
+    const Run r = run(script(90), script(74));
+    checkNoneWrong(r);
+    const auto edge = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "F01/s1") &&
+               about(o, "F01/c1/1");
+    };
+    INFO("references about the front top edge:" << refsAbout(r, "F01/s1"));
+    REQUIRE(count(r.out, edge) == 1);
+    for (const Outcome& o : r.out)
+        if (edge(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            REQUIRE(all.size() == 2);
+            checkNotAnswered(r, o, Answer::Split, all);
+        }
+}
+
+TEST_CASE("Regression (holdout 18:5): an arc on the far side of a moved hole's rim is not a piece of the picked arc",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A groove across the top (y 25.5..27.5) cuts the south of a hole's top rim (radius 5, centre y 31) off: the rim
+    // is one arc of 268 degrees. The hole then moves to y 29.8 and the groove widens to y 29.8: the rim is a north arc
+    // (0..180 degrees), where the picked arc went, and a south arc (239..301), where the picked arc had its gap; the
+    // two are together shorter than the picked arc and lie within the circle's diameter of each other. Without the
+    // check that the pieces of a moved arc fit in an arc no longer than the picked one (piecesLieAsPicked), the
+    // resolver answers Split with both.
+    auto script = [](double cy, double groove) {
+        Script s = block(100, 60, 20);
+        // Sketched with its x axis along -y, so the hole wall's seam faces south, inside the groove: the north arc is
+        // one edge.
+        Frame south = top(20);
+        south.xd = {0, -1, 0};
+        s.push_back(sweep("H1", BOp::Cut, south, circle(-cy, 50, 5), 25, "hole"));
+        s.push_back(sweep("G1", BOp::Cut, top(20), rect(-5, 25.5, 105, groove), 3));
+        return s;
+    };
+    const Run r = run(script(31, 27.5), script(29.8, 29.8));
+    checkNoneWrong(r);
+    const auto rim = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && about(o, "H1/s1") && about(o, "F01/c1/1");
+    };
+    REQUIRE(count(r.out, rim) == 1);
+    for (const Outcome& o : r.out)
+        if (rim(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            REQUIRE(all.size() >= 2); // the south arc may be in two at the seam
+            checkNotAnswered(r, o, Answer::Split, all);
+        }
+}
+
+TEST_CASE("Regression (random 5:43): a micron stub left of a cut-away edge is not the edge",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A cut removes the block's front right corner up to 0.0008 mm below the top: of the vertical corner edge only a
+    // stub of 0.0008 mm is left, and it keeps the edge's name. Without the stub check in the Exact stage, the
+    // resolver answers Exact with the stub.
+    Script base = block(100, 60, 20);
+    Script edited = base;
+    edited.push_back(sweep("X1", BOp::Cut, top(20 - 0.0008), rect(90, -5, 105, 10), 25));
+    const Run r = run(base, edited);
+    checkNoneWrong(r);
+    const auto corner = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "F01/s1") &&
+               about(o, "F01/s2");
+    };
+    REQUIRE(count(r.out, corner) == 1);
+    for (const Outcome& o : r.out)
+        if (corner(o)) {
+            INFO("resolver " << o.resolved.reason);
+            CHECK(o.resolved.state == naming::ResolveState::Broken);
+            // What is left on the corner is a sliver to the oracle too (no sample 0.02 mm inside it).
+            for (const std::uint32_t e : logicalElements(r, o))
+                CHECK(isSliver(r.now->of(SubKind::Edge)[e], SubKind::Edge));
+        }
+}
+
+TEST_CASE("Oracle: a face that took in a coplanar face of another feature is merged (known naming blind spot)",
+          "[naming][acceptance][oracle-gate]")
+{
+    // A boss under the block and a slot cut up into it to the block's bottom: inside the slot, the block's bottom
+    // plane shows as the slot's ceiling, a face of the slot. With the boss suppressed, the slot cuts nothing and the
+    // bottom face runs on over the ceiling's place: it took in a face that existed when it was picked, and the oracle
+    // expects it merged (Exact on it is a silent merge, Merged is right). The resolver cannot tell this from a
+    // dimension change that makes the face larger (which must stay Exact, T-096) without the picked face's territory
+    // in the reference: it answers Exact here (T-081a random 6:29 and 6:22, holdout2 13:4). Only the oracle is checked.
+    Script base = block(100, 60, 20);
+    Frame under; // sketch y runs along -y
+    under.n = {0, 0, -1};
+    base.push_back(sweep("B1", BOp::Join, under, rect(30, -40, 70, -20), 10));
+    base.push_back(sweep("S1", BOp::Cut, top(0), rect(40, 25, 60, 35), 15));
+    Script edited = base;
+    edited[1].suppressed = true;
+    const Run r = run(base, edited);
+    const auto bottom = [](const Outcome& o) {
+        return faceOf(o, "F01/c0/1");
+    };
+    INFO("references about the bottom:" << refsAbout(r, "F01/c0/1"));
+    REQUIRE(count(r.out, bottom) >= 1);
+    for (const Outcome& o : r.out)
+        if (bottom(o) && o.expected.merged) {
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict));
+            CHECK(judgeOther(r, o, Answer::Merged, o.expected.elems).verdict == Verdict::Correct);
+        }
+    CHECK(count(r.out, [&](const Outcome& o) { return bottom(o) && o.expected.merged; }) >= 1);
+}
+
+TEST_CASE("Regression (random 9:41): the pieces of an edge trade territory when the slot between them moves",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A slot across the block's front top edge splits it into a left and a right piece, told apart by the slot walls
+    // they end on. Moved left by more than its width, the slot leaves the left piece short and gives most of its old
+    // stretch to the right piece; each piece still ends on the same wall. Without the rule that an edge among
+    // siblings is trusted only while its geometry is unchanged (needsHint), both resolve Exact: one incomplete, one a
+    // silent merge.
+    auto script = [](double x0) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("S1", BOp::Cut, top(20), rect(x0, -5, x0 + 10, 10), 5));
+        return s;
+    };
+    const Run r = run(script(40), script(10));
+    checkNoneWrong(r);
+    const auto piece = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "F01/s1") &&
+               about(o, "F01/c1/1");
+    };
+    INFO("references about the front top edge:" << refsAbout(r, "F01/s1"));
+    REQUIRE(count(r.out, piece) == 2);
+    for (const Outcome& o : r.out)
+        if (piece(o)) {
+            INFO("reference " << o.ref.record.base.index << ": resolver " << o.resolved.reason);
+            CHECK(o.resolved.state != naming::ResolveState::Exact);
+            for (const SubId& e : o.resolved.elements)
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e.index}).verdict));
+        }
+}
+
+// ---------------------------------------------------------------- oracle capabilities of the T-081a gate
+// Each new judging rule of the oracle on a scripted case: the answer the rule now accepts is judged correct, and a
+// wrong answer in the same situation is still judged wrong.
+
+TEST_CASE("Oracle: a face that runs on over empty space is not merged; over a sibling's territory it is",
+          "[naming][acceptance][oracle-gate]")
+{
+    // New territory (expect, ownTerritory): the top face with a hole in it, the hole then suppressed: the face runs on
+    // over the hole's place, which was nothing when it was picked. Exact is right.
+    {
+        Script base = block(100, 60, 20);
+        base.push_back(sweep("H1", BOp::Cut, top(20), circle(50, 30, 5), 40, "hole"));
+        Script edited = base;
+        edited[1].suppressed = true;
+        const Run r = run(base, edited);
+        checkNoneWrong(r);
+        const auto topFace = [](const Outcome& o) {
+            return faceOf(o, "F01/c1/1");
+        };
+        REQUIRE(count(r.out, topFace) == 1);
+        for (const Outcome& o : r.out)
+            if (topFace(o)) {
+                REQUIRE(o.expected.elems.size() == 1);
+                CHECK_FALSE(o.expected.merged);
+                CHECK(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict == Verdict::Correct);
+                CHECK(judgeOther(r, o, Answer::Merged, o.expected.elems).verdict == Verdict::Correct);
+                // Negative: any other face is wrong.
+                const std::uint32_t other = o.expected.elems[0] == 0 ? 1 : 0;
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, {other}).verdict));
+            }
+    }
+    // Negative: a slot across the top splits it into a left and a right piece; with the slot suppressed the left
+    // piece's face also covers the right piece's territory. Exact on it is a silent merge; Merged is right.
+    {
+        Script base = block(100, 60, 20);
+        base.push_back(sweep("S1", BOp::Cut, top(20), rect(40, -5, 60, 65), 5));
+        Script edited = base;
+        edited[1].suppressed = true;
+        const Run r = run(base, edited);
+        checkNoneWrong(r);
+        const auto leftPiece = [](const Outcome& o) {
+            return faceOf(o, "F01/c1/1") && o.ref.record.picked().boxMax.x < 41;
+        };
+        REQUIRE(count(r.out, leftPiece) == 1);
+        for (const Outcome& o : r.out)
+            if (leftPiece(o)) {
+                REQUIRE(o.expected.elems.size() == 1);
+                CHECK(o.expected.merged);
+                CHECK(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict == Verdict::WrongSilentMerge);
+                CHECK(judgeOther(r, o, Answer::Merged, o.expected.elems).verdict == Verdict::Correct);
+            }
+    }
+}
+
+TEST_CASE("Oracle: a resized pocket carries its walls' meeting lines with it", "[naming][acceptance][oracle-gate]")
+{
+    // The edit map of a sweep scaled about its sketch origin (mapElement, profileScale): the line where a straight wall
+    // of a rounded pocket meets its corner arc, tangent, cannot be found by projecting onto the two walls; scaled with
+    // the pocket it is. The edge at the same wall's other end is still wrong.
+    auto script = [](double k) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("P1", BOp::Cut, top(20), roundedRect(30 * k, 20 * k, 70 * k, 40 * k, 5 * k), 5));
+        return s;
+    };
+    const Run r = run(script(1.0), script(0.8));
+    checkNoneWrong(r);
+    const auto tangent = [](const Outcome& o, const char* arc) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "P1/s1") &&
+               about(o, arc);
+    };
+    REQUIRE(count(r.out, [&](const Outcome& o) { return tangent(o, "P1/s5"); }) == 1);
+    REQUIRE(count(r.out, [&](const Outcome& o) { return tangent(o, "P1/s8"); }) == 1);
+    std::vector<std::uint32_t> e5, e8;
+    for (const Outcome& o : r.out) {
+        if (tangent(o, "P1/s5"))
+            e5 = o.expected.elems;
+        if (tangent(o, "P1/s8"))
+            e8 = o.expected.elems;
+    }
+    REQUIRE(e5.size() == 1);
+    REQUIRE(e8.size() == 1);
+    CHECK(e5 != e8);
+    for (const Outcome& o : r.out)
+        if (tangent(o, "P1/s5")) {
+            CHECK(o.result.noAnchor.empty());
+            CHECK(judgeOther(r, o, Answer::Exact, e5).verdict == Verdict::Correct);
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, e8).verdict));
+        }
+}
+
+TEST_CASE("Oracle: a small face unified into a large one is continued by it, merged",
+          "[naming][acceptance][oracle-gate]")
+{
+    // An element that holds the mapped pick continues it whatever the 2 % floor of evalTruth (expect, containers): a
+    // boss 2 x 2 mm on the top, 1 mm behind the front face, moved flush with it: its front face (20 mm^2) is unified
+    // into the block's front face (2,000 mm^2). Merged is right; Exact (it is larger) and any other face are wrong.
+    auto script = [](double y0) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("B1", BOp::Join, top(20), rect(10, y0, 12, y0 + 2), 10));
+        return s;
+    };
+    const Run r = run(script(1), script(0));
+    checkNoneWrong(r);
+    const auto front = [](const Outcome& o) {
+        return faceOf(o, "B1/s1");
+    };
+    REQUIRE(count(r.out, front) == 1);
+    for (const Outcome& o : r.out)
+        if (front(o)) {
+            REQUIRE(o.expected.elems.size() == 1);
+            CHECK(o.expected.merged);
+            CHECK(judgeOther(r, o, Answer::Merged, o.expected.elems).verdict == Verdict::Correct);
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict));
+            const std::uint32_t other = o.expected.elems[0] == 0 ? 1 : 0;
+            CHECK(isWrong(judgeOther(r, o, Answer::Merged, {other}).verdict));
+        }
+}
+
+TEST_CASE("Oracle: the exposed start face of a boss moved along the face it stands on moves with the boss",
+          "[naming][acceptance][oracle-gate]")
+{
+    // A face whose every owner is one sweep that moved moves with that sweep, though its own carrier did not change
+    // (mapElement): a boss on the front face that hangs 4 mm below the block shows its start face below the block;
+    // moved 20 mm along x, the start face shows 20 mm further on, and is the continuation. The front face of the
+    // block, on the same plane, is still wrong.
+    auto script = [](double x0) {
+        Script s = block(100, 60, 20);
+        Frame front; // sketch on the front face, extruded along -y; sketch y runs along +z
+        front.n = {0, -1, 0};
+        front.xd = {1, 0, 0};
+        s.push_back(sweep("B1", BOp::Join, front, rect(x0, -4, x0 + 10, 6), 8));
+        return s;
+    };
+    const Run r = run(script(20), script(40));
+    checkNoneWrong(r);
+    const auto cap = [](const Outcome& o) {
+        return faceOf(o, "B1/c0/1");
+    };
+    REQUIRE(count(r.out, cap) == 1);
+    for (const Outcome& o : r.out)
+        if (cap(o)) {
+            CHECK(o.result.noAnchor.empty());
+            REQUIRE(o.expected.elems.size() == 1);
+            CHECK(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict == Verdict::Correct);
+            for (const std::uint32_t e : logicalElements(r, o))
+                if (e != o.expected.elems[0])
+                    CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e}).verdict));
+        }
+}
