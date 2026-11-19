@@ -88,6 +88,33 @@ TEST_CASE("an extrude of a sketched rectangle makes a block named from the sketc
     CHECK(m.state->features[1].name == "Extrude 1");
 }
 
+TEST_CASE("without picked regions a nested outline is a hole; picked regions sweep exactly those", "[doc][parametric]")
+{
+    Model m;
+    // A rectangle, a circle inside it and a smaller circle inside that (an island in the hole).
+    SketchJson s;
+    s.rect(1, 0, 0, 40, 20).circleAt(10, 20, 10, 6).circleAt(12, 20, 10, 3);
+    m.run(addFeature("sketch", 2, sketchProps(kXY, s)));
+    SECTION("all regions: the plate and the pin are two solids, which one body cannot be")
+    {
+        m.run(addFeature("extrude", 3, extrudeProps(2, "10", "new", 'b')));
+        const BuildResultPtr b = m.build();
+        INFO(report(*b, 3).message);
+        CHECK(report(*b, 3).status == FeatureStatus::Failed);
+    }
+    SECTION("all regions without the pin: a plate with a hole")
+    {
+        m.run(cmd("sketch.entity.remove", R"({"id":")" + uuid('f', 2) + R"(","entities":[")" + ent(13) + R"("]})"));
+        m.run(addFeature("extrude", 3, extrudeProps(2, "10", "new", 'b')));
+        CHECK(volumeOf(*m.build(), 'b') == Catch::Approx(8000.0 - kPi * 36 * 10).epsilon(1e-9));
+    }
+    SECTION("the ring between the circles only")
+    {
+        m.run(addFeature("extrude", 3, extrudeProps(2, "10", "new", 'b', R"(,"regions":[)" + ids({11}) + "]")));
+        CHECK(volumeOf(*m.build(), 'b') == Catch::Approx(kPi * (36 - 9) * 10).epsilon(1e-9));
+    }
+}
+
 TEST_CASE("the curve tags of the doc match those closedLoops gives", "[doc][parametric]")
 {
     sketch::Sketch s;

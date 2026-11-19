@@ -9,8 +9,9 @@
 // each stored list picks the region whose outer loop shares the most entities with it; a tie or no shared entity fails
 // with a message ("pick the region again"). The cap faces of a region are named from the stored list, not from the
 // curves the region has now, so adding a line to the outline (a corner cut) or trimming one keeps the caps' names;
-// each side face is named from its own sketch entity (PLAN.md 3.3 rule 1). Without "regions" every region is swept
-// and its caps are named from its current outline.
+// each side face is named from its own sketch entity (PLAN.md 3.3 rule 1). Without "regions" every region that does
+// not fill a hole of another region is swept (a circle inside a rectangle is a hole; an island inside it is swept
+// again), and its caps are named from its current outline.
 //
 // BUILD (one region at a time, as the T-081a harness does): kernel::extrude of the region on the sketch plane, named
 // by naming::propagate from its SweepFaceOrigins; then for "new" the first region is the body and later ones are

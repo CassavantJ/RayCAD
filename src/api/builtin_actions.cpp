@@ -110,6 +110,7 @@ struct CommandText {
     const char* name;
     const char* title;
     const char* description;
+    const char* category = "Document";
 };
 constexpr CommandText kCommandTexts[] = {
     {"feature.add", "Add Feature", "Adds a feature to the history"},
@@ -121,6 +122,38 @@ constexpr CommandText kCommandTexts[] = {
     {"body.set", "Edit Body", "Changes a body's name, role, colour or visibility"},
     {"document.import", "Add Import Feature",
      "Adds a prepared import feature and its bodies (file.import reads the file and does this)"},
+    // The parametric features (T-096): props are checked against the type's schema; an edit replaces the props it
+    // names (null removes an optional one).
+    {"feature.datum_plane.add", "Datum Plane", "Adds a plane offset from a principal plane, a datum or a planar face",
+     "Model"},
+    {"feature.datum_plane.edit", "Edit Datum Plane", "Changes a datum plane's base, offset or direction", "Model"},
+    {"feature.sketch.add", "New Sketch", "Adds a sketch on a principal plane, a datum plane or a planar face",
+     "Model"},
+    {"feature.sketch.edit", "Edit Sketch Feature", "Changes a sketch feature's plane or replaces its props", "Model"},
+    {"feature.extrude.add", "Extrude",
+     "Extrudes sketch regions into a new body, or joins, cuts or intersects a body", "Model"},
+    {"feature.extrude.edit", "Edit Extrude", "Changes an extrude's distance, direction, draft, regions or operation",
+     "Model"},
+    {"feature.revolve.add", "Revolve",
+     "Revolves sketch regions about a sketch line or a world axis into a new body, or joins, cuts or intersects one",
+     "Model"},
+    {"feature.revolve.edit", "Edit Revolve", "Changes a revolve's axis, angle, regions or operation", "Model"},
+    {"feature.fillet.add", "Fillet", "Rounds edges of a body with a radius", "Model"},
+    {"feature.fillet.edit", "Edit Fillet", "Changes a fillet's edges or radius", "Model"},
+    {"feature.chamfer.add", "Chamfer", "Bevels edges of a body by a distance", "Model"},
+    {"feature.chamfer.edit", "Edit Chamfer", "Changes a chamfer's edges or distance", "Model"},
+    {"sketch.set", "Replace Sketch", "Replaces the whole model of a sketch (and optionally its plane)", "Sketch"},
+    {"sketch.entity.add", "Add Sketch Entities", "Adds points, lines, arcs, circles, splines or slots to a sketch",
+     "Sketch"},
+    {"sketch.entity.remove", "Delete Sketch Entities",
+     "Deletes sketch entities, the curves on deleted points, unused end points and their constraints", "Sketch"},
+    {"sketch.constraint.add", "Add Constraints", "Adds geometric constraints or dimensions to a sketch", "Sketch"},
+    {"sketch.constraint.remove", "Delete Constraints", "Deletes constraints or dimensions of a sketch", "Sketch"},
+    {"sketch.constraint.set", "Edit Dimension", "Changes a dimension's value or expression, or makes it driven",
+     "Sketch"},
+    {"sketch.split", "Split Curve", "Splits a sketch line or arc at a point; the first part keeps its id", "Sketch"},
+    {"sketch.trim", "Trim Curve",
+     "Removes the piece of a line, arc or circle between its nearest crossings; the rest keeps its id", "Sketch"},
 };
 
 std::string titleCase(std::string_view name)
@@ -189,6 +222,7 @@ Status addCommandActions(AppImpl& app)
             if (name == t.name) {
                 info.title = t.title;
                 info.description = t.description;
+                info.category = t.category;
             }
         }
         info.argsSchemaJson = commandSchema(handler->argsSchemaJson());
@@ -288,6 +322,116 @@ Status addExport(AppImpl& app, const char* id, const char* title, const char* fo
                 Value::object({{"path", Value::string(path)}, {"document", Value::string((*guard)->get()->od.id)}});
             return result(std::move(out));
         });
+}
+
+// The JSON form of a naming::TopoRef that the parametric feature props take (fillet and chamfer "edges", a sketch or
+// datum plane's "face"); the same layout src/doc/features/feature_props.h reads. Fingerprint integers are JSON
+// numbers, or decimal strings beyond +-2^53.
+Value topoRefJson(const naming::TopoRef& ref)
+{
+    const auto hashes = [](const std::vector<Hash256>& list) {
+        Value out = Value::array();
+        for (const Hash256& h : list) {
+            out.push(Value::string(h.hex()));
+        }
+        return out;
+    };
+    const auto integer = [](std::int64_t v) {
+        constexpr std::int64_t kExact = std::int64_t{1} << 53;
+        return v > -kExact && v < kExact ? Value::integer(v) : Value::string(std::to_string(v));
+    };
+    Value ambiguous = Value::array();
+    for (const bool a : ref.ambiguous) {
+        ambiguous.push(Value::boolean(a));
+    }
+    const naming::Fingerprint& f = ref.hint;
+    Value hint = Value::object({{"type", integer(static_cast<std::int64_t>(f.surface))},
+                                {"area", integer(f.qArea)},
+                                {"cx", integer(f.qCx)},
+                                {"cy", integer(f.qCy)},
+                                {"cz", integer(f.qCz)},
+                                {"radius", integer(f.qRadius)},
+                                {"ax", integer(f.qAxisX)},
+                                {"ay", integer(f.qAxisY)},
+                                {"az", integer(f.qAxisZ)},
+                                {"neighbours", integer(f.neighbourCount)}});
+    const char* kind = ref.kind == kernel::SubKind::Face   ? "face"
+                       : ref.kind == kernel::SubKind::Edge ? "edge"
+                                                           : "vertex";
+    return Value::object({{"body", Value::string(ref.body.value.toString())},
+                          {"kind", Value::string(kind)},
+                          {"names", hashes(ref.names)},
+                          {"families", hashes(ref.families)},
+                          {"ambiguous", std::move(ambiguous)},
+                          {"splitParents", hashes(ref.splitParents)},
+                          {"neighbourNames", hashes(ref.neighbourNames)},
+                          {"hint", std::move(hint)},
+                          {"repairConfirmed", Value::boolean(ref.repairConfirmed)}});
+}
+
+// model.reference: a persistent reference to an element of the latest build of a document (T-096).
+Status addModelActions(AppImpl& app)
+{
+    Value kind = Value::object({{"enum", Value::array({Value::string("face"), Value::string("edge"),
+                                                       Value::string("vertex")})},
+                                {"description", Value::string("The kind of element")}});
+    Value index = prop("integer", "The element's index in the body's latest build (as a viewport pick gives it)");
+    index.set("minimum", Value::integer(0));
+    Value body = prop("string", "The body id");
+    body.set("pattern", Value::string(kUuidPattern));
+    ActionInfo info{"model.reference",
+                    "Reference Element",
+                    "Model",
+                    "Returns a persistent reference (TopoRef JSON) to a face, edge or vertex of a built body, for "
+                    "feature props such as fillet edges or a sketch plane on a face",
+                    schemaOf(Value::object({{"body", std::move(body)},
+                                            {"kind", std::move(kind)},
+                                            {"index", std::move(index)},
+                                            {"document", documentProp()}}),
+                             {"body", "kind", "index"}),
+                    "",
+                    false,
+                    false,
+                    false};
+    return app.actions().add(std::move(info), [&app](std::string_view argsJson, Caller, JobContext&)
+                                                  -> Result<ActionResult> {
+        auto args = parseArgs(argsJson);
+        if (!args) {
+            return tl::unexpected<Error>(args.error());
+        }
+        auto entry = app.resolve(args->stringOr("document", ""));
+        if (!entry) {
+            return tl::unexpected<Error>(entry.error());
+        }
+        const doc::BuildResultPtr build = (*entry)->od.document->build();
+        if (!build) {
+            return fail(ErrorCode::NotFound, "The document has not been built yet; try again when the rebuild ends");
+        }
+        const BodyId bodyId{Uuid::fromString(args->stringOr("body", ""))};
+        const auto it = build->bodies.find(bodyId);
+        if (it == build->bodies.end() || it->second.shape.isNull()) {
+            return fail(ErrorCode::NotFound, "The latest build has no body " + bodyId.value.toString());
+        }
+        const std::string kindName = args->stringOr("kind", "");
+        const kernel::SubKind k = kindName == "face"   ? kernel::SubKind::Face
+                                  : kindName == "edge" ? kernel::SubKind::Edge
+                                                       : kernel::SubKind::Vertex;
+        const double i = args->numberOr("index", -1);
+        if (!(i >= 0) || i >= static_cast<double>(it->second.shape.count(k))) {
+            return fail(ErrorCode::InvalidArgument, "The body has no " + kindName + " " +
+                                                        std::to_string(static_cast<long long>(i)) + " (it has " +
+                                                        std::to_string(it->second.shape.count(k)) + ")");
+        }
+        auto resolver = naming::makeResolver({naming::ResolverBody{bodyId, it->second.map, it->second.shape}});
+        if (!resolver) {
+            return fail(ErrorCode::Internal, "Out of memory");
+        }
+        const naming::TopoRef ref = resolver->makeRef(bodyId, kernel::SubId{k, static_cast<std::uint32_t>(i)});
+        if (ref.names.empty()) {
+            return fail(ErrorCode::NotFound, "That element has no persistent name in this build");
+        }
+        return result(Value::object({{"ref", topoRefJson(ref)}}));
+    });
 }
 
 } // namespace
@@ -528,6 +672,11 @@ Status registerBuiltinActions(AppImpl& app)
 
     // ---- measure (T-022) ----
     if (st = registerMeasureActions(app); !st) {
+        return st;
+    }
+
+    // ---- model references (T-096) ----
+    if (st = addModelActions(app); !st) {
         return st;
     }
 

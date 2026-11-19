@@ -272,8 +272,36 @@ Result<std::vector<std::vector<kernel::ProfileLoop>>> selectRegions(const Sketch
     };
     std::vector<std::vector<kernel::ProfileLoop>> out;
     if (!props.regions) {
-        for (const SketchRegion& region : sketch.regions) {
-            out.push_back(loopsOf(region, regionTag(region.outerEntities)));
+        // Every region that does not fill a hole of another one, so a circle inside a rectangle makes a hole; a
+        // region inside that hole (an island) again counts, one inside the island's hole does not, and so on.
+        auto tagsOf = [](const kernel::ProfileLoop& loop) {
+            std::set<std::uint64_t> tags;
+            for (const kernel::ProfileCurve& c : loop.curves) {
+                tags.insert(c.tag);
+            }
+            return tags;
+        };
+        const std::size_t n = sketch.regions.size();
+        std::vector<int> parent(n, -1);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::set<std::uint64_t> outer = tagsOf(sketch.regions[i].outer);
+            for (std::size_t j = 0; j < n && parent[i] < 0; ++j) {
+                for (const kernel::ProfileLoop& hole : sketch.regions[j].holes) {
+                    if (j != i && tagsOf(hole) == outer) {
+                        parent[i] = static_cast<int>(j);
+                        break;
+                    }
+                }
+            }
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            int depth = 0;
+            for (int p = parent[i]; p >= 0 && depth <= static_cast<int>(n); p = parent[static_cast<std::size_t>(p)]) {
+                ++depth;
+            }
+            if (depth % 2 == 0) {
+                out.push_back(loopsOf(sketch.regions[i], regionTag(sketch.regions[i].outerEntities)));
+            }
         }
         return out;
     }
