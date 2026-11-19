@@ -6,6 +6,8 @@ add_library(ray_api STATIC
     include/ray_api/settings.h
     settings.cpp
     include/ray_api/measure.h
+    include/ray_api/sketch_edit.h
+    sketch_edit.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

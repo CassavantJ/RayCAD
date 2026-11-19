@@ -799,7 +799,8 @@ TEST_CASE("a shortcut does not fire while a text field has the focus", "[shortcu
     QTemporaryDir data;
     Window w(data.path());
     REQUIRE(w.shortcuts()->assign(QStringLiteral("test.ping"), QStringLiteral("Ctrl+Alt+P")).value("ok").toBool());
-    REQUIRE(w.shortcuts()->assign(QStringLiteral("test.record"), QStringLiteral("R")).value("ok").toBool());
+    // R is the sketch rectangle tool's key by default (T-092): taken over here.
+    REQUIRE(w.shortcuts()->assign(QStringLiteral("test.record"), QStringLiteral("R"), true).value("ok").toBool());
 
     // In the palette's search field: neither the chord nor the plain letter runs anything; the letter is typed.
     w.openPalette();

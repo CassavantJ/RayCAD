@@ -11,6 +11,8 @@
 //   commandHost       T-021: CommandHost.qml, the palette and the shortcut settings (Loaders); ContextMenu.qml over
 //                     viewportArea and the model tree opens the right-click menus.
 //   leftPanel         "Model": ModelTree.qml in leftPanelContent.
+//   sketch            T-092: sketch/SketchLayer.qml over the view (in viewportHost) and sketch/SketchPanel.qml (tools,
+//                     plane picker, status) in viewportArea.
 //   rightPanel        "Properties": SelectionInfo.qml in rightPanelContent; T-022: a second tab, the Measure panel
 //                     (panels/Measure.qml), and the measurement labels over the view (panels/MeasureOverlay.qml).
 //   statusBar         status text (AppContext.statusText) and jobSlot (the foreground job of Session.jobs, T-019).
@@ -110,6 +112,11 @@ FocusScope {
             view: viewport.view
             visible: Scene.bodyCount > 0
         }
+        // T-092: the sketch being edited, its pointer and keys (sketch/SketchLayer.qml).
+        SketchLayer {
+            anchors.fill: parent
+            view: viewport.view
+        }
     }
 
     // T-022: the M key and the measure commands show the Measure tab; it draws its witness while shown.
@@ -181,7 +188,12 @@ FocusScope {
             id: selectionFilterBar
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: Scene.bodyCount > 0
+            visible: Scene.bodyCount > 0 && !SketchTool.active
+        }
+
+        // T-092: New sketch, the plane picker, the sketch tools and the sketch's status (sketch/SketchPanel.qml).
+        SketchPanel {
+            anchors.fill: parent
         }
 
         // T-019: someone else holds the document's write lock.

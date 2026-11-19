@@ -157,6 +157,13 @@ constexpr CommandText kCommandTexts[] = {
     {"sketch.split", "Split Curve", "Splits a sketch line or arc at a point; the first part keeps its id", "Sketch"},
     {"sketch.trim", "Trim Curve",
      "Removes the piece of a line, arc or circle between its nearest crossings; the rest keeps its id", "Sketch"},
+    // T-092: the drawing tools' commands.
+    {"sketch.construction", "Construction Geometry",
+     "Marks sketch entities as construction geometry, or as profile geometry again", "Sketch"},
+    {"sketch.extend", "Extend Curve", "Grows the end of a sketch line or arc to the next curve it meets", "Sketch"},
+    {"sketch.offset", "Offset Curves",
+     "Copies sketch lines, arcs and circles at a distance to one side; chains stay joined", "Sketch"},
+    {"sketch.fillet", "Sketch Fillet", "Rounds the corner of two sketch lines with a tangent arc", "Sketch"},
 };
 
 std::string titleCase(std::string_view name)
