@@ -4,7 +4,8 @@ add_executable(ray_naming_tests
     element_map_test.cpp
     name_imported_test.cpp
     resolver_test.cpp
-    propagate_test.cpp)
+    propagate_test.cpp
+    evidence_test.cpp)
 target_link_libraries(ray_naming_tests PRIVATE ray_naming ray_kernel ray_core Catch2::Catch2WithMain)
 # The private headers of src/naming (test hooks) and src/kernel (shape_testing.h builders); neither includes an
 # OCCT header.

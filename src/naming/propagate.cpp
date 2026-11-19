@@ -1,8 +1,10 @@
 // propagate(): names for the result of a modelling operation (task T-081a). The rules are in propagate.h.
 #include "propagate.h"
+#include "territory.h"
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -200,6 +202,7 @@ public:
             return tl::unexpected(ok.error());
         for (const SubKind kind : kNamedKinds)
             nameFromHistory(kind);
+        absorbDeleted();
         nameFromNeighbours();
         NamingOutput out;
         out.lineage = lineage();
@@ -440,6 +443,69 @@ private:
             pending.push_back(std::move(p));
         }
         flush(pending);
+    }
+
+    // ---------- absorbed input elements (NamingInput::inputShapes) ----------
+    // A face or edge that history reports Modified from one input element only, and that grew, may also cover an
+    // input element on the same surface (or curve) that history reports Deleted: a boolean that unified the two
+    // without saying so. When every point of that element's territory (territory.h) lies on the result, it took
+    // the element in: it carries that element's names as well, and lineage reports the element Merged into it.
+    void absorbDeleted()
+    {
+        if (in_.inputShapes.empty())
+            return;
+        for (const SubKind kind : {SubKind::Face, SubKind::Edge}) {
+            std::vector<SourceKey> deleted;
+            for (const auto& [source, results] : modifiedTo_)
+                if (results.empty() && source.second.kind == kind && !inputNames(source).empty())
+                    deleted.push_back(source);
+            if (deleted.empty())
+                continue;
+            // Each deleted element's territory, made when first needed; an element is absorbed by one result only.
+            std::map<SourceKey, Territory> territories;
+            std::set<SourceKey> taken;
+            for (std::uint32_t i = 0; i < t_.count[slot(kind)]; ++i) {
+                const SubId r{kind, i};
+                std::vector<SourceKey>& modified = modifiedFrom_[slot(kind)][i];
+                if (!named(r) || modified.size() != 1 || modifiedCount(modified.front()) != 1)
+                    continue;
+                const Fingerprint& now = t_.fingerprint[slot(kind)][i];
+                const ElementMap* from = in_.inputMaps[static_cast<std::size_t>(modified.front().first)];
+                const Fingerprint before = from->fingerprintOf(modified.front().second);
+                if (!(static_cast<double>(now.qArea) >
+                      static_cast<double>(before.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta))
+                    continue;
+                std::optional<detail::Probe> probe;
+                std::vector<SourceKey> absorbed;
+                for (const SourceKey& d : deleted) {
+                    if (taken.count(d) != 0)
+                        continue;
+                    const Fingerprint fd = in_.inputMaps[static_cast<std::size_t>(d.first)]->fingerprintOf(d.second);
+                    if (fd.surface != now.surface || std::llabs(fd.qRadius - now.qRadius) > 10)
+                        continue;
+                    auto t = territories.find(d);
+                    if (t == territories.end())
+                        t = territories
+                                .emplace(d, detail::territoryOf(*in_.inputShapes[static_cast<std::size_t>(d.first)],
+                                                                d.second))
+                                .first;
+                    const Territory& territory = t->second;
+                    if (!territory.known())
+                        continue;
+                    if (!probe)
+                        probe.emplace(*in_.result, r);
+                    if (probe->count(territory) == territory.points.size())
+                        absorbed.push_back(d);
+                }
+                for (const SourceKey& d : absorbed) {
+                    taken.insert(d);
+                    inherit(r, d);
+                    modifiedTo_[d].push_back(r);
+                    modified.push_back(d);
+                }
+                std::sort(modified.begin(), modified.end());
+            }
+        }
     }
 
     // ---------- rule 3 ----------
@@ -771,6 +837,12 @@ Result<NamingOutput> propagateChecked(const NamingInput& in)
     for (const ElementMap* map : in.inputMaps)
         if (map == nullptr)
             return tl::unexpected(makeError(ErrorCode::InvalidArgument, "An input element map is missing."));
+    if (!in.inputShapes.empty() && in.inputShapes.size() != in.inputMaps.size())
+        return tl::unexpected(
+            makeError(ErrorCode::InvalidArgument, "The input shapes do not match the input element maps."));
+    for (const kernel::Shape* shape : in.inputShapes)
+        if (shape == nullptr)
+            return tl::unexpected(makeError(ErrorCode::InvalidArgument, "An input shape is missing."));
     Propagator propagator(in, gather(*in.result));
     return propagator.run();
 }

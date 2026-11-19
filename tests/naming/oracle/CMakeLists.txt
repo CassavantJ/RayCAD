@@ -47,3 +47,7 @@ set_tests_properties(ray_naming_random_holdout2 PROPERTIES TIMEOUT 7200)
 add_test(NAME ray_naming_random_holdout3 COMMAND ray_naming_oracle_tests "[random-holdout3]")
 ray_test_runtime_path(ray_naming_random_holdout3)
 set_tests_properties(ray_naming_random_holdout3 PROPERTIES TIMEOUT 7200)
+# A fourth block, first run (once, unseen) after the pick-time evidence and the oracle fixes of that task.
+add_test(NAME ray_naming_random_holdout4 COMMAND ray_naming_oracle_tests "[random-holdout4]")
+ray_test_runtime_path(ray_naming_random_holdout4)
+set_tests_properties(ray_naming_random_holdout4 PROPERTIES TIMEOUT 7200)

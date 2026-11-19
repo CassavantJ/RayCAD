@@ -44,7 +44,8 @@ std::string topoRefSchema()
            uuidSchema() + R"(,"kind":{"enum":["face","edge","vertex"]},"names":)" + hashesSchema() + R"(,"families":)" +
            hashesSchema() + R"(,"ambiguous":{"type":"array","items":{"type":"boolean"}},)" + R"("splitParents":)" +
            hashesSchema() + R"(,"neighbourNames":)" + hashesSchema() +
-           R"(,"hint":{"type":"object"},"repairConfirmed":{"type":"boolean"}},)" +
+           R"(,"hint":{"type":"object"},"repairConfirmed":{"type":"boolean"},"territory":{"type":"object"},)" +
+           R"("pickNeighbours":{"type":"array","items":{"type":"object"}}},)" +
            R"j("description":"A persistent reference to a face, edge or vertex (made by the model.reference action)"})j";
 }
 
@@ -234,116 +235,8 @@ Status checkNumeric(const Value& value, const DocumentParams& params, Parameter:
 }
 
 // ---------- TopoRef as JSON ----------
-
-namespace {
-
-constexpr double kExactInteger = 9007199254740992.0; // 2^53
-
-Value hashArray(const std::vector<Hash256>& hashes)
-{
-    Value::Array out;
-    for (const Hash256& h : hashes) {
-        out.push_back(Value::string(h.hex()));
-    }
-    return Value::array(std::move(out));
-}
-
-Value integer(std::int64_t v)
-{
-    const double d = static_cast<double>(v);
-    if (d > -kExactInteger && d < kExactInteger) {
-        return Value::number(d);
-    }
-    return Value::string(std::to_string(v));
-}
-
-Result<std::int64_t> readInteger(const PropsReader& r, const Value& hint, std::string_view key,
-                                 const std::string& field)
-{
-    const Value* v = hint.find(key);
-    if (v == nullptr) {
-        return std::int64_t{0};
-    }
-    if (v->isNumber()) {
-        const double d = v->asNumber();
-        if (!(d > -kExactInteger && d < kExactInteger) || std::floor(d) != d) {
-            return r.error(field + "." + std::string(key), "must be a whole number");
-        }
-        return static_cast<std::int64_t>(d);
-    }
-    if (v->isString()) {
-        const std::string& s = v->asString();
-        std::int64_t out = 0;
-        bool negative = false;
-        std::size_t i = 0;
-        if (!s.empty() && s[0] == '-') {
-            negative = true;
-            i = 1;
-        }
-        if (i >= s.size() || s.size() - i > 19) {
-            return r.error(field + "." + std::string(key), "must be a whole number");
-        }
-        for (; i < s.size(); ++i) {
-            if (s[i] < '0' || s[i] > '9') {
-                return r.error(field + "." + std::string(key), "must be a whole number");
-            }
-            out = out * 10 + (s[i] - '0');
-        }
-        return negative ? -out : out;
-    }
-    return r.error(field + "." + std::string(key), "must be a whole number");
-}
-
-Result<std::vector<Hash256>> readHashes(const PropsReader& r, const Value& ref, std::string_view key,
-                                        const std::string& field, bool required)
-{
-    std::vector<Hash256> out;
-    const Value* v = ref.find(key);
-    if (v == nullptr) {
-        if (required) {
-            return r.error(field + "." + std::string(key), "is required");
-        }
-        return out;
-    }
-    if (!v->isArray()) {
-        return r.error(field + "." + std::string(key), "must be an array of hashes (64 lower-case hex digits)");
-    }
-    for (const Value& item : v->asArray()) {
-        std::optional<Hash256> h;
-        if (item.isString() && item.asString().size() == 64) {
-            Hash256 parsed;
-            bool ok = true;
-            for (std::size_t i = 0; i < 32 && ok; ++i) {
-                int byte = 0;
-                for (std::size_t k = 0; k < 2; ++k) {
-                    const char c = item.asString()[2 * i + k];
-                    const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
-                    ok = ok && d >= 0;
-                    byte = byte * 16 + (d < 0 ? 0 : d);
-                }
-                parsed.bytes[i] = static_cast<std::uint8_t>(byte);
-            }
-            if (ok) {
-                h = parsed;
-            }
-        }
-        if (!h) {
-            return r.error(field + "." + std::string(key), "must be an array of hashes (64 lower-case hex digits)");
-        }
-        out.push_back(*h);
-    }
-    return out;
-}
-
-} // namespace
-
-bool consumable(const naming::Resolved& resolved, const naming::TopoRef& ref)
-{
-    if (resolved.elements.empty()) {
-        return false;
-    }
-    return resolved.usable() || (resolved.state == naming::ResolveState::Repaired && ref.repairConfirmed);
-}
+// One implementation: naming's (naming.h toJson / topoRefFromJson). These wrappers move it in and out of the props'
+// JSON values and name the field in the props' terms.
 
 const char* subKindName(kernel::SubKind kind)
 {
@@ -362,30 +255,9 @@ const char* subKindName(kernel::SubKind kind)
 
 Value topoRefToJson(const naming::TopoRef& ref)
 {
-    Value::Array ambiguous;
-    for (const bool a : ref.ambiguous) {
-        ambiguous.push_back(Value::boolean(a));
-    }
-    const naming::Fingerprint& f = ref.hint;
-    Value hint = Value::object({{"type", integer(static_cast<std::int64_t>(f.surface))},
-                                {"area", integer(f.qArea)},
-                                {"cx", integer(f.qCx)},
-                                {"cy", integer(f.qCy)},
-                                {"cz", integer(f.qCz)},
-                                {"radius", integer(f.qRadius)},
-                                {"ax", integer(f.qAxisX)},
-                                {"ay", integer(f.qAxisY)},
-                                {"az", integer(f.qAxisZ)},
-                                {"neighbours", integer(f.neighbourCount)}});
-    return Value::object({{"body", Value::string(ref.body.value.toString())},
-                          {"kind", Value::string(subKindName(ref.kind))},
-                          {"names", hashArray(ref.names)},
-                          {"families", hashArray(ref.families)},
-                          {"ambiguous", Value::array(std::move(ambiguous))},
-                          {"splitParents", hashArray(ref.splitParents)},
-                          {"neighbourNames", hashArray(ref.neighbourNames)},
-                          {"hint", std::move(hint)},
-                          {"repairConfirmed", Value::boolean(ref.repairConfirmed)}});
+    // naming writes canonical JSON of integers, strings and booleans only: it always parses.
+    auto parsed = json::parse(naming::toJson(ref));
+    return parsed ? std::move(*parsed) : Value{};
 }
 
 Result<naming::TopoRef> topoRefFromJson(const PropsReader& r, const Value& value, const std::string& field)
@@ -393,101 +265,12 @@ Result<naming::TopoRef> topoRefFromJson(const PropsReader& r, const Value& value
     if (!value.isObject()) {
         return r.error(field, "must be a reference to a face, edge or vertex (a JSON object)");
     }
-    const PropsReader ref = r.child(value);
-    if (auto known = ref.onlyKeys({"ambiguous", "body", "families", "hint", "kind", "names", "neighbourNames",
-                                   "repairConfirmed", "splitParents"},
-                                  field + ".");
-        !known) {
-        return tl::unexpected(known.error());
+    auto ref = naming::topoRefFromJson(json::write(value));
+    if (!ref) {
+        const std::vector<std::string>& at = ref.error().context;
+        return r.error(at.empty() ? field : field + "." + at.front(), ref.error().message);
     }
-    naming::TopoRef out;
-    auto body = ref.uuid("body", field + ".body");
-    if (!body) {
-        return tl::unexpected(body.error());
-    }
-    out.body = BodyId{*body};
-    auto kind = ref.choice("kind", field + ".kind", {"face", "edge", "vertex"}, std::nullopt);
-    if (!kind) {
-        return tl::unexpected(kind.error());
-    }
-    out.kind = *kind == "face"   ? kernel::SubKind::Face
-               : *kind == "edge" ? kernel::SubKind::Edge
-                                 : kernel::SubKind::Vertex;
-    auto names = readHashes(r, value, "names", field, true);
-    if (!names) {
-        return tl::unexpected(names.error());
-    }
-    if (names->empty()) {
-        return r.error(field + ".names", "must list at least one name");
-    }
-    out.names = std::move(*names);
-    auto families = readHashes(r, value, "families", field, false);
-    if (!families) {
-        return tl::unexpected(families.error());
-    }
-    out.families = std::move(*families);
-    if (!out.families.empty() && out.families.size() != out.names.size()) {
-        return r.error(field + ".families", "must have one entry per name");
-    }
-    if (const Value* a = value.find("ambiguous")) {
-        if (!a->isArray() || a->asArray().size() != out.names.size()) {
-            return r.error(field + ".ambiguous", "must have one true or false per name");
-        }
-        for (const Value& b : a->asArray()) {
-            if (!b.isBool()) {
-                return r.error(field + ".ambiguous", "must have one true or false per name");
-            }
-            out.ambiguous.push_back(b.asBool());
-        }
-    }
-    auto split = readHashes(r, value, "splitParents", field, false);
-    if (!split) {
-        return tl::unexpected(split.error());
-    }
-    out.splitParents = std::move(*split);
-    auto neighbours = readHashes(r, value, "neighbourNames", field, false);
-    if (!neighbours) {
-        return tl::unexpected(neighbours.error());
-    }
-    out.neighbourNames = std::move(*neighbours);
-    out.hint = naming::Fingerprint{};
-    out.hint.surface = kernel::SurfaceType::Other;
-    if (const Value* hint = value.find("hint")) {
-        if (!hint->isObject()) {
-            return r.error(field + ".hint", "must be a JSON object");
-        }
-        const std::string at = field + ".hint";
-        struct Slot {
-            const char* key;
-            std::int64_t* target;
-        };
-        std::int64_t type = static_cast<std::int64_t>(kernel::SurfaceType::Other);
-        std::int64_t neighbourCount = 0;
-        const Slot slots[] = {{"type", &type},          {"area", &out.hint.qArea},
-                              {"cx", &out.hint.qCx},    {"cy", &out.hint.qCy},
-                              {"cz", &out.hint.qCz},    {"radius", &out.hint.qRadius},
-                              {"ax", &out.hint.qAxisX}, {"ay", &out.hint.qAxisY},
-                              {"az", &out.hint.qAxisZ}, {"neighbours", &neighbourCount}};
-        for (const Slot& s : slots) {
-            auto v = readInteger(r, *hint, s.key, at);
-            if (!v) {
-                return tl::unexpected(v.error());
-            }
-            *s.target = *v;
-        }
-        if (type < 0 || type > static_cast<std::int64_t>(kernel::SurfaceType::Other) || neighbourCount < 0 ||
-            neighbourCount > 65535) {
-            return r.error(at, "is not a valid fingerprint");
-        }
-        out.hint.surface = static_cast<kernel::SurfaceType>(type);
-        out.hint.neighbourCount = static_cast<std::uint16_t>(neighbourCount);
-    }
-    auto confirmed = ref.optBool("repairConfirmed", field + ".repairConfirmed", false);
-    if (!confirmed) {
-        return tl::unexpected(confirmed.error());
-    }
-    out.repairConfirmed = *confirmed;
-    return out;
+    return std::move(*ref);
 }
 
 // ---------- Frames ----------
@@ -614,7 +397,7 @@ Result<kernel::Plane> facePlane(const RebuildContext& ctx, const naming::TopoRef
         return invalid(what + ": the reference must be a planar face, not a " + subKindName(ref.kind) + ".");
     }
     const naming::Resolved resolved = ctx.resolver.resolve(ref);
-    if (!consumable(resolved, ref)) {
+    if (!resolved.usable()) {
         return failed(ErrorCode::ReferenceBroken, brokenMessage(resolved, what, "face"));
     }
     auto shape = ctx.shapeOf(ref.body);

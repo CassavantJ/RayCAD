@@ -33,7 +33,9 @@
 //    vertex or edge the map leaves in place is anchored within 1e-3 mm (edge: plus the sample chord), not 0.05.
 //  - "Merged" means the element took in another element's territory: a part outside the description that lies on
 //    the mapped pick, or (nothing moved, or the pick moved with its sweep) on no other baseline element, does not
-//    make it merged (ownTerritory).
+//    make it merged (ownTerritory). When the pick moved otherwise, a part that lies on no other baseline element
+//    where it was, nor where the edit took it (mapElement of each baseline element that moved), is new territory
+//    too; a baseline element that might have moved there but cannot be mapped keeps the element merged.
 //  - Each face of an edge's or vertex's description needs a face of its own.
 //  - A weak reference that moved, whose mapped pick and a mapped sibling piece fall on one element: an Exact answer
 //    is not judged (Expectation::mergeUnknown).
@@ -94,8 +96,11 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace ray::naming_oracle {
@@ -220,7 +225,9 @@ struct Owner {
 struct Owners {
     std::vector<Owner> v;
     std::map<std::string, int> ix;
-    std::map<std::string, Feature> sweeps; // the sweeps they come from, by id (mapElement: moved features)
+    std::map<std::string, Feature> sweeps;    // the sweeps they come from, by id (mapElement: moved features)
+    std::shared_ptr<const ImportBase> import; // the imported base shape, if any (mapElement: material that stays)
+    std::uint64_t serial = 0;                 // unique per buildOwners call (a cache key)
     // Keys of logical faces the script has but the oracle cannot describe: a blend whose analytic surface does not
     // exist for its parents (a fillet larger than the corner arc it rounds, a torus with its tube wider than its ring).
     // A reference described by such an owner has no continuation the oracle can tell (expect: noAnchor).
@@ -304,11 +311,17 @@ public:
     // cannot vouch for it (it must select exactly that element on this shape).
     TruthDesc describe(SubId s) const;
     const std::vector<TruthDesc>& faceDescriptions() const { return faceDesc_; }
+    // Element s mapped through the edit to `after` (mapElement with its own description), made once per element and
+    // edited script (Owners::serial); thread-safe. nullopt: it cannot be described or mapped; no samples: it did not
+    // move.
+    const std::optional<ElemSamples>& mappedTo(SubId s, const Owners& after) const;
 
 private:
     const Owners& owners_;
     const Samples& samples_;
     std::vector<TruthDesc> faceDesc_;
+    mutable std::mutex lock_;
+    mutable std::map<std::tuple<std::uint64_t, int, std::uint32_t>, std::optional<ElemSamples>> mapped_;
 };
 
 // Does another element of the same kind lie where element `s` lies (they share territory, oracle.h overlap) and fit
@@ -345,6 +358,10 @@ struct PickRecord {
     TruthDesc truth;                         // its description
     std::shared_ptr<const Samples> baseline; // samples of the shape it was picked on
     std::shared_ptr<const Owners> owners;    // owners of the script it was picked on
+    // Optional: describes the other baseline elements (built on `owners` and `baseline`, which it must not outlive),
+    // so the merged rule can map them through the edit (expect). Without it a moved element that runs past its
+    // description is merged, as before.
+    std::shared_ptr<const TruthBuilder> builder;
     const ElemSamples& picked() const { return baseline->of(base.kind)[base.index]; }
 };
 

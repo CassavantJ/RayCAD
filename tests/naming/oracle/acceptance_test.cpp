@@ -812,15 +812,14 @@ TEST_CASE("Regression (random 5:43): a micron stub left of a cut-away edge is no
         }
 }
 
-TEST_CASE("Oracle: a face that took in a coplanar face of another feature is merged (known naming blind spot)",
+TEST_CASE("Oracle: a face that took in a coplanar face of another feature is merged",
           "[naming][acceptance][oracle-gate]")
 {
     // A boss under the block and a slot cut up into it to the block's bottom: inside the slot, the block's bottom
     // plane shows as the slot's ceiling, a face of the slot. With the boss suppressed, the slot cuts nothing and the
     // bottom face runs on over the ceiling's place: it took in a face that existed when it was picked, and the oracle
-    // expects it merged (Exact on it is a silent merge, Merged is right). The resolver cannot tell this from a
-    // dimension change that makes the face larger (which must stay Exact, T-096) without the picked face's territory
-    // in the reference: it answers Exact here (T-081a random 6:29 and 6:22, holdout2 13:4). Only the oracle is checked.
+    // expects it merged (Exact on it is a silent merge, Merged is right). Only the oracle is checked here; the resolver
+    // answers Merged since TopoRef carries the picked face's neighbours' territories (the regression test below).
     Script base = block(100, 60, 20);
     Frame under; // sketch y runs along -y
     under.n = {0, 0, -1};
@@ -1020,4 +1019,158 @@ TEST_CASE("Oracle: the exposed start face of a boss moved along the face it stan
                 if (e != o.expected.elems[0])
                     CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e}).verdict));
         }
+}
+
+// ---------------------------------------------------------------- pick-time evidence (TopoRef::territory)
+// Regressions of the naming errors that needed the picked element's territory and its neighbours' in the reference:
+// each fails without the resolver rule that uses it (exactAgainstEvidence, piecesFitEvidence).
+
+TEST_CASE("Regression (random 6:29, holdout2 13:4): a face that took in a coplanar face recorded at pick time is "
+          "Merged; one made larger by a dimension change stays Exact",
+          "[naming][acceptance][t081a-gate]")
+{
+    // The scene of the oracle case above: a slot cut up into a boss under the block shows the block's bottom plane as
+    // its ceiling. With the boss suppressed, the bottom face keeps its name and covers the ceiling's place. Without the
+    // evidence rule the resolver answers Exact (a silent merge).
+    auto script = [](double length, bool boss) {
+        Script s = block(length, 60, 20);
+        Frame under; // sketch y runs along -y
+        under.n = {0, 0, -1};
+        s.push_back(sweep("B1", BOp::Join, under, rect(30, -40, 70, -20), 10));
+        s.push_back(sweep("S1", BOp::Cut, top(0), rect(40, 25, 60, 35), 15));
+        s[1].suppressed = !boss;
+        return s;
+    };
+    const auto bottom = [](const Outcome& o) {
+        return faceOf(o, "F01/c0/1");
+    };
+    {
+        const Run r = run(script(100, true), script(100, false));
+        checkNoneWrong(r);
+        REQUIRE(count(r.out, bottom) >= 1);
+        std::size_t merged = 0;
+        // (The ceiling itself, a face of its own at pick time, has no name left: Broken, which is honest.)
+        for (const Outcome& o : r.out)
+            if (bottom(o) && o.expected.merged && o.ref.record.picked().boxMax.x > 99) {
+                INFO("resolver " << o.resolved.reason);
+                CHECK(o.resolved.state == naming::ResolveState::Merged);
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict));
+                ++merged;
+            }
+        CHECK(merged >= 1);
+    }
+    {
+        // The block 20 mm longer, boss and slot kept: the bottom grows into space nobody held. Exact (T-096).
+        const Run r = run(script(100, true), script(120, true));
+        checkNoneWrong(r);
+        for (const Outcome& o : r.out)
+            if (bottom(o) && o.ref.record.picked().boxMax.x > 99) {
+                INFO("resolver " << o.resolved.reason);
+                CHECK(o.resolved.state == naming::ResolveState::Exact);
+                CHECK_FALSE(o.expected.merged);
+            }
+    }
+}
+
+TEST_CASE("Regression (holdout3 11:1): pieces that together reach further than the picked face are not its Split",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A boss 20 mm long on the block; its top face is picked. The boss is then made 40 mm long and a slot is cut
+    // across its middle: the top face is in two pieces, together no larger than the picked face, both on its plane,
+    // but 40 mm apart end to end; the far one lies where nothing of the picked face was. Without the check that the
+    // pieces fit in the picked face's box (piecesFitEvidence), the resolver answers Split with both.
+    auto script = [](double x1, bool slot) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("B1", BOp::Join, top(20), rect(20, 20, x1, 40), 5));
+        if (slot)
+            s.push_back(sweep("X1", BOp::Cut, top(25), rect(30, 0, 50, 60), 4));
+        return s;
+    };
+    const Run r = run(script(40, false), script(60, true));
+    checkNoneWrong(r);
+    const auto cap = [](const Outcome& o) {
+        return faceOf(o, "B1/c1/1");
+    };
+    REQUIRE(count(r.out, cap) == 1);
+    for (const Outcome& o : r.out)
+        if (cap(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            REQUIRE(all.size() == 2);
+            checkNotAnswered(r, o, Answer::Split, all);
+        }
+}
+
+// ---------------------------------------------------------------- oracle capabilities of the evidence task
+TEST_CASE("Oracle: where a slot runs through a moved boss and through the part's own material, that stretch stays",
+          "[naming][acceptance][oracle-gate]")
+{
+    // A plate with a wall 4 mm thick standing on it (x 28..32) and a boss across the wall; a slot cut into the boss's
+    // top runs across the wall, and the edge where its floor meets a side runs from the boss's left face to its right
+    // face, through the wall. The boss then moves 35 mm along the slot: the stretch inside the wall is still there,
+    // where it was (it never depended on the boss), and the stretch in the boss moved with it (mapElement: material
+    // that stayed; T-081a holdout3 18:7). Both pieces continue the edge; either alone is incomplete, and a piece of the
+    // edge on the slot's other side is wrong.
+    auto script = [](double x0) {
+        Script s{sweep("F01", BOp::New, top(0), rect(0, 0, 100, 100), 2)};
+        s.push_back(sweep("W1", BOp::Join, top(2), rect(28, 0, 32, 100), 18));
+        s.push_back(sweep("B1", BOp::Join, top(2), rect(x0, 40, x0 + 60, 60), 10));
+        s.push_back(sweep("S1", BOp::Cut, top(12), rect(-5, 48, 100, 52), 3));
+        return s;
+    };
+    const Run r = run(script(0), script(35));
+    const auto floorEdge = [](const Outcome& o, const char* wall) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "S1/c1/1") &&
+               about(o, wall);
+    };
+    std::size_t seen = 0;
+    for (const Outcome& o : r.out)
+        if (floorEdge(o, "S1/s1") && o.ref.record.picked().boxMax.x - o.ref.record.picked().boxMin.x > 50) {
+            ++seen;
+            INFO("expected" << text(o.expected.elems) << "; resolver " << o.resolved.reason);
+            CHECK(o.result.noAnchor.empty());
+            REQUIRE(o.expected.elems.size() == 2);
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, {o.expected.elems[0]}).verdict));
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, {o.expected.elems[1]}).verdict));
+            CHECK(judgeOther(r, o, Answer::Split, o.expected.elems).verdict == Verdict::Correct);
+            for (const Outcome& other : r.out)
+                if (floorEdge(other, "S1/s3"))
+                    for (const std::uint32_t e : other.expected.elems)
+                        CHECK(isWrong(judgeOther(r, o, Answer::Split, {o.expected.elems[0], e}).verdict));
+            CHECK_FALSE(isWrong(o.verdict));
+        }
+    CHECK(seen == 1);
+}
+
+TEST_CASE("The size of a reference's JSON form with and without pick-time evidence, on corpus parts (printed)",
+          "[.ref-size]")
+{
+    for (const char* file : {"raycad-synthetic/fixture_plate_1.stp", "raycad-synthetic/rib_plate_1.stp",
+                             "nist-pmi/nist_ctc_01_asme1_rd_geometry.stp"}) {
+        JobContext ctx;
+        auto imported = kernel::importStep(std::string(RAY_CORPUS_DIR) + "/" + file, kernel::ImportOptions{}, ctx);
+        REQUIRE(imported.has_value());
+        REQUIRE(!imported->bodies.empty());
+        const kernel::Shape& shape = imported->bodies.front().shape;
+        const naming::ElementMap map = naming::nameImported(featureIdOf("I"), shape);
+        auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), map, shape}});
+        std::size_t n = 0, with = 0, without = 0, most = 0, neighbours = 0;
+        for (const SubKind kind : {SubKind::Face, SubKind::Edge, SubKind::Vertex})
+            for (std::uint32_t i = 0; i < shape.count(kind); ++i) {
+                const naming::TopoRef ref = resolver->makeRef(testBody(), SubId{kind, i});
+                if (ref.names.empty())
+                    continue;
+                naming::TopoRef bare = ref;
+                bare.territory = naming::Territory{};
+                bare.pickNeighbours.clear();
+                const std::size_t a = naming::toJson(ref).size(), b = naming::toJson(bare).size();
+                ++n;
+                with += a;
+                without += b;
+                most = std::max(most, a);
+                neighbours += ref.pickNeighbours.size();
+            }
+        std::printf("%s: %zu references, mean %.0f bytes with evidence (%.1f neighbours), %.0f without, largest %zu\n",
+                    file, n, static_cast<double>(with) / n, static_cast<double>(neighbours) / n,
+                    static_cast<double>(without) / n, most);
+    }
 }

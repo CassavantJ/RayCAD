@@ -367,7 +367,7 @@ TEST_CASE("blend faces are generated from their edge, boundary edges named from 
     CHECK(res.state == ResolveState::Exact);
 }
 
-TEST_CASE("Repaired is a suggestion and never usable", "[naming][propagate]")
+TEST_CASE("Repaired is a suggestion, usable only once the user confirms it", "[naming][propagate]")
 {
     // A reference whose names are all foreign to the map, with the hint and neighbour names of a real face.
     const Body b0 = block();
@@ -383,8 +383,16 @@ TEST_CASE("Repaired is a suggestion and never usable", "[naming][propagate]")
     REQUIRE(res.state == ResolveState::Repaired);
     CHECK(res.elements == std::vector<SubId>{top});
     CHECK_FALSE(res.usable());
+    CHECK_FALSE(res.postableWithoutReview());
+    CHECK_FALSE(res.repairConfirmed);
+    // The confirmation travels with the reference: resolve() copies it, and usable() honours it (the confirmation is
+    // the review, so a confirmed repair is also postable).
     ref.repairConfirmed = true;
-    CHECK_FALSE(r0->resolve(ref).usable());
+    const Resolved confirmed = r0->resolve(ref);
+    CHECK(confirmed.state == ResolveState::Repaired);
+    CHECK(confirmed.repairConfirmed);
+    CHECK(confirmed.usable());
+    CHECK(confirmed.postableWithoutReview());
     // Without neighbour names, or with a neighbour that is not around the candidate, there is no repair.
     TopoRef lonely = ref;
     lonely.neighbourNames.clear();

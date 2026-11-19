@@ -1,5 +1,6 @@
 // Resolver stages 2 to 4 (task T-081a): following names through the current build. See propagate.h.
 #include "propagate.h"
+#include "territory.h"
 
 #include <algorithm>
 #include <array>
@@ -822,6 +823,8 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
         if (!facePiecesStayInside(map, shape, elements, ref))
             return broken("The picked element came apart, and a piece lies beyond a face that bounded it when it was "
                           "picked.");
+        if (std::string why; !piecesFitEvidence(map, shape, elements, ref, why))
+            return broken(why);
         return make(ResolveState::Split, std::move(elements));
     }
 
@@ -853,8 +856,10 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 continue;
             if (wasAlone && members.size() > 1) {
                 std::sort(elements.begin(), elements.end());
+                std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
-                    !facePiecesStayInside(map, shape, elements, ref))
+                    !facePiecesStayInside(map, shape, elements, ref) ||
+                    !piecesFitEvidence(map, shape, elements, ref, why))
                     continue;
                 return make(ResolveState::Split, std::move(elements));
             }

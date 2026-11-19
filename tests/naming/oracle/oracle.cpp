@@ -3,6 +3,7 @@
 #include "oracle.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -624,7 +625,9 @@ Result<std::shared_ptr<const ImportBase>> analyseImport(const kernel::Shape& sha
 // ---------------------------------------------------------------- owners from the script
 Owners buildOwners(const Script& script)
 {
+    static std::atomic<std::uint64_t> serials{0};
     Owners O;
+    O.serial = ++serials;
     auto addOwner = [&](Owner o) {
         O.ix[o.key] = static_cast<int>(O.v.size());
         O.v.push_back(std::move(o));
@@ -635,6 +638,7 @@ Owners buildOwners(const Script& script)
         if (f.type == FType::Import) {
             if (!f.base)
                 continue;
+            O.import = f.base;
             for (std::size_t i = 0; i < f.base->carriers.size(); ++i) {
                 Owner o;
                 o.key = f.id + "/i" + std::to_string(i);
@@ -1200,6 +1204,29 @@ TruthBuilder::TruthBuilder(const Owners& o, const Samples& s) : owners_(o), samp
         faceDesc_[f] = describe({SubKind::Face, f});
 }
 
+const std::optional<ElemSamples>& TruthBuilder::mappedTo(SubId s, const Owners& after) const
+{
+    const auto key = std::make_tuple(after.serial, static_cast<int>(s.kind), s.index);
+    {
+        const std::lock_guard<std::mutex> guard(lock_);
+        const auto it = mapped_.find(key);
+        if (it != mapped_.end())
+            return it->second;
+    }
+    std::optional<ElemSamples> out;
+    const TruthDesc d = describe(s);
+    if (d.ok) {
+        bool moved = false;
+        out = mapElement(samples_, s, d, owners_, after, moved);
+        if (!moved)
+            out = ElemSamples{};
+        else if (out->pts.empty())
+            out.reset();
+    }
+    const std::lock_guard<std::mutex> guard(lock_);
+    return mapped_.emplace(key, std::move(out)).first->second;
+}
+
 TruthDesc TruthBuilder::describe(SubId s) const
 {
     TruthDesc d;
@@ -1570,6 +1597,16 @@ bool sameSheet(const ElemSamples& a, const ElemSamples& b, SubKind kind)
     return kind != SubKind::Face || a.type != plane || b.type != plane || std::abs(dot(a.nrm, b.nrm)) > 0.99;
 }
 
+// The largest distance any owner's reference point moved between two scripts (owners in both), mm.
+double largestOwnerShift(const Owners& before, const Owners& after)
+{
+    double out = 0;
+    for (const Owner& o : before.v)
+        if (const Owner* a = after.get(o.key))
+            out = std::max(out, norm(sub(a->c.p, o.c.p)));
+    return out;
+}
+
 // Is b another surface than a (not merely another reference point on the same surface)?
 bool carrierChanged(const Carrier& a, const Carrier& b)
 {
@@ -1704,12 +1741,135 @@ bool insideSweep(const Feature& f, const Vec3& p, double m)
     return false;
 }
 
+// The same sweep in both scripts (nothing about it edited).
+bool sameSweep(const Feature& a, const Feature& b)
+{
+    auto same = [](const Vec3& x, const Vec3& y) {
+        return norm(sub(x, y)) <= 1e-12;
+    };
+    if (a.op != b.op || a.dist != b.dist || !same(a.frame.o, b.frame.o) || !same(a.frame.n, b.frame.n) ||
+        !same(a.frame.xd, b.frame.xd) || a.loops.size() != b.loops.size())
+        return false;
+    for (std::size_t i = 0; i < a.loops.size(); ++i) {
+        if (a.loops[i].ents.size() != b.loops[i].ents.size())
+            return false;
+        for (std::size_t k = 0; k < a.loops[i].ents.size(); ++k) {
+            const Ent &x = a.loops[i].ents[k], &y = b.loops[i].ents[k];
+            if (x.k != y.k || x.x0 != y.x0 || x.y0 != y.y0 || x.x1 != y.x1 || x.y1 != y.y1 || x.cx != y.cx ||
+                x.cy != y.cy || x.r != y.r)
+                return false;
+        }
+    }
+    return true;
+}
+
+// The triangles of an imported base's face meshes, bucketed by (y, z) for rays along +x (insideImport). Made once per
+// base, thread-safe.
+struct RayGrid {
+    std::vector<std::array<Vec3, 3>> tris;
+    double y0 = 0, z0 = 0, dy = 1, dz = 1;
+    static constexpr int kCells = 64;
+    std::vector<std::vector<std::uint32_t>> cells; // kCells x kCells
+};
+
+const RayGrid& rayGridOf(const ImportBase& base)
+{
+    static std::mutex lock;
+    static std::map<const ImportBase*, std::unique_ptr<RayGrid>> grids;
+    const std::lock_guard<std::mutex> guard(lock);
+    auto& slot = grids[&base];
+    if (slot)
+        return *slot;
+    auto g = std::make_unique<RayGrid>();
+    Vec3 lo{1e300, 1e300, 1e300}, hi{-1e300, -1e300, -1e300};
+    for (const auto& mesh : base.meshes)
+        if (mesh)
+            for (const auto& t : mesh->triangles) {
+                g->tris.push_back({mesh->nodes[t[0]], mesh->nodes[t[1]], mesh->nodes[t[2]]});
+                for (const Vec3& v : g->tris.back()) {
+                    lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)};
+                    hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)};
+                }
+            }
+    g->y0 = lo.y;
+    g->z0 = lo.z;
+    g->dy = std::max(1e-9, (hi.y - lo.y) / RayGrid::kCells);
+    g->dz = std::max(1e-9, (hi.z - lo.z) / RayGrid::kCells);
+    g->cells.resize(static_cast<std::size_t>(RayGrid::kCells * RayGrid::kCells));
+    auto cell = [&](double v, double v0, double d) {
+        return std::clamp(static_cast<int>((v - v0) / d), 0, RayGrid::kCells - 1);
+    };
+    for (std::uint32_t i = 0; i < g->tris.size(); ++i) {
+        const auto& t = g->tris[i];
+        const int a0 = cell(std::min({t[0].y, t[1].y, t[2].y}), g->y0, g->dy);
+        const int a1 = cell(std::max({t[0].y, t[1].y, t[2].y}), g->y0, g->dy);
+        const int b0 = cell(std::min({t[0].z, t[1].z, t[2].z}), g->z0, g->dz);
+        const int b1 = cell(std::max({t[0].z, t[1].z, t[2].z}), g->z0, g->dz);
+        for (int a = a0; a <= a1; ++a)
+            for (int b = b0; b <= b1; ++b)
+                g->cells[static_cast<std::size_t>(a * RayGrid::kCells + b)].push_back(i);
+    }
+    slot = std::move(g);
+    return *slot;
+}
+
+// Is p inside the imported base solid, at least m from its faces? Its faces' fine meshes for both: the margin, and the
+// parity of the crossings of a ray from p along +x with their triangles (the meshes are closed).
+bool insideImport(const ImportBase& base, const Vec3& p, double m)
+{
+    for (const auto& mesh : base.meshes)
+        if (mesh && mesh->distanceWithin(p, m) <= m)
+            return false;
+    const RayGrid& g = rayGridOf(base);
+    const int a = static_cast<int>((p.y - g.y0) / g.dy), b = static_cast<int>((p.z - g.z0) / g.dz);
+    if (a < 0 || b < 0 || a >= RayGrid::kCells || b >= RayGrid::kCells)
+        return false;
+    int crossings = 0;
+    for (const std::uint32_t i : g.cells[static_cast<std::size_t>(a * RayGrid::kCells + b)]) {
+        const auto& t = g.tris[i];
+        // The triangle's projection on the (y, z) plane holds (p.y, p.z)? (Half-open edges: a ray through an edge
+        // counts once.)
+        const double y = p.y, z = p.z;
+        auto side = [&](const Vec3& u, const Vec3& v) {
+            return (v.y - u.y) * (z - u.z) - (v.z - u.z) * (y - u.y);
+        };
+        const double s0 = side(t[0], t[1]), s1 = side(t[1], t[2]), s2 = side(t[2], t[0]);
+        const bool in = (s0 > 0 && s1 > 0 && s2 > 0) || (s0 < 0 && s1 < 0 && s2 < 0);
+        if (!in)
+            continue;
+        // Where the ray meets the triangle's plane.
+        const Vec3 n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+        if (std::abs(n.x) < 1e-15)
+            continue;
+        const double x = t[0].x - (n.y * (y - t[0].y) + n.z * (z - t[0].z)) / n.x;
+        if (x > p.x)
+            ++crossings;
+    }
+    return crossings % 2 == 1;
+}
+
 TruthDesc withoutSeparators(const TruthDesc& d)
 {
     TruthDesc out = d;
     out.seps.clear();
     for (Constraint& c : out.cons)
         c.seps.clear();
+    return out;
+}
+
+// The description without the separators whose owner the edited script no longer has (Sep::frozen): the feature
+// that told the pieces apart is gone (suppressed, or it failed to build where an edit moved it), so where it was no
+// longer divides anything.
+TruthDesc withoutFrozenSeparators(const TruthDesc& d, const Owners& now)
+{
+    TruthDesc out = d;
+    auto live = [&](std::vector<Sep>& seps) {
+        seps.erase(std::remove_if(seps.begin(), seps.end(), [&](const Sep& s) { return now.get(s.owner) == nullptr; }),
+                   seps.end());
+    };
+    live(out.seps);
+    for (Constraint& c : out.cons)
+        live(c.seps);
     return out;
 }
 
@@ -1771,6 +1931,7 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
         }
     // The common shift of the bounding features (owners its vertices lie on, other than its own).
     Vec3 bound{0, 0, 0};
+    bool boundByJoin = false; // one of them is a face of a join (it bounds the element by the material it adds)
     if (!ownChanged && kind != SubKind::Vertex) {
         std::set<std::string> own;
         for (const Constraint& c : d.cons)
@@ -1798,6 +1959,9 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
                 const Owner* o1 = after.get(o.key);
                 if (o1 == nullptr || !carrierChanged(o.c, o1->c))
                     continue;
+                if (const auto f = before.sweeps.find(featureOfOwner(o.key));
+                    f != before.sweeps.end() && f->second.op != BOp::Cut)
+                    boundByJoin = true;
                 const Vec3 t = carrierShift(o.c, o1->c);
                 if (any && norm(sub(t, at)) > 1e-6)
                     agree = false;
@@ -1836,13 +2000,27 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
     // Sweeps that only moved: what lies in the volume one swept (the part of a hole wall inside a moved boss) moves
     // with it.
     std::vector<std::pair<const Feature*, Vec3>> movedSweeps;
+    std::vector<const Feature*> keptMaterial; // joins the edit left as they were
     for (const auto& [id, f] : before.sweeps) {
         const auto it = after.sweeps.find(id);
         if (it == after.sweeps.end())
             continue;
         if (const auto t = pureMove(f, it->second))
             movedSweeps.push_back({&f, *t});
+        else if (f.op != BOp::Cut && sameSweep(f, it->second))
+            keptMaterial.push_back(&f);
     }
+    // But not what lies in material that stayed where it was: inside the imported base (unchanged by every edit) or a
+    // join the edit did not touch. A point there does not depend on the moved sweep (T-081a holdout3 18:7: a slot's
+    // edge running through a boss and the imported part it was joined into; where the slot crosses the part, the
+    // edge stays when the boss moves).
+    const bool keptImport = before.import != nullptr && before.import == after.import;
+    auto inKeptMaterial = [&](const Vec3& p) {
+        for (const Feature* g : keptMaterial)
+            if (insideSweep(*g, p, kAnchorTolerance))
+                return true;
+        return keptImport && insideImport(*before.import, p, kAnchorTolerance);
+    };
     // A sweep edited by a similarity of its profile (a resize, with or without a move) carries the points of its own
     // walls exactly (profileScale): a point where two of its walls meet (the tangent line between a straight wall and
     // a corner arc) cannot be found again by projecting onto the walls, which barely cross there. Used when every
@@ -1890,6 +2068,7 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
             }
         }
     }
+    std::size_t keptPoints = 0, shiftedPoints = 0; // points kept where they were by inKeptMaterial; points moved
     auto mapPoint = [&](const Vec3& p, Vec3& q) {
         Vec3 shift{0, 0, 0};
         double best = 0;
@@ -1899,6 +2078,12 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
                 withSweep = &t;
                 break;
             }
+        // A point in material that stayed does not move with a moved join, as what lies in its volume (withSweep) nor
+        // as what its faces bound (bound): it does not depend on it. (Cuts that bound a piece move it.)
+        const bool kept =
+            !ownChanged && (withSweep != nullptr || (boundByJoin && norm(bound) > 1e-9)) && inKeptMaterial(p);
+        if (kept)
+            withSweep = nullptr;
         std::vector<const Carrier*> onto;
         for (const Constraint& c : d.cons) {
             const Owner* o0 = nullptr;
@@ -1926,10 +2111,12 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
             moved = true;
         // Nothing the point depends on changed: it stays exactly where it is (projecting it onto carriers that meet
         // at a small angle would slide it along them, onto a neighbouring vertex 0.04 mm away).
-        if (withSweep == nullptr && !ownChanged && !(norm(bound) > 1e-9)) {
+        if (withSweep == nullptr && !ownChanged && (kept || !(norm(bound) > 1e-9))) {
             q = p;
+            keptPoints += kept ? 1 : 0;
             return true;
         }
+        ++shiftedPoints;
         if (withSweep == nullptr && simA != nullptr)
             q = similarMap(*simA, *simB, simK, p);
         else
@@ -1987,7 +2174,9 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
         fm->findBoundary();
         out.mesh = fm;
     }
-    if (out.nodes.empty())
+    // An edge some of whose points stayed in material that did not move while the rest moved is no longer the polyline
+    // of its mapped ends: its mapped samples are.
+    if (out.nodes.empty() || (kind == SubKind::Edge && keptPoints > 0 && shiftedPoints > 0))
         out.nodes = out.pts;
     bool first = true;
     for (const auto* v : {&out.nodes, &out.pts})
@@ -2106,10 +2295,13 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     // picked element is: evalTruth's floor (2 % of a face's area on the description) is for telling overlaps from
     // noise, not for containment (a boss's start face exposed in a corner, now flush with and unified into a large
     // face; a strip 0.03 mm wide now part of the face beside it). Such an element runs past the description: merged.
-    // It must still lie on every carrier of the description with the right type and material side.
+    // It must still lie on every carrier of the description with the right type and material side, and on the right
+    // side of every separator whose owner still exists: a separator whose owner is gone (Sep::frozen) divides nothing
+    // any more, and the element holding the mapped pick is its continuation whichever side of it the rest lies (T-081a
+    // holdout3 16:1: the stub of an import edge below a cut that an edit moved off the part; the edge is whole again).
     std::set<std::uint32_t> containers;
     if (!x.mapped.pts.empty()) {
-        for (const std::uint32_t e : evalTruthImpl(d, now, smp, nullptr, 0.0).elems) {
+        for (const std::uint32_t e : evalTruthImpl(withoutFrozenSeparators(d, now), now, smp, nullptr, 0.0).elems) {
             if (interiorShare(x.mapped, N[e], x.kind, pickTol) < 0.9)
                 continue;
             containers.insert(e);
@@ -2201,13 +2393,57 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         FitMasks masks;
         evalTruthImpl(d, now, smp, &masks);
         const auto& B = pick.baseline->of(x.kind);
+        // Is p of element `of` on territory of element b (inside it, not beside it)?
+        auto onTerritoryOf = [&](const Vec3& p, const ElemSamples& of, const ElemSamples& b) {
+            return !b.pts.empty() && sameSheet(of, b, x.kind) &&
+                   nearInterior(p, b, x.kind, kAnchorTolerance, besideMargin(b, x.kind));
+        };
         // (On a baseline element other than the picked one: where the picked element itself was is not something else's
         // territory, also when the picked element moved away from it.)
+        // The baseline elements whose box lies within `reach` of element `of`'s box (made once per element and reach).
+        std::map<std::pair<const ElemSamples*, double>, std::vector<std::uint32_t>> nearby;
+        auto near = [&](const ElemSamples& of, double reach) -> const std::vector<std::uint32_t>& {
+            auto it = nearby.find({&of, reach});
+            if (it != nearby.end())
+                return it->second;
+            std::vector<std::uint32_t> out;
+            const Vec3 lo = sub(of.boxMin, Vec3{reach, reach, reach}), hi = add(of.boxMax, Vec3{reach, reach, reach});
+            for (std::uint32_t i = 0; i < B.size(); ++i)
+                if (i != pick.base.index && !B[i].pts.empty() && B[i].boxMin.x <= hi.x && B[i].boxMax.x >= lo.x &&
+                    B[i].boxMin.y <= hi.y && B[i].boxMax.y >= lo.y && B[i].boxMin.z <= hi.z && B[i].boxMax.z >= lo.z)
+                    out.push_back(i);
+            return nearby.emplace(std::make_pair(&of, reach), std::move(out)).first->second;
+        };
+        // (p a point of `of`, so only the elements near `of` need looking at.)
         auto onBaseline = [&](const Vec3& p, const ElemSamples& of) {
-            for (std::uint32_t i = 0; i < B.size(); ++i) {
-                const ElemSamples& b = B[i];
-                if (i != pick.base.index && !b.pts.empty() && sameSheet(of, b, x.kind) &&
-                    nearInterior(p, b, x.kind, kAnchorTolerance, besideMargin(b, x.kind)))
+            for (const std::uint32_t i : near(of, kAnchorTolerance))
+                if (onTerritoryOf(p, of, B[i]))
+                    return true;
+            return false;
+        };
+        // (p anywhere.)
+        auto onBaselineAnywhere = [&](const Vec3& p, const ElemSamples& of) {
+            for (std::uint32_t i = 0; i < B.size(); ++i)
+                if (i != pick.base.index && onTerritoryOf(p, of, B[i]))
+                    return true;
+            return false;
+        };
+        // The baseline elements that the edit may have moved to p, mapped through it: where their territory is now.
+        // Only elements within reach of p are looked at (their baseline box within twice the largest shift of any
+        // owner, plus 1 mm: an element moves with its owners), each mapped once. One that cannot be described or mapped
+        // counts as lying at p (it might have moved there).
+        const double reach = 2.0 * largestOwnerShift(*pick.owners, now) + 1.0;
+        auto onMovedBaseline = [&](const Vec3& p, const ElemSamples& of) {
+            if (!pick.builder)
+                return true; // nothing can be mapped: as before, the element stays merged
+            for (const std::uint32_t i : near(of, reach)) {
+                if (outsideBox(p, B[i].boxMin, B[i].boxMax, reach))
+                    continue;
+                // (Mapped once per element and edited script, for every reference of the baseline: TruthBuilder.)
+                const std::optional<ElemSamples>& m = pick.builder->mappedTo(SubId{x.kind, i}, now);
+                if (!m)
+                    return true;
+                if (!m->pts.empty() && onTerritoryOf(p, of, *m)) // no samples: where it was, onBaseline's business
                     return true;
             }
             return false;
@@ -2253,8 +2489,10 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                     continue; // on what was picked
                 if (!x.moved && !onBaseline(p, N[e]))
                     continue; // new territory
-                if (movedWithSweep && !onBaseline(p, N[e]) && !onBaseline(similarUnmap(*fa, *fb, fk, p), N[e]))
+                if (movedWithSweep && !onBaseline(p, N[e]) && !onBaselineAnywhere(similarUnmap(*fa, *fb, fk, p), N[e]))
                     continue; // new territory of an element that moved with its sweep
+                if (x.moved && !movedWithSweep && !onBaseline(p, N[e]) && !onMovedBaseline(p, N[e]))
+                    continue; // new territory of an element that moved otherwise: nothing had it, here or moved here
                 merged = true;
             }
             if (merged)

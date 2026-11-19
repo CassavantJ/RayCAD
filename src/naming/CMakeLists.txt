@@ -4,6 +4,8 @@ add_library(ray_naming STATIC
     naming_internal.h element_map.cpp fingerprint.cpp
     import_naming.h name_imported.cpp
     resolver.h resolver.cpp
-    propagate.h propagate.cpp propagate_resolve.cpp)
+    propagate.h propagate.cpp propagate_resolve.cpp
+    territory.h territory.cpp evidence.cpp
+    topo_ref_json.cpp)
 ray_module(ray_naming DETERMINISTIC)
 target_link_libraries(ray_naming PRIVATE ray_core ray_kernel)

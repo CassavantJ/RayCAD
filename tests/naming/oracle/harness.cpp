@@ -239,7 +239,8 @@ bool Builder::sweep(const Feature& f)
             continue;
         }
         const std::array<const naming::ElementMap*, 2> maps{&map_, &toolNames->map};
-        const naming::NamingInput input{fid, f.role, maps, &result->history, &result->shape, {}};
+        const std::array<const kernel::Shape*, 2> shapes{&shape_, &tool->op.shape};
+        const naming::NamingInput input{fid, f.role, maps, &result->history, &result->shape, {}, std::span(shapes)};
         auto named = naming::propagate(input);
         if (!named) {
             failed_.push_back(f.id + ": naming failed: " + named.error().message);
@@ -309,7 +310,8 @@ bool Builder::blend(const Feature& f)
         return false;
     }
     const std::array<const naming::ElementMap*, 1> maps{&map_};
-    const naming::NamingInput input{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}};
+    const std::array<const kernel::Shape*, 1> shapes{&shape_};
+    const naming::NamingInput input{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
     auto named = naming::propagate(input);
     if (!named) {
         failed_.push_back(f.id + ": naming failed: " + named.error().message);
@@ -334,7 +336,8 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
     std::vector<Ref> refs;
     if (!b.have())
         return refs;
-    const TruthBuilder tb(*owners, *samples);
+    const auto builder = std::make_shared<const TruthBuilder>(*owners, *samples);
+    const TruthBuilder& tb = *builder;
     auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), b.map(), b.shape()}});
     for (const SubKind kind : {SubKind::Face, SubKind::Edge, SubKind::Vertex}) {
         const auto& elems = samples->of(kind);
@@ -365,7 +368,7 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                 continue;
             }
             refs.push_back(
-                Ref{resolver->makeRef(testBody(), s), PickRecord{s, d, samples, owners}, namesOf(b.map(), s)});
+                Ref{resolver->makeRef(testBody(), s), PickRecord{s, d, samples, owners, builder}, namesOf(b.map(), s)});
         }
     }
     return refs;
@@ -741,6 +744,15 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
 
 } // namespace
 
+namespace {
+thread_local Inspector inspector;
+} // namespace
+
+void setInspector(Inspector f)
+{
+    inspector = std::move(f);
+}
+
 void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners& owners, const Samples& samples,
               Tally& tally, JudgeLog& log, const std::string& key)
 {
@@ -755,6 +767,8 @@ void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners&
         const std::string id = key + "|" + kindName(r.record.base.kind) + " " + std::to_string(r.record.base.index);
         if (res.state == naming::ResolveState::Exact && res.elements.size() == 1)
             exactOn[res.elements.front()].push_back(id);
+        if (inspector)
+            inspector(id, r, res, rr, owners, samples);
         account(id, rr, res, r.record.truth.weak, tally, log, [&] {
             const SubKind kind = r.record.base.kind;
             std::string out = "    " + explain(r.record.truth, owners, samples,
