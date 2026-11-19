@@ -152,7 +152,6 @@ Item {
                                 isSketch: slot.isSketch
                                 sketchShown: slot.sketchShown
                                 onDragMoved: (i, y) => {
-                                    featureScope.forceActiveFocus()
                                     root.dragFrom = i
                                     root.dropRow = root.rowAt(mapToItem(featureColumn, 0, y).y)
                                 }

@@ -79,6 +79,8 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton
+        // The tree's Flickable must not take a reorder drag.
+        preventStealing: true
         property real pressY: 0
         property bool dragging: false
         onPressed: event => {
