@@ -161,14 +161,9 @@ private:
             detail::edgeContinuesUnderOtherName(map, body.shape, element))
             return broken("One of the picked edge's faces was split, and the edge runs on under another name; which "
                           "stretches are the picked edge cannot be told.");
-        // A face or edge that grew is the picked element plus more: Merged, not Exact (consumers review it, as a
-        // Split). What it grew over may have been empty, or an element of another feature on the same surface whose
-        // name does not survive the edit (T-081a random 6:29: the bottom face of a flange took in the ceiling of a
-        // slot that cut into a boss under it, once the boss was suppressed); the names cannot tell which.
-        if (element.kind != kernel::SubKind::Vertex && !now.matches(ref.hint) &&
-            static_cast<double>(now.qArea) >
-                static_cast<double>(ref.hint.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta)
-            return Resolved{ResolveState::Merged, {element}, {}};
+        // (A face that grew may have taken in a face of another feature on the same surface whose name does not
+        // survive the edit, T-081a random 6:29; the names cannot tell that from a dimension change, which must stay
+        // Exact (T-096). Known blind spot: it needs the picked element's territory in TopoRef.)
         return Resolved{ResolveState::Exact, {element}, {}};
     }
 

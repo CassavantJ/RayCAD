@@ -8,7 +8,8 @@
 //     reference's hint, and an edge or vertex must still lie on the faces it was picked on
 //     (detail::onPickedFaces), else Broken. Further (T-081a gate): a stub of under 1e-3 mm left by a cut is Broken; a
 //     face or edge among siblings that grew is Broken; a face among siblings whose geometry changed must still hold
-//     its picked centroid (detail::holdsHintCentre), else Broken; a face or edge that grew is Merged, not Exact.
+//     its picked centroid (detail::holdsHintCentre), else Broken; an edge named from a face split since that runs on
+//     under another name (detail::edgeContinuesUnderOtherName) is Broken.
 //  2. (T-081a) names followed through the current build: Split / Merged.
 //  3. (T-081a) family rule and split parent: Split / Merged.
 //  4. (T-081a) Repaired: one fingerprint match surrounded by exactly the faces the neighbour names resolve to.
