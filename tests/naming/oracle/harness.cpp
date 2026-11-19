@@ -346,6 +346,13 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                     ++(*skipped)[std::string(kindName(kind)) + ": " + d.why];
                 continue;
             }
+            // A sliver (no sample more than 0.02 mm inside it): which element of an edited shape holds it cannot be told
+            // by position (oracle.h, isSliver), so the oracle cannot vouch for it.
+            if (isSliver(samples->of(kind)[i], kind)) {
+                if (skipped != nullptr)
+                    ++(*skipped)[std::string(kindName(kind)) + ": a sliver"];
+                continue;
+            }
             if (coincidesWithAnother(d, s, *owners, *samples)) {
                 if (skipped != nullptr)
                     ++(*skipped)[std::string(kindName(kind)) + ": coincides with another element it cannot be told "

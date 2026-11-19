@@ -632,3 +632,123 @@ TEST_CASE("Regression (Linux 7:28): a boss widened over a second opening; the ca
         if (capEdge(o))
             checkSeparateParts(r, o);
 }
+
+// ---------------------------------------------------------------- regressions of the T-081a gate (naming errors)
+// Each scenario rebuilds, on a block, the kind of wrong-element answer the randomised test found on a corpus part, and
+// fails without the naming rule that fixed it: the oracle judges the old answer wrong, and the resolver must not give
+// it.
+namespace {
+
+Feature blendOn(const std::string& id, bool fillet, Target t, double size)
+{
+    Feature f;
+    f.id = id;
+    f.type = fillet ? FType::Fillet : FType::Chamfer;
+    f.role = fillet ? "fillet" : "chamfer";
+    f.targets = {std::move(t)};
+    f.size = size;
+    return f;
+}
+
+// The wrong answer `bad` is judged wrong by the oracle, the resolver's answer is not, and it is not `bad`.
+void checkNotAnswered(const Run& r, const Outcome& o, Answer bad, const std::vector<std::uint32_t>& badElements)
+{
+    INFO("reference " << o.ref.record.base.index << " [" << o.ref.record.truth.cat << "]: resolver "
+                      << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), oracle expects"
+                      << text(o.expected.elems));
+    CHECK(isWrong(judgeOther(r, o, bad, badElements).verdict));
+    CHECK_FALSE(isWrong(o.verdict));
+    std::vector<std::uint32_t> got;
+    for (const SubId& e : o.resolved.elements)
+        got.push_back(e.index);
+    CHECK_FALSE((answerOf(o.resolved.state) == bad && got == badElements));
+}
+
+} // namespace
+
+TEST_CASE("Regression (random 11:12): a Split piece beyond a pocket that bounded the picked face is not a piece",
+          "[naming][acceptance][t081a-gate]")
+{
+    // The chamfer of the block's front top edge, cut short at x = 90 by a pocket over the right end. The pocket then
+    // moves to x = 80..96: the chamfer is in two pieces, and the piece beyond the pocket (x 96..100) lies where the
+    // pocket was when the chamfer was picked. Without the rule that a Split piece must not lie beyond a face of a
+    // feature that bounded the picked element (facePiecesStayInside), the resolver answers Split with both pieces.
+    auto script = [](double x0) {
+        Script s = block(100, 60, 20);
+        s.push_back(blendOn("R1", false, Target{"F01/s1", "F01/c1/1", true, true}, 2));
+        s.push_back(sweep("P1", BOp::Cut, top(20), rect(x0, -5, x0 + 16, 10), 5));
+        return s;
+    };
+    const Run r = run(script(90), script(80));
+    checkNoneWrong(r);
+    const auto chamfer = [](const Outcome& o) {
+        return faceOf(o, "R1/b0");
+    };
+    REQUIRE(count(r.out, chamfer) == 1);
+    for (const Outcome& o : r.out)
+        if (chamfer(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            REQUIRE(all.size() == 2);
+            checkNotAnswered(r, o, Answer::Split, all);
+        }
+}
+
+TEST_CASE("Regression (random 10:34): a piece whose face is whole again round a notch where the piece was is not "
+          "Merged into it",
+          "[naming][acceptance][t081a-gate]")
+{
+    // Two slots through the block's right end split its x = 100 side into three pieces. With the slots suppressed and
+    // a notch over the middle piece's place (from the top down to 0.5 mm above the bottom), the side is one face
+    // again, its outline round the notch: the face's box still holds the middle piece's centre, the face does not.
+    // Without the outline check in canContain, the split-parent rule answers Merged with the whole side.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("A1", BOp::Cut, top(20), rect(90, 20, 105, 22), 25));
+    base.push_back(sweep("B1", BOp::Cut, top(20), rect(90, 38, 105, 40), 25));
+    Script edited = base;
+    edited[1].suppressed = true;
+    edited[2].suppressed = true;
+    edited.push_back(sweep("N1", BOp::Cut, top(20), rect(90, 21, 105, 39), 19.5));
+    const Run r = run(base, edited);
+    checkNoneWrong(r);
+    const auto middle = [](const Outcome& o) {
+        return faceOf(o, "F01/s2") && o.ref.record.truth.cons[0].seps.size() == 2;
+    };
+    INFO("references about the right side:" << refsAbout(r, "F01/s2"));
+    REQUIRE(count(r.out, middle) == 1);
+    for (const Outcome& o : r.out)
+        if (middle(o)) {
+            const std::vector<std::uint32_t> side = logicalElements(r, o);
+            REQUIRE(side.size() == 1);
+            checkNotAnswered(r, o, Answer::Merged, side);
+        }
+}
+
+TEST_CASE("Regression (random 9:41): the pieces of an edge trade territory when the slot between them moves",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A slot across the block's front top edge splits it into a left and a right piece, told apart by the slot walls
+    // they end on. Moved left by more than its width, the slot leaves the left piece short and gives most of its old
+    // stretch to the right piece; each piece still ends on the same wall. Without the rule that an edge among
+    // siblings is trusted only while its geometry is unchanged (needsHint), both resolve Exact: one incomplete, one a
+    // silent merge.
+    auto script = [](double x0) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("S1", BOp::Cut, top(20), rect(x0, -5, x0 + 10, 10), 5));
+        return s;
+    };
+    const Run r = run(script(40), script(10));
+    checkNoneWrong(r);
+    const auto piece = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "F01/s1") &&
+               about(o, "F01/c1/1");
+    };
+    INFO("references about the front top edge:" << refsAbout(r, "F01/s1"));
+    REQUIRE(count(r.out, piece) == 2);
+    for (const Outcome& o : r.out)
+        if (piece(o)) {
+            INFO("reference " << o.ref.record.base.index << ": resolver " << o.resolved.reason);
+            CHECK(o.resolved.state != naming::ResolveState::Exact);
+            for (const SubId& e : o.resolved.elements)
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e.index}).verdict));
+        }
+}

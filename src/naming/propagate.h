@@ -86,4 +86,10 @@ std::optional<Resolved> resolveThroughBuild(const ElementMap& map, const kernel:
 // build) is still among the faces around the answer. Faces are not checked (a face is its surface). Never throws.
 bool onPickedFaces(const ElementMap& map, const kernel::Shape& shape, kernel::SubId element, const TopoRef& ref);
 
+// Does planar face `face` hold, inside its outline, the centroid the reference's hint recorded (the picked element
+// kept the place it was picked at)? False for any other surface, or when the outline cannot be read (an edge that is
+// not a line, a circle or an open curve). Used for a face among siblings whose geometry changed (resolver.h). Never
+// throws.
+bool holdsHintCentre(const kernel::Shape& shape, kernel::SubId face, const Fingerprint& hint);
+
 } // namespace ray::naming::detail

@@ -930,7 +930,8 @@ Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape)
 namespace {
 // evalTruth, also giving for each matching element which of its samples fit the description.
 using FitMasks = std::vector<std::pair<std::uint32_t, std::vector<char>>>;
-TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp, FitMasks* masks)
+TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp, FitMasks* masks,
+                        double minFraction = -1)
 {
     TruthEval ev;
     const Tol T = tolFor(d.kind);
@@ -1040,7 +1041,7 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
             }
         }
         const double frac = W > 0 ? okw / W : 0;
-        if (frac >= T.thr) {
+        if (frac >= (minFraction >= 0 ? minFraction : T.thr) && frac > 0) {
             ev.elems.push_back(x);
             if (frac < 0.98) {
                 ev.merged = true;
@@ -1886,6 +1887,12 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
         }
         if (withSweep != nullptr)
             moved = true;
+        // Nothing the point depends on changed: it stays exactly where it is (projecting it onto carriers that meet
+        // at a small angle would slide it along them, onto a neighbouring vertex 0.04 mm away).
+        if (withSweep == nullptr && !ownChanged && !(norm(bound) > 1e-9)) {
+            q = p;
+            return true;
+        }
         if (withSweep == nullptr && simA != nullptr)
             q = similarMap(*simA, *simB, simK, p);
         else
@@ -2055,16 +2062,37 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 return x;
             }
     x.strict = evalTruth(d, now, smp);
+    x.mapped = mapElement(*pick.baseline, pick.base, d, *pick.owners, now, x.moved);
+    const auto& N = smp.of(x.kind);
+    const double pickTol = anchorTolerance(x.kind, unmovedMap(pick.picked(), x.mapped));
+    // An element that holds the picked element (mapped through the edit) continues it, however small a part of it the
+    // picked element is: evalTruth's floor (2 % of a face's area on the description) is for telling overlaps from
+    // noise, not for containment (a boss's start face exposed in a corner, now flush with and unified into a large
+    // face; a strip 0.03 mm wide now part of the face beside it). Such an element runs past the description: merged.
+    // It must still lie on every carrier of the description with the right type and material side.
+    std::set<std::uint32_t> containers;
+    if (!x.mapped.pts.empty()) {
+        for (const std::uint32_t e : evalTruthImpl(d, now, smp, nullptr, 0.0).elems) {
+            if (interiorShare(x.mapped, N[e], x.kind, pickTol) < 0.9)
+                continue;
+            containers.insert(e);
+            if (std::binary_search(x.strict.elems.begin(), x.strict.elems.end(), e))
+                continue;
+            x.strict.elems.insert(std::lower_bound(x.strict.elems.begin(), x.strict.elems.end(), e), e);
+            x.strict.partial.insert(std::lower_bound(x.strict.partial.begin(), x.strict.partial.end(), e), e);
+            x.strict.merged = true;
+        }
+    }
     const TruthEval L = evalTruth(withoutSeparators(d), now, smp);
     std::set_union(L.elems.begin(), L.elems.end(), x.strict.elems.begin(), x.strict.elems.end(),
                    std::back_inserter(x.logical));
     x.component = componentsOf(x.logical, x.kind, smp);
-    x.mapped = mapElement(*pick.baseline, pick.base, d, *pick.owners, now, x.moved);
-    const auto& N = smp.of(x.kind);
-    const double pickTol = anchorTolerance(x.kind, unmovedMap(pick.picked(), x.mapped));
     x.anchored.resize(x.logical.size(), 0);
     for (std::size_t i = 0; i < x.logical.size(); ++i)
-        x.anchored[i] = !x.mapped.pts.empty() && overlap(N[x.logical[i]], x.mapped, x.kind, pickTol) ? 1 : 0;
+        x.anchored[i] = !x.mapped.pts.empty() && (containers.count(x.logical[i]) != 0 ||
+                                                  overlap(N[x.logical[i]], x.mapped, x.kind, pickTol))
+                            ? 1
+                            : 0;
     if (x.weak) {
         // The other pieces of the logical element at pick time, mapped through the edit: what overlaps one of
         // them is that piece's continuation.
@@ -2091,6 +2119,16 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     }
     const auto cong = congruent(pick.picked(), x.kind, smp, overlapTolerance(x.kind));
     x.congruentIndex = cong.size() == 1 ? static_cast<long>(cong[0]) : -1;
+    // Nothing the picked element depends on changed, and one element of the logical element lies exactly where it
+    // was with the same extent: that element is its continuation, all of it and nothing else. (Overlap alone would
+    // also take in a short edge that leaves the picked one's end at a small angle, sharing a stretch within the
+    // tolerance.)
+    if (!x.moved && x.congruentIndex >= 0 && x.inLogical(static_cast<std::uint32_t>(x.congruentIndex)) &&
+        !sliver(N[static_cast<std::size_t>(x.congruentIndex)], x.kind)) {
+        x.expected = TruthEval{};
+        x.expected.elems = {static_cast<std::uint32_t>(x.congruentIndex)};
+        return x;
+    }
     if (x.strict.elems.empty())
         return x;
     // Slivers are left out of the expectation (isSliver), unless nothing else is left.
@@ -2121,7 +2159,6 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         FitMasks masks;
         evalTruthImpl(d, now, smp, &masks);
         const auto& B = pick.baseline->of(x.kind);
-        const double pickMargin = x.mapped.pts.empty() ? 0.0 : besideMargin(x.mapped, x.kind);
         auto onBaseline = [&](const Vec3& p, const ElemSamples& of) {
             for (const ElemSamples& b : B)
                 if (!b.pts.empty() && sameSheet(of, b, x.kind) &&
@@ -2140,7 +2177,9 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 if ((*mask)[j] != 0)
                     continue;
                 const Vec3& p = N[e].pts[j];
-                if (!x.mapped.pts.empty() && nearInterior(p, x.mapped, x.kind, pickTol, pickMargin))
+                // (On, not inside: the samples of an element that kept part of the picked one's border lie on that
+                // border; a sibling's territory beyond the border has samples further than the tolerance from it.)
+                if (!x.mapped.pts.empty() && nearElement(p, x.mapped, x.kind, pickTol))
                     continue; // on what was picked
                 if (!x.moved && !onBaseline(p, N[e]))
                     continue; // new territory
@@ -2188,6 +2227,15 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         const Vec3 p = N[x.expected.elems.front()].nodes.front();
         for (const std::uint32_t e : x.expected.elems)
             x.twins = x.twins && norm(sub(N[e].nodes.front(), p)) <= 1e-4;
+    }
+    // Edges that a boolean left lying on each other (one along a stretch of the other): position cannot tell them
+    // apart either. Only an answer congruent in place with the picked element, when nothing moved, is accepted as the
+    // twin (judgeAnswer); the edges must each share territory with every other one, exactly.
+    if (x.kind == SubKind::Edge && x.expected.elems.size() >= 2 && !x.moved && x.congruentIndex >= 0) {
+        x.twins = true;
+        for (const std::uint32_t a : x.expected.elems)
+            for (const std::uint32_t b : x.expected.elems)
+                x.twins = x.twins && (a == b || overlap(N[a], N[b], x.kind, kExactVertexTolerance));
     }
     if (x.expected.elems.empty())
         x.noAnchor = x.mapped.pts.empty() ? "the picked element cannot be mapped through the edit"
@@ -2293,7 +2341,8 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
     }
     const std::vector<std::uint32_t>& E = x.expected.elems;
     if (x.twins && (answer == Answer::Exact || answer == Answer::Repaired) && X.size() == 1 &&
-        std::binary_search(E.begin(), E.end(), X[0])) {
+        std::binary_search(E.begin(), E.end(), X[0]) &&
+        (x.kind != SubKind::Edge || static_cast<long>(X[0]) == x.congruentIndex)) {
         j.verdict = Verdict::Correct;
         j.twin = true;
         return j;

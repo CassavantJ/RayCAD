@@ -130,6 +130,11 @@ private:
             sibling = sibling || (record != nullptr && record->siblingCount > 1);
         }
         const Fingerprint now = map.fingerprintOf(element);
+        // An edge or face left as a stub of under 1e-3 mm (or mm^2) and a thousandth of its picked size is what
+        // remains where a cut took the element away, not the element (T-081a random 5:43: a 9.5 mm edge kept its name
+        // on a stub of a micron at its end).
+        if (element.kind != kernel::SubKind::Vertex && now.qArea < 10 && now.qArea * 1000 < ref.hint.qArea)
+            return broken("Only a vanishingly small stub of the picked element is left.");
         if (ambiguous && !now.matches(ref.hint))
             return broken("The picked element could only be told apart from similar elements by its surroundings or "
                           "its geometry, and its geometry has changed.");
@@ -142,9 +147,25 @@ private:
                 static_cast<double>(ref.hint.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta)
             return broken("The picked element was one of several pieces and has grown since; it may now include what "
                           "was a separate piece when it was picked.");
+        // A piece that shrank must still lie where it was picked: its picked centroid inside its outline (something cut
+        // into it, as in spike S4 V34). One that moved away is the sibling the faces now fit (random 16:14: the
+        // pieces of a boss wall split by a slot, after the boss moved twice by its width), or a piece whose old centre
+        // went to a sibling. Only planar faces are checked; any other piece whose geometry changed is Broken.
+        if (sibling && element.kind == kernel::SubKind::Face && !now.matches(ref.hint) &&
+            !detail::holdsHintCentre(body.shape, element, ref.hint))
+            return broken("The picked element was one of several pieces and no longer lies where it was picked.");
         // An edge or vertex whose faces are no longer the ones it was picked on is another element (T-081a).
         if (!detail::onPickedFaces(map, body.shape, element, ref))
             return broken("The picked element no longer lies on the faces it was picked on.");
+        // A planar face that grew where it was picked holds what was picked plus more: Merged, not Exact. What it grew
+        // over may have been empty, or a face of another feature on the same plane whose name does not survive the
+        // edit (T-081a random 6:29: the bottom face of a flange took in the ceiling of a slot that cut into a boss
+        // under it, once the boss was suppressed); the names cannot tell which.
+        if (element.kind == kernel::SubKind::Face && !now.matches(ref.hint) &&
+            static_cast<double>(now.qArea) >
+                static_cast<double>(ref.hint.qArea) * (1.0 + 1e-6) + detail::kGrowthSlackQuanta &&
+            detail::holdsHintCentre(body.shape, element, ref.hint))
+            return Resolved{ResolveState::Merged, {element}, {}};
         return Resolved{ResolveState::Exact, {element}, {}};
     }
 

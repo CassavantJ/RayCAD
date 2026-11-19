@@ -178,6 +178,9 @@ struct Pending {
     int sourceInput = -1;         // for a split piece: the input element it is a piece of
     SubId source{};
     Hash256 family{};
+    // For a split piece: how many pieces the input element came out in. Pieces that no longer lie on the faces their
+    // input's names were made from get no piece name (facesStillFit), so the family can be smaller than this.
+    std::uint32_t pieces = 0;
 };
 
 using SourceKey = std::pair<int, SubId>;
@@ -404,6 +407,7 @@ private:
                     p.parents = splitParents(s);
                     p.sourceInput = s.first;
                     p.source = s.second;
+                    p.pieces = static_cast<std::uint32_t>(modifiedCount(s));
                     pending.push_back(std::move(p));
                 }
             }
@@ -594,10 +598,17 @@ private:
             std::size_t end = i + 1;
             while (end < order.size() && pending[order[end]].family == pending[order[i]].family)
                 ++end;
-            if (end - i == 1)
+            if (end - i == 1 && pending[order[i]].pieces > 1) {
+                // The only piece of its input that got a piece name, out of several: which piece that is depends on
+                // which pieces still lie on the input's faces, so the name does not say which piece it is (T-081a
+                // random 3:10: the name moved to another piece on another line). Its sibling count is the number of
+                // pieces, and it is marked as told apart by surroundings only (needsHint).
+                issue(pending[order[i]], {detail::allFacesDiscriminatorMark()}, 0, pending[order[i]].pieces);
+            } else if (end - i == 1) {
                 issue(pending[order[i]], {}, 0, 1);
-            else
+            } else {
                 groups.emplace_back(i, end);
+            }
             i = end;
         }
         refreshNames(pending);
@@ -639,7 +650,10 @@ private:
                     return c < 0;
                 return pending[members[a]].element < pending[members[b]].element;
             });
-            const auto siblings = static_cast<std::uint32_t>(members.size()); // the family size
+            // The family size, or for pieces of a split the number of pieces if some got no piece name.
+            auto siblings = static_cast<std::uint32_t>(members.size());
+            for (const std::size_t m : members)
+                siblings = std::max(siblings, pending[m].pieces);
             for (std::size_t i = 0; i < idx.size();) {
                 std::size_t end2 = i + 1;
                 while (end2 < idx.size() && discs[idx[end2]] == discs[idx[i]])

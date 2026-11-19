@@ -349,8 +349,10 @@ bool onHintCarrier(const ElementMap& map, const kernel::Shape& shape, SubId c, c
             const double t = dot(w, u);
             const Vec3 off{w.x - t * u.x, w.y - t * u.y, w.z - t * u.z};
             const double half = 0.5 * q(hint.qArea); // the picked segment runs from t - half to t + half
-            return norm(off) <= kContainTolerance && t + half >= -kContainTolerance &&
-                   t - half <= length + kContainTolerance;
+            // The piece must share a stretch of the picked segment, not merely touch its end: a separate segment
+            // on the same line that starts where the picked one ended is not a piece of it (T-081a random 6:21).
+            const double shared = std::min(length, t + half) - std::max(0.0, t - half);
+            return norm(off) <= kContainTolerance && shared > std::max(kContainTolerance, 0.01 * 2.0 * half);
         }
         if (info->type == kernel::CurveType::Circle) {
             const double axisLength = norm(info->axis);
@@ -369,8 +371,46 @@ bool onHintCarrier(const ElementMap& map, const kernel::Shape& shape, SubId c, c
             // An arc: no point of the picked arc is further than half its length from its chord's midpoint, so a
             // piece of it has an end that near (the other arc where a plane meets a torus on the far side has not).
             const double reach = 0.5 * q(hint.qArea) + kContainTolerance;
-            return norm(d) <= info->radius + kContainTolerance &&
-                   std::min(norm(sub(info->start, p)), norm(sub(info->end, p))) <= reach;
+            if (!(norm(d) <= info->radius + kContainTolerance &&
+                  std::min(norm(sub(info->start, p)), norm(sub(info->end, p))) <= reach))
+                return false;
+            // And it must share a stretch of the picked arc, not merely touch its end (T-081a random 6:21). The picked
+            // arc runs `half` radians either side of the direction of its chord's midpoint; the piece is walked in
+            // short steps from its start, turning whichever way about the axis ends at its end.
+            const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};
+            const double rl = norm(radial);
+            if (!(rl > kContainTolerance) || !(info->radius > 0.0))
+                return false;
+            const Vec3 m{radial.x / rl, radial.y / rl, radial.z / rl};
+            const double half = 0.5 * q(hint.qArea) / info->radius;
+            const Vec3 r0 = sub(info->start, info->center);
+            const Vec3 r1{axis.y * r0.z - axis.z * r0.y, axis.z * r0.x - axis.x * r0.z, axis.x * r0.y - axis.y * r0.x};
+            auto at = [&](double a) {
+                const double ca = dmath::cos(a), sa = dmath::sin(a);
+                return Vec3{r0.x * ca + r1.x * sa, r0.y * ca + r1.y * sa, r0.z * ca + r1.z * sa};
+            };
+            double sweep = info->length / info->radius;
+            const Vec3 endRadial = sub(info->end, info->center);
+            if (norm(sub(at(sweep), endRadial)) > 1e-4 * std::max(1.0, info->radius)) {
+                sweep = -sweep;
+                if (norm(sub(at(sweep), endRadial)) > 1e-4 * std::max(1.0, info->radius))
+                    return false;
+            }
+            constexpr double kPi = 3.14159265358979323846;
+            const double margin = kContainTolerance / info->radius;
+            if (half - margin >= kPi)
+                return true;
+            const double cosLimit = dmath::cos(std::max(0.0, half - margin));
+            constexpr int kSteps = 64;
+            int inside = 0;
+            for (int i = 0; i < kSteps; ++i) {
+                const Vec3 v = at(sweep * (i + 0.5) / kSteps);
+                const double vl = norm(v);
+                if (vl > 0.0 && dot(v, m) / vl > cosLimit)
+                    ++inside;
+            }
+            const double shared = info->length * inside / kSteps;
+            return shared > std::max(kContainTolerance, 0.01 * q(hint.qArea));
         }
         return false;
     }
@@ -795,6 +835,28 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
 }
 
 } // namespace
+
+bool holdsHintCentre(const kernel::Shape& shape, kernel::SubId face, const Fingerprint& hint)
+{
+    try {
+        if (face.kind != SubKind::Face)
+            return false;
+        const auto info = kernel::surfaceInfo(shape, face);
+        if (!info || info->type != kernel::SurfaceType::Plane)
+            return false;
+        const double n = norm(info->axis);
+        if (!(n > 0.0))
+            return false;
+        const Vec3 p{q(hint.qCx), q(hint.qCy), q(hint.qCz)};
+        const Vec3 axis{info->axis.x / n, info->axis.y / n, info->axis.z / n};
+        if (std::abs(dot(sub(p, info->origin), axis)) > kContainTolerance)
+            return false;
+        const auto inside = insidePlanarFace(shape, face, p, *info);
+        return inside.has_value() && *inside;
+    } catch (...) {
+        return false;
+    }
+}
 
 bool onPickedFaces(const ElementMap& map, const kernel::Shape& shape, kernel::SubId element, const TopoRef& ref)
 {
