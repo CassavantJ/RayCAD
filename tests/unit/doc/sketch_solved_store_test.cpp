@@ -630,8 +630,8 @@ TEST_CASE("a trim right after a parameter edit acts on the shape the parameter g
     // (param.set: no sketch command), then the piece of the line at x = 20, now between the right side (15) and the
     // line's end, is trimmed: the line must end at 15.
     Session s;
-    s.run("parameter", cmd("param.set", R"({"id":")" + uuid('a', 1) +
-                                            R"(","name":"w","expression":"40 mm","kind":"length"})"));
+    s.run("parameter",
+          cmd("param.set", R"({"id":")" + uuid('a', 1) + R"(","name":"w","expression":"40 mm","kind":"length"})"));
     SketchJson r = rectangle(40, 20);
     r.constraint(5, "fix", {1}).constraint(6, "distance", {5}, "w").constraint(7, "distance", {8}, {}, 20.0);
     r.point(20, -5, 10).point(21, 50, 10).line(22, 20, 21).constraint(8, "horizontal", {22});
@@ -642,10 +642,9 @@ TEST_CASE("a trim right after a parameter edit acts on the shape the parameter g
     int lines = 0;
     double right = -1e9;
     for (const sketch::Entity& e : v.entities) {
-        if (const auto* l = std::get_if<sketch::Line>(&e.geom); l != nullptr && e.id.value != Uuid::fromString(ent(5)) &&
-                                                                 e.id.value != Uuid::fromString(ent(6)) &&
-                                                                 e.id.value != Uuid::fromString(ent(7)) &&
-                                                                 e.id.value != Uuid::fromString(ent(8))) {
+        if (const auto* l = std::get_if<sketch::Line>(&e.geom);
+            l != nullptr && e.id.value != Uuid::fromString(ent(5)) && e.id.value != Uuid::fromString(ent(6)) &&
+            e.id.value != Uuid::fromString(ent(7)) && e.id.value != Uuid::fromString(ent(8))) {
             ++lines;
             for (const sketch::Entity& p : v.entities) {
                 if (p.id == l->a || p.id == l->b) {
