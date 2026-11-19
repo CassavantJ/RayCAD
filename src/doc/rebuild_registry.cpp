@@ -1,5 +1,10 @@
 // The feature type registry and the built-in feature types (<ray/document.h>).
+#include "features/datum_plane_feature.h"
+#include "features/extrude_feature.h"
+#include "features/fillet_feature.h"
 #include "features/import_feature.h"
+#include "features/revolve_feature.h"
+#include "features/sketch_feature.h"
 
 #include <ray/document.h>
 
@@ -7,6 +12,7 @@
 #include <new>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace ray::doc {
 
@@ -54,14 +60,26 @@ std::vector<std::string> FeatureRegistry::typeNames() const
 Status registerBuiltinFeatureTypes(FeatureRegistry& registry)
 {
     try {
-        auto import = features::makeImportFeatureType();
-        if (registry.find(import->typeName()) != nullptr) {
-            return tl::unexpected(
-                Error{ErrorCode::InvalidArgument,
-                      "The feature type '" + std::string(import->typeName()) + "' is already registered",
-                      {}});
+        std::vector<std::unique_ptr<IFeatureType>> types;
+        types.push_back(features::makeImportFeatureType());
+        // The parametric types (task T-096).
+        types.push_back(features::makeDatumPlaneFeatureType());
+        types.push_back(features::makeSketchFeatureType());
+        types.push_back(features::makeExtrudeFeatureType());
+        types.push_back(features::makeRevolveFeatureType());
+        types.push_back(features::makeFilletFeatureType());
+        types.push_back(features::makeChamferFeatureType());
+        for (const auto& type : types) {
+            if (registry.find(type->typeName()) != nullptr) {
+                return tl::unexpected(
+                    Error{ErrorCode::InvalidArgument,
+                          "The feature type '" + std::string(type->typeName()) + "' is already registered",
+                          {}});
+            }
         }
-        registry.add(std::move(import));
+        for (auto& type : types) {
+            registry.add(std::move(type));
+        }
         return {};
     } catch (...) {
         return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while registering the feature types", {}});

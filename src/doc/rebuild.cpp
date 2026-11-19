@@ -16,7 +16,15 @@
 // and poisons what it affects in the same way (except that unknown means nothing more). A feature that writes a body
 // gives that body a fresh start. The table keeps the last good state of every body, which is what
 // BuildResult::bodies returns.
+//
+// Artifacts (task T-096): what a feature publishes for later features (a sketch's plane and regions) is kept in the
+// same table under artifactSlot(feature), a pseudo body with a null shape, so reading it is recorded, cached,
+// poisoned and revised exactly like a body read. Pseudo bodies are left out of BuildResult::bodies.
+// Parameters: a type that implements detail::ParametersFromProps is keyed on the values of the parameters whose names
+// occur in the string values of its props, not on every parameter.
 #include "rebuild.h"
+
+#include "json.h"
 
 #include <ray/naming.h>
 
@@ -45,9 +53,10 @@ tl::unexpected<Error> failure(ErrorCode code, std::string message)
 }
 
 struct BodyState {
-    kernel::Shape shape;
+    kernel::Shape shape; // null for an artifact slot
     naming::ElementMap map;
     Hash256 revision;
+    detail::ArtifactPtr artifact; // artifact slots only
 };
 using BodyTable = std::map<BodyId, BodyState>;
 using Reads = std::map<BodyId, std::optional<Hash256>>; // revision when read; nullopt = the body did not exist
@@ -70,6 +79,60 @@ Hash256 parametersHash(const std::map<std::string, double>& values)
     for (const auto& [name, value] : values) { // std::map: sorted by name
         h.str(name);
         h.f64(value);
+    }
+    return h.finish();
+}
+
+// Every identifier ([A-Za-z_][A-Za-z0-9_]*) in the string values of a JSON value.
+void collectNames(const json::Value& value, std::set<std::string>& out)
+{
+    if (value.isString()) {
+        const std::string& s = value.asString();
+        const auto letter = [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+        };
+        const auto digit = [](char c) {
+            return c >= '0' && c <= '9';
+        };
+        std::size_t i = 0;
+        while (i < s.size()) {
+            if (letter(s[i]) && (i == 0 || !(letter(s[i - 1]) || digit(s[i - 1]) || s[i - 1] == '.'))) {
+                std::size_t j = i + 1;
+                while (j < s.size() && (letter(s[j]) || digit(s[j]))) {
+                    ++j;
+                }
+                out.insert(s.substr(i, j - i));
+                i = j;
+            } else {
+                ++i;
+            }
+        }
+    } else if (value.isArray()) {
+        for (const json::Value& v : value.asArray()) {
+            collectNames(v, out);
+        }
+    } else if (value.isObject()) {
+        for (const json::Member& m : value.asObject()) {
+            collectNames(m.value, out);
+        }
+    }
+}
+
+// The hash of the values of the parameters a feature's props name (detail::ParametersFromProps).
+Hash256 usedParametersHash(const Feature& f, const std::map<std::string, double>& values)
+{
+    std::set<std::string> names;
+    if (auto parsed = json::parse(f.propsJson.empty() ? std::string_view("{}") : std::string_view(f.propsJson))) {
+        collectNames(*parsed, names);
+    }
+    Hasher h;
+    h.str("ray.doc.rebuild.used-parameters/1");
+    for (const std::string& name : names) { // std::set: sorted
+        const auto it = values.find(name);
+        if (it != values.end()) {
+            h.str(name);
+            h.f64(it->second);
+        }
     }
     return h.finish();
 }
@@ -127,8 +190,24 @@ public:
         reads_.emplace(id, it == bodies_.end() ? std::nullopt : std::optional<Hash256>(it->second.revision));
         if (poisoned || (it == bodies_.end() && afterFailure_)) {
             blocked_ = true;
+            if (it == bodies_.end() || it->second.shape.isNull()) {
+                blockedByArtifact_ = blockedByArtifact_ || isArtifactRead(id);
+            }
         }
         return poisoned || it == bodies_.end() ? nullptr : &it->second;
+    }
+
+    // Marks `slot` as an artifact slot, so that a block through it is reported as such.
+    void noteArtifactSlot(const BodyId& slot)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        artifactSlots_.insert(slot);
+    }
+
+    bool blockedByArtifact() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return blockedByArtifact_;
     }
 
     bool isPoisoned(const BodyId& id) const { return poisoned_.count(id) != 0; }
@@ -146,12 +225,16 @@ public:
     }
 
 private:
+    bool isArtifactRead(const BodyId& id) const { return artifactSlots_.count(id) != 0; } // mutex_ held
+
     const BodyTable& bodies_;
     const std::set<BodyId>& poisoned_;
     const bool afterFailure_;
     mutable std::mutex mutex_;
     Reads reads_;
+    std::set<BodyId> artifactSlots_;
     bool blocked_ = false;
+    bool blockedByArtifact_ = false;
 };
 
 std::string unavailable(const Recorder& recorder, const BodyId& id)
@@ -249,10 +332,32 @@ public:
 
     IJobSystem* jobSystem() const override { return jobs_; }
 
+    detail::ArtifactPtr artifactOf(const FeatureId& producer) const override
+    {
+        const BodyId slot = detail::artifactSlot(producer);
+        recorder_.noteArtifactSlot(slot);
+        const BodyState* body = recorder_.read(slot);
+        return body != nullptr ? body->artifact : nullptr;
+    }
+
+    void publishArtifact(detail::ArtifactPtr artifact) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        artifact_ = std::move(artifact);
+    }
+
+    detail::ArtifactPtr published() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return artifact_;
+    }
+
 private:
     Recorder& recorder_;
     const IObjectSource* objects_;
     IJobSystem* jobs_;
+    mutable std::mutex mutex_;
+    detail::ArtifactPtr artifact_; // guarded by mutex_
 };
 
 std::string joined(const std::vector<std::string>& lines)
@@ -283,6 +388,7 @@ Status validate(const FeatureOutput& out)
 struct CacheEntry {
     Reads reads;
     FeatureOutput output;
+    detail::ArtifactPtr artifact;
     std::uint64_t lastUse = 0;
 };
 
@@ -348,10 +454,13 @@ private:
                 result->reports.push_back(std::move(report));
                 continue;
             }
-            const Hash256 key = staticKey(feature, paramsHash);
+            const Hash256 key = staticKey(feature, dynamic_cast<const detail::ParametersFromProps*>(type) != nullptr
+                                                       ? usedParametersHash(feature, params)
+                                                       : paramsHash);
             if (auto hit = lookup(key, bodies, poisoned, afterFailure)) {
-                remember(feature.id, hit->reads, hit->output);
-                apply(entryKey(key, hit->reads), hit->output, bodies, poisoned, result->lineage);
+                remember(feature.id, hit->reads, hit->output, hit->artifact != nullptr);
+                apply(feature.id, entryKey(key, hit->reads), hit->output, hit->artifact, bodies, poisoned,
+                      result->lineage);
                 report.cacheHit = true;
                 report.status = hit->output.warnings.empty() ? FeatureStatus::Ok : FeatureStatus::Warning;
                 report.message = joined(hit->output.warnings);
@@ -380,15 +489,18 @@ private:
                 }
             }
             const Reads reads = recorder.reads();
+            const detail::ArtifactPtr artifact = out ? context.published() : nullptr;
             if (ctx.cancel.cancelled()) {
                 if (out && !recorder.blocked()) {
-                    store(key, reads, *out); // finished work is kept for the next rebuild
+                    store(key, reads, *out, artifact); // finished work is kept for the next rebuild
                 }
                 return failure(ErrorCode::Cancelled, "The rebuild was cancelled.");
             }
             if (recorder.blocked()) {
                 report.status = FeatureStatus::NotBuilt;
-                report.message = "Not built: it needs a body that an earlier failed feature should have built.";
+                report.message = recorder.blockedByArtifact()
+                                     ? "Not built: it uses a sketch or datum that an earlier failure left unbuilt."
+                                     : "Not built: it needs a body that an earlier failed feature should have built.";
                 poisonAffected(feature, type, reads, bodies, poisoned, false);
                 result->reports.push_back(std::move(report));
                 continue;
@@ -401,16 +513,18 @@ private:
                 result->reports.push_back(std::move(report));
                 continue;
             }
-            remember(feature.id, reads, *out);
-            store(key, reads, *out);
-            apply(entryKey(key, reads), *out, bodies, poisoned, result->lineage);
+            remember(feature.id, reads, *out, artifact != nullptr);
+            store(key, reads, *out, artifact);
+            apply(feature.id, entryKey(key, reads), *out, artifact, bodies, poisoned, result->lineage);
             report.status = out->warnings.empty() ? FeatureStatus::Ok : FeatureStatus::Warning;
             report.message = joined(out->warnings);
             result->reports.push_back(std::move(report));
         }
 
         for (auto& [id, body] : bodies) {
-            result->bodies.emplace(id, BuiltBody{std::move(body.shape), std::move(body.map)});
+            if (!body.shape.isNull()) { // artifact slots are not bodies
+                result->bodies.emplace(id, BuiltBody{std::move(body.shape), std::move(body.map)});
+            }
         }
         evict();
         ctx.progress.set(1.0);
@@ -424,10 +538,15 @@ private:
                         std::set<BodyId>& poisoned, bool unknownMeansAll)
     {
         bool known = false;
-        for (const auto& read : reads) {
-            poisoned.insert(read.first);
+        // A feature that did not build publishes no artifact: features using it are not built either.
+        poisoned.insert(detail::artifactSlot(feature.id));
+        const auto* declaration = dynamic_cast<const detail::BodyDeclaration*>(type);
+        if (declaration == nullptr || !declaration->writesOnlyDeclared()) {
+            for (const auto& read : reads) {
+                poisoned.insert(read.first);
+            }
         }
-        if (const auto* declaration = dynamic_cast<const detail::BodyDeclaration*>(type)) {
+        if (declaration != nullptr) {
             for (const BodyId& id : declaration->bodiesWritten(feature)) {
                 poisoned.insert(id);
             }
@@ -449,7 +568,7 @@ private:
     }
 
     // Records the bodies a feature read and wrote in its last successful build.
-    void remember(const FeatureId& id, const Reads& reads, const FeatureOutput& out)
+    void remember(const FeatureId& id, const Reads& reads, const FeatureOutput& out, bool artifact)
     {
         try {
             std::set<BodyId> touched;
@@ -459,13 +578,17 @@ private:
             for (const BodyUpdate& update : out.bodies) {
                 touched.insert(update.body);
             }
+            if (artifact) {
+                touched.insert(detail::artifactSlot(id));
+            }
             std::lock_guard<std::mutex> lock(mutex_);
             touched_[id] = std::move(touched);
         } catch (...) {
         }
     }
 
-    static void apply(const Hash256& entry, const FeatureOutput& out, BodyTable& bodies, std::set<BodyId>& poisoned,
+    static void apply(const FeatureId& feature, const Hash256& entry, const FeatureOutput& out,
+                      const detail::ArtifactPtr& artifact, BodyTable& bodies, std::set<BodyId>& poisoned,
                       std::vector<naming::LineageEvent>& lineage)
     {
         for (const BodyUpdate& update : out.bodies) {
@@ -473,9 +596,16 @@ private:
             if (update.shape.isNull()) {
                 bodies.erase(update.body);
             } else {
-                bodies[update.body] = BodyState{update.shape, update.map, bodyRevision(entry, update.body)};
+                bodies[update.body] = BodyState{update.shape, update.map, bodyRevision(entry, update.body), nullptr};
             }
             lineage.insert(lineage.end(), update.lineage.begin(), update.lineage.end());
+        }
+        const BodyId slot = detail::artifactSlot(feature);
+        if (artifact) {
+            poisoned.erase(slot);
+            bodies[slot] = BodyState{kernel::Shape{}, naming::ElementMap{}, bodyRevision(entry, slot), artifact};
+        } else {
+            bodies.erase(slot);
         }
     }
 
@@ -515,7 +645,7 @@ private:
         return std::nullopt;
     }
 
-    void store(const Hash256& key, const Reads& reads, const FeatureOutput& out)
+    void store(const Hash256& key, const Reads& reads, const FeatureOutput& out, const detail::ArtifactPtr& artifact)
     {
         try {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -523,11 +653,12 @@ private:
             for (CacheEntry& entry : entries) {
                 if (entry.reads == reads) {
                     entry.output = out;
+                    entry.artifact = artifact;
                     entry.lastUse = ++tick_;
                     return;
                 }
             }
-            entries.push_back(CacheEntry{reads, out, ++tick_});
+            entries.push_back(CacheEntry{reads, out, artifact, ++tick_});
             ++size_;
         } catch (...) {
             // Out of memory: the result is simply not cached.
@@ -580,6 +711,17 @@ private:
 };
 
 } // namespace
+
+BodyId detail::artifactSlot(const FeatureId& producer)
+{
+    Hasher h;
+    h.str("ray.doc.rebuild.artifact/1");
+    hashUuid(h, producer.value);
+    const Hash256 digest = h.finish();
+    BodyId out;
+    std::copy_n(digest.bytes.begin(), out.value.bytes.size(), out.value.bytes.begin());
+    return out;
+}
 
 std::shared_ptr<IRebuilder> makeRebuilder(IJobSystem& jobs, std::shared_ptr<const FeatureRegistry> types,
                                           std::shared_ptr<const IObjectSource> objects, RebuilderOptions options)
