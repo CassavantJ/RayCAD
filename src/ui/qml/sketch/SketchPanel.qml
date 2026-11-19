@@ -146,6 +146,7 @@ Item {
                     objectName: "sketchTool." + modelData.name
                     iconName: modelData.icon
                     checked: SketchTool.tool === modelData.name
+                             && !(modelData.name === "select" && SketchConstraints.dimensionTool) // T-093
                     toolTipText: modelData.title + root.shortcut("sketch.tool." + modelData.name, hovered)
                     Accessible.checkable: true
                     Accessible.checked: checked
@@ -224,5 +225,10 @@ Item {
                 text: SketchTool.hint
             }
         }
+    }
+
+    // T-093: the constraint toolbar and the list of conflicting constraints (ConstraintsPanel.qml).
+    ConstraintsPanel {
+        anchors.fill: parent
     }
 }

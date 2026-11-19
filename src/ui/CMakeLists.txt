@@ -31,7 +31,11 @@ add_library(ray_ui STATIC
     sketch/sketch_tools.h
     sketch/sketch_tools.cpp
     sketch/sketch_drag.h
-    sketch/sketch_drag.cpp)
+    sketch/sketch_drag.cpp
+    sketch/dimensions.h
+    sketch/dimensions.cpp
+    sketch/constraints.h
+    sketch/constraints.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -97,7 +101,10 @@ set(RAY_UI_QML_FILES
     qml/controls/PanelHeader.qml
     qml/sketch/SketchLayer.qml
     qml/sketch/SketchPanel.qml
-    qml/sketch/SketchGlyph.qml)
+    qml/sketch/SketchGlyph.qml
+    qml/sketch/DimensionLayer.qml
+    qml/sketch/ConstraintsLayer.qml
+    qml/sketch/ConstraintsPanel.qml)
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -135,6 +142,12 @@ qt_add_qml_module(ray_ui
         sketch/sketch_mode.cpp
         sketch/sketch_overlay.h
         sketch/sketch_overlay.cpp
+        sketch/constraints_rows.h
+        sketch/constraints_rows.cpp
+        sketch/constraints_model.h
+        sketch/constraints_model.cpp
+        sketch/dimensions_overlay.h
+        sketch/dimensions_overlay.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick

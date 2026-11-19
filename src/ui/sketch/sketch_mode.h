@@ -46,6 +46,7 @@
 #include <QtQml/QQmlEngine>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -190,6 +191,28 @@ public:
     int dragSteps() const { return dragSteps_; }
     double slowestDragStepMs() const { return slowestStepMs_; }
 
+    // ---- T-093 hooks (constraints and dimensions: sketch/constraints_model.h) ----
+    // The constraints layer sees the pointer and keys first while it has a tool of its own (true: it used them).
+    struct InputHook {
+        std::function<bool(QPointF, Qt::KeyboardModifiers)> move, press, release, doubleClick;
+        std::function<bool(const QKeyEvent*)> wantsKey;
+        std::function<bool(QKeyEvent*)> keyPress;
+    };
+    void setInputHook(InputHook hook) { inputHook_ = std::move(hook); }
+    // The finished solve of the current model (its diagnosis); nullptr while solving or when it failed outright.
+    const sketch::SolveResult* currentSolve() const;
+    // The solved shape shown for the current model's entities (this solve, or the last good one while solving or
+    // after a failure); nullopt when there is none. Commands send it so the stored shape is the one shown.
+    std::optional<sketch::Sketch> shownSolved() const;
+    // Runs a sketch command as one step (its arguments include "id"); `done` hears whether it ran.
+    void runStep(const QString& actionId, std::string argsJson, const QString& label,
+                 std::function<void(bool)> done = {});
+    void selectEntities(const std::vector<SketchEntId>& ids);
+    // Entities drawn in the highlight colour (a hovered constraint's, the dimension tool's picks).
+    void setHighlight(const std::vector<SketchEntId>& ids);
+    // A hint that replaces the tool's while set ("" gives it back).
+    void setHintOverride(const QString& hint);
+
 signals:
     void activeChanged();
     void placingChanged();
@@ -204,6 +227,8 @@ signals:
     void viewChanged();
     // T-093: a double-click on an entity that carries a dimension (the dimension editor hooks in here).
     void constraintEditRequested(const QString& constraintId);
+    // T-093: a solve of the model finished (currentSolve() has its diagnosis), or failed.
+    void solveFinished();
 
 private:
     enum class Press { None, Select, Drag };
@@ -227,7 +252,7 @@ private:
     void setModel(sketch::Sketch model);
     void refreshDisplay();
     void requestSolve();
-    void run(const QString& actionId, std::string argsJson, const QString& label);
+    void run(const QString& actionId, std::string argsJson, const QString& label, std::function<void(bool)> done = {});
     void apply(const sketchui::Action& action);
     void afterToolInput();
     void updateOverlay();
@@ -304,6 +329,12 @@ private:
     SketchOverlayScene overlay_;
     QVariantList glyphs_;
     QPointF fieldsAt_;
+
+    // T-093.
+    InputHook inputHook_;
+    std::optional<sketch::Sketch> lastGood_; // the last solve that worked: shown while solving and after a failure
+    std::set<SketchEntId> externalHighlight_;
+    QString hintOverride_;
 };
 
 } // namespace ray::ui

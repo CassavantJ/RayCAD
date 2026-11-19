@@ -192,6 +192,27 @@ constexpr UiCommand kUiCommands[] = {
     {"sketch.tool.fillet", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch Fillet"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rounds the corner of two lines"), "Shift+C"},
+    // T-093: constraints and dimensions (sketch/constraints_model.h runs these).
+#define RAY_SKETCH_CONSTRAIN(name, title, description, key)                                                            \
+    {"sketch.constrain." name, QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", title),                                     \
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", description), \
+     key}
+    RAY_SKETCH_CONSTRAIN("dimension", "Smart Dimension", "Dimensions what is picked: length, distance, angle, radius or diameter", "D"),
+    RAY_SKETCH_CONSTRAIN("coincident", "Coincident", "Joins two points, or puts a point on a curve", "I"),
+    RAY_SKETCH_CONSTRAIN("horizontal", "Horizontal", "Makes lines, or two points, horizontal", "H"),
+    RAY_SKETCH_CONSTRAIN("vertical", "Vertical", "Makes lines, or two points, vertical", "V"),
+    RAY_SKETCH_CONSTRAIN("parallel", "Parallel", "Makes lines parallel", "Shift+P"),
+    RAY_SKETCH_CONSTRAIN("perpendicular", "Perpendicular", "Makes two lines perpendicular", "Shift+L"),
+    RAY_SKETCH_CONSTRAIN("tangent", "Tangent", "Makes an arc or circle tangent to a line, arc or circle", "G"),
+    RAY_SKETCH_CONSTRAIN("equal", "Equal", "Makes lines the same length, or arcs and circles the same radius", "Q"),
+    RAY_SKETCH_CONSTRAIN("midpoint", "Midpoint", "Puts a point at the middle of a line", "Shift+M"),
+    RAY_SKETCH_CONSTRAIN("concentric", "Concentric", "Gives two arcs or circles the same centre", "Shift+O"),
+    RAY_SKETCH_CONSTRAIN("collinear", "Collinear", "Puts two lines on one line", "Shift+N"),
+    RAY_SKETCH_CONSTRAIN("symmetric", "Symmetric", "Makes two points symmetric about a line or a point", "Shift+Y"),
+    RAY_SKETCH_CONSTRAIN("fix", "Fix", "Holds points or curves where they are", "Shift+K"),
+    RAY_SKETCH_CONSTRAIN("driven", "Driven Dimension", "Makes the selected dimension driven (a reference) or driving again", ""),
+    RAY_SKETCH_CONSTRAIN("delete", "Delete Constraint", "Deletes the selected constraint or dimension", ""),
+#undef RAY_SKETCH_CONSTRAIN
 };
 // clang-format on
 
