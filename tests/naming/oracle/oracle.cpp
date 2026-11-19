@@ -2151,16 +2151,10 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             const ElemSamples sibling = mapElement(*pick.baseline, SubId{x.kind, s}, d, *pick.owners, now, unused);
             if (sibling.pts.empty())
                 continue;
-            const double tol =
-                anchorTolerance(x.kind, unmovedMap(pick.baseline->of(x.kind)[s], sibling));
+            const double tol = anchorTolerance(x.kind, unmovedMap(pick.baseline->of(x.kind)[s], sibling));
             for (std::size_t i = 0; i < x.logical.size(); ++i)
-                if (x.claimed[i] == 0 && overlap(N[x.logical[i]], sibling, x.kind, tol)) {
+                if (x.claimed[i] == 0 && overlap(N[x.logical[i]], sibling, x.kind, tol))
                     x.claimed[i] = 1;
-                    if (std::getenv("RAYCAD_ORACLE_DEBUG") != nullptr)
-                        std::fprintf(stderr, "claimed: element %u by baseline sibling %u (%.2f / %.2f)\n",
-                                     x.logical[i], s, interiorShare(N[x.logical[i]], sibling, x.kind, tol),
-                                     interiorShare(sibling, N[x.logical[i]], x.kind, tol));
-                }
         }
     }
     const auto cong = congruent(pick.picked(), x.kind, smp, overlapTolerance(x.kind));
@@ -2262,9 +2256,6 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 if (movedWithSweep && !onBaseline(p, N[e]) && !onBaseline(similarUnmap(*fa, *fb, fk, p), N[e]))
                     continue; // new territory of an element that moved with its sweep
                 merged = true;
-                if (std::getenv("RAYCAD_ORACLE_DEBUG") != nullptr)
-                    std::fprintf(stderr, "ownTerritory: element %u sample (%.4f %.4f %.4f) moved %d\n", e, p.x, p.y,
-                                 p.z, x.moved ? 1 : 0);
             }
             if (merged)
                 still.push_back(e);

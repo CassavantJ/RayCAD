@@ -346,8 +346,8 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                     ++(*skipped)[std::string(kindName(kind)) + ": " + d.why];
                 continue;
             }
-            // A sliver (no sample more than 0.02 mm inside it): which element of an edited shape holds it cannot be told
-            // by position (oracle.h, isSliver), so the oracle cannot vouch for it.
+            // A sliver (no sample more than 0.02 mm inside it): which element of an edited shape holds it cannot be
+            // told by position (oracle.h, isSliver), so the oracle cannot vouch for it.
             if (isSliver(samples->of(kind)[i], kind)) {
                 if (skipped != nullptr)
                     ++(*skipped)[std::string(kindName(kind)) + ": a sliver"];
@@ -356,7 +356,7 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
             if (coincidesWithAnother(d, s, *owners, *samples)) {
                 if (skipped != nullptr)
                     ++(*skipped)[std::string(kindName(kind)) + ": coincides with another element it cannot be told "
-                                                              "apart from"];
+                                                               "apart from"];
                 continue;
             }
             if (b.map().namesOf(s).empty()) {
@@ -854,9 +854,10 @@ void printTally(const char* title, const Tally& t)
                 v(Verdict::WrongSilentMerge));
     std::printf("  among references whose element still exists: %s%% Exact, Split or Merged (%ld of %ld)\n",
                 percent(t.existingOk, t.existing).c_str(), t.existingOk, t.existing);
-    std::printf("  continuation unknown (no anchor): %ld references (%ld answered other than Broken: NOT JUDGED, %ld of "
-                "them reviewed); blend picks not judged (no description): %ld\n",
-                t.noAnchor, t.unjudged(), t.unjudgedReviewed, t.picksUnjudged);
+    std::printf(
+        "  continuation unknown (no anchor): %ld references (%ld answered other than Broken: NOT JUDGED, %ld of "
+        "them reviewed); blend picks not judged (no description): %ld\n",
+        t.noAnchor, t.unjudged(), t.unjudgedReviewed, t.picksUnjudged);
     std::printf("  new-territory acceptances: %ld (%ld on the reviewed list, %ld NOT REVIEWED)\n", t.accepted,
                 t.acceptedReviewed, t.accepted - t.acceptedReviewed);
     std::printf(

@@ -152,7 +152,7 @@ struct Tally {
     long conflicts = 0;                      // the one congruent-in-place element is not E, nothing moved, and the
                         // answer was judged correct (gated: oracle and resolver may share an error)
     long conflictsReviewed = 0;
-    long unjudgedReviewed = 0; // not-judged answers on the reviewed list (reviewed_unjudged.txt)
+    long unjudgedReviewed = 0;  // not-judged answers on the reviewed list (reviewed_unjudged.txt)
     long conflictsOther = 0;    // the same with a Broken or wrong answer (counted: no answer was accepted)
     long congruentGhosts = 0;   // the same after a move (another element took the place: counted only)
     long injectivity = 0;       // elements answered Exact for two or more distinct references

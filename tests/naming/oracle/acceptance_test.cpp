@@ -698,10 +698,10 @@ TEST_CASE("Regression (random 10:34): a piece whose face is whole again round a 
           "[naming][acceptance][t081a-gate]")
 {
     // A slot through the block's right end splits its x = 100 side into a piece y 0..38 and a piece y 40..60. With the
-    // slot suppressed and a notch over the second piece's place (y 39..61, from the top down to 0.3 mm above the bottom),
-    // the side is one face again, L-shaped: its box still holds the second piece's centre (y 50, z 10), the face does
-    // not, and only a strip 0.3 mm high of the piece's place is left on it. Without the outline check in canContain, the
-    // split-parent rule answers Merged with the whole side.
+    // slot suppressed and a notch over the second piece's place (y 39..61, from the top down to 0.3 mm above the
+    // bottom), the side is one face again, L-shaped: its box still holds the second piece's centre (y 50, z 10), the
+    // face does not, and only a strip 0.3 mm high of the piece's place is left on it. Without the outline check in
+    // canContain, the split-parent rule answers Merged with the whole side.
     Script base = block(100, 60, 20);
     base.push_back(sweep("A1", BOp::Cut, top(20), rect(90, 38, 105, 40), 25));
     Script edited = base;
@@ -962,7 +962,8 @@ TEST_CASE("Oracle: a resized pocket carries its walls' meeting lines with it", "
         }
 }
 
-TEST_CASE("Oracle: a small face unified into a large one is continued by it, merged", "[naming][acceptance][oracle-gate]")
+TEST_CASE("Oracle: a small face unified into a large one is continued by it, merged",
+          "[naming][acceptance][oracle-gate]")
 {
     // An element that holds the mapped pick continues it whatever the 2 % floor of evalTruth (expect, containers): a
     // boss 2 x 2 mm on the top, 1 mm behind the front face, moved flush with it: its front face (20 mm^2) is unified
