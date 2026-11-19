@@ -13,7 +13,11 @@ Item {
     id: root
     objectName: "sketchPanel"
 
-    function shortcut(id) {
+    // The key of a command, for a tooltip. Asked only while the button is hovered: the shortcut map is read on first
+    // use, not at start-up.
+    function shortcut(id, hovered) {
+        if (!hovered)
+            return ""
         const s = Shortcuts.revision >= 0 ? Shortcuts.shortcutText(id) : ""
         return s !== "" ? " (" + s + ")" : ""
     }
@@ -36,7 +40,7 @@ Item {
                 objectName: "newSketchButton"
                 iconName: "sketch"
                 enabled: !Session.readOnly
-                toolTipText: qsTr("New sketch") + root.shortcut("sketch.mode.new")
+                toolTipText: qsTr("New sketch") + root.shortcut("sketch.mode.new", hovered)
                 onClicked: Commands.trigger("sketch.mode.new")
             }
         }
@@ -142,7 +146,7 @@ Item {
                     objectName: "sketchTool." + modelData.name
                     iconName: modelData.icon
                     checked: SketchTool.tool === modelData.name
-                    toolTipText: modelData.title + root.shortcut("sketch.tool." + modelData.name)
+                    toolTipText: modelData.title + root.shortcut("sketch.tool." + modelData.name, hovered)
                     Accessible.checkable: true
                     Accessible.checked: checked
                     onClicked: Commands.trigger("sketch.tool." + modelData.name)
@@ -159,7 +163,7 @@ Item {
                 iconName: "construction"
                 checked: SketchTool.construction
                 toolTipText: qsTr("Construction geometry: the selection, or what is drawn next")
-                             + root.shortcut("sketch.tool.construction")
+                             + root.shortcut("sketch.tool.construction", hovered)
                 Accessible.checkable: true
                 Accessible.checked: checked
                 onClicked: Commands.trigger("sketch.tool.construction")
@@ -167,7 +171,7 @@ Item {
             ToolButton {
                 objectName: "sketchFinish"
                 iconName: "finish"
-                toolTipText: qsTr("Finish the sketch") + root.shortcut("sketch.mode.finish")
+                toolTipText: qsTr("Finish the sketch") + root.shortcut("sketch.mode.finish", hovered)
                 onClicked: Commands.trigger("sketch.mode.finish")
             }
         }

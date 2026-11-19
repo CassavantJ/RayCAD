@@ -7,6 +7,7 @@ target_link_libraries(ray_ui_sketch_tests PRIVATE ray_ui ray_render ray_api Qt6:
                                                   Qt6::Test Catch2::Catch2)
 # The private headers of src/ui (AppHost, SketchModel, the tool engine, ...).
 target_include_directories(ray_ui_sketch_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
+target_compile_definitions(ray_ui_sketch_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
 set_property(TARGET ray_ui_sketch_tests PROPERTY FOLDER "tests")
 
 add_test(NAME ray_ui_sketch_tests COMMAND ray_ui_sketch_tests)

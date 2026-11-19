@@ -162,7 +162,7 @@ signals:
     void bodyVisibilityChanged(int index);
     void stateChanged();
     void presetChanged();
-    void firstMeshesShown(); // the current body set became visible: the viewport fits it
+    void firstMeshesShown(); // a new body set became visible: the viewport fits it (not for the same bodies again)
 
 private:
     struct Slot {
@@ -185,8 +185,9 @@ private:
     JobsProvider jobs_;
     QPointer<AppContext> context_;
     render::IRenderViewport* viewport_ = nullptr;
-    std::vector<Slot> slots_;         // parallel to snapshot_->bodies
-    std::vector<int> selectedBodies_; // sorted
+    std::vector<Slot> slots_;          // parallel to snapshot_->bodies
+    std::vector<int> selectedBodies_;  // sorted
+    std::vector<BodyId> framedBodies_; // the body set the view last framed (sorted ids), T-092
     std::vector<Feature> features_;
     bool hasDocument_ = false;
     QString sourceName_;

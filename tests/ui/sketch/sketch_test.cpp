@@ -9,6 +9,8 @@
 //     PLAN.md 9 budget (50 ms) while the drag worker solves
 //   - an open sketch renders no frames while idle
 //   - entering and leaving a sketch without drawing leaves the document hash as it was (new and existing sketches)
+//   - an offset in the plane picker makes a datum plane first; a sketch on a picked planar face of an imported part;
+//     a line dragged by its middle follows the pointer
 //   - every sketch command is in the palette and the default keys do not clash
 //
 // Screenshots: with RAY_T092_SHOTS set to a folder, the window is saved there.
@@ -19,6 +21,7 @@
 #include "files.h"
 #include "palette_commands.h"
 #include "scene_controller.h"
+#include "selection_model.h"
 #include "session.h"
 #include "shortcuts.h"
 #include "sketch/sketch_mode.h"
@@ -26,6 +29,7 @@
 #include "viewport_item.h"
 
 #include <ray_api/sketch_edit.h>
+#include <ray_api/viewer.h>
 #include <ray_render/viewport.h>
 
 #include <QtCore/QDir>
@@ -47,6 +51,7 @@
 
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,6 +62,9 @@ using ray::ui::AppOptions;
 using ray::ui::SketchModel;
 
 namespace {
+
+// plate_thru_holes_1 (tools/corpus_gen): a 120 x 80 x 10 mm plate with through holes.
+const QString kPlate = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/plate_thru_holes_1.stp");
 
 struct Window {
     QTemporaryDir cache;
@@ -562,6 +570,74 @@ TEST_CASE("an offset in the plane picker makes a datum plane; the sketch lies on
     REQUIRE(w.settled());
     REQUIRE(w.document()->state()->features.size() == 2);
     CHECK(w.document()->state()->features[1].propsJson.find("\"datum\"") != std::string::npos);
+    REQUIRE(w.run("sketch.mode.finish"));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("a sketch on a picked planar face; a curve dragged by its middle", "[sketch][face]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    REQUIRE(w.host->files()->open(kPlate));
+    REQUIRE(QTest::qWaitFor(
+        [&] { return !w.host->files()->busy() && w.host->scene()->ready() && w.host->scene()->bodyCount() == 1; },
+        120000));
+    // The plate's top face (z = 10).
+    const api::viewer::Body* body = w.host->scene()->body(0);
+    REQUIRE(body != nullptr);
+    std::optional<std::uint32_t> top;
+    JobContext ctx;
+    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face); ++i) {
+        auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Face, i}, ctx);
+        REQUIRE(info);
+        if (info->surface && info->surface->type == kernel::SurfaceType::Plane &&
+            std::abs(info->surface->centroid.z - 10) < 1e-6)
+            top = i;
+    }
+    REQUIRE(top.has_value());
+    w.host->selection()->applyClick(
+        render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, *top, Vec3{}, 0}, Qt::NoModifier);
+    REQUIRE(w.run("sketch.mode.new"));
+    QQuickItem* face = nullptr;
+    REQUIRE(QTest::qWaitFor([&] { return (face = w.find(QStringLiteral("sketchPlane.face"))) != nullptr; }, 5000));
+    w.click(face);
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->active(); }, 20000));
+    CHECK(w.sketch()->plane().origin.z == Approx(10));
+    CHECK(w.sketch()->plane().normal.z == Approx(1));
+    w.frame({-10, -10}, {130, 90});
+    w.shot("t092_face_sketch_empty");
+
+    // A line, then dragged by its middle: the line follows the pointer (a temporary point on it is dragged).
+    REQUIRE(w.run("sketch.tool.line"));
+    w.clickAt({20, 20});
+    w.clickAt({60, 25});
+    QTest::keyClick(w.window(), Qt::Key_Escape);
+    REQUIRE(w.settled());
+    REQUIRE(w.run("sketch.tool.select"));
+    const Vec2 grab{40, 22.5};
+    const Vec2 to{40, 50};
+    w.moveTo(grab);
+    w.sendMouse(QEvent::MouseButtonPress, w.scenePoint(grab), Qt::LeftButton, Qt::LeftButton);
+    QPointF at;
+    for (int i = 1; i <= 20; ++i) {
+        at = w.scenePoint({grab.x, grab.y + (to.y - grab.y) * i / 20.0});
+        w.sendMouse(QEvent::MouseMove, at, Qt::LeftButton, Qt::LeftButton);
+        QTest::qWait(16);
+    }
+    w.sendMouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+    REQUIRE(QTest::qWaitFor([&] { return !w.sketch()->dragging(); }, 30000));
+    REQUIRE(w.settled());
+    const sketch::Sketch m = documentSketch(w);
+    CHECK(countOf<sketch::Point>(m) == 2); // the temporary point is gone
+    CHECK(m.constraints.empty());
+    // The line now passes through the drop point: both ends moved up.
+    double ySum = 0;
+    for (const sketch::Entity& e : m.entities) {
+        if (const auto* p = std::get_if<sketch::Point>(&e.geom))
+            ySum += p->p.y;
+    }
+    CHECK(ySum / 2 > 35);
+    w.shot("t092_face_sketch");
     REQUIRE(w.run("sketch.mode.finish"));
     w.checkNoWarnings();
 }

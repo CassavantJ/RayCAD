@@ -281,6 +281,8 @@ void SceneController::setBodies(std::vector<api::viewer::Body> bodies, const QSt
     selectedBodies_.clear();
     sourceName_ = sourceName;
     fineWanted_ = false;
+    if (snapshot_->bodies.empty())
+        framedBodies_.clear(); // nothing shown: whatever comes next is framed
     emit bodiesChanged();
     tree_->rebuild();
     if (!slots_.empty()) {
@@ -523,8 +525,18 @@ void SceneController::showMeshes(const Meshes& meshes, bool fine)
         context_->showMessage(failed == 1 ? tr("1 body could not be meshed and is not shown.")
                                           : tr("%1 bodies could not be meshed and are not shown.").arg(failed),
                               true);
-    if (first)
-        emit firstMeshesShown();
+    if (!first)
+        return;
+    // T-092: a document edit feeds the same bodies again (every sketch step does); the view then stays where the user
+    // put it. Only a different body set is framed anew.
+    std::vector<BodyId> ids;
+    for (const api::viewer::Body& b : snapshot_->bodies)
+        ids.push_back(b.id);
+    std::sort(ids.begin(), ids.end());
+    if (!ids.empty() && ids == framedBodies_)
+        return;
+    framedBodies_ = std::move(ids);
+    emit firstMeshesShown();
 }
 
 void SceneController::pushToViewport(int index)
