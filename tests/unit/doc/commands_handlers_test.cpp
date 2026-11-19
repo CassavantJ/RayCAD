@@ -83,6 +83,7 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "sketch.constraint.remove",
                                                         "sketch.constraint.set",
                                                         "sketch.construction",
+                                                        "sketch.dimension.place",
                                                         "sketch.entity.add",
                                                         "sketch.entity.remove",
                                                         "sketch.extend",

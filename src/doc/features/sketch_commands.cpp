@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <map>
 #include <new>
 #include <optional>
 #include <set>
@@ -61,12 +62,66 @@ Result<Editing> open(const Args& args, const DocState& before)
     return out;
 }
 
+// T-093: the props with "labels" (dimension label offsets) kept only for dimensions `model` still has, and with
+// `edits` applied (nullopt removes a label). The member goes when no label is left.
+using LabelEdits = std::map<Uuid, std::optional<Vec2>>;
+
+Result<std::string> withLabels(const std::string& where, const std::string& propsJson, const Sketch& model,
+                               const LabelEdits& edits)
+{
+    RAY_TRY(root, PropsReader::parse(where, propsJson));
+    const Value* old = root->find("labels");
+    if (old == nullptr && edits.empty()) {
+        return propsJson;
+    }
+    std::set<Uuid> dimensions;
+    for (const Constraint& c : model.constraints) {
+        if (isDimension(c.type)) {
+            dimensions.insert(c.id);
+        }
+    }
+    std::map<Uuid, Vec2> labels;
+    if (old != nullptr && old->isObject()) {
+        for (const Member& m : old->asObject()) {
+            const Value* x = m.value.find("x");
+            const Value* y = m.value.find("y");
+            if (x != nullptr && y != nullptr && x->isNumber() && y->isNumber()) {
+                labels[Uuid::fromString(m.key)] = Vec2{x->asNumber(), y->asNumber()};
+            }
+        }
+    }
+    for (const auto& [id, at] : edits) {
+        if (at) {
+            labels[id] = *at;
+        } else {
+            labels.erase(id);
+        }
+    }
+    Value::Object out;
+    for (const auto& [id, at] : labels) {
+        if (dimensions.count(id)) {
+            out.push_back({id.toString(), Value::object({{"x", Value::number(at.x)}, {"y", Value::number(at.y)}})});
+        }
+    }
+    Value::Object members;
+    for (const Member& m : root->asObject()) {
+        if (m.key != "labels") {
+            members.push_back(m);
+        }
+    }
+    if (!out.empty()) {
+        members.push_back({"labels", Value::object(std::move(out))});
+    }
+    return json::write(Value::object(std::move(members)));
+}
+
 // Writes `model` into the feature and checks it as the sketch type does for its own commands.
-Result<DocStatePtr> commit(Editing& e, const Sketch& model, const std::string& command)
+Result<DocStatePtr> commit(Editing& e, const Sketch& model, const std::string& command, const LabelEdits& labels = {})
 {
     Feature& feature = e.next->features[e.index];
     RAY_TRY(props, withSketch(feature, model));
-    feature.propsJson = std::move(*props);
+    RAY_TRY(labelled, withLabels(command, *props, model, labels));
+    feature.propsJson = std::move(*labelled);
     const auto registry = builtinFeatureRegistry();
     const auto* type = registry ? dynamic_cast<const ParametricType*>(registry->find(kSketchType)) : nullptr;
     if (type == nullptr) {
@@ -468,6 +523,7 @@ constexpr std::string_view kConstruction = "sketch.construction";
 constexpr std::string_view kExtend = "sketch.extend";
 constexpr std::string_view kOffset = "sketch.offset";
 constexpr std::string_view kFillet = "sketch.fillet";
+constexpr std::string_view kDimensionPlace = "sketch.dimension.place";
 
 Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson)
 {
@@ -526,18 +582,122 @@ Result<DocStatePtr> entityRemove(const DocState& before, std::string_view argsJs
     return commit(*e, model, std::string(kEntityRemove));
 }
 
+// A label offset {"x", "y"} (mm, finite).
+std::optional<Vec2> labelOffset(const Value& v)
+{
+    if (!v.isObject() || v.asObject().size() != 2) {
+        return std::nullopt;
+    }
+    const Value* x = v.find("x");
+    const Value* y = v.find("y");
+    if (x == nullptr || y == nullptr || !x->isNumber() || !y->isNumber() || !std::isfinite(x->asNumber()) ||
+        !std::isfinite(y->asNumber())) {
+        return std::nullopt;
+    }
+    return Vec2{x->asNumber(), y->asNumber()};
+}
+
+// The label offsets of dimensions in `model` named by a {"<constraint id>": {"x", "y"}} argument.
+Result<LabelEdits> labelArg(const Args& args, std::string_view key, const Sketch& model)
+{
+    RAY_TRY(value, args.optValue(key));
+    LabelEdits out;
+    if (*value == nullptr) {
+        return out;
+    }
+    if (!(*value)->isObject()) {
+        return args.error(key, "must be an object {\"<dimension id>\": {\"x\": <mm>, \"y\": <mm>}}");
+    }
+    for (const Member& m : (*value)->asObject()) {
+        const Uuid id = Uuid::fromString(m.key);
+        const auto it = std::find_if(model.constraints.begin(), model.constraints.end(),
+                                     [&](const Constraint& c) { return c.id == id; });
+        if (id.toString() != m.key || it == model.constraints.end() || !isDimension(it->type)) {
+            return args.error(key, "names " + m.key + ", which is not a dimension of the sketch");
+        }
+        const auto at = labelOffset(m.value);
+        if (!at) {
+            return args.error(key, "gives " + m.key + " an offset that is not {\"x\": <mm>, \"y\": <mm>}");
+        }
+        out[id] = *at;
+    }
+    return out;
+}
+
+// T-093: "solved" is the caller's solved form of the same model (sketch_json.h form): its coordinates (points, circle
+// radii, slot widths) replace the stored ones, so the stored shape is the one the person sees and the rebuild solves
+// on from there (a solve from stale coordinates can land on another solution, e.g. a point on the far side of a line).
+Status takeSolved(const Args& args, Sketch& model)
+{
+    RAY_TRY(value, args.optValue("solved"));
+    if (*value == nullptr) {
+        return {};
+    }
+    const PropsReader r(args.command(), **value);
+    RAY_TRY(solved, sketchFromJson(r, **value, "solved"));
+    if (solved->entities.size() != model.entities.size()) {
+        return args.error("solved", "must have the same entities as the sketch");
+    }
+    for (Entity& e : model.entities) {
+        const auto it = std::find_if(solved->entities.begin(), solved->entities.end(),
+                                     [&](const Entity& s) { return s.id == e.id; });
+        if (it == solved->entities.end() || it->geom.index() != e.geom.index()) {
+            return args.error("solved", "must have the same entities as the sketch (" + entityText(e.id) + ")");
+        }
+        if (auto* p = std::get_if<Point>(&e.geom)) {
+            p->p = std::get<Point>(it->geom).p;
+        } else if (auto* c = std::get_if<Circle>(&e.geom)) {
+            c->radius = std::get<Circle>(it->geom).radius;
+        } else if (auto* s = std::get_if<Slot>(&e.geom)) {
+            s->width = std::get<Slot>(it->geom).width;
+        }
+    }
+    return {};
+}
+
 Result<DocStatePtr> constraintAdd(const DocState& before, std::string_view argsJson)
 {
-    RAY_TRY(args, Args::parse(kConstraintAdd, argsJson, {"constraints", "id"}));
+    RAY_TRY(args, Args::parse(kConstraintAdd, argsJson, {"constraints", "id", "labels", "solved"}));
     RAY_TRY(e, open(*args, before));
     RAY_TRY(constraints, arrayArg(*args, "constraints"));
     RAY_TRY(model, merged(e->model, nullptr, *constraints, std::string(kConstraintAdd)));
-    return commit(*e, *model, std::string(kConstraintAdd));
+    RAY_TRY(labels, labelArg(*args, "labels", *model));
+    RAY_TRY(solved, takeSolved(*args, *model));
+    return commit(*e, *model, std::string(kConstraintAdd), *labels);
+}
+
+// T-093: where a dimension's value label sits, as an offset from the dimension's own anchor (the UI decides the
+// anchor: the middle of a distance, the centre of a circle, the vertex of an angle). Props only; no geometry changes.
+Result<DocStatePtr> dimensionPlace(const DocState& before, std::string_view argsJson)
+{
+    RAY_TRY(args, Args::parse(kDimensionPlace, argsJson, {"constraint", "id", "offset"}));
+    RAY_TRY(e, open(*args, before));
+    RAY_TRY(id, args->id("constraint"));
+    const auto it = std::find_if(e->model.constraints.begin(), e->model.constraints.end(),
+                                 [&](const Constraint& c) { return c.id == *id; });
+    if (it == e->model.constraints.end() || !isDimension(it->type)) {
+        return args->error("constraint", "names no dimension of the sketch (" + id->toString() + ")");
+    }
+    RAY_TRY(offset, args->optValue("offset"));
+    if (*offset == nullptr) {
+        return args->error("offset", "is required: {\"x\": <mm>, \"y\": <mm>}, or null to remove it");
+    }
+    LabelEdits edits;
+    if ((*offset)->isNull()) {
+        edits[*id] = std::nullopt;
+    } else {
+        const auto at = labelOffset(**offset);
+        if (!at) {
+            return args->error("offset", "must be {\"x\": <mm>, \"y\": <mm>} or null");
+        }
+        edits[*id] = *at;
+    }
+    return commit(*e, e->model, std::string(kDimensionPlace), edits);
 }
 
 Result<DocStatePtr> constraintRemove(const DocState& before, std::string_view argsJson)
 {
-    RAY_TRY(args, Args::parse(kConstraintRemove, argsJson, {"constraints", "id"}));
+    RAY_TRY(args, Args::parse(kConstraintRemove, argsJson, {"constraints", "id", "solved"}));
     RAY_TRY(e, open(*args, before));
     RAY_TRY(ids, idList(*args, "constraints"));
     Sketch model = e->model;
@@ -549,12 +709,14 @@ Result<DocStatePtr> constraintRemove(const DocState& before, std::string_view ar
         }
         model.constraints.erase(it);
     }
+    RAY_TRY(solved, takeSolved(*args, model));
     return commit(*e, model, std::string(kConstraintRemove));
 }
 
 Result<DocStatePtr> constraintSet(const DocState& before, std::string_view argsJson)
 {
-    RAY_TRY(args, Args::parse(kConstraintSet, argsJson, {"constraint", "driven", "expression", "id", "value"}));
+    RAY_TRY(args,
+            Args::parse(kConstraintSet, argsJson, {"constraint", "driven", "expression", "id", "solved", "value"}));
     RAY_TRY(e, open(*args, before));
     RAY_TRY(id, args->id("constraint"));
     RAY_TRY(expression, args->optString("expression"));
@@ -592,6 +754,7 @@ Result<DocStatePtr> constraintSet(const DocState& before, std::string_view argsJ
     if (*driven) {
         it->driven = **driven;
     }
+    RAY_TRY(solved, takeSolved(*args, model));
     return commit(*e, model, std::string(kConstraintSet));
 }
 
@@ -1324,16 +1487,22 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
         &entityAdd));
     out.push_back(std::make_unique<SketchCommand>(kEntityRemove, schemaOf(R"("entities":)" + ids, R"("id","entities")"),
                                                   &entityRemove));
+    const std::string labels = R"({"type":"object","additionalProperties":)" + point + "}";
     out.push_back(std::make_unique<SketchCommand>(
-        kConstraintAdd, schemaOf(R"("constraints":)" + objects, R"("id","constraints")"), &constraintAdd));
+        kConstraintAdd,
+        schemaOf(R"("constraints":)" + objects + R"(,"labels":)" + labels + R"(,"solved":{"type":"object"})",
+                 R"("id","constraints")"),
+        &constraintAdd));
     out.push_back(std::make_unique<SketchCommand>(
-        kConstraintRemove, schemaOf(R"("constraints":)" + ids, R"("id","constraints")"), &constraintRemove));
+        kConstraintRemove,
+        schemaOf(R"("constraints":)" + ids + R"(,"solved":{"type":"object"})", R"("id","constraints")"),
+        &constraintRemove));
     out.push_back(std::make_unique<SketchCommand>(
         kConstraintSet,
         schemaOf(
             R"("constraint":)" + uuid +
                 R"(,"expression":{"type":"string","description":"An expression such as \"12 mm\" or \"width / 2\"; )"
-                R"(\"\" removes it"},"value":{"type":"number"},"driven":{"type":"boolean"})",
+                R"(\"\" removes it"},"value":{"type":"number"},"driven":{"type":"boolean"},"solved":{"type":"object"})",
             R"("id","constraint")"),
         &constraintSet));
     out.push_back(std::make_unique<SketchCommand>(
@@ -1366,6 +1535,12 @@ std::vector<std::unique_ptr<ICommandHandler>> makeSketchCommands()
         schemaOf(R"("point":)" + uuid + R"(,"radius":{"type":"number","exclusiveMinimum":0},"newEntity":)" + uuid,
                  R"("id","point","radius")"),
         &fillet));
+    // T-093
+    out.push_back(std::make_unique<SketchCommand>(
+        kDimensionPlace,
+        schemaOf(R"("constraint":)" + uuid + R"(,"offset":{"anyOf":[)" + point + R"(,{"type":"null"}]})",
+                 R"("id","constraint","offset")"),
+        &dimensionPlace));
     return out;
 }
 

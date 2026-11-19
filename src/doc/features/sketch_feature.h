@@ -1,7 +1,8 @@
 // The "sketch" feature type (task T-096), private to src/doc and its tests.
 //
 // Props: {"plane": {"principal": "xy" | "yz" | "xz"} | {"datum": "<datum_plane id>"} | {"face": <TopoRef>},
-//         "sketch": <sketch model, sketch_json.h>}
+//         "sketch": <sketch model, sketch_json.h>,
+//         "labels"?: {"<dimension id>": {"x", "y"}}}   (T-093: dimension label offsets, display only)
 // The model is stored in the feature itself (not as a separate object): the feature object is content-addressed
 // already, and a sketch is small. Its point coordinates are the last solved ones, so a file opens without a solve.
 //

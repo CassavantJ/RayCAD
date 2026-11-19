@@ -256,6 +256,103 @@ std::string datumAddArgs(const FeatureId& id, std::string_view name, std::string
                                             {"props", std::move(props)}}));
 }
 
+Result<double> evaluateExpression(const doc::DocState& state, std::string_view text, bool angle)
+{
+    try {
+        const features::DocumentParams params = features::documentParams(state);
+        const doc::Parameter::Kind kind = angle ? doc::Parameter::Kind::Angle : doc::Parameter::Kind::Length;
+        auto v = features::evaluateNumeric(json::Value::string(std::string(text)), params.values, kind, "The dimension",
+                                           "value");
+        if (!v && params.error) {
+            return fail(v.error().code, v.error().message + " (" + *params.error + ")");
+        }
+        return v;
+    } catch (const std::bad_alloc&) {
+        return fail(ErrorCode::Internal, "Out of memory");
+    } catch (const std::exception& e) {
+        return fail(ErrorCode::Internal, std::string("Unexpected failure: ") + e.what());
+    }
+}
+
+sketch::Sketch withEvaluatedDimensions(const doc::DocState& state, sketch::Sketch model)
+{
+    bool any = false;
+    for (const sketch::Constraint& c : model.constraints) {
+        any = any || (c.expression && !c.driven);
+    }
+    if (!any) {
+        return model;
+    }
+    try {
+        const features::DocumentParams params = features::documentParams(state);
+        for (sketch::Constraint& c : model.constraints) {
+            if (!c.expression || c.driven) {
+                continue;
+            }
+            const doc::Parameter::Kind kind =
+                c.type == sketch::ConstraintType::Angle ? doc::Parameter::Kind::Angle : doc::Parameter::Kind::Length;
+            if (auto v = features::evaluateNumeric(json::Value::string(*c.expression), params.values, kind,
+                                                   "The dimension", "value")) {
+                c.value = *v;
+            }
+        }
+    } catch (const std::exception&) {
+        // The stored values stand.
+    }
+    return model;
+}
+
+std::map<Uuid, Vec2> labelsOf(const doc::DocState& state, const FeatureId& id)
+{
+    std::map<Uuid, Vec2> out;
+    const doc::Feature* f = findFeature(state, id);
+    if (f == nullptr) {
+        return out;
+    }
+    auto root = features::PropsReader::parse(features::featureLabel(*f), f->propsJson);
+    if (!root) {
+        return out;
+    }
+    const json::Value* labels = root->find("labels");
+    if (labels == nullptr || !labels->isObject()) {
+        return out;
+    }
+    for (const json::Member& m : labels->asObject()) {
+        const json::Value* x = m.value.find("x");
+        const json::Value* y = m.value.find("y");
+        if (x != nullptr && y != nullptr && x->isNumber() && y->isNumber()) {
+            out[Uuid::fromString(m.key)] = Vec2{x->asNumber(), y->asNumber()};
+        }
+    }
+    return out;
+}
+
+std::string sketchJson(const sketch::Sketch& model)
+{
+    return json::write(features::sketchToJson(model));
+}
+
+std::string constraintAddArgs(const FeatureId& sketchId, const std::vector<sketch::Constraint>& constraints,
+                              const std::map<Uuid, Vec2>& labels, const sketch::Sketch* solved)
+{
+    sketch::Sketch part{{}, constraints};
+    auto [e, c] = arraysOf(part);
+    (void)e;
+    json::Value::Object members{{"id", json::Value::string(sketchId.value.toString())}, {"constraints", std::move(c)}};
+    if (!labels.empty()) {
+        json::Value::Object l;
+        for (const auto& [id, at] : labels) {
+            l.push_back({id.toString(),
+                         json::Value::object({{"x", json::Value::number(at.x)}, {"y", json::Value::number(at.y)}})});
+        }
+        members.push_back({"labels", json::Value::object(std::move(l))});
+    }
+    if (solved != nullptr) {
+        members.push_back({"solved", features::sketchToJson(*solved)});
+    }
+    return json::write(json::Value::object(std::move(members)));
+}
+
 std::unique_ptr<sketch::ISketchSolver> makeSolver()
 {
     return sketch::makePlaneGcsSolver();

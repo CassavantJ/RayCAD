@@ -10,6 +10,7 @@
 
 #include <ray/api.h>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -42,6 +43,22 @@ std::string sketchAddArgs(const FeatureId& id, std::string_view name, std::strin
                           const sketch::Sketch& model);
 // feature.datum_plane.add {"id", "name", "props": {"base", "offset"}}.
 std::string datumAddArgs(const FeatureId& id, std::string_view name, std::string_view basePlaneJson, double offsetMm);
+
+// ---------- Dimensions (task T-093) ----------
+// `text` evaluated as a dimension's expression over the document's parameters, in the feature props' expression
+// language (numbers, unit suffixes, parameter names, functions): mm, or radians when `angle`. The error says why not.
+Result<double> evaluateExpression(const doc::DocState& state, std::string_view text, bool angle);
+// The model with each driving dimension that has an expression set to the expression's value now, as the rebuild
+// solves it. An expression that does not evaluate keeps the stored value.
+sketch::Sketch withEvaluatedDimensions(const doc::DocState& state, sketch::Sketch model);
+// Where the value labels of a sketch feature's dimensions sit (its "labels" props): dimension id -> offset in mm
+// from the dimension's anchor. Empty when there are none.
+std::map<Uuid, Vec2> labelsOf(const doc::DocState& state, const FeatureId& id);
+// sketch.constraint.add {"id", "constraints", "labels"?, "solved"?}.
+std::string constraintAddArgs(const FeatureId& sketch, const std::vector<sketch::Constraint>& constraints,
+                              const std::map<Uuid, Vec2>& labels = {}, const sketch::Sketch* solved = nullptr);
+// A model as the sketch commands read it (sketch_json form), e.g. the "solved" argument.
+std::string sketchJson(const sketch::Sketch& model);
 
 // ---------- Solving ----------
 // The sketch solver (PlaneGCS): full solves and drag sessions. Both run on workers (sketch.h).

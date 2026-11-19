@@ -164,6 +164,9 @@ constexpr CommandText kCommandTexts[] = {
     {"sketch.offset", "Offset Curves",
      "Copies sketch lines, arcs and circles at a distance to one side; chains stay joined", "Sketch"},
     {"sketch.fillet", "Sketch Fillet", "Rounds the corner of two sketch lines with a tangent arc", "Sketch"},
+    // T-093
+    {"sketch.dimension.place", "Move Dimension Label", "Moves where a sketch dimension's value label is shown",
+     "Sketch"},
 };
 
 std::string titleCase(std::string_view name)
