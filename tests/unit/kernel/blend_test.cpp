@@ -609,6 +609,36 @@ TEST_CASE("a fillet whose stripe OCCT reprocesses next to a collapsed end fails 
     filletWithoutFault(body, edge, 0.62535860723638381);
 }
 
+TEST_CASE("a chamfer whose corner belongs to the second stripe reads that stripe", "[kernel][blend][errors]")
+{
+    // The body and pick of naming random holdout sequence 18:3 (nist 827-9999-905 after two features): a 0.7069 mm
+    // chamfer of edges 0 and 11, two separate stripes. At the last corner of the second stripe OCCT 8.0.1's
+    // ChFi3d_Builder::PerformMoreSurfdata read the SurfData of the first stripe with an index of the second one, out of
+    // range, which left the first stripe's sequence unusable; ChFi3d_StripeEdgeInter then read through a null node
+    // (access violation on Windows, SIGSEGV on Linux). It happens for the request and for its size-search trials
+    // 0.5302 and 0.5081 mm. Fixed in OCCT by ports/opencascade/0007-chfi3d-moresurfdata-own-stripe.patch.
+    const Shape body = loadBody("chamfer_stripe_fault.rbrep");
+    REQUIRE(body.count(SubKind::Solid) == 1);
+    const std::vector<SubId> edges{SubId{SubKind::Edge, 0}, SubId{SubKind::Edge, 11}};
+    const std::uint64_t guardBefore = testing::structuredExceptions();
+    JobContext ctx;
+    // A trial size that used to fault: with the corner reading its own stripe it gives a valid body.
+    auto trial = chamfer(body, edges, 0.50807109386240945, ctx);
+    CHECK(testing::structuredExceptions() == guardBefore);
+    REQUIRE(trial.has_value());
+    checkValid(*trial);
+    CHECK(std::abs(volumeOf(trial->shape) - volumeOf(body)) < 0.01 * volumeOf(body)); // two small chamfers
+    // The request of the naming sequence, size search included: an ordinary failure, the same both times.
+    auto first = chamfer(body, edges, 0.70688152189552611, ctx);
+    auto second = chamfer(body, edges, 0.70688152189552611, ctx);
+    CHECK(testing::structuredExceptions() == guardBefore);
+    REQUIRE_FALSE(first.has_value());
+    REQUIRE_FALSE(second.has_value());
+    INFO(first.error().message);
+    CHECK(first.error().code == ErrorCode::KernelFailure);
+    CHECK(first.error().message == second.error().message);
+}
+
 TEST_CASE("a size equal to a face width gives a valid body or a clear failure", "[kernel][blend][errors]")
 {
     const Shape block = box({0, 0, 0}, {100, 60, 20});

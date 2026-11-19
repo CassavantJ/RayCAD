@@ -1,7 +1,7 @@
 # RayCAD overlay of the vcpkg opencascade port (vcpkg-configuration.json "overlay-ports"). It is the port of the
-# pinned baseline (8.0.1, port-version 1) unchanged, plus 0006-chfi3d-null-neighbour-curve.patch; port-version 2
-# tells the patched build apart in vcpkg output and the binary cache. When the baseline moves to an OCCT with the
-# fix, delete this folder.
+# pinned baseline (8.0.1, port-version 1) unchanged, plus the RayCAD patches 0006 and 0007;
+# port-version 3 tells the patched build apart in vcpkg output and the binary cache. When the baseline moves to an
+# OCCT with both fixes, delete this folder.
 string(REPLACE "." "_" VERSION_STR "V${VERSION}")
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
@@ -16,6 +16,7 @@ vcpkg_from_github(
         0004-cmake-add-additional-path-extraction-for-OpenCASCADE.patch
         0005-drop-bin-letter.patch
         0006-chfi3d-null-neighbour-curve.patch # RayCAD: see the header of the patch
+        0007-chfi3d-moresurfdata-own-stripe.patch # RayCAD: see the header of the patch
 )
 
 if (VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
