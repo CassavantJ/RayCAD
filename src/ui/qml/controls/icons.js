@@ -60,6 +60,21 @@ var paths = {
     "offset": { d: "M 2 13 V 6 A 3 3 0 0 1 5 3 H 13 M 5 13 V 7.5 A 1.5 1.5 0 0 1 6.5 6 H 13" },
     "fillet": { d: "M 2.5 13.5 V 9 A 6 6 0 0 1 8.5 3 H 13.5" },
     "finish": { d: "M 3.5 8.5 L 6.5 11.25 L 12.5 4.75" },
+    // T-098: the feature tools (a profile pushed along an arrow; a profile turned about an axis; a cut corner; a drilled
+    // hole seen from above; a plane drawn in perspective) and the feature tree (parameters, a warning, delete).
+    "extrude": { d: "M 2 12.5 H 10 L 14 9.5 H 6 Z M 8 8 V 1.75 M 5.75 4 L 8 1.75 L 10.25 4" },
+    "revolve": { d: "M 3 1.5 V 3.5 M 3 5.5 V 7.5 M 3 9.5 V 11.5 M 6 2.5 H 10.5 V 8.5 H 6 Z "
+                    + "M 14 11 A 5.5 2.5 0 1 1 5 13.4 M 14 11 L 14.6 9 M 14 11 L 12.1 11.4" },
+    "fillet3d": { d: "M 2.5 13.5 V 8.5 A 6 6 0 0 1 8.5 2.5 H 13.5 V 13.5 Z" },
+    "chamfer": { d: "M 2.5 13.5 V 8.5 L 8.5 2.5 H 13.5 V 13.5 Z" },
+    "hole": { d: "M 13.5 8 A 5.5 5.5 0 1 1 2.5 8 A 5.5 5.5 0 1 1 13.5 8 Z M 10.5 8 A 2.5 2.5 0 1 1 5.5 8 A 2.5 2.5 0 1 1 10.5 8 Z" },
+    "datum": { d: "M 1.5 11.5 L 5 4.5 H 14.5 L 11 11.5 Z" },
+    "parameters": { d: "M 2.5 5 L 7 11 M 7 5 L 2.5 11 M 9.5 6.5 H 14 M 9.5 9.5 H 14" },
+    "warning": { d: "M 8 2 L 14.5 13.5 H 1.5 Z M 8 6.5 V 9.5 M 8 11.5 V 11.6" },
+    "suppress": { d: "M 6 4 V 12 M 10 4 V 12" },
+    "eye": { d: "M 1.75 8 Q 8 1.5 14.25 8 Q 8 14.5 1.75 8 Z M 10 8 A 2 2 0 1 1 6 8 A 2 2 0 1 1 10 8 Z" },
+    "eye-off": { d: "M 1.75 8 Q 8 1.5 14.25 8 Q 8 14.5 1.75 8 Z M 3 13 L 13 3" },
+    "trash": { d: "M 3 4.5 H 13 M 6.25 4.5 V 2.75 H 9.75 V 4.5 M 4.5 4.5 L 5.25 13.5 H 10.75 L 11.5 4.5" },
     // Inferred-constraint glyphs over the view.
     "glyph-coincident": { fill: true, d: "M 11 8 A 3 3 0 1 1 5 8 A 3 3 0 1 1 11 8 Z" },
     "glyph-center": { d: "M 12.5 8 A 4.5 4.5 0 1 1 3.5 8 A 4.5 4.5 0 1 1 12.5 8 Z M 8 6.25 V 9.75 M 6.25 8 H 9.75" },

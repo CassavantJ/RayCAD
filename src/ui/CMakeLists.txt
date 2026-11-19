@@ -31,7 +31,10 @@ add_library(ray_ui STATIC
     sketch/sketch_tools.h
     sketch/sketch_tools.cpp
     sketch/sketch_drag.h
-    sketch/sketch_drag.cpp)
+    sketch/sketch_drag.cpp
+    model/model_util.h
+    model/preview.h
+    model/preview.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -97,7 +100,12 @@ set(RAY_UI_QML_FILES
     qml/controls/PanelHeader.qml
     qml/sketch/SketchLayer.qml
     qml/sketch/SketchPanel.qml
-    qml/sketch/SketchGlyph.qml)
+    qml/sketch/SketchGlyph.qml
+    qml/model/ModelToolButtons.qml
+    qml/model/FeaturePanel.qml
+    qml/model/FeatureLayer.qml
+    qml/model/FeatureRow.qml
+    qml/model/ParameterTable.qml)
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -135,6 +143,12 @@ qt_add_qml_module(ray_ui
         sketch/sketch_mode.cpp
         sketch/sketch_overlay.h
         sketch/sketch_overlay.cpp
+        model/features.h
+        model/features.cpp
+        model/feature_tree.h
+        model/feature_tree.cpp
+        model/params.h
+        model/params.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick
@@ -143,6 +157,7 @@ qt_add_qml_module(ray_ui
         QtQuick.Dialogs)
 # The generated type registrations include QML_ELEMENT headers by file name: sketch/ (T-092) must be on the path.
 target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sketch")
+target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/model") # T-098, likewise
 
 # The C++ that qmlcachegen generates from the QML is Qt's code, not ours: its warnings (MSVC C4702 "unreachable
 # code" inside Qt's inline headers) do not fail the build. Our own sources keep warnings as errors.

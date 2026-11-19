@@ -43,6 +43,7 @@ Item {
                 toolTipText: qsTr("New sketch") + root.shortcut("sketch.mode.new", hovered)
                 onClicked: Commands.trigger("sketch.mode.new")
             }
+            ModelToolButtons {} // T-098: the feature tools
         }
     }
 

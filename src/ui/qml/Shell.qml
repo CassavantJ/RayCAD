@@ -117,6 +117,11 @@ FocusScope {
             anchors.fill: parent
             view: viewport.view
         }
+        // T-098: the feature tools' drag handles over the view (model/FeatureLayer.qml).
+        FeatureLayer {
+            anchors.fill: parent
+            view: viewport.view
+        }
     }
 
     // T-022: the M key and the measure commands show the Measure tab; it draws its witness while shown.
@@ -193,6 +198,10 @@ FocusScope {
 
         // T-092: New sketch, the plane picker, the sketch tools and the sketch's status (sketch/SketchPanel.qml).
         SketchPanel {
+            anchors.fill: parent
+        }
+        // T-098: the open feature tool's property panel and the Extrude offer after a sketch (model/FeaturePanel.qml).
+        FeaturePanel {
             anchors.fill: parent
         }
 
