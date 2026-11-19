@@ -4,6 +4,7 @@
 
 #include "naming_internal.h"
 #include "propagate.h"
+#include "territory.h"
 
 #include <algorithm>
 #include <optional>
@@ -14,9 +15,18 @@ namespace ray::naming {
 
 bool Resolved::usable() const
 {
-    // Repaired is a suggestion. naming.h makes a confirmed repair usable, but Resolved does not carry the
-    // confirmation; T-081 must settle that (see the T-007 report). Until then Repaired is never usable.
-    return state == ResolveState::Exact || state == ResolveState::Split || state == ResolveState::Merged;
+    if (elements.empty())
+        return false;
+    // Repaired is a suggestion until the user confirms it (TopoRef::repairConfirmed, copied by resolve()).
+    return state == ResolveState::Exact || state == ResolveState::Split || state == ResolveState::Merged ||
+           (state == ResolveState::Repaired && repairConfirmed);
+}
+
+bool Resolved::postableWithoutReview() const
+{
+    if (elements.empty())
+        return false;
+    return state == ResolveState::Exact || (state == ResolveState::Repaired && repairConfirmed);
 }
 
 namespace {
@@ -44,15 +54,20 @@ public:
         bodies_.erase(std::unique(bodies_.begin(), bodies_.end(),
                                   [](const ResolverBody& a, const ResolverBody& b) { return a.id == b.id; }),
                       bodies_.end());
+        for (const ResolverBody& body : bodies_)
+            territories_.push_back(std::make_unique<detail::TerritoryCache>(body.shape));
     }
 
     Resolved resolve(const TopoRef& ref) const override
     {
+        Resolved out;
         try {
-            return resolveStages(ref);
+            out = resolveStages(ref);
         } catch (...) {
-            return broken("The reference could not be resolved because of an internal failure.");
+            out = broken("The reference could not be resolved because of an internal failure.");
         }
+        out.repairConfirmed = ref.repairConfirmed;
+        return out;
     }
 
     TopoRef makeRef(BodyId body, kernel::SubId sub) const override
@@ -80,6 +95,11 @@ private:
         const auto it = std::lower_bound(bodies_.begin(), bodies_.end(), id,
                                          [](const ResolverBody& b, const BodyId& i) { return b.id < i; });
         return it != bodies_.end() && it->id == id ? &*it : nullptr;
+    }
+
+    const detail::TerritoryCache& territoriesOf(const ResolverBody* body) const
+    {
+        return *territories_[static_cast<std::size_t>(body - bodies_.data())];
     }
 
     static bool wellFormed(const TopoRef& ref)
@@ -161,9 +181,11 @@ private:
             detail::edgeContinuesUnderOtherName(map, body.shape, element))
             return broken("One of the picked edge's faces was split, and the edge runs on under another name; which "
                           "stretches are the picked edge cannot be told.");
-        // (A face that grew may have taken in a face of another feature on the same surface whose name does not
-        // survive the edit, T-081a random 6:29; the names cannot tell that from a dimension change, which must stay
-        // Exact (T-096). Known blind spot: it needs the picked element's territory in TopoRef.)
+        // A face that grew may have taken in a face of another feature on the same surface whose name does not
+        // survive the edit (T-081a random 6:29); the names cannot tell that from a dimension change, which must stay
+        // Exact (T-096). The pick-time evidence can: territory that a recorded neighbour held (territory.h).
+        if (auto evidence = detail::exactAgainstEvidence(map, body.shape, element, ref))
+            return evidence;
         return Resolved{ResolveState::Exact, {element}, {}};
     }
 
@@ -223,9 +245,14 @@ private:
         ref.neighbourNames.erase(std::unique(ref.neighbourNames.begin(), ref.neighbourNames.end()),
                                  ref.neighbourNames.end());
         ref.hint = map.fingerprintOf(sub);
+        // Pick-time evidence: where the element lies, and the elements it could later be confused with or grow over.
+        const detail::TerritoryCache& territories = territoriesOf(body);
+        ref.territory = territories.of(sub);
+        ref.pickNeighbours = detail::pickNeighboursOf(map, body->shape, sub, territories);
     }
 
-    std::vector<ResolverBody> bodies_; // sorted by id, unique
+    std::vector<ResolverBody> bodies_;                                 // sorted by id, unique
+    std::vector<std::unique_ptr<detail::TerritoryCache>> territories_; // parallel to bodies_
 };
 
 } // namespace

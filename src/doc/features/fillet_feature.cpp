@@ -150,7 +150,7 @@ private:
         const std::size_t n = props->edges.size();
         for (std::size_t i = 0; i < n; ++i) {
             const naming::Resolved r = ctx.resolver.resolve(props->edges[i]);
-            if (!consumable(r, props->edges[i])) {
+            if (!r.usable()) {
                 if (r.state == naming::ResolveState::Repaired) {
                     broken.push_back(ordinal(i, n) + " could not be found exactly; a likely match was found (" +
                                      r.reason + "): confirm it in the reference review, or pick the edge again");
@@ -202,7 +202,9 @@ private:
             out.warnings.push_back(where + ": " + w);
         }
         const std::array<const naming::ElementMap*, 1> maps{&map};
-        const naming::NamingInput input{f.id, std::string(kind_.type), maps, &op->history, &op->shape, {}};
+        const std::array<const kernel::Shape*, 1> shapes{&*shape};
+        const naming::NamingInput input{f.id, std::string(kind_.type), maps, &op->history, &op->shape,
+                                        {},   std::span(shapes)};
         auto named = naming::propagate(input);
         if (!named) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + named.error().message);

@@ -82,6 +82,7 @@ All 25 M1 tasks were merged on 2026-11-18. These are the places where the code n
 - One job system per process; one process-wide mesh lock shared by meshing and STL export; IGES reads are serialised.
 - New theme tokens `DraftPositive`, `DraftNegative`, `DraftVertical`. T-016 needed no custom shader. Section caps use stencil parity in the main pass.
 - Test corpus: 388 files, 204 committed. The ABC and Fusion gallery sets were rejected on licence grounds.
+- Naming interface after the T-081a gate (`naming.h`, settled here): `TopoRef` carries pick-time evidence (`territory`: box, measure and up to 5 interior points of the picked element; `pickNeighbours`: up to 8 siblings and same-carrier elements with their names and territories), optional, so older references load and resolve as before. One JSON form for `TopoRef` (`naming::toJson`, `naming::topoRefFromJson`), used by feature props and `model.reference`. `NamingInput::inputShapes` (optional) lets `propagate` give a result element the names of a deleted input element it absorbed. `Resolved::usable()` honours `repairConfirmed` (copied into `Resolved`); `postableWithoutReview()` is Exact or a confirmed repair, for CAM.
 
 **Missing from the headers, to add in an interface task**
 

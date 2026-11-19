@@ -83,20 +83,13 @@ Status checkNumeric(const json::Value& value, const DocumentParams& params, Para
                     std::string_view where, std::string_view field);
 
 // ---------- naming::TopoRef as JSON ----------
-// {"body": "<uuid>", "kind": "face" | "edge" | "vertex", "names": ["<64 hex>", ...], "families": [...],
-//  "ambiguous": [true | false, ...], "splitParents": [...], "neighbourNames": [...],
-//  "hint": {"type": n, "area": n, "cx": n, "cy": n, "cz": n, "radius": n, "ax": n, "ay": n, "az": n, "neighbours": n},
-//  "repairConfirmed": false}
-// families and ambiguous are parallel to names. The hint holds naming::Fingerprint's quantised integers (as JSON
-// numbers; a value beyond +-2^53 as a decimal string); "type" is the numeric SurfaceType (CurveType for edges).
+// The JSON form is naming's (naming.h toJson and topoRefFromJson, the one implementation, also used by the
+// model.reference action); these move it in and out of a props JSON value. A reading error names the member under
+// `field` ("edges[0].names must list at least one name"). Whether a feature may use a resolution is
+// naming::Resolved::usable() (it honours TopoRef::repairConfirmed).
 json::Value topoRefToJson(const naming::TopoRef& ref);
 Result<naming::TopoRef> topoRefFromJson(const PropsReader& r, const json::Value& value, const std::string& field);
 const char* subKindName(kernel::SubKind kind);
-
-// Whether a feature rebuild may use a resolution (PLAN.md 3.3): Exact, Split and Merged; Repaired only when the user
-// confirmed it (TopoRef::repairConfirmed). Resolved::usable() does not see the confirmation yet
-// (src/naming/resolver.cpp leaves that to T-081), so the reference's flag is checked here.
-bool consumable(const naming::Resolved& resolved, const naming::TopoRef& ref);
 
 // ---------- Frames ----------
 // Principal planes: "xy" (normal +Z, x +X), "yz" (normal +X, x +Y), "xz" (normal -Y, x +X; its y is +Z).

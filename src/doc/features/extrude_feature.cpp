@@ -420,7 +420,9 @@ Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const
         }
         out.warnings.insert(out.warnings.end(), combined->warnings.begin(), combined->warnings.end());
         const std::array<const naming::ElementMap*, 2> maps{&intoMap, &named->map};
-        const naming::NamingInput input{self.id, featureRole, maps, &combined->history, &combined->shape, {}};
+        const std::array<const kernel::Shape*, 2> shapes{&*into, &swept->op.shape};
+        const naming::NamingInput input{self.id, featureRole,      maps, &combined->history, &combined->shape,
+                                        {},      std::span(shapes)};
         auto result = naming::propagate(input);
         if (!result) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + result.error().message);
@@ -440,7 +442,9 @@ Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const
         }
         out.warnings.insert(out.warnings.end(), combined->warnings.begin(), combined->warnings.end());
         const std::array<const naming::ElementMap*, 2> maps{&map, &toolMap};
-        const naming::NamingInput input{self.id, featureRole, maps, &combined->history, &combined->shape, {}};
+        const std::array<const kernel::Shape*, 2> shapes{&*shape, &*tool};
+        const naming::NamingInput input{self.id, featureRole,      maps, &combined->history, &combined->shape,
+                                        {},      std::span(shapes)};
         auto result = naming::propagate(input);
         if (!result) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + result.error().message);

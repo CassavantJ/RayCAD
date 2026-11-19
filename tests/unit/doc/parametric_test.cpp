@@ -11,7 +11,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <set>
+#include <sstream>
 
 using namespace ray;
 using namespace ray::doc;
@@ -541,6 +545,132 @@ TEST_CASE("TopoRef JSON round-trips", "[doc][parametric]")
             CHECK(r1.elements == std::vector<kernel::SubId>{kernel::SubId{kind, i}});
         }
     }
+}
+
+TEST_CASE("a document saved before references carried pick-time evidence opens and rebuilds to the same geometry",
+          "[doc][parametric]")
+{
+    // golden/old_toporef: the storage objects of a document saved by the code before TopoRef had territory and
+    // pickNeighbours (a block, a fillet and a chamfer on picked edges, a sketch on a picked face and a cut from it),
+    // with the geometry that code built (geometry.json). Its references load without evidence and resolve as they did
+    // then; the rebuild gives the same body, and saving again writes the same bytes.
+    const std::string dir = std::string(RAY_DOC_GOLDEN_DIR) + "/old_toporef";
+    auto read = [](const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream text;
+        text << in.rdbuf();
+        std::string s = text.str();
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
+            s.pop_back();
+        }
+        return s;
+    };
+    const std::string manifest = read(dir + "/manifest.json");
+    REQUIRE(!manifest.empty());
+    auto state = deserializeState(manifest, [&](const Hash256& h) -> Result<std::string> {
+        const std::string bytes = read(dir + "/" + h.hex() + ".json");
+        if (bytes.empty()) {
+            return tl::unexpected(Error{ErrorCode::NotFound, "missing object " + h.hex(), {}});
+        }
+        return bytes;
+    });
+    REQUIRE(state.has_value());
+    const auto loaded = std::make_shared<const DocState>(std::move(*state));
+    REQUIRE(loaded->features.size() == 6);
+    // The references are in the old form: no evidence.
+    std::size_t refs = 0;
+    for (const Feature& f : loaded->features) {
+        const std::size_t at = f.propsJson.find("\"names\"");
+        if (at == std::string::npos) {
+            continue;
+        }
+        CHECK(f.propsJson.find("territory") == std::string::npos);
+        CHECK(f.propsJson.find("pickNeighbours") == std::string::npos);
+        ++refs;
+    }
+    CHECK(refs == 3);
+    // Saved again unchanged: the same manifest (so the same feature objects).
+    CHECK(serializeState(*loaded).manifest == manifest);
+
+    RebuildEnv env(4);
+    const BuildResultPtr b = env.rebuild(loaded);
+    for (const Feature& f : loaded->features) {
+        const FeatureReport& r = reportOf(*b, f.id);
+        INFO(f.name << ": " << r.message);
+        CHECK(r.status == FeatureStatus::Ok);
+    }
+    const BuiltBody& body = bodyOf(*b, 'b');
+    const auto geometry = json::parse(read(dir + "/geometry.json"));
+    REQUIRE(geometry.has_value());
+    auto mp = kernel::massProps(body.shape);
+    REQUIRE(mp);
+    CHECK(mp->volume == Catch::Approx(geometry->find("volume")->asNumber()).epsilon(1e-9));
+    CHECK(mp->area == Catch::Approx(geometry->find("area")->asNumber()).epsilon(1e-9));
+    const Box3 box = kernel::bounds(body.shape);
+    const auto& lo = geometry->find("min")->asArray();
+    const auto& hi = geometry->find("max")->asArray();
+    CHECK(box.min.x == Catch::Approx(lo[0].asNumber()).margin(1e-7));
+    CHECK(box.min.y == Catch::Approx(lo[1].asNumber()).margin(1e-7));
+    CHECK(box.min.z == Catch::Approx(lo[2].asNumber()).margin(1e-7));
+    CHECK(box.max.x == Catch::Approx(hi[0].asNumber()).margin(1e-7));
+    CHECK(box.max.y == Catch::Approx(hi[1].asNumber()).margin(1e-7));
+    CHECK(box.max.z == Catch::Approx(hi[2].asNumber()).margin(1e-7));
+    CHECK(body.shape.count(kernel::SubKind::Face) == static_cast<std::uint32_t>(geometry->find("faces")->asNumber()));
+    CHECK(body.shape.count(kernel::SubKind::Edge) == static_cast<std::uint32_t>(geometry->find("edges")->asNumber()));
+    CHECK(body.shape.count(kernel::SubKind::Vertex) ==
+          static_cast<std::uint32_t>(geometry->find("vertices")->asNumber()));
+}
+
+TEST_CASE("the size of the pick-time evidence in a saved document (printed)", "[.toporef-size]")
+{
+    // The document of golden/old_toporef built again with references made now (with evidence): the storage objects'
+    // sizes, against the old form's, and per reference.
+    Model m;
+    block(m);
+    BuildResultPtr b = m.build();
+    const auto vertical = findEdge(bodyOf(*b, 'b').shape, [](const kernel::CurveInfo& c) {
+        return c.type == kernel::CurveType::Line && near(c.start.x, 40) && near(c.end.x, 40) && near(c.start.y, 20) &&
+               near(c.end.y, 20);
+    });
+    REQUIRE(vertical);
+    const naming::TopoRef r1 = refTo(*b, 'b', *vertical);
+    m.run(addFeature("fillet", 4, R"({"edges":[)" + refJson(r1) + R"(],"radius":2})"));
+    b = m.build();
+    const auto front = findEdge(bodyOf(*b, 'b').shape, [](const kernel::CurveInfo& c) {
+        return c.type == kernel::CurveType::Line && near(c.start.y, 0) && near(c.end.y, 0) && near(c.start.z, 10) &&
+               near(c.end.z, 10);
+    });
+    REQUIRE(front);
+    const naming::TopoRef r2 = refTo(*b, 'b', *front);
+    m.run(addFeature("chamfer", 5, R"({"edges":[)" + refJson(r2) + R"(],"distance":1})"));
+    b = m.build();
+    const auto top = findFace(bodyOf(*b, 'b').shape, [](const kernel::SurfaceInfo& s) {
+        return s.type == kernel::SurfaceType::Plane && near(s.centroid.z, 10, 1e-3) && s.area > 500;
+    });
+    REQUIRE(top);
+    const naming::TopoRef r3 = refTo(*b, 'b', *top);
+    m.run(addFeature("sketch", 6, sketchProps(R"({"face":)" + refJson(r3) + "}", SketchJson().circleAt(1, 20, 10, 4))));
+    m.run(addFeature("extrude", 7, extrudeProps(6, "4", "cut", 'b', R"(,"direction":"reverse")")));
+    const StateObjects objects = serializeState(*m.state);
+    std::size_t total = objects.manifest.size();
+    for (const auto& [hash, bytes] : objects.features) {
+        total += bytes.size();
+    }
+    std::size_t oldTotal = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(std::string(RAY_DOC_GOLDEN_DIR) + "/old_toporef")) {
+        if (entry.path().filename() != "geometry.json") {
+            oldTotal += static_cast<std::size_t>(entry.file_size()) - 1; // each file ends in a newline
+        }
+    }
+    for (const naming::TopoRef* r : {&r1, &r2, &r3}) {
+        naming::TopoRef bare = *r;
+        bare.territory = naming::Territory{};
+        bare.pickNeighbours.clear();
+        std::printf("reference (%s): %zu bytes with evidence (%zu neighbours, %zu points), %zu without\n",
+                    features::subKindName(r->kind), naming::toJson(*r).size(), r->pickNeighbours.size(),
+                    r->territory.points.size(), naming::toJson(bare).size());
+    }
+    std::printf("document: %zu bytes with evidence, %zu in the old form\n", total, oldTotal);
 }
 
 TEST_CASE("undo and redo of feature commands restore the snapshots and their builds", "[doc][parametric]")

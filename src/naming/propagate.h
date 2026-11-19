@@ -14,6 +14,10 @@
 //       generated from faces) when it no longer lies on all of those faces (by name, or on a piece of one): history
 //       can carry an edge onto a different face (the start rim of a cut tool that ends on another feature's
 //       face), and such an edge is a different element. It is named by the next rule that applies.
+//     - Absorbed (only with NamingInput::inputShapes): a face or edge Modified from one input element only, that
+//       grew, and on which every territory point (territory.h) of an input element of its kind that history reports
+//       Deleted lies, also carries that element's names (lineage: Merged into it): a boolean unified the two without
+//       saying so, and a reference to either must not resolve Exact.
 //     - Generated only: (feature, featureRole + ".g" + source kinds + "_" + result kind, [every name of every
 //       source]), e.g. "fillet.gE_F" for a blend face, "fillet.gEF_V" for a vertex made from an edge and a face.
 //       An edge or vertex generated from faces only is left to rule 3: it is where those faces meet, and two

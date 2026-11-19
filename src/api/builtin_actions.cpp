@@ -335,48 +335,10 @@ Status addExport(AppImpl& app, const char* id, const char* title, const char* fo
 }
 
 // The JSON form of a naming::TopoRef that the parametric feature props take (fillet and chamfer "edges", a sketch or
-// datum plane's "face"); the same layout src/doc/features/feature_props.h reads. Fingerprint integers are JSON
-// numbers, or decimal strings beyond +-2^53.
-Value topoRefJson(const naming::TopoRef& ref)
+// datum plane's "face"): naming's own (naming.h toJson, the one implementation), parsed into an action result value.
+Result<Value> topoRefJson(const naming::TopoRef& ref)
 {
-    const auto hashes = [](const std::vector<Hash256>& list) {
-        Value out = Value::array();
-        for (const Hash256& h : list) {
-            out.push(Value::string(h.hex()));
-        }
-        return out;
-    };
-    const auto integer = [](std::int64_t v) {
-        constexpr std::int64_t kExact = std::int64_t{1} << 53;
-        return v > -kExact && v < kExact ? Value::integer(v) : Value::string(std::to_string(v));
-    };
-    Value ambiguous = Value::array();
-    for (const bool a : ref.ambiguous) {
-        ambiguous.push(Value::boolean(a));
-    }
-    const naming::Fingerprint& f = ref.hint;
-    Value hint = Value::object({{"type", integer(static_cast<std::int64_t>(f.surface))},
-                                {"area", integer(f.qArea)},
-                                {"cx", integer(f.qCx)},
-                                {"cy", integer(f.qCy)},
-                                {"cz", integer(f.qCz)},
-                                {"radius", integer(f.qRadius)},
-                                {"ax", integer(f.qAxisX)},
-                                {"ay", integer(f.qAxisY)},
-                                {"az", integer(f.qAxisZ)},
-                                {"neighbours", integer(f.neighbourCount)}});
-    const char* kind = ref.kind == kernel::SubKind::Face   ? "face"
-                       : ref.kind == kernel::SubKind::Edge ? "edge"
-                                                           : "vertex";
-    return Value::object({{"body", Value::string(ref.body.value.toString())},
-                          {"kind", Value::string(kind)},
-                          {"names", hashes(ref.names)},
-                          {"families", hashes(ref.families)},
-                          {"ambiguous", std::move(ambiguous)},
-                          {"splitParents", hashes(ref.splitParents)},
-                          {"neighbourNames", hashes(ref.neighbourNames)},
-                          {"hint", std::move(hint)},
-                          {"repairConfirmed", Value::boolean(ref.repairConfirmed)}});
+    return json::parse(naming::toJson(ref));
 }
 
 // model.reference: a persistent reference to an element of the latest build of a document (T-096).
@@ -441,7 +403,11 @@ Status addModelActions(AppImpl& app)
             if (ref.names.empty()) {
                 return fail(ErrorCode::NotFound, "That element has no persistent name in this build");
             }
-            return result(Value::object({{"ref", topoRefJson(ref)}}));
+            auto refJson = topoRefJson(ref);
+            if (!refJson) {
+                return fail(ErrorCode::Internal, "The reference could not be written: " + refJson.error().message);
+            }
+            return result(Value::object({{"ref", std::move(*refJson)}}));
         });
 }
 

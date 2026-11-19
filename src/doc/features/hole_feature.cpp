@@ -788,7 +788,8 @@ private:
             }
             out.warnings.insert(out.warnings.end(), cut->warnings.begin(), cut->warnings.end());
             const std::array<const naming::ElementMap*, 2> maps{&map, &named->map};
-            const naming::NamingInput input{f.id, "hole", maps, &cut->history, &cut->shape, {}};
+            const std::array<const kernel::Shape*, 2> shapes{&shape, &tool->op.shape};
+            const naming::NamingInput input{f.id, "hole", maps, &cut->history, &cut->shape, {}, std::span(shapes)};
             auto result = naming::propagate(input);
             if (!result) {
                 return failed(ErrorCode::Internal, where + ": naming the result failed: " + result.error().message);
