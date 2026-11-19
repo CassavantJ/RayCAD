@@ -6,6 +6,8 @@
 #include "measure_actions.h"
 #include "schema.h"
 
+#include "../doc/features/hole_standards.h"
+
 #include <string>
 #include <utility>
 
@@ -141,6 +143,8 @@ constexpr CommandText kCommandTexts[] = {
     {"feature.fillet.edit", "Edit Fillet", "Changes a fillet's edges or radius", "Model"},
     {"feature.chamfer.add", "Chamfer", "Bevels edges of a body by a distance", "Model"},
     {"feature.chamfer.edit", "Edit Chamfer", "Changes a chamfer's edges or distance", "Model"},
+    {"feature.hole.add", "Hole", "Drills simple, tapped, counterbored or countersunk holes at sketch points", "Model"},
+    {"feature.hole.edit", "Edit Hole", "Changes a hole's kind, sizes, depth, thread or points", "Model"},
     {"sketch.set", "Replace Sketch", "Replaces the whole model of a sketch (and optionally its plane)", "Sketch"},
     {"sketch.entity.add", "Add Sketch Entities", "Adds points, lines, arcs, circles, splines or slots to a sketch",
      "Sketch"},
@@ -441,6 +445,41 @@ Status addModelActions(AppImpl& app)
         });
 }
 
+// standards.threads.list: the thread table of the hole feature (T-097).
+Status addStandardsActions(AppImpl& app)
+{
+    Value series =
+        Value::object({{"enum", Value::array({Value::string("iso_metric_coarse"), Value::string("iso_metric_fine"),
+                                              Value::string("unc"), Value::string("unf")})},
+                       {"description", Value::string("One series; all when omitted")}});
+    ActionInfo info{"standards.threads.list",
+                    "Thread Sizes",
+                    "Model",
+                    "Lists the thread series (ISO metric coarse and fine, UNC, UNF) with major diameter, pitch or "
+                    "threads per inch and tap drill of each size, for the hole feature's thread",
+                    schemaOf(Value::object({{"series", std::move(series)}})),
+                    "",
+                    false,
+                    false,
+                    false};
+    return app.actions().add(
+        std::move(info), [](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+            auto args = parseArgs(argsJson);
+            if (!args) {
+                return tl::unexpected<Error>(args.error());
+            }
+            auto list = doc::features::threadListJson(args->stringOr("series", ""));
+            if (!list) {
+                return tl::unexpected<Error>(list.error());
+            }
+            auto parsed = json::parse(*list);
+            if (!parsed) {
+                return fail(ErrorCode::Internal, "The thread table could not be read: " + parsed.error().message);
+            }
+            return result(std::move(*parsed));
+        });
+}
+
 } // namespace
 
 Status registerBuiltinActions(AppImpl& app)
@@ -684,6 +723,11 @@ Status registerBuiltinActions(AppImpl& app)
 
     // ---- model references (T-096) ----
     if (st = addModelActions(app); !st) {
+        return st;
+    }
+
+    // ---- standards tables (T-097) ----
+    if (st = addStandardsActions(app); !st) {
         return st;
     }
 

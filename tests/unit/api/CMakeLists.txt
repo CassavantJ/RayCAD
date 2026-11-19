@@ -9,6 +9,7 @@ add_executable(ray_api_tests
     actions_test.cpp
     external_app_test.cpp
     features_test.cpp
+    hole_actions_test.cpp
     measure_test.cpp
     recovery_test.cpp
     session_test.cpp

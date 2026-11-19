@@ -5,6 +5,7 @@ add_executable(ray_doc_tests
     commands_handlers_test.cpp
     commands_random_test.cpp
     expr_test.cpp
+    hole_test.cpp
     json_test.cpp
     number_test.cpp
     parametric_test.cpp
@@ -48,6 +49,10 @@ set_tests_properties(ray_doc_s4 PROPERTIES TIMEOUT 3600)
 add_test(NAME ray_doc_s4_revolve COMMAND ray_doc_s4_tests "[s4doc-revolve]")
 ray_test_runtime_path(ray_doc_s4_revolve)
 set_tests_properties(ray_doc_s4_revolve PROPERTIES TIMEOUT 3600)
+# The S4 part with its hole sweeps made by the hole feature (task T-097).
+add_test(NAME ray_doc_s4_hole COMMAND ray_doc_s4_tests "[s4doc-hole]")
+ray_test_runtime_path(ray_doc_s4_hole)
+set_tests_properties(ray_doc_s4_hole PROPERTIES TIMEOUT 3600)
 # Incremental rebuild of a 100-feature part (PLAN.md section 9) and the geometry goldens (tests/golden/geometry).
 add_test(NAME ray_doc_rebuild_bench COMMAND ray_doc_s4_tests "[rebuild-bench]")
 ray_test_runtime_path(ray_doc_rebuild_bench)

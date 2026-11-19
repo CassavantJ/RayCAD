@@ -2,6 +2,7 @@
 #include "features/datum_plane_feature.h"
 #include "features/extrude_feature.h"
 #include "features/fillet_feature.h"
+#include "features/hole_feature.h"
 #include "features/import_feature.h"
 #include "features/revolve_feature.h"
 #include "features/sketch_feature.h"
@@ -69,6 +70,7 @@ Status registerBuiltinFeatureTypes(FeatureRegistry& registry)
         types.push_back(features::makeRevolveFeatureType());
         types.push_back(features::makeFilletFeatureType());
         types.push_back(features::makeChamferFeatureType());
+        types.push_back(features::makeHoleFeatureType()); // task T-097
         for (const auto& type : types) {
             if (registry.find(type->typeName()) != nullptr) {
                 return tl::unexpected(
