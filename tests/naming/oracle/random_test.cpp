@@ -579,6 +579,8 @@ BlockResult runBlock(const char* title, const std::vector<Part>& parts, int perP
                     if (progress)
                         std::fprintf(stderr, "sequence %d:%d\n", jobs[i].part, jobs[i].seq);
                     out[i] = runSequence(parts[static_cast<std::size_t>(jobs[i].part)], jobs[i].part, jobs[i].seq, opt);
+                    if (progress)
+                        std::fprintf(stderr, "finished %d:%d\n", jobs[i].part, jobs[i].seq);
                     const std::lock_guard<std::mutex> guard(lock);
                     if (++done % 100 == 0)
                         std::printf("  %zu of %zu sequences\n", done, jobs.size());
@@ -834,4 +836,115 @@ TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the 
     holdout.keyPrefix = "holdout3 ";
     const BlockResult r = runBlock("Third holdout", parts, kHoldoutPerPart, holdout);
     checkGates(r, kHoldoutPerPart);
+}
+
+TEST_CASE("Fourth holdout: 200 randomised sequences on seeds first run after the pick-time evidence was added",
+          "[random-holdout4]")
+{
+    // The second and third blocks' findings were fixed with the pick-time evidence in TopoRef (territories of the
+    // picked element and its neighbours) and four oracle fixes; this block's seeds (disjoint from every other block's)
+    // were run once, on the final code, unseen, on Windows and on Linux.
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x2B4D4000ull;
+    holdout.keyPrefix = "holdout4 ";
+    const BlockResult r = runBlock("Fourth holdout", parts, kHoldoutPerPart, holdout);
+    checkGates(r, kHoldoutPerPart);
+}
+
+// ---------------------------------------------------------------- oracle fixes on the corpus cases that showed them
+// Each replays one sequence of a holdout block (deterministic: its seed is fixed) and checks the oracle's verdict on
+// the references the fix is about, with a negative case: a wrong answer to the same reference is still judged wrong.
+namespace {
+
+struct Looked {
+    std::string id;
+    Answer answer = Answer::Broken;
+    std::vector<std::uint32_t> elements;
+    Judgement judgement;
+    Judgement other; // the oracle's verdict on the wrong answer below
+};
+
+// Replays sequence `seq` of part `partIndex` of a block, and for the reference `id` judges also `wrong` (from its
+// expectation and the resolver's answer).
+std::vector<Looked> replayAndLook(int partIndex, int seq, std::uint64_t seedBase, const std::string& prefix,
+                                  const std::vector<std::string>& ids,
+                                  const std::function<std::pair<Answer, std::vector<std::uint32_t>>(
+                                      const Expectation&, const std::vector<std::uint32_t>& answered)>& wrong)
+{
+    const Part part = loadPart(kParts[partIndex]);
+    REQUIRE(part.base != nullptr);
+    std::vector<Looked> out;
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners& now, const Samples& samples) {
+        if (std::find(ids.begin(), ids.end(), id) == ids.end())
+            return;
+        Looked l;
+        l.id = id;
+        l.answer = rr.answer;
+        for (const SubId& s : res.elements)
+            l.elements.push_back(s.index);
+        l.judgement = rr.judgement;
+        const Expectation x = expect(ref.record, now, samples);
+        const auto [answer, elements] = wrong(x, l.elements);
+        l.other = judgeAnswer(x, ref.record, now, samples, answer, elements);
+        out.push_back(std::move(l));
+    });
+    SequenceOptions opt;
+    opt.seedBase = seedBase;
+    opt.keyPrefix = prefix;
+    const SequenceResult r = runSequence(part, partIndex, seq, opt);
+    setInspector({});
+    CHECK_FALSE(r.skipped);
+    CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("Oracle (holdout3 17:1): a chamfer made larger lengthens the edges where it meets a face; the stretch it "
+          "gains is new territory",
+          "[naming][acceptance][oracle-gate]")
+{
+    // The chamfer R4 0.502 -> 0.712: edges 63 and 64 (chamfer face / import face I/i5) move with the chamfer plane and
+    // get longer. Before the fix the oracle called them merged (any stretch of a moved element beyond its description
+    // was), and Exact a silent merge; now the gained stretch is new territory: it lies on no baseline element where it
+    // was, nor where the edit took one. Negative: the other edge is wrong.
+    const std::string a = "holdout3 nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #1|edge 63";
+    const std::string b = "holdout3 nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #1|edge 64";
+    const std::vector<Looked> looked = replayAndLook(
+        17, 1, 0x7A11D000ull, "holdout3 ", {a, b}, [](const Expectation& x, const std::vector<std::uint32_t>& got) {
+            // The other one of the two chamfer end edges on I/i5 (the one not answered), Exact.
+            for (const std::uint32_t e : x.logical)
+                if (got.empty() || e != got.front())
+                    return std::make_pair(Answer::Exact, std::vector<std::uint32_t>{e});
+            return std::make_pair(Answer::Exact, std::vector<std::uint32_t>{});
+        });
+    REQUIRE(looked.size() == 2);
+    for (const Looked& l : looked) {
+        INFO(l.id << ": " << verdictName(l.judgement.verdict));
+        CHECK(l.answer == Answer::Exact);
+        CHECK(l.judgement.verdict == Verdict::Correct);
+        CHECK(isWrong(l.other.verdict));
+    }
+}
+
+TEST_CASE("Oracle (holdout3 16:1): where a separating cut is gone, the edge whole again continues its stub, merged",
+          "[naming][acceptance][oracle-gate]")
+{
+    // The cut R5 moved off the part (it fails): the import edge it had split is whole again, and continues the lower
+    // piece that was picked, merged. Before the fix the cut's frozen separator made the oracle expect the piece gone,
+    // and the resolver's Merged a ghost. Negative: Exact on the whole edge is a silent merge.
+    const std::string id = "holdout3 raycad-synthetic/thin_wall_box_1.stp #1|edge 5";
+    const std::vector<Looked> looked = replayAndLook(
+        16, 1, 0x7A11D000ull, "holdout3 ", {id},
+        [](const Expectation&, const std::vector<std::uint32_t>& got) { return std::make_pair(Answer::Exact, got); });
+    REQUIRE(looked.size() == 1);
+    CHECK(looked[0].answer == Answer::Merged);
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    CHECK(looked[0].other.verdict == Verdict::WrongSilentMerge);
 }

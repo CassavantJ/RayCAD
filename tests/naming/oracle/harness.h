@@ -19,6 +19,7 @@
 
 #include <ray/naming.h>
 
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -187,6 +188,12 @@ const std::map<std::string, std::string>& reviewedUnjudged();
 // in the reviewed lists and in the log.
 void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners& owners, const Samples& samples,
               Tally& tally, JudgeLog& log, const std::string& key);
+
+// While set (on the calling thread), judgeAll calls this for every reference it judges: for tests that look at one
+// reference of a randomised sequence (random_test.cpp [oracle-gate]). Pass an empty function to clear it.
+using Inspector = std::function<void(const std::string& id, const Ref& ref, const naming::Resolved& resolved,
+                                     const RefResult& result, const Owners& now, const Samples& samples)>;
+void setInspector(Inspector inspector);
 
 // Prints the totals of a tally, every bucket, in one block.
 void printTally(const char* title, const Tally& t);
