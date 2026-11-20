@@ -7,6 +7,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -33,15 +34,14 @@ struct Model {
     BuildResultPtr build() { return env.rebuild(state); }
     sketch::Sketch sketchModel(std::uint64_t n) const
     {
-        for (const Feature& f : state->features) {
-            if (f.id == featureId(n)) {
-                auto s = features::sketchOfFeature(f, false);
-                REQUIRE(s);
-                return *s;
-            }
+        const auto f = std::find_if(state->features.begin(), state->features.end(),
+                                    [&](const Feature& g) { return g.id == featureId(n); });
+        if (f == state->features.end()) {
+            FAIL("no sketch");
         }
-        FAIL("no sketch");
-        return {};
+        auto s = features::sketchOfFeature(*f, false);
+        REQUIRE(s);
+        return *s;
     }
 };
 

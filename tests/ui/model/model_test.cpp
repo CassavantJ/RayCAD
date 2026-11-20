@@ -321,15 +321,17 @@ std::uint32_t faceAtZ(const Window& w, double z)
     const api::viewer::Body* body = w.host->scene()->body(0);
     REQUIRE(body != nullptr);
     JobContext ctx;
-    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face); ++i) {
+    std::optional<std::uint32_t> found;
+    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face) && !found; ++i) {
         auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Face, i}, ctx);
         REQUIRE(info);
         if (info->surface && info->surface->type == kernel::SurfaceType::Plane &&
             std::abs(info->surface->centroid.z - z) < 1e-6 && info->surface->axis.z > 0.5)
-            return i;
+            found = i;
     }
-    FAIL("no planar face at that height");
-    return 0;
+    if (!found)
+        FAIL("no planar face at that height");
+    return *found;
 }
 
 // The straight edge of body 0 along X at (y, z); its index and midpoint.
@@ -338,7 +340,8 @@ std::pair<std::uint32_t, Vec3> edgeAlongX(const Window& w, double y, double z)
     const api::viewer::Body* body = w.host->scene()->body(0);
     REQUIRE(body != nullptr);
     JobContext ctx;
-    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Edge); ++i) {
+    std::optional<std::pair<std::uint32_t, Vec3>> found;
+    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Edge) && !found; ++i) {
         auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Edge, i}, ctx);
         REQUIRE(info);
         if (!info->curve || info->curve->type != kernel::CurveType::Line)
@@ -346,10 +349,11 @@ std::pair<std::uint32_t, Vec3> edgeAlongX(const Window& w, double y, double z)
         const kernel::CurveInfo& c = *info->curve;
         if (std::abs(c.start.y - y) < 1e-6 && std::abs(c.end.y - y) < 1e-6 && std::abs(c.start.z - z) < 1e-6 &&
             std::abs(c.end.z - z) < 1e-6 && std::abs(c.start.x - c.end.x) > 1)
-            return {i, Vec3{(c.start.x + c.end.x) / 2, y, z}};
+            found = std::pair<std::uint32_t, Vec3>{i, Vec3{(c.start.x + c.end.x) / 2, y, z}};
     }
-    FAIL("no edge there");
-    return {};
+    if (!found)
+        FAIL("no edge there");
+    return *found;
 }
 
 // Opens the tool and waits for its panel.

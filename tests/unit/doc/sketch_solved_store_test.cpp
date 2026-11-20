@@ -127,13 +127,12 @@ double largestMove(const sketch::Sketch& a, const sketch::Sketch& b)
 Vec2 pointIn(const sketch::Sketch& s, std::uint64_t n)
 {
     const SketchEntId id{Uuid::fromString(ent(n))};
-    for (const sketch::Entity& e : s.entities) {
-        if (e.id == id) {
-            return std::get<sketch::Point>(e.geom).p;
-        }
+    const auto it =
+        std::find_if(s.entities.begin(), s.entities.end(), [&](const sketch::Entity& e) { return e.id == id; });
+    if (it == s.entities.end()) {
+        FAIL("no point " << n);
     }
-    FAIL("no point " << n);
-    return {};
+    return std::get<sketch::Point>(it->geom).p;
 }
 
 std::string modelJson(const sketch::Sketch& s)
@@ -168,13 +167,12 @@ struct Session {
     DocStatePtr state() const { return env.doc->state(); }
     const Feature& feature(const DocState& s, std::uint64_t n = 2) const
     {
-        for (const Feature& f : s.features) {
-            if (f.id == featureId(n)) {
-                return f;
-            }
+        const auto it =
+            std::find_if(s.features.begin(), s.features.end(), [&](const Feature& f) { return f.id == featureId(n); });
+        if (it == s.features.end()) {
+            FAIL("no feature " << n);
         }
-        FAIL("no feature " << n);
-        return s.features.front();
+        return *it;
     }
     sketch::Sketch stored() const
     {

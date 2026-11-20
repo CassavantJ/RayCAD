@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -46,23 +47,27 @@ Vec3 added(const Vec3& a, const Vec3& b)
 // The face of an axis-aligned box whose outward normal is `normal`.
 SubId boxFace(const Shape& shape, const Vec3& normal)
 {
+    std::optional<SubId> found;
     for (const SubId id : all(shape, SubKind::Face)) {
         const SurfaceInfo info = take(surfaceInfo(shape, id));
         const Vec3 outward = info.reversed ? scaled(info.axis, -1) : info.axis;
-        if (close(outward, normal, 1e-12))
-            return id;
+        if (!found && close(outward, normal, 1e-12))
+            found = id;
     }
-    FAIL("no face with that normal");
-    return SubId{SubKind::Face, 0};
+    if (!found)
+        FAIL("no face with that normal");
+    return *found;
 }
 
 SubId vertexAt(const Shape& shape, const Vec3& point)
 {
+    std::optional<SubId> found;
     for (const SubId id : all(shape, SubKind::Vertex))
-        if (close(take(vertexPoint(shape, id)), point, 1e-12))
-            return id;
-    FAIL("no vertex there");
-    return SubId{SubKind::Vertex, 0};
+        if (!found && close(take(vertexPoint(shape, id)), point, 1e-12))
+            found = id;
+    if (!found)
+        FAIL("no vertex there");
+    return *found;
 }
 
 } // namespace

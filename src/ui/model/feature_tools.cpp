@@ -1996,12 +1996,10 @@ std::optional<Vec3> FeatureToolModel::handleBase(const QString& key, Vec3* dir) 
         const Vec3 at = edgePoints_.front();
         // Towards the middle of the body: the side the blend takes material from.
         std::optional<Box3> box;
-        if (selection_) {
-            for (const SelectionEntry& e : selection_->entries()) {
-                const render::PickHit hit{scene_->itemForBody(e.body), kernel::SubKind::Solid, 0, {}, 0};
-                box = scene_->boundsOf(std::span<const render::PickHit>(&hit, 1));
-                break;
-            }
+        if (selection_ && !selection_->entries().empty()) {
+            const SelectionEntry& e = selection_->entries().front();
+            const render::PickHit hit{scene_->itemForBody(e.body), kernel::SubKind::Solid, 0, {}, 0};
+            box = scene_->boundsOf(std::span<const render::PickHit>(&hit, 1));
         }
         Vec3 centre =
             box ? Vec3{(box->min.x + box->max.x) / 2, (box->min.y + box->max.y) / 2, (box->min.z + box->max.z) / 2}
