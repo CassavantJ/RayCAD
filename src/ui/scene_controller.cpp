@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <utility>
 
 namespace ray::ui {
@@ -266,10 +267,34 @@ void SceneController::setBodies(std::vector<api::viewer::Body> bodies, const QSt
     coarse_ = {};
     fine_ = {};
     coarseSerial_ = fineSerial_ = 0;
+
+    // A body that is still the same shape object keeps its mesh and viewport item (see the header).
+    std::map<BodyId, std::size_t> previous;
+    for (std::size_t j = 0; j < snapshot_->bodies.size(); ++j)
+        previous.emplace(snapshot_->bodies[j].id, j);
+    std::vector<Slot> next(bodies.size());
+    std::vector<char> kept(slots_.size(), 0);
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        const api::viewer::Body& body = bodies[i];
+        const auto it = previous.find(body.id);
+        if (it != previous.end() && !kept[it->second]) {
+            const std::size_t j = it->second;
+            const api::viewer::Body& old = snapshot_->bodies[j];
+            if (slots_[j].mesh && !body.shape.isNull() && old.shape.impl == body.shape.impl) {
+                next[i] = slots_[j];
+                kept[j] = 1;
+                if (viewport_ != nullptr && next[i].item != 0 && old.color != body.color)
+                    viewport_->setStyle(next[i].item, modelStyle(&body));
+            }
+        }
+        next[i].visible = body.visible;
+        if (viewport_ != nullptr && next[i].item != 0)
+            viewport_->setVisible(next[i].item, body.visible);
+    }
     if (viewport_ != nullptr) {
-        for (const Slot& slot : slots_) {
-            if (slot.item != 0)
-                viewport_->remove(slot.item);
+        for (std::size_t j = 0; j < slots_.size(); ++j) {
+            if (!kept[j] && slots_[j].item != 0)
+                viewport_->remove(slots_[j].item);
         }
     }
     ++generation_;
@@ -277,20 +302,26 @@ void SceneController::setBodies(std::vector<api::viewer::Body> bodies, const QSt
     snap->generation = generation_;
     snap->bodies = std::move(bodies);
     snap->resolver = std::make_shared<const api::viewer::SelectionResolver>(snap->bodies);
-    slots_.assign(snap->bodies.size(), Slot{});
-    for (std::size_t i = 0; i < slots_.size(); ++i)
-        slots_[i].visible = snap->bodies[i].visible;
+    slots_ = std::move(next);
     snapshot_ = std::move(snap);
     selectedBodies_.clear();
     sourceName_ = sourceName;
     fineWanted_ = false;
+    framePending_ = true;
     if (snapshot_->bodies.empty())
         framedBodies_.clear(); // nothing shown: whatever comes next is framed
     emit bodiesChanged();
     tree_->rebuild();
     if (!slots_.empty()) {
         ensurePreset();
-        startCoarse();
+        if (std::any_of(slots_.begin(), slots_.end(), [](const Slot& s) { return s.mesh == nullptr; })) {
+            startCoarse();
+        } else {
+            // Every body kept its mesh: nothing to tessellate; refine any that are still coarse.
+            frameIfNew();
+            fineWanted_ = true;
+            startFine();
+        }
     }
     updateJobSlot();
     emit stateChanged();
@@ -365,6 +396,10 @@ void SceneController::setPreset(const render::TierPreset& preset)
         viewport_->setPreset(preset_);
     emit presetChanged();
     // A new tolerance: mesh again (only once the coarse view is up; the coarse job's end starts it otherwise).
+    if (!sameTolerance) {
+        for (Slot& slot : slots_)
+            slot.fine = false; // meshed at the old tolerance (still shown until the new ones arrive)
+    }
     if (!sameTolerance && !slots_.empty() && !coarse_.valid()) {
         fine_.cancel();
         fine_ = {};
@@ -413,19 +448,27 @@ void SceneController::startCoarse()
     coarseSerial_ = serial;
     jobTitle_ = sourceName_.isEmpty() ? tr("Meshing") : tr("Meshing %1").arg(sourceName_);
     jobProgress_ = 0;
+    std::vector<std::size_t> todo; // the bodies that have no mesh yet
+    for (std::size_t i = 0; i < slots_.size(); ++i) {
+        if (!slots_[i].mesh)
+            todo.push_back(i);
+    }
     coarse_ = jobs->submit<Meshes>(
-        JobInfo{"Display mesh (coarse)", JobPriority::Interactive, true}, [snap](JobContext& ctx) -> Result<Meshes> {
-            auto out = std::make_shared<std::vector<std::shared_ptr<const kernel::Mesh>>>();
-            const std::size_t n = snap->bodies.size();
-            for (const api::viewer::Body& body : snap->bodies) {
+        JobInfo{"Display mesh (coarse)", JobPriority::Interactive, true},
+        [snap, todo, meshed = meshed_](JobContext& ctx) -> Result<Meshes> {
+            auto out = std::make_shared<SceneMeshBatch>();
+            const std::size_t n = todo.size();
+            for (std::size_t i : todo) {
                 if (auto ok = ctx.cancel.check(); !ok)
                     return tl::unexpected(ok.error());
                 JobContext sub{ctx.cancel, ctx.progress.sub(1.0 / double(n))};
-                Result<kernel::Mesh> mesh =
-                    api::viewer::meshBody(body.shape, api::viewer::kCoarseChordMm, api::viewer::kCoarseAngleDeg, sub);
+                ++*meshed;
+                Result<kernel::Mesh> mesh = api::viewer::meshBody(snap->bodies[i].shape, api::viewer::kCoarseChordMm,
+                                                                  api::viewer::kCoarseAngleDeg, sub);
                 if (!mesh && mesh.error().code == ErrorCode::Cancelled)
                     return tl::unexpected(mesh.error());
-                out->push_back(mesh ? std::make_shared<const kernel::Mesh>(std::move(*mesh)) : nullptr);
+                out->indices.push_back(i);
+                out->meshes.push_back(mesh ? std::make_shared<const kernel::Mesh>(std::move(*mesh)) : nullptr);
             }
             return Meshes(std::move(out));
         });
@@ -467,6 +510,13 @@ void SceneController::startFine()
     if (jobs == nullptr)
         return;
     fineWanted_ = false;
+    std::vector<std::size_t> todo; // the bodies not yet meshed at this tolerance
+    for (std::size_t i = 0; i < slots_.size(); ++i) {
+        if (!slots_[i].fine)
+            todo.push_back(i);
+    }
+    if (todo.empty())
+        return;
     const std::shared_ptr<const SceneSnapshot> snap = snapshot_;
     const std::uint64_t serial = ++jobSerial_;
     fineSerial_ = serial;
@@ -474,17 +524,19 @@ void SceneController::startFine()
     jobProgress_ = 0;
     fine_ = jobs->submit<Meshes>(
         JobInfo{"Display mesh (fine)", JobPriority::Background, true},
-        [snap, chord, angle](JobContext& ctx) -> Result<Meshes> {
-            auto out = std::make_shared<std::vector<std::shared_ptr<const kernel::Mesh>>>();
-            const std::size_t n = snap->bodies.size();
-            for (const api::viewer::Body& body : snap->bodies) {
+        [snap, todo, chord, angle, meshed = meshed_](JobContext& ctx) -> Result<Meshes> {
+            auto out = std::make_shared<SceneMeshBatch>();
+            const std::size_t n = todo.size();
+            for (std::size_t i : todo) {
                 if (auto ok = ctx.cancel.check(); !ok)
                     return tl::unexpected(ok.error());
                 JobContext sub{ctx.cancel, ctx.progress.sub(1.0 / double(n))};
-                Result<kernel::Mesh> mesh = api::viewer::meshBody(body.shape, chord, angle, sub);
+                ++*meshed;
+                Result<kernel::Mesh> mesh = api::viewer::meshBody(snap->bodies[i].shape, chord, angle, sub);
                 if (!mesh && mesh.error().code == ErrorCode::Cancelled)
                     return tl::unexpected(mesh.error());
-                out->push_back(mesh ? std::make_shared<const kernel::Mesh>(std::move(*mesh)) : nullptr);
+                out->indices.push_back(i);
+                out->meshes.push_back(mesh ? std::make_shared<const kernel::Mesh>(std::move(*mesh)) : nullptr);
             }
             return Meshes(std::move(out));
         });
@@ -511,10 +563,12 @@ void SceneController::showMeshes(const Meshes& meshes, bool fine)
 {
     if (!meshes)
         return;
-    const bool first = std::none_of(slots_.begin(), slots_.end(), [](const Slot& s) { return s.mesh != nullptr; });
     int failed = 0;
-    for (std::size_t i = 0; i < slots_.size() && i < meshes->size(); ++i) {
-        const std::shared_ptr<const kernel::Mesh>& mesh = (*meshes)[i];
+    for (std::size_t k = 0; k < meshes->indices.size() && k < meshes->meshes.size(); ++k) {
+        const std::size_t i = meshes->indices[k];
+        const std::shared_ptr<const kernel::Mesh>& mesh = meshes->meshes[k];
+        if (i >= slots_.size())
+            continue;
         if (!mesh) {
             ++failed;
             continue;
@@ -528,8 +582,14 @@ void SceneController::showMeshes(const Meshes& meshes, bool fine)
         context_->showMessage(failed == 1 ? tr("1 body could not be meshed and is not shown.")
                                           : tr("%1 bodies could not be meshed and are not shown.").arg(failed),
                               true);
-    if (!first)
+    frameIfNew();
+}
+
+void SceneController::frameIfNew()
+{
+    if (!framePending_)
         return;
+    framePending_ = false;
     // T-092: a document edit feeds the same bodies again (every sketch step does); the view then stays where the user
     // put it. Only a different body set is framed anew.
     std::vector<BodyId> ids;

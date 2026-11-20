@@ -9,6 +9,12 @@
 // on the job system and shown as soon as that finishes, then refined in the background to the tier preset's
 // tolerance. Both steps show in the status bar's job slot (AppContext::setJob) and Esc / Cancel stops them; a
 // cancelled or superseded mesh job is abandoned (its result is dropped when it arrives, PLAN.md 7).
+//
+// A new body set keeps the meshes and viewport items of the bodies it shares with the one shown: same body id and the
+// same kernel::Shape object. The rebuilder hands a body no edited feature touched back as the shape object it cached
+// (a cache hit), so after a document edit only the bodies whose geometry was rebuilt are tessellated and uploaded
+// again. A body rebuilt to the same geometry is a new shape object and is meshed again (hashing every shape to find
+// out would cost about as much as meshing it).
 #pragma once
 
 #include "app_context.h"
@@ -23,6 +29,8 @@
 #include <QtCore/QString>
 #include <QtQml/QQmlEngine>
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -38,6 +46,12 @@ struct SceneSnapshot {
     std::uint64_t generation = 0;
     std::vector<api::viewer::Body> bodies;
     std::shared_ptr<const api::viewer::SelectionResolver> resolver;
+};
+
+// One mesh job's result: the body slots it meshed and their meshes, in step (a null mesh is a body that failed).
+struct SceneMeshBatch {
+    std::vector<std::size_t> indices; // into the scene's bodies
+    std::vector<std::shared_ptr<const kernel::Mesh>> meshes;
 };
 
 // The model tree's rows: section headers, features (when a document is attached) and bodies, flattened.
@@ -162,6 +176,10 @@ public:
     void setSelectedBodies(std::vector<int> bodies);
     bool bodySelected(int index) const;
 
+    // Bodies tessellated by this scene's mesh jobs so far, coarse and fine passes counted separately (tests and
+    // diagnostics: a document edit re-meshes only the bodies whose shape changed).
+    std::uint64_t bodiesMeshed() const { return meshed_->load(); }
+
 signals:
     void bodiesChanged(); // a new body set (the selection clears itself)
     void bodyVisibilityChanged(int index);
@@ -176,13 +194,14 @@ private:
         render::ItemId item = 0;
         bool visible = true;
     };
-    // Shared, so JobHandle hands the result over without copying the meshes; a null entry is a body that failed.
-    using Meshes = std::shared_ptr<const std::vector<std::shared_ptr<const kernel::Mesh>>>;
+    // Shared, so JobHandle hands the result over without copying the meshes.
+    using Meshes = std::shared_ptr<const SceneMeshBatch>;
 
     void startCoarse();
     void startFine();
     void ensurePreset();
     void showMeshes(const Meshes& meshes, bool fine);
+    void frameIfNew(); // the first meshes of a new body set are up: fit the view if the set differs (T-092)
     void pushToViewport(int index);
     void updateJobSlot();
     void setFeatures(std::vector<Feature> features);
@@ -207,6 +226,8 @@ private:
     bool presetKnown_ = false;
     bool presetPending_ = false;
     bool fineWanted_ = false;
+    bool framePending_ = false; // set by setBodies, cleared once its bodies are shown
+    std::shared_ptr<std::atomic<std::uint64_t>> meshed_ = std::make_shared<std::atomic<std::uint64_t>>(0);
     SceneTreeModel* tree_ = nullptr;
     std::unique_ptr<BodyOverlay> preview_;
 };

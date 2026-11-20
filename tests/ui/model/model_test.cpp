@@ -392,6 +392,9 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
     w.commit();
     REQUIRE(w.host->scene()->bodyCount() == 1);
     CHECK(w.volume() == Approx(40.0 * 25 * 10).epsilon(1e-6));
+    // The commit is the previewed command: the document's rebuild takes the extrude from the preview's (a cache hit).
+    REQUIRE(w.document()->build());
+    CHECK(w.document()->build()->reports.back().cacheHit);
 
     // ---- A circle on the top face (the sketch mode), then the Extrude it offers: a cut through ----
     const std::uint32_t top = faceAtZ(w, 10);
@@ -1050,6 +1053,77 @@ TEST_CASE("extrude through all: a cut that stays through after the block grows; 
         CHECK(p.value(QStringLiteral("distance")).toString() == QStringLiteral("5 mm"));
     }
     CHECK(w.volume() == Approx(20000 - kPi * r2 * 5).epsilon(1e-6));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("a document edit re-meshes only the bodies whose geometry changed", "[model][mesh-reuse]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    ui::SceneController* scene = w.host->scene();
+    const auto meshesDone = [&] {
+        REQUIRE(QTest::qWaitFor([&] { return scene->ready() && !scene->refining(); }, kTimeoutMs));
+    };
+    // Four plates, each a rectangle sketch extruded into a body of its own.
+    constexpr int kBodies = 4;
+    std::vector<FeatureId> extrudes;
+    for (int b = 0; b < kBodies; ++b) {
+        sketch::Sketch m;
+        std::vector<SketchEntId> p;
+        const double x0 = 50.0 * b;
+        for (const Vec2 c : {Vec2{x0, 0}, Vec2{x0 + 40, 0}, Vec2{x0 + 40, 25}, Vec2{x0, 25}}) {
+            p.push_back(SketchEntId{Uuid::generate()});
+            m.entities.push_back(sketch::Entity{p.back(), sketch::Point{c}, false});
+        }
+        for (int i = 0; i < 4; ++i)
+            m.entities.push_back(
+                sketch::Entity{SketchEntId{Uuid::generate()}, sketch::Line{p[i], p[(i + 1) % 4]}, false});
+        std::sort(m.entities.begin(), m.entities.end(),
+                  [](const sketch::Entity& a, const sketch::Entity& c) { return a.id < c.id; });
+        const FeatureId sketchId{Uuid::generate()};
+        REQUIRE(w.invoke("feature.sketch.add",
+                         api::sketch_edit::sketchAddArgs(sketchId, "Plate sketch", "{\"principal\":\"xy\"}", m)));
+        extrudes.push_back(FeatureId{Uuid::generate()});
+        REQUIRE(w.invoke("feature.extrude.add", "{\"id\":\"" + extrudes.back().value.toString() +
+                                                    "\",\"props\":{\"sketch\":\"" + sketchId.value.toString() +
+                                                    "\",\"distance\":\"10 mm\",\"operation\":\"new\",\"target\":\"" +
+                                                    Uuid::generate().toString() + "\"}}"));
+    }
+    w.settle();
+    meshesDone();
+    REQUIRE(scene->bodyCount() == kBodies);
+    std::map<BodyId, render::ItemId> items;
+    for (int i = 0; i < kBodies; ++i) {
+        REQUIRE(scene->itemForBody(i) != 0);
+        items[scene->body(i)->id] = scene->itemForBody(i);
+    }
+    const std::uint64_t before = scene->bodiesMeshed();
+
+    // The third plate made 20 mm thick: one body rebuilt, so one coarse and one fine tessellation, and the other
+    // bodies keep their viewport items.
+    REQUIRE(w.invoke("feature.extrude.edit",
+                     "{\"id\":\"" + extrudes[2].value.toString() + "\",\"props\":{\"distance\":\"20 mm\"}}"));
+    w.settle();
+    meshesDone();
+    REQUIRE(scene->bodyCount() == kBodies);
+    CHECK(scene->bodiesMeshed() - before == 2);
+    int kept = 0;
+    for (int i = 0; i < kBodies; ++i) {
+        const auto it = items.find(scene->body(i)->id);
+        REQUIRE(it != items.end());
+        kept += scene->itemForBody(i) == it->second ? 1 : 0;
+        CHECK(scene->meshIsFine(i));
+    }
+    CHECK(kept == kBodies - 1);
+
+    // Undo gives back the earlier shape objects (a rebuild cache hit): nothing is meshed for the three plates the
+    // edit did not touch, and the thick plate is meshed again.
+    const std::uint64_t edited = scene->bodiesMeshed();
+    w.undo();
+    w.settle();
+    meshesDone();
+    CHECK(scene->bodiesMeshed() - edited == 2);
     w.checkNoWarnings();
 }
 
