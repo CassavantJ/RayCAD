@@ -1105,6 +1105,92 @@ TEST_CASE("editing a fillet picks in the model before it: its edges are selected
     w.checkNoWarnings();
 }
 
+TEST_CASE("datum planes are drawn in the view, hidden by their eye, and picked where a plane is asked for",
+          "[model][datum]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    // A datum plane 20 mm above XY.
+    openTool(w, "model.tool.datumPlane", "datum_plane");
+    w.typeInto(QStringLiteral("offset"), QStringLiteral("20 mm"));
+    w.previewed();
+    w.commit();
+    const FeatureId datum = w.document()->state()->features.back().id;
+    REQUIRE(w.document()->state()->features.back().type == "datum_plane");
+    const QString base = QStringLiteral("datum:") + QString::fromStdString(datum.value.toString());
+    const QString frame = base + QStringLiteral(":frame");
+    const auto drawn = [&] { return !w.tree()->busy() && w.tree()->datumLines().has(frame); };
+    const auto gone = [&] { return !w.tree()->busy() && !w.tree()->datumLines().has(frame); };
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+    CHECK(w.tree()->datumLines().has(base + QStringLiteral(":inner")));
+    CHECK(w.tree()->datumLines().has(base + QStringLiteral(":normal")));
+    // A guide: it never takes a viewport pick.
+    render::IRenderViewport* viewport = w.host->scene()->viewport();
+    REQUIRE(viewport != nullptr);
+    CHECK(viewport->pickMode(w.tree()->datumLines().itemOf(frame)) == render::PickMode::Never);
+    const int row = w.tree()->rowOf(QString::fromStdString(datum.value.toString()));
+    REQUIRE(row >= 0);
+    CHECK(w.tree()->get(row).value(QStringLiteral("isDatum")).toBool());
+    CHECK(w.tree()->get(row).value(QStringLiteral("datumShown")).toBool());
+    CHECK(!w.tree()->get(1).value(QStringLiteral("isDatum")).toBool());
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.view()->fitAll();
+    w.settle();
+    w.shot("datum_plane_in_view");
+
+    // Its eye in the tree hides it and shows it again.
+    QQuickItem* eye = nullptr;
+    REQUIRE(QTest::qWaitFor([&] { return (eye = w.find(QStringLiteral("datumVisibility.%1").arg(row))) && eye->isVisible(); },
+                            5000));
+    w.click(eye);
+    REQUIRE(QTest::qWaitFor(gone, kTimeoutMs));
+    CHECK(!w.tree()->get(row).value(QStringLiteral("datumShown")).toBool());
+    w.tree()->setDatumShown(row, true);
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+
+    // Rolled back to before it: not built, not drawn.
+    REQUIRE(w.tree()->rollTo(1));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackIndex() == 1; }, kTimeoutMs));
+    w.settle();
+    REQUIRE(QTest::qWaitFor(gone, kTimeoutMs));
+    REQUIRE(w.tree()->rollTo(-1));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackIndex() == -1; }, kTimeoutMs));
+    w.settle();
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+
+    // A point on the plane inside its frame, beside the block: the frame is centred over the model.
+    const Vec3 onDatum{35, 30, 20};
+    const QPointF at = w.view()->mapFromScene(w.sceneOf(onDatum));
+    // Nothing asks for a plane: a click there picks nothing.
+    CHECK(!w.tree()->planeWanted());
+    CHECK(!w.tree()->pickDatumAt(at.x(), at.y()));
+
+    // The datum plane tool asks for a base: a click on the datum takes it.
+    openTool(w, "model.tool.datumPlane", "datum_plane");
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+    CHECK(w.tree()->planeWanted());
+    w.clickScene(w.sceneOf(onDatum));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->values().value(QStringLiteral("base")).toString() == base; },
+                            5000));
+    w.tool()->cancel();
+
+    // The sketch mode's plane picker: a click on the datum puts the new sketch on it.
+    w.sketch()->newSketch();
+    REQUIRE(w.sketch()->placing());
+    CHECK(w.tree()->planeWanted());
+    w.clickScene(w.sceneOf(onDatum));
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->active(); }, kTimeoutMs));
+    CHECK(w.sketch()->plane().origin.z == Approx(20));
+    CHECK(std::abs(w.sketch()->plane().normal.z) == Approx(1));
+    w.shot("sketch_on_datum_plane");
+    w.sketch()->finish();
+    REQUIRE(QTest::qWaitFor([&] { return !w.sketch()->active(); }, kTimeoutMs));
+    w.checkNoWarnings();
+}
+
 TEST_CASE("editing an extrude shows the model before it under the preview; cancel shows the part again",
           "[model][edit]")
 {

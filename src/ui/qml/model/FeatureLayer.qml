@@ -19,6 +19,12 @@ Item {
         property: "view"
         value: root.view
     }
+    // Clicks on the datum planes drawn in the view, where a plane is asked for.
+    Binding {
+        target: FeatureTree
+        property: "view"
+        value: root.view
+    }
 
     Repeater {
         // By count: a drag changes the handles' places, not their number, so the knob being dragged stays.

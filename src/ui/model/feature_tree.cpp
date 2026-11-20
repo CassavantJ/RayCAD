@@ -5,6 +5,7 @@
 #include "../session.h"
 #include "../sketch/sketch_geom.h"
 #include "../sketch/sketch_mode.h"
+#include "../viewport_item.h"
 #include "feature_tools.h"
 #include "model_util.h"
 
@@ -13,9 +14,11 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
+#include <QtGui/QMouseEvent>
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <utility>
 
 namespace ray::ui {
@@ -123,7 +126,7 @@ std::vector<QString> bodiesMade(const doc::Feature& f)
 
 FeatureTreeModel::FeatureTreeModel(SceneController* scene, Session* session, AppContext* context, QObject* parent)
     : QAbstractListModel(parent), scene_(scene), session_(session), context_(context),
-      sketchLines_(std::make_unique<LineOverlay>(scene))
+      sketchLines_(std::make_unique<LineOverlay>(scene)), datumLines_(std::make_unique<LineOverlay>(scene))
 {
     if (session_) {
         connect(session_, &Session::documentChanged, this, [this] {
@@ -135,6 +138,9 @@ FeatureTreeModel::FeatureTreeModel(SceneController* scene, Session* session, App
                 current_ = -1;
                 sketchOverride_.clear();
                 sketchLines_->clear();
+                datumOverride_.clear();
+                datums_.clear();
+                datumLines_->clear();
                 emit rollbackChanged();
                 emit currentChanged();
                 subscribe();
@@ -142,13 +148,70 @@ FeatureTreeModel::FeatureTreeModel(SceneController* scene, Session* session, App
             }
         });
     }
+    if (scene_) {
+        // The datum frames are sized to the model shown: drawn again when it changes.
+        connect(scene_, &SceneController::stateChanged, this, [this] { drawDatums(); });
+        connect(scene_, &SceneController::bodiesChanged, this, [this] { drawDatums(); });
+    }
 }
 
 FeatureTreeModel::~FeatureTreeModel()
 {
     sketchJob_.cancel();
+    datumJob_.cancel();
+    if (view_)
+        view_->removeEventFilter(this);
     sketchLines_.reset();
+    datumLines_.reset();
     unsubscribe();
+}
+
+void FeatureTreeModel::setFeatureTool(FeatureToolModel* tool)
+{
+    if (tool_)
+        disconnect(tool_, nullptr, this, nullptr);
+    tool_ = tool;
+    if (tool_) {
+        // The datum plane tool asks for a plane, and leaves the datum it edits to its own preview.
+        connect(tool_, &FeatureToolModel::activeChanged, this, [this] { updateDatumLines(); });
+    }
+}
+
+QObject* FeatureTreeModel::view() const
+{
+    return view_;
+}
+
+void FeatureTreeModel::setView(QObject* view)
+{
+    auto* item = qobject_cast<QQuickItem*>(view);
+    if (item == view_)
+        return;
+    if (view_)
+        view_->removeEventFilter(this);
+    view_ = item;
+    if (view_)
+        view_->installEventFilter(this);
+    emit viewChanged();
+}
+
+bool FeatureTreeModel::eventFilter(QObject* watched, QEvent* event)
+{
+    // A click (not a drag) on a datum plane where a plane is asked for picks it; the view still gets the click.
+    if (watched == view_ && planeWanted()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* m = static_cast<QMouseEvent*>(event);
+            pressed_ = m->button() == Qt::LeftButton;
+            pressAt_ = m->position();
+        } else if (event->type() == QEvent::MouseButtonRelease && pressed_) {
+            auto* m = static_cast<QMouseEvent*>(event);
+            pressed_ = false;
+            const QPointF d = m->position() - pressAt_;
+            if (m->button() == Qt::LeftButton && std::hypot(d.x(), d.y()) < 4)
+                pickDatumAt(m->position().x(), m->position().y());
+        }
+    }
+    return QAbstractListModel::eventFilter(watched, event);
 }
 
 FeatureTreeModel* FeatureTreeModel::create(QQmlEngine* qml, QJSEngine*)
@@ -188,6 +251,8 @@ void FeatureTreeModel::setSketchTool(SketchModel* sketch)
     };
     connect(sketch, &SketchModel::activeChanged, this, follow);
     connect(sketch, &SketchModel::modelChanged, this, follow);
+    // The plane picker asks for a plane: the datum planes are drawn as pickable.
+    connect(sketch, &SketchModel::placingChanged, this, [this] { drawDatums(); });
 }
 
 // ---------- document ----------
@@ -277,6 +342,7 @@ void FeatureTreeModel::sync()
             row.type = qs(f.type);
             row.suppressed = f.suppressed;
             row.sketch = f.type == "sketch";
+            row.datum = f.type == "datum_plane";
             const auto it = reports.find(f.id);
             if (bar >= 0 && static_cast<int>(rows.size()) > bar) {
                 row.status = QStringLiteral("rolledBack");
@@ -337,6 +403,7 @@ void FeatureTreeModel::sync()
     }
     emit changed();
     updateSketchLines();
+    updateDatumLines();
 }
 
 int FeatureTreeModel::rowCount(const QModelIndex& parent) const
@@ -374,6 +441,10 @@ QVariant FeatureTreeModel::data(const QModelIndex& index, int role) const
         return r.sketch;
     case SketchShownRole:
         return r.sketch && sketchShown(r.id);
+    case IsDatumRole:
+        return r.datum;
+    case DatumShownRole:
+        return r.datum && datumShown(r.id);
     default:
         return {};
     }
@@ -384,7 +455,8 @@ QHash<int, QByteArray> FeatureTreeModel::roleNames() const
     return {{IdRole, "featureId"},          {NameRole, "featureName"},  {TypeRole, "featureType"},
             {TypeTitleRole, "typeTitle"},   {IconRole, "iconName"},     {StatusRole, "status"},
             {StatusTextRole, "statusText"}, {MessageRole, "message"},   {SuppressedRole, "suppressed"},
-            {RolledBackRole, "rolledBack"}, {IsSketchRole, "isSketch"}, {SketchShownRole, "sketchShown"}};
+            {RolledBackRole, "rolledBack"}, {IsSketchRole, "isSketch"}, {SketchShownRole, "sketchShown"},
+            {IsDatumRole, "isDatum"},       {DatumShownRole, "datumShown"}};
 }
 
 QVariantMap FeatureTreeModel::get(int row) const
@@ -797,6 +869,196 @@ void FeatureTreeModel::updateSketchLines()
                 self->sketchLines_->remove(key);
         }
     });
+}
+
+// ---------- datum planes in the view ----------
+bool FeatureTreeModel::datumShown(const FeatureId& id) const
+{
+    const auto o = datumOverride_.find(id);
+    return o == datumOverride_.end() || o->second;
+}
+
+void FeatureTreeModel::setDatumShown(int row, bool shown)
+{
+    const auto id = featureAt(row);
+    if (!id)
+        return;
+    datumOverride_[*id] = shown;
+    emit dataChanged(index(row), index(row), {DatumShownRole});
+    updateDatumLines();
+}
+
+bool FeatureTreeModel::planeWanted() const
+{
+    return (sketchTool_ && sketchTool_->placing()) ||
+           (tool_ && tool_->active() && tool_->type() == QLatin1String("datum_plane"));
+}
+
+void FeatureTreeModel::updateDatumLines()
+{
+    datumJob_.cancel();
+    datumJob_ = {};
+    const std::uint64_t serial = ++datumSerial_;
+    doc::Document* d = liveDoc();
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    if (d == nullptr || jobs == nullptr) {
+        datums_.clear();
+        datumLines_->clear();
+        return;
+    }
+    const doc::DocStatePtr state = d->state();
+    const doc::BuildResultPtr build = d->build();
+    // The datum plane tool's own datum is drawn by its preview.
+    std::optional<FeatureId> edited;
+    if (tool_ && tool_->active() && tool_->editing() && tool_->type() == QLatin1String("datum_plane"))
+        edited = tool_->featureId();
+    std::vector<FeatureId> shown;
+    for (std::size_t i = 0; i < state->features.size(); ++i) {
+        const doc::Feature& f = state->features[i];
+        if (f.type != "datum_plane" || f.suppressed)
+            continue;
+        if (rollback_ >= 0 && static_cast<int>(i) > rollback_)
+            continue; // not built
+        if ((edited && *edited == f.id) || !datumShown(f.id))
+            continue;
+        shown.push_back(f.id);
+    }
+    if (shown.empty()) {
+        datums_.clear();
+        drawDatums();
+        return;
+    }
+    // Resolving a plane on a face reads the kernel: on a worker.
+    datumJob_ = jobs->submit<std::shared_ptr<const std::vector<DatumPlane>>>(
+        JobInfo{"Datum planes", JobPriority::Interactive, false},
+        [state, build, shown](JobContext& ctx) -> Result<std::shared_ptr<const std::vector<DatumPlane>>> {
+            auto out = std::make_shared<std::vector<DatumPlane>>();
+            for (const FeatureId& id : shown) {
+                if (auto ok = ctx.cancel.check(); !ok)
+                    return tl::unexpected(ok.error());
+                const std::string planeJson = "{\"datum\":\"" + id.value.toString() + "\"}";
+                auto plane = api::sketch_edit::resolvePlane(*state, build.get(), planeJson, ctx);
+                if (plane)
+                    out->push_back(DatumPlane{id, *plane});
+            }
+            return std::shared_ptr<const std::vector<DatumPlane>>(std::move(out));
+        });
+    QPointer<FeatureTreeModel> self(this);
+    datumJob_.then([self, serial](Result<std::shared_ptr<const std::vector<DatumPlane>>> result) {
+        if (!self || serial != self->datumSerial_)
+            return;
+        self->datumJob_ = {};
+        if (!result)
+            return;
+        self->datums_ = **result;
+        self->drawDatums();
+    });
+}
+
+namespace {
+
+// The bodies shown, as one box (from their display meshes); nullopt when none is meshed.
+std::optional<Box3> modelBox(const SceneController& scene)
+{
+    std::vector<render::PickHit> hits;
+    for (int i = 0; i < scene.bodyCount(); ++i) {
+        if (const render::ItemId item = scene.itemForBody(i); item != 0 && scene.bodyVisible(i))
+            hits.push_back(render::PickHit{item, kernel::SubKind::Solid, 0, Vec3{}, 0});
+    }
+    return hits.empty() ? std::nullopt : scene.boundsOf(hits);
+}
+
+// The centre of a datum's frame: the model's centre projected onto the plane (the plane's origin without a model).
+Vec3 frameCentre(const kernel::Plane& plane, const std::optional<Box3>& box)
+{
+    if (!box)
+        return plane.origin;
+    const Vec3 c{(box->min.x + box->max.x) / 2, (box->min.y + box->max.y) / 2, (box->min.z + box->max.z) / 2};
+    return sub(c, mul(plane.normal, dot(sub(c, plane.origin), plane.normal)));
+}
+
+} // namespace
+
+void FeatureTreeModel::drawDatums()
+{
+    if (!datumLines_)
+        return;
+    const std::optional<Box3> box = scene_ ? modelBox(*scene_) : std::nullopt;
+    // Half the frame's side: a little more than half the model's diagonal, so the frame shows around the model.
+    datumHalf_ = box ? std::max(5.0, 0.6 * length(sub(box->max, box->min))) : 25.0;
+    const bool wanted = planeWanted();
+    const render::Token colour = wanted ? render::Token::Accent : render::Token::AccentThinLine;
+    std::set<QString> keys;
+    for (const DatumPlane& dp : datums_) {
+        const kernel::Plane& p = dp.plane;
+        const Vec3 c = frameCentre(p, box);
+        const Vec3 x = p.xDir;
+        const Vec3 y = yDirOf(p);
+        const auto at = [&](double u, double v) { return add(c, add(mul(x, u), mul(y, v))); };
+        const auto square = [&](double h) {
+            std::vector<Vec3> segs;
+            appendPolyline(segs, {at(-h, -h), at(h, -h), at(h, h), at(-h, h), at(-h, -h)});
+            return segs;
+        };
+        const double h = datumHalf_;
+        const QString base = QStringLiteral("datum:") + idText(dp.id.value);
+        datumLines_->set(base + QStringLiteral(":frame"), square(h), colour, wanted ? 2.0f : 1.25f);
+        datumLines_->set(base + QStringLiteral(":inner"), square(h * 0.85), colour, 1.0f, true);
+        datumLines_->set(base + QStringLiteral(":normal"), {c, add(c, mul(p.normal, h * 0.2))}, colour,
+                         wanted ? 2.0f : 1.25f);
+        keys.insert(base);
+    }
+    for (const QString& key : datumLines_->keys()) {
+        if (keys.count(key.section(QLatin1Char(':'), 0, 1)) == 0)
+            datumLines_->remove(key);
+    }
+}
+
+std::optional<FeatureId> FeatureTreeModel::datumAt(const render::Ray& ray) const
+{
+    const std::optional<Box3> box = scene_ ? modelBox(*scene_) : std::nullopt;
+    std::optional<FeatureId> best;
+    double bestT = 0;
+    for (const DatumPlane& dp : datums_) {
+        const kernel::Plane& p = dp.plane;
+        const double denom = dot(ray.dir, p.normal);
+        if (std::abs(denom) < 1e-9)
+            continue; // edge-on
+        const double t = dot(sub(p.origin, ray.origin), p.normal) / denom;
+        if (t <= 0)
+            continue;
+        const Vec3 hit = add(ray.origin, mul(ray.dir, t));
+        const Vec3 d = sub(hit, frameCentre(p, box));
+        if (std::abs(dot(d, p.xDir)) > datumHalf_ || std::abs(dot(d, yDirOf(p))) > datumHalf_)
+            continue;
+        if (!best || t < bestT) {
+            best = dp.id;
+            bestT = t;
+        }
+    }
+    return best;
+}
+
+bool FeatureTreeModel::pickDatumAt(qreal x, qreal y)
+{
+    auto* view = qobject_cast<ViewportItem*>(view_.data());
+    if (view == nullptr || view->width() <= 0 || view->height() <= 0 || !planeWanted())
+        return false;
+    const render::Ray ray = render::cameraRay(view->camera(), x, y, static_cast<int>(view->width()),
+                                              static_cast<int>(view->height()));
+    const std::optional<FeatureId> datum = datumAt(ray);
+    if (!datum)
+        return false;
+    const QString key = QStringLiteral("datum:") + idText(datum->value);
+    if (sketchTool_ && sketchTool_->placing()) {
+        sketchTool_->placeOn(key); // the new sketch goes on it
+        return true;
+    }
+    if (tool_ && tool_->active() && tool_->type() == QLatin1String("datum_plane")) {
+        tool_->setValue(QStringLiteral("base"), key); // the new plane is offset from it
+        return true;
+    }
+    return false;
 }
 
 } // namespace ray::ui

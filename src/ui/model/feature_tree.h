@@ -17,6 +17,12 @@
 //   Sketches    every visible sketch is drawn in the view in the sketch colours (construction dashed). A sketch is
 //               visible unless a later feature uses it (an extrude, revolve or hole) or it was hidden here; the
 //               sketch a tool works on is always shown. The sketch being edited in the sketch mode is left to it.
+//   Datums      every datum plane built (not suppressed, not past the rollback bar) is drawn in the view as a square
+//               frame sized to the model, a dashed inner frame and a short normal, unless hidden with its eye in the
+//               tree. They are guides: they never take a viewport pick. Where a plane is asked for (the sketch mode's
+//               plane picker, the datum plane tool's base) they are drawn in the accent colour and a click on one
+//               (setView's view) picks it: the sketch goes on it, or the new plane is offset from it. The datum the
+//               datum plane tool edits is left to its preview.
 #pragma once
 
 #include "preview.h"
@@ -24,10 +30,12 @@
 #include <ray/api.h>
 
 #include <QtCore/QAbstractListModel>
+#include <QtCore/QPointF>
 #include <QtCore/QPointer>
 #include <QtCore/QString>
 #include <QtCore/QVariantMap>
 #include <QtQml/QQmlEngine>
+#include <QtQuick/QQuickItem>
 
 #include <cstdint>
 #include <map>
@@ -58,6 +66,8 @@ class FeatureTreeModel : public QAbstractListModel {
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     // A reorder is being checked (its side rebuild runs).
     Q_PROPERTY(bool checking READ checking NOTIFY messageChanged)
+    // The ViewportItem: clicks on datum planes where a plane is asked for.
+    Q_PROPERTY(QObject* view READ view WRITE setView NOTIFY viewChanged)
 
 public:
     enum Role {
@@ -73,13 +83,17 @@ public:
         RolledBackRole, // after the rollback bar
         IsSketchRole,
         SketchShownRole,
+        IsDatumRole,
+        DatumShownRole,
     };
 
     FeatureTreeModel(SceneController* scene, Session* session, AppContext* context, QObject* parent = nullptr);
     ~FeatureTreeModel() override;
     static FeatureTreeModel* create(QQmlEngine* qml, QJSEngine* js);
     void setSketchTool(SketchModel* sketch);
-    void setFeatureTool(FeatureToolModel* tool) { tool_ = tool; }
+    void setFeatureTool(FeatureToolModel* tool);
+    QObject* view() const;
+    void setView(QObject* view);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role) const override;
@@ -107,6 +121,10 @@ public:
     // Why moving `from` to `to` is refused, from the quick checks only ("" when they pass).
     Q_INVOKABLE QString moveProblem(int from, int to) const;
     Q_INVOKABLE void setSketchShown(int row, bool shown);
+    Q_INVOKABLE void setDatumShown(int row, bool shown);
+    // A click in the view (item coordinates) where a plane is asked for: picks the datum plane there, if one is drawn
+    // there. True if it picked one.
+    Q_INVOKABLE bool pickDatumAt(qreal x, qreal y);
     // Moves the rollback bar after row `index` (-1 or the last row: the whole history) as one undo step. False when
     // nothing was started (it is there already, or the document cannot change; message() says why).
     Q_INVOKABLE bool rollTo(int index);
@@ -119,8 +137,15 @@ public:
     void setToolSketch(std::optional<FeatureId> sketch);
     const LineOverlay& sketchLines() const { return *sketchLines_; }
     bool sketchShown(const FeatureId& id) const;
-    // Sketch-line jobs still running (tests).
-    bool busy() const { return sketchJob_.valid(); }
+    // Datum planes in the view (keys "datum:<id>:frame", ":inner", ":normal").
+    const LineOverlay& datumLines() const { return *datumLines_; }
+    bool datumShown(const FeatureId& id) const;
+    // A plane is asked for: the sketch mode's plane picker or the datum plane tool is open.
+    bool planeWanted() const;
+    // The drawn datum plane a ray meets first inside its frame.
+    std::optional<FeatureId> datumAt(const render::Ray& ray) const;
+    // Sketch-line and datum jobs still running (tests).
+    bool busy() const { return sketchJob_.valid() || datumJob_.valid(); }
 
 signals:
     void changed();
@@ -131,6 +156,10 @@ signals:
     void renameRequested(int row);
     // The Parameters command: the model panel shows the parameter table.
     void parametersRequested();
+    void viewChanged();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     struct Row {
@@ -138,6 +167,7 @@ private:
         QString name, type, status, statusText, message;
         bool suppressed = false;
         bool sketch = false;
+        bool datum = false;
     };
     api::IApp* app() const;
     api::OpenDocument* document() const;
@@ -148,6 +178,8 @@ private:
     void setMessage(const QString& message);
     bool run(const QString& actionId, const std::string& argsJson, const QString& label);
     void updateSketchLines();
+    void updateDatumLines();
+    void drawDatums(); // datums_ into datumLines_, in the colour of planeWanted()
     void finishReorderCheck(doc::DocStatePtr state, doc::BuildResultPtr build);
     QString quickMoveProblem(const doc::DocState& state, int from, int to) const;
 
@@ -158,6 +190,10 @@ private:
     QPointer<FeatureToolModel> tool_;
     QQmlEngine* engine_ = nullptr;
     std::unique_ptr<LineOverlay> sketchLines_;
+    std::unique_ptr<LineOverlay> datumLines_;
+    QPointer<QQuickItem> view_;
+    QPointF pressAt_;
+    bool pressed_ = false;
 
     std::string docId_;
     doc::Document* doc_ = nullptr;
@@ -190,6 +226,17 @@ private:
     };
     JobHandle<std::shared_ptr<const std::vector<SketchLines>>> sketchJob_;
     std::uint64_t sketchSerial_ = 0;
+
+    // Datum planes.
+    std::map<FeatureId, bool> datumOverride_; // user's show / hide (shown by default)
+    struct DatumPlane {
+        FeatureId id;
+        kernel::Plane plane;
+    };
+    std::vector<DatumPlane> datums_; // the ones drawn
+    double datumHalf_ = 25;          // half the frame's side (mm), from the model's size
+    JobHandle<std::shared_ptr<const std::vector<DatumPlane>>> datumJob_;
+    std::uint64_t datumSerial_ = 0;
 };
 
 } // namespace ray::ui
