@@ -222,7 +222,7 @@ Result<DocStatePtr> featureReorder(const DocState& before, std::string_view args
     return next;
 }
 
-Result<DocStatePtr> featureRollback(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> featureRollback(const DocState& before, std::string_view argsJson, JobContext*)
 {
     RAY_DOC_TRY(args, Args::parse(kFeatureRollback, argsJson, {"to"}));
     RAY_DOC_TRY(to, args->optValue("to"));
