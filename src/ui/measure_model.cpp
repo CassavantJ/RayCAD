@@ -6,6 +6,7 @@
 #include "session.h"
 #include "shortcuts.h"
 #include "theme_object.h"
+#include "ui_commands.h"
 #include "units.h"
 #include "viewport_item.h"
 #include "viewport_navigation.h"
@@ -24,6 +25,35 @@
 namespace ray::ui {
 
 namespace measure = api::measure;
+
+namespace {
+// T-022: the measure tool's commands (MeasureModel runs them and the measure.* actions on the selection).
+// clang-format off
+constexpr UiCommand kMeasureCommands[] = {
+    {"measure.tool", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows the Measure panel and measures the selection"), "M", CommandContext::Global, ""},
+    {"measure.pin", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Pin Measurement"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Keeps the current measurement shown while other things are selected"), "", CommandContext::Global, ""},
+    {"measure.clearPinned", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Clear Pinned Measurements"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Removes every pinned measurement"), "", CommandContext::Global, ""},
+    {"measure.copyAll", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy All Measurements"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the current and the pinned measurements as text"), "", CommandContext::Global, ""},
+    {"measure.minInternalCornerRadius", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Minimum Internal Corner Radius"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "The smallest internal corner radius: the largest cutter that fits"), "", CommandContext::Global, ""},
+};
+// clang-format on
+
+} // namespace
+
+std::span<const UiCommand> measureUiCommands()
+{
+    return kMeasureCommands;
+}
 
 namespace {
 
@@ -690,6 +720,11 @@ void MeasureModel::addWitness(const measure::Witness& witness, bool pinned, std:
         items.push_back(viewport->addLines(solid, render::Token::AccentThinLine, pinned ? thin : strong, false));
     if (!dashed.empty())
         items.push_back(viewport->addLines(dashed, render::Token::AccentThinLine, thin, true));
+    // Witness lines are drawn over the model: picks go through them to what is measured next.
+    for (const render::ItemId id : items) {
+        if (id != 0)
+            viewport->setPickMode(id, render::PickMode::Never);
+    }
 }
 
 void MeasureModel::redrawWitness()

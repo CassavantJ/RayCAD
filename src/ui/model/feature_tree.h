@@ -9,9 +9,11 @@
 //               moved-past feature is checked as its add command checks it (the features and bodies it names must come
 //               before it); then the reorder is rebuilt off to the side (Document::beginPreview) and refused with the
 //               message of the first feature it would break. Only an order that builds as before is executed.
-//   Rollback    setRollback(i) shows the model as it is after feature i (rebuilt off to the side by a rebuilder of its
-//               own, shown in place of the scene's bodies); later features are greyed and new features are inserted
-//               after i. It is a view state: the document does not change. -1 is the end of the history.
+//   Rollback    the document's rollback bar (DocState::rollback): rollTo(i) moves it after feature i through the
+//               feature.rollback action (one undo step, saved with the document), and the rebuild then builds the
+//               history only up to i, so the scene shows the model as it was there. Later features are greyed
+//               ("Rolled back") and new features go in right after the bar, which moves past them (the add
+//               commands do this). -1 is the end of the history (roll forward).
 //   Sketches    every visible sketch is drawn in the view in the sketch colours (construction dashed). A sketch is
 //               visible unless a later feature uses it (an extrude, revolve or hole) or it was hidden here; the
 //               sketch a tool works on is always shown. The sketch being edited in the sketch mode is left to it.
@@ -49,7 +51,7 @@ class FeatureTreeModel : public QAbstractListModel {
 
     Q_PROPERTY(int count READ count NOTIFY changed)
     Q_PROPERTY(int revision READ revision NOTIFY changed)
-    // The last feature shown (rolled back), or -1 for the whole history.
+    // The last feature built (the document's rollback bar), or -1 for the whole history. Writing it runs rollTo.
     Q_PROPERTY(int rollbackIndex READ rollbackIndex WRITE setRollback NOTIFY rollbackChanged)
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentChanged)
     // Why the last tree action was refused (a blocked reorder, a failed rename, ...); "" when none.
@@ -64,7 +66,7 @@ public:
         TypeRole,
         TypeTitleRole,
         IconRole,
-        StatusRole,     // "ok", "warning", "failed", "suppressed", "notBuilt", "building"
+        StatusRole,     // "ok", "warning", "failed", "suppressed", "notBuilt", "building", "rolledBack"
         StatusTextRole, // short: "Failed", "Waits on Extrude 1", ...
         MessageRole,    // the rebuild's message (failed, warning) or what it waits on
         SuppressedRole,
@@ -86,7 +88,7 @@ public:
     int count() const { return static_cast<int>(rows_.size()); }
     int revision() const { return revision_; }
     int rollbackIndex() const { return rollback_; }
-    void setRollback(int index);
+    void setRollback(int index) { rollTo(index); }
     int currentIndex() const { return current_; }
     void setCurrentIndex(int index);
     QString message() const { return message_; }
@@ -105,6 +107,9 @@ public:
     // Why moving `from` to `to` is refused, from the quick checks only ("" when they pass).
     Q_INVOKABLE QString moveProblem(int from, int to) const;
     Q_INVOKABLE void setSketchShown(int row, bool shown);
+    // Moves the rollback bar after row `index` (-1 or the last row: the whole history) as one undo step. False when
+    // nothing was started (it is there already, or the document cannot change; message() says why).
+    Q_INVOKABLE bool rollTo(int index);
     Q_INVOKABLE void dismissMessage();
 
     // ---- C++ ----
@@ -112,13 +117,10 @@ public:
     std::optional<FeatureId> featureAt(int row) const;
     // The sketch a tool works on: always drawn (nullopt: none).
     void setToolSketch(std::optional<FeatureId> sketch);
-    // A tool previews the rolled-back model itself: the rollback view steps aside meanwhile.
-    void setRollbackOverlaySuspended(bool suspended);
-    const BodyOverlay& rollbackOverlay() const { return *rollbackOverlay_; }
     const LineOverlay& sketchLines() const { return *sketchLines_; }
     bool sketchShown(const FeatureId& id) const;
-    // Sketch-line jobs and the rollback build still running (tests).
-    bool busy() const { return sketchJob_.valid() || rollbackJob_.valid(); }
+    // Sketch-line jobs still running (tests).
+    bool busy() const { return sketchJob_.valid(); }
 
 signals:
     void changed();
@@ -146,7 +148,6 @@ private:
     void setMessage(const QString& message);
     bool run(const QString& actionId, const std::string& argsJson, const QString& label);
     void updateSketchLines();
-    void updateRollbackView();
     void finishReorderCheck(doc::DocStatePtr state, doc::BuildResultPtr build);
     QString quickMoveProblem(const doc::DocState& state, int from, int to) const;
 
@@ -156,7 +157,6 @@ private:
     QPointer<SketchModel> sketchTool_;
     QPointer<FeatureToolModel> tool_;
     QQmlEngine* engine_ = nullptr;
-    std::unique_ptr<BodyOverlay> rollbackOverlay_;
     std::unique_ptr<LineOverlay> sketchLines_;
 
     std::string docId_;
@@ -179,13 +179,6 @@ private:
     std::size_t checkTo_ = 0;
     std::string checkArgs_;
     std::map<FeatureId, doc::FeatureStatus> checkBefore_;
-
-    // Rollback view.
-    bool rollbackSuspended_ = false;
-    std::shared_ptr<doc::IRebuilder> sideRebuilder_;
-    std::string sideRebuilderDoc_;
-    JobHandle<doc::BuildResultPtr> rollbackJob_;
-    std::uint64_t rollbackSerial_ = 0;
 
     // Sketch lines.
     std::map<FeatureId, bool> sketchOverride_; // user's show / hide

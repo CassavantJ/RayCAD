@@ -30,6 +30,7 @@
 #include "shortcuts.h"
 #include "sketch/sketch_mode.h"
 #include "sketch/sketch_overlay.h"
+#include "ui_commands.h"
 #include "viewport_item.h"
 #include "viewport_navigation.h"
 
@@ -56,8 +57,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -219,8 +222,12 @@ struct Window {
         const std::size_t before = document()->undoCount();
         REQUIRE(tool()->canCommit());
         click("featureOk");
-        REQUIRE(
-            QTest::qWaitFor([&] { return !tool()->active() && document()->undoCount() == before + 1; }, kTimeoutMs));
+        const bool done =
+            QTest::qWaitFor([&] { return !tool()->active() && document()->undoCount() == before + 1; }, kTimeoutMs);
+        INFO("commit: tool active " << tool()->active() << ", status '" << tool()->previewStatus().toStdString()
+                                    << "', message '" << tool()->message().toStdString() << "', undo steps "
+                                    << document()->undoCount() << " (before " << before << ")");
+        REQUIRE(done);
         settle();
     }
     bool invoke(const char* action, const std::string& args) const
@@ -435,7 +442,8 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
     w.view()->setStandardView(QStringLiteral("top"));
     w.grab();
     const kernel::Plane plane = *w.tool()->sketchPlane();
-    w.clickScene(w.sceneOf(Vec3{plane.origin.x + 12, plane.origin.y + 12.5, plane.origin.z}));
+    // Inside the circle, to the right of its centre: clear of the panel (taller since it has the End row).
+    w.clickScene(w.sceneOf(Vec3{plane.origin.x + 16, plane.origin.y + 12.5, plane.origin.z}));
     REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, 5000));
     w.previewed();
     w.view()->setStandardView(QStringLiteral("iso"));
@@ -494,7 +502,6 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
                                     Qt::ShiftModifier);
     REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
     w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
-    w.tool()->setPicking(false);
     w.previewed();
     CHECK(!w.tool()->handles().isEmpty());
     w.shot("t098_fillet_panel");
@@ -516,17 +523,42 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
     QTest::qWait(500);
     CHECK(w.framesOver(1000) == 0);
 
-    // ---- Rolled back to after Extrude 1: the view shows the plain block, later features are greyed ----
-    w.tree()->setRollback(1);
-    REQUIRE(
-        QTest::qWaitFor([&] { return w.tree()->rollbackOverlay().itemCount() == 1 && !w.tree()->busy(); }, kTimeoutMs));
-    CHECK(!w.tree()->get(1).value(QStringLiteral("rolledBack")).toBool());
-    CHECK(w.tree()->get(2).value(QStringLiteral("rolledBack")).toBool());
-    CHECK(w.tree()->rollbackOverlay().meshes().front()->faces.size() == 6); // the block before the cut
-    w.shot("t098_rollback");
-    CHECK(w.stateHash() == finished); // a view state: the document does not change
-    w.tree()->setRollback(-1);
-    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackOverlay().itemCount() == 0; }, 5000));
+    // ---- Rolled back to after Extrude 1 (document state, one undo step): the block alone is built and shown, later
+    // features are greyed; a feature added now goes in at the bar, which moves past it; undo restores the part ----
+    {
+        const std::size_t undo = w.document()->undoCount();
+        REQUIRE(w.tree()->rollTo(1));
+        REQUIRE(QTest::qWaitFor([&] { return w.document()->undoCount() == undo + 1 && w.tree()->rollbackIndex() == 1; },
+                                kTimeoutMs));
+        w.settle();
+        CHECK(w.document()->state()->rollback.has_value());
+        CHECK(!w.tree()->get(1).value(QStringLiteral("rolledBack")).toBool());
+        CHECK(w.tree()->get(2).value(QStringLiteral("rolledBack")).toBool());
+        CHECK(w.status(2) == QStringLiteral("rolledBack"));
+        REQUIRE(w.host->scene()->bodyCount() == 1);
+        CHECK(w.volume() == Approx(10000).epsilon(1e-6)); // the block before the cut
+        CHECK(w.host->scene()->meshOf(0)->faces.size() == 6);
+        CHECK(w.stateHash() != finished); // document state: saved and undone with the rest
+        w.shot("t098_rollback");
+        // A datum plane added while rolled back lands right after the bar.
+        openTool(w, "model.tool.datumPlane", "datum_plane");
+        w.typeInto(QStringLiteral("offset"), QStringLiteral("5 mm"));
+        w.previewed();
+        w.commit();
+        CHECK(w.featureTypes() == std::vector<std::string>{"sketch", "extrude", "datum_plane", "sketch", "extrude",
+                                                           "sketch", "hole", "fillet"});
+        CHECK(w.tree()->rollbackIndex() == 2);
+        CHECK(w.volume() == Approx(10000).epsilon(1e-6));
+        w.shot("rollback_insert");
+        w.undo(); // the datum plane
+        w.settle();
+        CHECK(w.tree()->rollbackIndex() == 1);
+        w.undo(); // the rollback
+        w.settle();
+        CHECK(w.tree()->rollbackIndex() == -1);
+        CHECK(w.stateHash() == finished);
+        CHECK(w.volume() == Approx(finalVolume).epsilon(1e-4));
+    }
 
     // ---- Sketches in the view: the cut's sketch is hidden once used; the eye shows it again ----
     {
@@ -861,6 +893,365 @@ TEST_CASE("every model command is in the palette and the default keys do not cla
     for (const QString& c : w.host->shortcuts()->conflicts())
         UNSCOPED_INFO(c.toStdString());
     CHECK(w.host->shortcuts()->conflicts().isEmpty());
+}
+
+TEST_CASE("fillet edges are picked and unpicked in the view while the preview is shown", "[model][pick]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.view()->fitAll();
+    w.settle();
+    const render::ItemId body = w.host->scene()->itemForBody(0);
+    REQUIRE(body != 0);
+    const auto e1 = edgeAlongX(w, 0, 10);
+    const auto e2 = edgeAlongX(w, 25, 10);
+
+    openTool(w, "model.tool.fillet", "fillet");
+    CHECK(w.tool()->picking());
+    CHECK(w.tool()->pickCount() == 0);
+    w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
+    const auto selectedEdges = [&] {
+        std::set<std::uint32_t> out;
+        for (const ui::SelectionEntry& e : w.host->selection()->entries()) {
+            if (e.hit.kind == kernel::SubKind::Edge && e.hit.item == body)
+                out.insert(e.hit.subIndex);
+        }
+        return out;
+    };
+
+    // A click on an edge in the view: picked, and the preview shows the fillet.
+    w.clickScene(w.sceneOf(e1.second));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, kTimeoutMs));
+    w.previewed();
+    REQUIRE(w.tool()->overlay().itemCount() == 1);
+    CHECK(w.tool()->overlay().owner() == w.tool());
+    render::IRenderViewport* viewport = w.host->scene()->viewport();
+    REQUIRE(viewport != nullptr);
+    // The preview never answers picks; the body it stands in for still does (hidden).
+    CHECK(viewport->pickMode(w.tool()->overlay().items().front()) == render::PickMode::Never);
+    CHECK(viewport->pickMode(body) == render::PickMode::Always);
+    w.shot("fillet_pick_one");
+
+    // With the preview shown, Shift adds the second edge (the click lands on the preview, the pick on the model).
+    w.clickScene(w.sceneOf(e2.second), Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e1.first, e2.first});
+    w.previewed();
+    CHECK(w.tool()->overlay().itemCount() == 1);
+    w.shot("fillet_pick_two_with_preview");
+
+    // Ctrl takes the first one off again, still with the preview shown.
+    w.clickScene(w.sceneOf(e1.second), Qt::ControlModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, kTimeoutMs));
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e2.first});
+    w.previewed();
+    w.shot("fillet_before_commit");
+    {
+        QQuickItem* ok = w.find(QStringLiteral("featureOk"));
+        REQUIRE(ok != nullptr);
+        const QPointF c = ok->mapToScene(QPointF(ok->width() / 2, ok->height() / 2));
+        QQuickItem* under = w.window()->contentItem()->childAt(c.x(), c.y());
+        INFO("OK at " << c.x() << "," << c.y() << " enabled " << ok->isEnabled() << " visible " << ok->isVisible()
+                      << ", top item there " << (under ? under->objectName().toStdString() : std::string("none")));
+        CHECK(ok->isEnabled());
+    }
+    w.commit();
+    const double fillet = (1 - kPi / 4) * 2 * 2 * 40;
+    CHECK(w.volume() == Approx(10000 - fillet).epsilon(1e-4));
+    // The preview slot is free and the body answers picks as it is drawn again.
+    CHECK(w.tool()->overlay().owner() == nullptr);
+    CHECK(viewport->pickMode(w.host->scene()->itemForBody(0)) == render::PickMode::WhenVisible);
+    w.checkNoWarnings();
+}
+
+TEST_CASE("extrude through all: a cut that stays through after the block grows; the panel and the edit path",
+          "[model][throughall]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    const FeatureId block = w.document()->state()->features[1].id;
+    // A circle (r 5 mm) sketched on XY, under the block.
+    const FeatureId circle{Uuid::generate()};
+    {
+        sketch::Sketch m;
+        const SketchEntId centre{Uuid::generate()};
+        m.entities.push_back(sketch::Entity{centre, sketch::Point{Vec2{12, 12.5}}, false});
+        m.entities.push_back(sketch::Entity{SketchEntId{Uuid::generate()}, sketch::Circle{centre, 5.0}, false});
+        std::sort(m.entities.begin(), m.entities.end(),
+                  [](const sketch::Entity& a, const sketch::Entity& b) { return a.id < b.id; });
+        REQUIRE(w.invoke("feature.sketch.add",
+                         api::sketch_edit::sketchAddArgs(circle, "Circle", "{\"principal\":\"xy\"}", m)));
+        w.settle();
+    }
+    openTool(w, "model.tool.extrude", "extrude");
+    w.tool()->setValue(QStringLiteral("sketch"), QString::fromStdString(circle.value.toString()));
+    w.tool()->setValue(QStringLiteral("operation"), QStringLiteral("cut"));
+    w.tool()->setValue(QStringLiteral("extent"), QStringLiteral("through_all"));
+    QQuickItem* distance = nullptr;
+    REQUIRE(
+        QTest::qWaitFor([&] { return (distance = w.find(QStringLiteral("featureField.distance"))) != nullptr; }, 5000));
+    REQUIRE(QTest::qWaitFor([&] { return !distance->isVisible(); }, 5000)); // no length to give
+    w.previewed();
+    CHECK(w.tool()->handles().isEmpty()); // and no length to drag
+    w.shot("through_all_panel");
+    w.commit();
+    {
+        const doc::Feature& cut = w.document()->state()->features.back();
+        const QJsonObject p = QJsonDocument::fromJson(QByteArray::fromStdString(cut.propsJson)).object();
+        CHECK(p.value(QStringLiteral("extent")).toString() == QStringLiteral("through_all"));
+        CHECK(!p.contains(QStringLiteral("distance")));
+    }
+    const double r2 = 5.0 * 5.0;
+    CHECK(w.volume() == Approx(10000 - kPi * r2 * 10).epsilon(1e-6));
+
+    // The block made 20 mm deep upstream: the cut still goes through.
+    REQUIRE(w.invoke("feature.extrude.edit",
+                     "{\"id\":\"" + block.value.toString() + "\",\"props\":{\"distance\":\"20 mm\"}}"));
+    w.settle();
+    for (int i = 0; i < w.tree()->count(); ++i)
+        CHECK(w.status(i) == QStringLiteral("ok"));
+    CHECK(w.volume() == Approx(20000 - kPi * r2 * 20).epsilon(1e-6));
+
+    // Edited back to a 5 mm blind cut in the panel: the extent goes, the distance comes.
+    w.tree()->setCurrentIndex(w.tree()->count() - 1);
+    REQUIRE(w.run("model.feature.edit"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
+    CHECK(w.tool()->values().value(QStringLiteral("extent")).toString() == QStringLiteral("through_all"));
+    w.tool()->setValue(QStringLiteral("extent"), QStringLiteral("distance"));
+    w.typeInto(QStringLiteral("distance"), QStringLiteral("5 mm"));
+    w.previewed();
+    w.commit();
+    {
+        const doc::Feature& cut = w.document()->state()->features.back();
+        const QJsonObject p = QJsonDocument::fromJson(QByteArray::fromStdString(cut.propsJson)).object();
+        CHECK(!p.contains(QStringLiteral("extent")));
+        CHECK(p.value(QStringLiteral("distance")).toString() == QStringLiteral("5 mm"));
+    }
+    CHECK(w.volume() == Approx(20000 - kPi * r2 * 5).epsilon(1e-6));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("the palette lists each command once; default keys never collide within a context", "[model][commands]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    ui::CommandCatalog& commands = *w.host->commands();
+    ui::ShortcutManager& keys = *w.host->shortcuts();
+
+    // One entry per title in the palette (a registry action a UI command stands for is not listed again).
+    const auto normalized = [](QString t) {
+        t = t.toLower();
+        t.remove(QChar(0x2026));
+        t.remove(QStringLiteral("..."));
+        return t.trimmed();
+    };
+    std::map<QString, QString> seen;
+    for (const ui::Command& c : commands.commands()) {
+        const auto [it, inserted] = seen.emplace(normalized(c.title), c.id);
+        INFO(c.id.toStdString() << " and " << it->second.toStdString() << " are both '" << c.title.toStdString()
+                                << "'");
+        CHECK(inserted);
+    }
+    int extrudes = 0;
+    for (const ui::Command& c : commands.search(QStringLiteral("extrude")))
+        extrudes += normalized(c.title) == QStringLiteral("extrude") ? 1 : 0;
+    CHECK(extrudes == 1);
+    REQUIRE(commands.find(QStringLiteral("feature.extrude.add")).has_value()); // still there for scripts and agents
+    for (const ui::Command& c : commands.commands())
+        CHECK(c.id != QStringLiteral("feature.extrude.add"));
+
+    // Every default key, declared where its command is registered, collides with no other in an overlapping context.
+    std::vector<ui::Command> all = commands.commands();
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        const QString a = keys.defaultShortcutText(all[i].id);
+        if (a.isEmpty())
+            continue;
+        for (std::size_t j = i + 1; j < all.size(); ++j) {
+            if (keys.defaultShortcutText(all[j].id) != a || !ui::contextsOverlap(all[i].context, all[j].context))
+                continue;
+            FAIL_CHECK(all[i].id.toStdString() << " and " << all[j].id.toStdString() << " share " << a.toStdString());
+        }
+    }
+    for (const QString& c : keys.conflicts())
+        UNSCOPED_INFO(c.toStdString());
+    CHECK(keys.conflicts().isEmpty());
+    for (const ui::UiCommand& u : ui::allUiCommands()) {
+        INFO(u.id);
+        if (QString::fromLatin1(u.id).startsWith(QLatin1String("model.tool.")))
+            CHECK(u.context == ui::CommandContext::Model);
+        if (QString::fromLatin1(u.id).startsWith(QLatin1String("sketch.tool.")) ||
+            QString::fromLatin1(u.id).startsWith(QLatin1String("sketch.constrain.")))
+            CHECK(u.context == ui::CommandContext::Sketch);
+    }
+
+    // The context decides what a key runs: E in the model, P (the point tool) only in a sketch.
+    CHECK(keys.commandFor(QStringLiteral("E")) == QStringLiteral("model.tool.extrude"));
+    CHECK(keys.commandFor(QStringLiteral("P")).isEmpty());
+    // A model and a sketch command may share a key; a key that works everywhere may not be shared.
+    CHECK(keys.assign(QStringLiteral("model.tool.revolve"), QStringLiteral("L")).value(QStringLiteral("ok")).toBool());
+    CHECK(keys.conflicts().isEmpty());
+    const QVariantMap clash = keys.assign(QStringLiteral("model.tool.revolve"), QStringLiteral("Ctrl+S"));
+    CHECK(!clash.value(QStringLiteral("ok")).toBool());
+    CHECK(clash.value(QStringLiteral("conflictId")).toString() == QStringLiteral("file.save"));
+    keys.resetAll();
+
+    // In a sketch: P picks the point tool and a click places a free point (the hole positions of a part).
+    const FeatureId sk = rectangleSketch(w, 40, 25);
+    w.settle();
+    REQUIRE(w.sketch()->editFeature(QString::fromStdString(sk.value.toString())));
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->active(); }, 20000));
+    CHECK(keys.commandFor(QStringLiteral("P")) == QStringLiteral("sketch.tool.point"));
+    CHECK(keys.commandFor(QStringLiteral("E")).isEmpty());
+    CHECK(keys.commandFor(QStringLiteral("L")) == QStringLiteral("sketch.tool.line"));
+    w.view()->setStandardView(QStringLiteral("top"));
+    w.grab();
+    QTest::keyClick(w.window(), Qt::Key_P);
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->tool() == QStringLiteral("point"); }, 5000));
+    const auto at = w.sketch()->toView(Vec2{17, 9});
+    REQUIRE(at.has_value());
+    w.clickScene(w.view()->mapToScene(*at));
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->inFlight() == 0 && !w.sketch()->solving(); }, 20000));
+    auto model = api::sketch_edit::modelOf(*w.document()->state(), sk);
+    REQUIRE(model);
+    int points = 0;
+    for (const sketch::Entity& e : model->entities) {
+        if (const auto* p = std::get_if<sketch::Point>(&e.geom))
+            points += std::abs(p->p.x - 17) < 0.5 && std::abs(p->p.y - 9) < 0.5 ? 1 : 0;
+    }
+    CHECK(points == 1);
+    w.shot("sketch_point_tool");
+    REQUIRE(w.run("sketch.mode.finish"));
+    w.checkNoWarnings();
+}
+
+// The whole flow in the real window, step by step with screenshots (RAY_T098_SHOTS): sketch with a point, extrude,
+// through-all cut, hole at the point, fillet with its edges changed while the preview shows, rollback and a feature
+// inserted at the bar. Hidden ("[.scenario]"): run it by name.
+TEST_CASE("scenario: sketch with a point, extrude, through-all cut, hole, fillet, rollback and insert", "[.scenario]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    w.shot("app_01_extrude");
+
+    // Sketch on the top face: a circle (10 mm) and a free point (P), both drawn in the sketch mode.
+    const std::uint32_t top = faceAtZ(w, 10);
+    w.host->selection()->applyClick(
+        render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, top, Vec3{20, 12.5, 10}, 0},
+        Qt::NoModifier);
+    REQUIRE(w.run("sketch.mode.new"));
+    QQuickItem* face = nullptr;
+    REQUIRE(QTest::qWaitFor([&] { return (face = w.find(QStringLiteral("sketchPlane.face"))) != nullptr; }, 5000));
+    w.click(face);
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->active(); }, 20000));
+    w.view()->setCamera(w.view()->framed(w.view()->camera(), Box3{{-5, -5, 10}, {45, 30, 10}}));
+    w.grab();
+    REQUIRE(w.run("sketch.tool.circle"));
+    {
+        const auto centre = w.sketch()->toView(Vec2{12, 12.5});
+        const auto rim = w.sketch()->toView(Vec2{15, 12.5});
+        REQUIRE(centre.has_value());
+        REQUIRE(rim.has_value());
+        w.clickScene(w.view()->mapToScene(*centre));
+        w.sendMouse(QEvent::MouseMove, w.view()->mapToScene(*rim), Qt::NoButton, Qt::NoButton);
+        QCoreApplication::processEvents();
+        for (const char c : {'1', '0', 'm', 'm'})
+            QTest::keyClick(w.window(), c);
+        QTest::keyClick(w.window(), Qt::Key_Return);
+    }
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->inFlight() == 0 && !w.sketch()->solving(); }, 20000));
+    QTest::keyClick(w.window(), Qt::Key_P); // the point tool
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->tool() == QStringLiteral("point"); }, 5000));
+    {
+        const auto at = w.sketch()->toView(Vec2{30, 12.5});
+        REQUIRE(at.has_value());
+        w.clickScene(w.view()->mapToScene(*at));
+    }
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->inFlight() == 0 && !w.sketch()->solving(); }, 20000));
+    w.shot("app_02_sketch_circle_and_point");
+    const std::optional<FeatureId> sketch2 = w.sketch()->featureId();
+    REQUIRE(sketch2.has_value());
+    REQUIRE(w.run("sketch.mode.finish"));
+    w.settle();
+
+    // The extrude offered for the sketch: the circle cut through all.
+    REQUIRE(QTest::qWaitFor([&] { return !w.tool()->offerSketch().isEmpty(); }, 5000));
+    w.click("extrudeOfferAccept");
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active(); }, 5000));
+    w.tool()->setValue(QStringLiteral("operation"), QStringLiteral("cut"));
+    w.tool()->setValue(QStringLiteral("extent"), QStringLiteral("through_all"));
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.previewed();
+    w.shot("app_03_through_all_cut_panel");
+    w.commit();
+    CHECK(w.volume() == Approx(10000 - kPi * 25 * 10).epsilon(1e-5));
+
+    // A hole at the sketch point (the circle's centre is not a hole position while a free point exists).
+    openTool(w, "model.tool.hole", "hole");
+    w.tool()->setValue(QStringLiteral("sketch"), QString::fromStdString(sketch2->value.toString()));
+    REQUIRE(
+        QTest::qWaitFor([&] { return w.tool()->pickText().startsWith(QStringLiteral("Every point")); }, kTimeoutMs));
+    w.typeInto(QStringLiteral("diameter"), QStringLiteral("6 mm"));
+    w.previewed();
+    w.shot("app_04_hole_panel");
+    w.commit();
+    CHECK(w.volume() == Approx(10000 - kPi * 25 * 10 - kPi * 9 * 10).epsilon(1e-5));
+
+    // Fillet: one edge picked, then with the preview shown a second added and the first taken off.
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.view()->fitAll();
+    w.settle();
+    const auto e1 = edgeAlongX(w, 0, 10);
+    const auto e2 = edgeAlongX(w, 25, 10);
+    openTool(w, "model.tool.fillet", "fillet");
+    w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
+    w.clickScene(w.sceneOf(e1.second));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, kTimeoutMs));
+    w.previewed();
+    w.shot("app_05_fillet_one_edge_preview");
+    w.clickScene(w.sceneOf(e2.second), Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
+    w.previewed();
+    w.shot("app_06_fillet_edge_added_with_preview");
+    w.clickScene(w.sceneOf(e1.second), Qt::ControlModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, kTimeoutMs));
+    w.previewed();
+    w.shot("app_07_fillet_edge_removed_with_preview");
+    w.commit();
+    for (int i = 0; i < w.tree()->count(); ++i)
+        CHECK(w.status(i) == QStringLiteral("ok"));
+    w.shot("app_08_finished_part");
+
+    // Roll back to after Extrude 1 and insert a datum plane at the bar.
+    REQUIRE(w.tree()->rollTo(1));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackIndex() == 1; }, kTimeoutMs));
+    w.settle();
+    w.shot("app_09_rolled_back");
+    openTool(w, "model.tool.datumPlane", "datum_plane");
+    w.typeInto(QStringLiteral("offset"), QStringLiteral("5 mm"));
+    w.previewed();
+    w.shot("app_10_datum_at_rollback_bar");
+    w.commit();
+    CHECK(w.tree()->rollbackIndex() == 2);
+    CHECK(w.document()->state()->features[2].type == "datum_plane");
+    w.shot("app_11_inserted_at_bar");
+    REQUIRE(w.run("model.rollback.end"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackIndex() == -1; }, kTimeoutMs));
+    w.settle();
+    for (int i = 0; i < w.tree()->count(); ++i)
+        CHECK(w.status(i) == QStringLiteral("ok"));
+    w.shot("app_12_rolled_forward");
+    w.checkNoWarnings();
 }
 
 int main(int argc, char** argv)

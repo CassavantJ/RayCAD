@@ -129,6 +129,7 @@ Item {
             Repeater {
                 model: [
                     { name: "select", icon: "select", title: qsTr("Select and drag") },
+                    { name: "point", icon: "point", title: qsTr("Point") },
                     { name: "line", icon: "line", title: qsTr("Line") },
                     { name: "rectangle", icon: "rectangle", title: qsTr("Rectangle") },
                     { name: "circle", icon: "circle", title: qsTr("Circle") },

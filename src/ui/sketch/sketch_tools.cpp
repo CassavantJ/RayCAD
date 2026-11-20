@@ -17,19 +17,13 @@ struct NamedTool {
     const char* name;
 };
 constexpr NamedTool kTools[] = {
-    {ToolKind::Select, "select"},
-    {ToolKind::Line, "line"},
-    {ToolKind::Rectangle, "rectangle"},
-    {ToolKind::Circle, "circle"},
-    {ToolKind::Arc3, "arc3"},
-    {ToolKind::ArcCenter, "arcCenter"},
-    {ToolKind::ArcTangent, "arcTangent"},
-    {ToolKind::Slot, "slot"},
-    {ToolKind::Spline, "spline"},
-    {ToolKind::Trim, "trim"},
-    {ToolKind::Extend, "extend"},
-    {ToolKind::Offset, "offset"},
-    {ToolKind::Fillet, "fillet"},
+    {ToolKind::Select, "select"},       {ToolKind::Point, "point"},
+    {ToolKind::Line, "line"},           {ToolKind::Rectangle, "rectangle"},
+    {ToolKind::Circle, "circle"},       {ToolKind::Arc3, "arc3"},
+    {ToolKind::ArcCenter, "arcCenter"}, {ToolKind::ArcTangent, "arcTangent"},
+    {ToolKind::Slot, "slot"},           {ToolKind::Spline, "spline"},
+    {ToolKind::Trim, "trim"},           {ToolKind::Extend, "extend"},
+    {ToolKind::Offset, "offset"},       {ToolKind::Fillet, "fillet"},
 };
 
 bool chainTool(ToolKind k)
@@ -348,6 +342,11 @@ std::optional<double> typedValue(const std::map<std::string, double>& typed, con
 
 Vec2 ToolEngine::target() const
 {
+    if (kind_ == ToolKind::Point) {
+        const auto x = typedValue(typed_, "x");
+        const auto y = typedValue(typed_, "y");
+        return {x ? *x : cursor_.x, y ? *y : cursor_.y};
+    }
     if (placed_.empty())
         return cursor_;
     const Vec2 s = placed_.back().snap.p;
@@ -397,6 +396,10 @@ std::vector<FieldSpec> ToolEngine::fields() const
     const Vec2 s = placed_.empty() ? Vec2{} : placed_.back().snap.p;
     const Vec2 d = sub(t, s);
     switch (kind_) {
+    case ToolKind::Point:
+        out.push_back({"x", "X", false, t.x});
+        out.push_back({"y", "Y", false, t.y});
+        break;
     case ToolKind::Line:
         if (placed_.size() == 1) {
             out.push_back({"length", "Length", false, length(d)});
@@ -567,6 +570,11 @@ void ToolEngine::rebuildDraft(const SketchView& view)
     };
     switch (kind_) {
     case ToolKind::Select:
+        break;
+    case ToolKind::Point:
+        snapGlyphs();
+        d.points.push_back(t);
+        d.labelAt = t;
         break;
     case ToolKind::Line:
         snapGlyphs();
@@ -854,6 +862,27 @@ Action ToolEngine::click(const SketchView& view)
             "{\"entities\":[" + ids + "],\"distance\":" + jsonNumber(dist) + ",\"side\":" + jsonPoint(raw_) + "}";
         offsetChain_.clear();
         resetTyped();
+        return a;
+    }
+    if (kind_ == ToolKind::Point) {
+        // One point per click, with the constraints its snap infers; typed coordinates place it exactly.
+        Placed p;
+        p.snap = snap_;
+        if (!typed_.empty()) {
+            p.snap = {};
+            p.snap.p = target();
+        }
+        if (p.snap.kind == Snap::Kind::Point)
+            return {}; // a point is there already
+        p.id = SketchEntId{Uuid::generate()};
+        Action a;
+        a.kind = Action::Kind::Add;
+        a.label = "Point";
+        pointFor(p, a.batch);
+        for (sketch::Entity& e : a.batch.entities)
+            e.construction = construction_;
+        resetTyped();
+        rebuildDraft(view);
         return a;
     }
     if (kind_ == ToolKind::Line) {

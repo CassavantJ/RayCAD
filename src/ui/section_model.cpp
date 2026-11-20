@@ -2,6 +2,7 @@
 
 #include "scene_controller.h"
 #include "selection_model.h"
+#include "ui_commands.h"
 #include "units.h"
 #include "viewport_item.h"
 
@@ -13,6 +14,32 @@
 #include <limits>
 
 namespace ray::ui {
+
+namespace {
+// T-023: section view and draft analysis (SectionModel::runCommand runs these).
+// clang-format off
+constexpr UiCommand kSectionCommands[] = {
+    {"view.section.toggle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Section View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Cuts the model with a plane to show its inside"), "", CommandContext::Global, ""},
+    {"view.section.fromFace", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Section Parallel to Face"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Cuts the model parallel to the selected planar face"), "", CommandContext::Global, ""},
+    {"view.draft.toggle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draft Analysis"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Colours faces by their draft angle to the pull direction"), "", CommandContext::Global, ""},
+    {"view.draft.fromFace", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Pull Direction from Face"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draft analysis with the selected planar face's normal as the pull"), "", CommandContext::Global, ""},
+};
+// clang-format on
+
+} // namespace
+
+std::span<const UiCommand> sectionUiCommands()
+{
+    return kSectionCommands;
+}
 
 namespace {
 

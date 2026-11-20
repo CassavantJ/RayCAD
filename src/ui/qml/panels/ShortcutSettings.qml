@@ -190,7 +190,9 @@ Item {
                         anchors.leftMargin: Theme.spacingS
                         anchors.rightMargin: Theme.spacingS
                         anchors.verticalCenter: parent.verticalCenter
-                        text: row.modelData.title
+                        // Where the key works when not everywhere: "Model" or "Sketch" (a key may serve one of each).
+                        text: row.modelData.context ? qsTr("%1  (%2)").arg(row.modelData.title).arg(row.modelData.context)
+                                                    : row.modelData.title
                     }
 
                     Button {

@@ -5,6 +5,10 @@
 // sketch.entity.add, one undo step), or a sketch command with its arguments (trim, extend, offset, fillet). The
 // sketch mode (sketch_mode.h) runs it through the action registry.
 //
+// The point tool places one free point per click (hole positions, construction references): on a curve it gets
+// PointOnCurve, at a line's middle Midpoint, lined up with another point Horizontal / Vertical; on an existing
+// point it places nothing (that point is there already). Typed "x" and "y" place it at those coordinates.
+//
 // Snaps, strongest first: an existing point (end point, centre: the new geometry uses that point, which is the
 // coincidence), the midpoint of a line (Midpoint), horizontal / vertical from the tool's anchor (the line gets
 // Horizontal / Vertical), a curve (PointOnCurve; with an axis snap, where the axis line crosses the curve), and
@@ -25,6 +29,7 @@ namespace ray::ui::sketchui {
 
 enum class ToolKind {
     Select,
+    Point,
     Line,
     Rectangle,
     Circle,

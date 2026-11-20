@@ -10,13 +10,16 @@
 //                gets the display unit (lengths) or degrees (angles). Choices and switches are strings and booleans.
 //   Picking      extrude and revolve: clicking a closed region of the sketch in the view toggles it (none picked: all
 //                regions); hole: clicking a sketch point toggles it (none: every free point); fillet and chamfer: the
-//                edges selected in the view (persistent references through model.reference); datum plane on a face:
-//                the selected planar face.
-//   Preview      every change rebuilds the feature off to the side through Document::beginPreview (or, while the
-//                model is rolled back, through a side rebuilder over the history up to the new feature) on the job
-//                system, never on the UI thread. One preview build runs at a time; changes made meanwhile are merged
-//                into the next one, so the newest values always win. The result bodies are meshed on a worker and
-//                shown in place of the bodies they change (BodyOverlay). A command that the document refuses, or a
+//                edges selected in the view (persistent references through model.reference), picked and unpicked
+//                while the preview is shown (the preview never answers picks; the model under it does, preview.h);
+//                when editing, the stored edges stay and the selected ones are added; datum plane on a face: the
+//                selected planar face.
+//   Preview      every change rebuilds the feature off to the side through Document::beginPreview on the job
+//                system, never on the UI thread. While the history is rolled back, the add command puts the new
+//                feature right after the rollback bar, so the preview is the rolled-back model with it. One preview
+//                build runs at a time; changes made meanwhile are merged into the next one, so the newest values
+//                always win. The result bodies are meshed on a worker and shown in the scene's preview slot in place
+//                of the bodies they change (SceneController::preview()). A command that the document refuses, or a
 //                feature that fails to build, shows its message in the panel and the last good preview stays.
 //   Handles      handles() lists the in-view drag handles in view coordinates: an arrow for the extrude distance and
 //                the hole depth, an angle handle for the revolve, a radius handle for fillet and chamfer.
@@ -93,9 +96,8 @@ class FeatureToolModel : public QObject {
     Q_PROPERTY(QString pickText READ pickText NOTIFY picksChanged)
     Q_PROPERTY(QString pickHint READ pickHint NOTIFY picksChanged)
     Q_PROPERTY(int pickCount READ pickCount NOTIFY picksChanged)
-    // Fillet and chamfer: the view's selection feeds the edges while true (the preview is hidden meanwhile, so the
-    // original edges can be clicked).
-    Q_PROPERTY(bool picking READ picking WRITE setPicking NOTIFY picksChanged)
+    // Fillet and chamfer: the view's selection feeds the edges (with the preview shown).
+    Q_PROPERTY(bool picking READ picking NOTIFY activeChanged)
     // In-view handles: [{key, kind ("arrow" | "angle" | "radius"), x, y, tipX, tipY}] in view coordinates.
     Q_PROPERTY(QVariantList handles READ handles NOTIFY handlesChanged)
     Q_PROPERTY(bool handleDragging READ handleDragging NOTIFY handlesChanged)
@@ -133,8 +135,7 @@ public:
     QString pickText() const;
     QString pickHint() const;
     int pickCount() const;
-    bool picking() const { return picking_; }
-    void setPicking(bool on);
+    bool picking() const;
     QVariantList handles() const;
     bool handleDragging() const { return !dragKey_.isEmpty(); }
     QVariantMap offerSketch() const { return offer_; }
@@ -161,8 +162,9 @@ public:
 
     // ---- C++ (tests) ----
     std::optional<FeatureId> featureId() const { return id_; }
-    bool previewBusy() const { return previewBusy_ || previewPending_ || overlay_->meshing(); }
-    const BodyOverlay& overlay() const { return *overlay_; }
+    bool previewBusy() const;
+    // The scene's preview slot (shared; this tool's preview while it holds it).
+    const BodyOverlay& overlay() const;
     int previewBuilds() const { return previewBuilds_; }
     std::optional<kernel::Plane> sketchPlane() const { return plane_; }
     const std::vector<api::feature_edit::Region>& regions() const { return regions_; }
@@ -236,7 +238,6 @@ private:
     QPointer<SketchModel> sketchTool_;
     QPointer<ViewportItem> view_;
     QList<QMetaObject::Connection> viewConnections_;
-    std::unique_ptr<BodyOverlay> overlay_;
     std::unique_ptr<LineOverlay> lines_;
 
     // The document observed.
@@ -257,15 +258,15 @@ private:
     QString message_, messageField_, previewStatus_;
     bool committing_ = false;
     bool rejected_ = false; // the document refuses the command (not just a feature that fails to build)
-    bool picking_ = false;
     std::uint8_t savedFilter_ = 0;
     bool filterSaved_ = false;
 
     // Picks.
     std::vector<std::vector<SketchEntId>> regionPicks_;
     std::vector<SketchEntId> pointPicks_;
-    QJsonArray edges_;             // TopoRef JSON objects
-    std::vector<Vec3> edgePoints_; // where each edge was picked (for the radius handle)
+    QJsonArray edges_;             // TopoRef JSON objects: storedEdges_, then the selected ones
+    QJsonArray storedEdges_;       // editing: the edges the feature has (they may not exist in the model shown)
+    std::vector<Vec3> edgePoints_; // where each selected edge was picked (for the radius handle)
     QJsonObject faceRef_;          // datum plane on a face
     std::uint64_t edgeSerial_ = 0;
 
@@ -285,13 +286,9 @@ private:
     QTimer previewTimer_;
     bool previewBusy_ = false;
     bool previewPending_ = false;
-    bool previewSide_ = false;     // the running preview is a side build (rolled back)
     doc::DocStatePtr previewBase_; // the state the last preview was built on
     std::uint64_t previewSerial_ = 0;
     int previewBuilds_ = 0;
-    JobHandle<doc::BuildResultPtr> sideJob_;
-    std::shared_ptr<doc::IRebuilder> sideRebuilder_;
-    std::string sideRebuilderDoc_;
 
     // Handles and clicks in the view.
     QString dragKey_;

@@ -1,6 +1,7 @@
 #include "scene_controller.h"
 
 #include "app_context.h"
+#include "model/preview.h"
 
 #include <QtCore/QVariant>
 
@@ -229,12 +230,14 @@ SceneController::SceneController(JobsProvider jobs, AppContext* context, QObject
       preset_(render::presetFor(render::Tier::Low))
 {
     tree_ = new SceneTreeModel(this);
+    preview_ = std::make_unique<BodyOverlay>(this);
     if (context_ != nullptr)
         connect(context_, &AppContext::jobCancelRequested, this, [this] { cancelJobs(); });
 }
 
 SceneController::~SceneController()
 {
+    preview_.reset();
     coarse_.cancel();
     fine_.cancel();
 }

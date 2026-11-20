@@ -134,6 +134,7 @@ qt_add_qml_module(ray_ui
         files.cpp
         palette_commands.h
         palette_commands.cpp
+        ui_commands.h
         palette_model.h
         palette_model.cpp
         shortcuts.h
