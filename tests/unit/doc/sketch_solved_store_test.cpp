@@ -1279,7 +1279,7 @@ TEST_CASE("time the solve of a grid (printed)", "[.sketch-solve-timing][grid]")
 
 TEST_CASE("time the solve of a chain near its singular configuration (printed)", "[.sketch-solve-timing][stretched]")
 {
-    for (int links : {200, 500, 1000}) {
+    for (int links : {200, 500}) { // 1000 links: minutes per solve
         const std::string what = "stretched chain, " + std::to_string(links) + " links, near singular";
         const double full = links; // fully stretched
         printTiming(what.c_str(),
@@ -1292,8 +1292,8 @@ TEST_CASE("time the solve of a chain near its singular configuration (printed)",
 
 TEST_CASE("time the solve of a long under-constrained chain (printed)", "[.sketch-solve-timing][zigzag]")
 {
-    // The 200-line zig-zag chain of the timing test below, up to ten times longer.
-    for (int lines : {500, 1000, 2000}) {
+    // The 200-line zig-zag chain of the timing test below, up to five times longer (2000 lines: minutes per solve).
+    for (int lines : {500, 1000}) {
         SketchJson chain;
         for (int i = 0; i <= lines; ++i) {
             chain.point(static_cast<std::uint64_t>(100000 + i), i * 0.5, (i % 2) * 0.4);
