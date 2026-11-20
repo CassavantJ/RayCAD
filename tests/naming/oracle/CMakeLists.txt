@@ -51,3 +51,7 @@ set_tests_properties(ray_naming_random_holdout3 PROPERTIES TIMEOUT 7200)
 add_test(NAME ray_naming_random_holdout4 COMMAND ray_naming_oracle_tests "[random-holdout4]")
 ray_test_runtime_path(ray_naming_random_holdout4)
 set_tests_properties(ray_naming_random_holdout4 PROPERTIES TIMEOUT 7200)
+# A fifth block, first run (once, unseen) after the fourth block's findings were fixed.
+add_test(NAME ray_naming_random_holdout5 COMMAND ray_naming_oracle_tests "[random-holdout5]")
+ray_test_runtime_path(ray_naming_random_holdout5)
+set_tests_properties(ray_naming_random_holdout5 PROPERTIES TIMEOUT 7200)

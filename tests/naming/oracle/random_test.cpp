@@ -887,6 +887,25 @@ TEST_CASE("Fourth holdout: 200 randomised sequences on seeds first run after the
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
+TEST_CASE("Fifth holdout: 200 randomised sequences on seeds first run after the fourth holdout's findings were fixed",
+          "[random-holdout5]")
+{
+    // The fourth block's two wrong answers were fixed (exactAgainstEvidence: part of the pick on another element, an
+    // answer that runs on into another element), and the oracle learnt to judge sliding crossings; this block's seeds
+    // (disjoint from every other block's) were added after those were committed and run once, unseen, on Windows and
+    // on Linux, under the holdout pass criterion (checkGates): no review entries for it existed when it was first run.
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x6C3A9000ull;
+    holdout.keyPrefix = "holdout5 ";
+    const BlockResult r = runBlock("Fifth holdout", parts, kHoldoutPerPart, holdout);
+    checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
+}
+
 // ---------------------------------------------------------------- oracle fixes on the corpus cases that showed them
 // Each replays one sequence of a holdout block (deterministic: its seed is fixed) and checks the oracle's verdict on
 // the references the fix is about, with a negative case: a wrong answer to the same reference is still judged wrong.
