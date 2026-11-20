@@ -9,6 +9,7 @@ add_executable(ray_kernel_tests
     sweep_test.cpp
     boolean_test.cpp
     blend_test.cpp
+    blend_determinism_test.cpp
     immutability_test.cpp)
 target_link_libraries(ray_kernel_tests PRIVATE ray_kernel Catch2::Catch2WithMain)
 # occt_smoke.h, shape_testing.h, mesh_testing.h and io_internal.h are private to src/kernel; no OCCT header.

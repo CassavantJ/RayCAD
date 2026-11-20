@@ -1,0 +1,43 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: ChFi3d_Builder::IntersectMoreCorner declares `int prol;` without a value and passes it to the static
+ChFi3d_ExtendSurface(S, prol), whose first statement is `if (prol) return;` (prol is an in/out flag: "this surface is
+already extended"). Initialise it to 0, as PerformOneCorner does for the same code. The same flag array in
+PerformIntersectionAtEnd, prolface[], is set to 0 for indices 0 .. nbface-1 and nn, but the loop that intersects the
+faces also calls ChFi3d_ExtendSurface(Sface, prolface[nb]) with nb == nbface; set that element to 0 too.
+
+Why: the value read is whatever an earlier call left in that stack slot. When it is not 0, ChFi3d_ExtendSurface
+returns at once and leaves prol set, so IntersectMoreCorner takes the "extended" branch with the face's own,
+unextended surface: Bs is initialised on an unbounded copy of the face and DStr.SetNewSurface(Fv, Sface) is called
+with the surface the face already has. If Fv lies on a periodic surface (a cylinder), TopOpeBRepBuild then rebuilds
+it through TopOpeBRepDS_BuildTool::UpdateSurface (TopOpeBRepBuild_Builder::MakeFaces), which gives every edge of the
+face one pcurve on the "new" surface: on the seam edge this replaces the pair of pcurves by one, the face is no
+longer closed in U and BRepCheck reports it (UnorientableShape). Seen in RayCAD as a fillet or chamfer of a straight
+edge ending at a vertex shared with a cylindrical pocket wall that failed in 1 to 2 % of the runs in one process
+(depending on the heap and stack history of the process; forcing the flag to 0 gave the valid result every time,
+forcing it to 1 gave the invalid solid every time). Where the slot happened to hold 0 the result was already right,
+so nothing changes there.
+
+Upstream: not fixed in OCCT master as of 2026-11-19 (`int prol;` and the missing prolface[nbface] are still there).
+Not reported upstream yet.
+
+diff --git a/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx b/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx
+--- a/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx
++++ b/src/ModelingAlgorithms/TKFillet/ChFi3d/ChFi3d_Builder_C1.cxx
+@@ -2604,6 +2604,7 @@
+     shrink[nb - 1]   = 0;
+   }
+   proledge[nbface] = 0;
++  prolface[nbface] = 0; // read by ChFi3d_ExtendSurface when the loop below reaches nb == nbface
+   prolface[nn]     = 0;
+   if (oneintersection1 || oneintersection2)
+   {
+@@ -4914,7 +4915,7 @@
+     }
+     TopoDS_Face               FFv;
+     double                    tol;
+-    int                       prol;
++    int                       prol = 0; // read by ChFi3d_ExtendSurface: 0 = not extended yet
+     BRep_Builder              BRE;
+     occ::handle<Geom_Surface> Sface;
+     Sface = BRep_Tool::Surface(Fv);
