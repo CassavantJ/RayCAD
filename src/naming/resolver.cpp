@@ -129,7 +129,8 @@ private:
 
     // Stage 1. A value is final (Exact, or Broken because an ambiguous name no longer matches its hint);
     // nullopt passes the reference on to the next stage.
-    static std::optional<Resolved> exact(const ResolverBody& body, const TopoRef& ref, const Lookup& lookup)
+    static std::optional<Resolved> exact(const ResolverBody& body, const detail::TerritoryCache& territories,
+                                         const TopoRef& ref, const Lookup& lookup)
     {
         const ElementMap& map = body.map;
         if (lookup.found.size() != 1 || lookup.missing != 0 || lookup.shared != 0)
@@ -183,8 +184,9 @@ private:
                           "stretches are the picked edge cannot be told.");
         // A face that grew may have taken in a face of another feature on the same surface whose name does not
         // survive the edit (T-081a random 6:29); the names cannot tell that from a dimension change, which must stay
-        // Exact (T-096). The pick-time evidence can: territory that a recorded neighbour held (territory.h).
-        if (auto evidence = detail::exactAgainstEvidence(map, body.shape, element, ref))
+        // Exact (T-096). The pick-time evidence can: territory that a recorded neighbour held (territory.h). It also
+        // tells when part of what was picked is now another element's (holdout4).
+        if (auto evidence = detail::exactAgainstEvidence(map, body.shape, territories, element, ref))
             return evidence;
         return Resolved{ResolveState::Exact, {element}, {}};
     }
@@ -210,7 +212,7 @@ private:
         if (!wellFormed(ref))
             return broken("The reference is damaged: it holds no usable name.");
         const Lookup lookup = lookUp(body->map, ref);
-        if (auto result = exact(*body, ref, lookup))
+        if (auto result = exact(*body, territoriesOf(body), ref, lookup))
             return std::move(*result);
         // T-081a, in this order: lineage (Split, Merged), the family rule (Split, Merged), Repaired.
         if (auto result = detail::resolveThroughBuild(body->map, body->shape, ref))

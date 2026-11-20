@@ -483,6 +483,7 @@ RefResult judgeReference(const PickRecord& pick, const Owners& now, const Sample
     out.expected = x.expected.elems;
     out.merged = x.expected.merged;
     out.noAnchor = x.noAnchor;
+    out.crossing = x.crossing;
     out.congruent = x.congruentIndex;
     // Congruence cross-check: an element lies exactly where the picked one was, and the oracle expects something
     // else. When nothing the element depends on moved, that is a disagreement (gated); when it moved, another element
@@ -590,6 +591,8 @@ void Tally::merge(const Tally& o)
     picksUnjudged += o.picksUnjudged;
     repairedUsable += o.repairedUsable;
     noAnchor += o.noAnchor;
+    crossings += o.crossings;
+    crossingsAtSeam += o.crossingsAtSeam;
     accepted += o.accepted;
     acceptedReviewed += o.acceptedReviewed;
     conflicts += o.conflicts;
@@ -671,6 +674,11 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     }
     if (!rr.noAnchor.empty())
         ++tally.noAnchor;
+    if (!rr.crossing.empty()) {
+        ++tally.crossings;
+        if (rr.crossing.compare(0, 5, "seam:") == 0)
+            ++tally.crossingsAtSeam;
+    }
     if (rr.judgement.twin)
         ++tally.twins;
     auto addWrong = [&](const std::string& line) {
@@ -734,12 +742,15 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     if (isWrong(v) || v == Verdict::Unjudged || explainThis) {
         addWrong(id + ": " + verdictName(v) + "; resolver " + answer + " (" + res.reason + "), oracle expects " +
                  list(rr.expected) + (rr.merged ? " merged" : "") +
-                 (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") + ", congruent " + std::to_string(rr.congruent));
+                 (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") +
+                 (rr.crossing.empty() ? "" : " (sliding crossing, " + rr.crossing + ")") + ", congruent " +
+                 std::to_string(rr.congruent));
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr && log.wrongs.size() < log.maxWrongs)
             log.wrongs.push_back(verbose());
     }
     if (std::getenv("RAYCAD_NAMING_VERDICTS") != nullptr)
-        log.trace.push_back(id + " " + answer + " " + verdictName(v) + " E" + list(rr.expected) + " | " + res.reason);
+        log.trace.push_back(id + " " + answer + " " + verdictName(v) + " E" + list(rr.expected) +
+                            (rr.crossing.empty() ? "" : " [crossing " + rr.crossing + "]") + " | " + res.reason);
 }
 
 } // namespace
@@ -872,6 +883,9 @@ void printTally(const char* title, const Tally& t)
         "  continuation unknown (no anchor): %ld references (%ld answered other than Broken: NOT JUDGED, %ld of "
         "them reviewed); blend picks not judged (no description): %ld\n",
         t.noAnchor, t.unjudged(), t.unjudgedReviewed, t.picksUnjudged);
+    std::printf("  sliding crossings told by the oracle (oracle.h Expectation::crossing): %ld (%ld at a seam, %ld by "
+                "position)\n",
+                t.crossings, t.crossingsAtSeam, t.crossings - t.crossingsAtSeam);
     std::printf("  new-territory acceptances: %ld (%ld on the reviewed list, %ld NOT REVIEWED)\n", t.accepted,
                 t.acceptedReviewed, t.accepted - t.acceptedReviewed);
     std::printf(

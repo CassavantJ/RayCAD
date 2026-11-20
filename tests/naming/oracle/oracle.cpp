@@ -2273,6 +2273,43 @@ bool Expectation::isClaimed(std::uint32_t e) const
            claimed[static_cast<std::size_t>(it - logical.begin())] != 0;
 }
 
+namespace {
+
+// ---------------------------------------------------------------- sliding crossings (oracle.h CONTINUATION)
+// How much nearer the mapped pick must be to the element it picks out than to any other candidate, and than any other
+// baseline piece's mapped place is to that element.
+constexpr double kCrossingMargin = 2.0;
+
+// Mean distance from the samples of `a` (its points; a vertex's point) to element `b` (its polyline or point), mm.
+double meanDistanceTo(const ElemSamples& a, const ElemSamples& b, SubKind kind)
+{
+    const std::vector<Vec3>& from = a.pts.empty() ? a.nodes : a.pts;
+    if (from.empty() || b.nodes.empty())
+        return 1e300;
+    double sum = 0;
+    for (const Vec3& p : from) {
+        double d = norm(sub(p, b.nodes.front()));
+        if (kind == SubKind::Edge)
+            for (std::size_t k = 1; k < b.nodes.size(); ++k)
+                d = std::min(d, segmentDistance(p, b.nodes[k - 1], b.nodes[k]));
+        sum += d;
+    }
+    return sum / static_cast<double>(from.size());
+}
+
+// Is vertex v of `smp` a seam vertex: on exactly two faces? No third face meets there; the vertex only splits (or
+// closes) the curve where the two meet, at the seam of the periodic one (a hole's wall), whether or not a seam edge
+// of that face starts there (the face may only touch its seam line at that point).
+bool seamVertex(const Samples& smp, std::uint32_t v)
+{
+    std::vector<std::uint32_t> faces = smp.facesOf[0][v];
+    std::sort(faces.begin(), faces.end());
+    faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+    return faces.size() == 2;
+}
+
+} // namespace
+
 Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
 {
     Expectation x;
@@ -2553,6 +2590,108 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         for (const std::uint32_t a : x.expected.elems)
             for (const std::uint32_t b : x.expected.elems)
                 x.twins = x.twins && (a == b || overlap(N[a], N[b], x.kind, kExactVertexTolerance));
+    }
+    // SLIDING CROSSINGS (vertices and edges only). A vertex or edge where a moved or resized feature's face crosses a
+    // face (or edge) that stayed, slides along the one that stayed: the map moves each point with its owners and then
+    // projects it onto the edited carriers, which lands on the edited crossing curve but not where on it the crossing
+    // now is. So no part of the logical element overlaps the mapped pick, and the continuation is told here instead,
+    // from first principles, or not at all:
+    //  (a) a seam vertex (on only its two faces, seamVertex): no third face makes it; it only splits or closes the
+    //  curve
+    //      where the two faces meet, at the seam of the periodic one (a hole's wall), whose parametrisation moves with
+    //      that face. Its identity is "the seam vertex of where these two faces meet", as a described vertex's is
+    //      "where these faces meet". When the logical element had exactly one seam vertex at pick time (the pick) and
+    //      exactly one element fitting the description is one now, that one continues it. (Two periodic faces would
+    //      give two seam vertices on their curve: then neither count is one, and (b) decides);
+    //  (b) otherwise, by position, with a clear margin: the parts fitting the description (without the elements a
+    //      mapped sibling claims), each scored by how far the mapped pick lies from it. Every other piece of the
+    //      logical element at pick time is mapped through the same edit, and slides along the same surfaces by an error
+    //      of the same kind, so the arrangement survives up to that error: the part nearest the mapped pick continues
+    //      it when every other part is at least kCrossingMargin times as far from the mapped pick, and every other
+    //      mapped piece at least kCrossingMargin times as far from that part as the mapped pick is. A piece that cannot
+    //      be mapped could be anywhere: not judged.
+    // Both need the part within reach of the mapped pick (twice the largest owner shift plus 1 mm: a crossing does not
+    // slide further than the edit moved its surfaces, with room for shallow crossing angles). Both can say WRONG: any
+    // other answer than the part chosen is judged against it as usual.
+    if (x.expected.elems.empty() && anchoredParts.empty() && x.moved && !x.mapped.pts.empty() &&
+        x.kind != SubKind::Face) {
+        const double reach = 2.0 * largestOwnerShift(*pick.owners, now) + 1.0;
+        const std::vector<std::uint32_t> before = evalTruth(withoutSeparators(d), *pick.owners, *pick.baseline).elems;
+        std::vector<std::uint32_t> chosen;
+        char why[200];
+        if (x.kind == SubKind::Vertex && seamVertex(*pick.baseline, pick.base.index)) {
+            std::size_t then = 0;
+            for (const std::uint32_t b : before)
+                if (seamVertex(*pick.baseline, b))
+                    ++then;
+            std::vector<std::uint32_t> seamNow;
+            for (const std::uint32_t e : x.strict.elems)
+                if (seamVertex(smp, e))
+                    seamNow.push_back(e);
+            const double dist = seamNow.size() == 1 ? meanDistanceTo(x.mapped, N[seamNow.front()], x.kind) : 1e300;
+            if (then == 1 && seamNow.size() == 1 && dist <= reach) {
+                chosen = seamNow;
+                std::snprintf(why, sizeof why,
+                              "seam: the one vertex on only its two faces, then and now, %.3f mm from the mapped pick",
+                              dist);
+                x.crossing = why;
+            }
+        }
+        if (chosen.empty()) {
+            std::map<int, std::vector<std::uint32_t>> parts;
+            for (const std::uint32_t e : x.strict.elems)
+                if (!sliver(N[e], x.kind) && !(x.weak && x.isClaimed(e)))
+                    parts[x.componentOf(e)].push_back(e);
+            std::vector<ElemSamples> others;
+            bool placed = true;
+            for (const std::uint32_t b : before) {
+                if (b == pick.base.index)
+                    continue;
+                bool unused = false;
+                ElemSamples m = mapElement(*pick.baseline, SubId{x.kind, b}, d, *pick.owners, now, unused);
+                placed = placed && !m.pts.empty();
+                others.push_back(std::move(m));
+            }
+            auto distance = [&](const ElemSamples& from, const std::vector<std::uint32_t>& part) {
+                double best = 1e300;
+                for (const std::uint32_t e : part)
+                    best = std::min(best, meanDistanceTo(from, N[e], x.kind));
+                return best;
+            };
+            const std::vector<std::uint32_t>* best = nullptr;
+            double dBest = 1e300, dNext = 1e300;
+            for (const auto& [component, part] : parts) {
+                const double dist = distance(x.mapped, part);
+                if (dist < dBest) {
+                    dNext = dBest;
+                    dBest = dist;
+                    best = &part;
+                } else {
+                    dNext = std::min(dNext, dist);
+                }
+            }
+            double dOther = 1e300;
+            if (best != nullptr)
+                for (const ElemSamples& o : others)
+                    dOther = std::min(dOther, distance(o, *best));
+            if (placed && best != nullptr && dBest <= reach && dNext >= kCrossingMargin * dBest &&
+                dOther >= kCrossingMargin * dBest) {
+                chosen = *best;
+                std::snprintf(why, sizeof why,
+                              "nearest: %.3f mm from the mapped pick; next part %.3f mm, nearest other mapped piece "
+                              "%.3f mm",
+                              dBest, dNext >= 1e299 ? -1.0 : dNext, dOther >= 1e299 ? -1.0 : dOther);
+                x.crossing = why;
+            }
+        }
+        if (!chosen.empty()) {
+            x.expected.elems = chosen;
+            for (const std::uint32_t e : chosen)
+                if (std::binary_search(x.strict.partial.begin(), x.strict.partial.end(), e))
+                    x.expected.partial.push_back(e);
+            x.expected.merged = !x.expected.partial.empty();
+            ownTerritory(x.expected);
+        }
     }
     if (x.expected.elems.empty())
         x.noAnchor = x.mapped.pts.empty() ? "the picked element cannot be mapped through the edit"

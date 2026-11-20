@@ -43,6 +43,11 @@
 //    nothing (Owners::degenerate), leaves the reference without an anchor.
 //  - An element that coincides at pick time with another one the description cannot tell from it (coincidesWith
 //    Another), and a sliver at pick time, are not references (recordReferences counts them by reason).
+//  - A vertex or edge that moved, no part of whose logical element overlaps the mapped pick (a crossing that slid
+//    along the face or edge that stayed), is continued (Expectation::crossing): (a) a seam vertex (on only its two
+//    faces) by the one seam vertex fitting the description, when it was the only one of its logical element at pick
+//    time too; (b) else by the part nearest the mapped pick, when every other part and every other piece's mapped place
+//    is at least twice as far from it; else it has no anchor. Both within twice the largest owner shift plus 1 mm.
 //
 // NEW TERRITORY. An answer that differs from E may still be right when the extra part did not exist at pick time
 // (a face that a suppressed cut no longer splits runs on into territory that was nothing). judgeAnswer accepts it
@@ -405,6 +410,7 @@ struct Expectation {
     bool moved = false;
     TruthEval expected;       // E: the strict elements in components that continue the pick
     std::string noAnchor;     // why the continuation cannot be told (then E is not trusted)
+    std::string crossing;     // non-empty: E was told by the sliding-crossing rule (expect, oracle.cpp), and how
     long congruentIndex = -1; // the one element congruent in place with the pick, or -1
     // A weak reference that moved, whose mapped pick and another piece's mapped position fall on one element of E:
     // whether that element continues both (merged) cannot be told, so an Exact answer is not judged (a Merged or Split

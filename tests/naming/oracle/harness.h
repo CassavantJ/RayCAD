@@ -45,6 +45,7 @@ struct RefResult {
     std::vector<std::uint32_t> expected; // E
     bool merged = false;
     std::string noAnchor;
+    std::string crossing;  // E was told by the sliding-crossing rule (oracle.h Expectation::crossing), and how
     long congruent = -1;   // the one element congruent in place with the pick, or -1
     int conflict = 0;      // the one element congruent in place is not E, nothing moved, and: 1 the answer was judged
                            // correct, 2 it was not (Broken, or judged wrong); 3: the same after a move
@@ -149,6 +150,7 @@ struct Tally {
     long picksUnjudged = 0;                  // blend picks the oracle could not vouch for (not in n)
     long repairedUsable = 0;                 // Repaired answers that claimed to be usable (must stay 0)
     long noAnchor = 0;                       // references whose continuation the oracle cannot tell (any answer)
+    long crossings = 0, crossingsAtSeam = 0; // references whose E the sliding-crossing rule told (any answer)
     long accepted = 0, acceptedReviewed = 0; // new-territory acceptances, and of them those on the reviewed list
     long conflicts = 0;                      // the one congruent-in-place element is not E, nothing moved, and the
                         // answer was judged correct (gated: oracle and resolver may share an error)

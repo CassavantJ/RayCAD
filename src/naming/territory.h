@@ -91,16 +91,27 @@ std::optional<Box3> elementBox(const kernel::Shape& shape, kernel::SubId sub);
 
 // ---------------------------------------------------------------- the resolver's evidence rules (naming.h TopoRef)
 // The Exact stage's answer `element` against the reference's evidence; nullopt when the evidence does not object (or
-// there is none, or the element is unchanged: its fingerprint matches the hint). Otherwise:
+// there is none, or the element is unchanged: its fingerprint matches the hint). Otherwise, the first that applies:
 //  - the element covers a point of a recorded neighbour's territory: Merged when it also still covers a point of the
 //    picked element's own territory (it took the neighbour in), else Broken (it lies over the neighbour's place and
 //    not where it was picked); a vertex is never Merged;
+//  - (holdout4) the element (a face or edge) still covers some of its own territory, and a point of that territory it
+//    no longer covers lies on another element of the same kind on the same carrier (`territories`: plane on the same
+//    side, cylinder, line, circle): part of what was picked is that element's now: Broken. Otherwise, covering some of
+//    its own territory, it is not objected to;
+//  - (holdout4) the element (a face or edge) covers none of its own territory, no recorded neighbour touched it at
+//    pick time (boxes within the extent tolerance; a neighbour without a known box counts as touching), and it now
+//    shares a vertex (an edge) or an edge (a face) with another element of its kind on the same carrier, an edge also
+//    with each of that one's faces equal to or on the carrier of one of its own: it runs on into that element with
+//    nothing between them: Broken;
 //  - the element covers none of its own territory (it moved, or what was picked of it is gone), grew, and every name of
 //    a recorded sibling is gone from the map: the pieces may have joined where it is now: Merged (not a vertex);
 //  - the element covers none of its own territory and a recorded sibling's names lead to one element now whose shift
 //    since the pick (box centre to box centre) differs from the element's by more than the tolerance: the pieces did
 //    not move together, and which is which cannot be told: Broken.
-std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel::Shape& shape, kernel::SubId element,
+// A reference without evidence (an older document) skips all of these.
+std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel::Shape& shape,
+                                             const TerritoryCache& territories, kernel::SubId element,
                                              const TopoRef& ref);
 // May `pieces` be answered Split against the reference's evidence? No (with the reason) when together they do not fit
 // in the picked element's box, translated (a split adds no territory, a move keeps the size), or one of them covers a

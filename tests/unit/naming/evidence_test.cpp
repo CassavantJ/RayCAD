@@ -369,6 +369,167 @@ TEST_CASE("Siblings that no longer lie as they did when picked cannot be told ap
     CHECK(resolverFor(pocketed(40, 65, 10))->resolve(ref).state == ResolveState::Exact);
 }
 
+namespace {
+
+// A block 100 x 60 x 20 with a slot 5 deep across its top, x x0..x0+10 (all of y): the top face in two pieces, each
+// named apart by the slot wall beside it.
+Body slotted(double x0)
+{
+    const Body b = extrude(kBlock, 0, rectangle(0, 0, 100, 60, 1, 1), 20);
+    return boolean(b, kPocket, kernel::BoolOp::Cut, 20, rectangle(x0, -1, x0 + 10, 61, 21, 3), -5);
+}
+
+} // namespace
+
+TEST_CASE("An Exact answer part of whose picked territory is now another element on its surface is Broken",
+          "[naming][evidence]")
+{
+    // The top face piece right of the slot (x 50..100) is picked. The slot then moves 22 mm right, past its own width:
+    // the right piece keeps its name (it is still the piece beside the slot's right wall) and shrinks to x 72..100,
+    // while the left piece grows over x 50..62, which was the picked piece's. Names alone say Exact (T-081a holdout4
+    // 9:9); whether the left piece now continues the pick cannot be told, so the answer is Broken.
+    const Body picked = slotted(40);
+    const auto right = faceAt(picked.shape, Vec3{80, 30, 20}, Vec3{0, 0, 1});
+    REQUIRE(right);
+    const TopoRef ref = resolverFor(picked)->makeRef(kBody, *right);
+    REQUIRE(ref.territory.known());
+    std::size_t inStrip = 0;
+    for (const auto& q : ref.territory.points) {
+        const Vec3 p = naming::detail::fromQuanta(q);
+        inStrip += p.x > 50 && p.x < 62 ? 1 : 0;
+    }
+    REQUIRE(inStrip > 0);
+    REQUIRE(inStrip < ref.territory.points.size());
+
+    const Body moved = slotted(62);
+    const auto movedRight = faceAt(moved.shape, Vec3{85, 30, 20}, Vec3{0, 0, 1});
+    const auto movedLeft = faceAt(moved.shape, Vec3{55, 30, 20}, Vec3{0, 0, 1});
+    REQUIRE(movedRight);
+    REQUIRE(movedLeft);
+    REQUIRE(*movedRight != *movedLeft);
+    // By its names the reference leads to the right piece: without evidence (an older document) it is Exact there.
+    const Resolved old = resolverFor(moved)->resolve(withoutEvidence(ref));
+    CHECK(old.state == ResolveState::Exact);
+    CHECK(old.elements == std::vector<SubId>{*movedRight});
+    const Resolved r = resolverFor(moved)->resolve(ref);
+    CHECK(r.state == ResolveState::Broken);
+    CHECK(r.reason.find("another element on the same surface") != std::string::npos);
+
+    // The slot moved by less than its width: the strip the right piece lost is the slot's now (air at the top), on no
+    // element; the piece only shrank, and stays Exact.
+    const Body nudged = slotted(45);
+    const auto nudgedRight = faceAt(nudged.shape, Vec3{80, 30, 20}, Vec3{0, 0, 1});
+    REQUIRE(nudgedRight);
+    const Resolved shrunk = resolverFor(nudged)->resolve(ref);
+    CHECK(shrunk.state == ResolveState::Exact);
+    CHECK(shrunk.elements == std::vector<SubId>{*nudgedRight});
+}
+
+namespace {
+
+// A block 100 x 60 x 20 at y y0..y0+60, cut through by a groove along y whose walls meet the bottom: with `apart`, a
+// trapezoid with a flat bottom below the block (x 44.5..55.5 at z 0: two solids 11 mm apart), else a V whose apex
+// is on the bottom at x 50 (two solids touching along that line). The groove's walls carry the same tags either way.
+Body grooved(double y0, bool apart)
+{
+    const Body b = extrude(kBlock, 0, rectangle(0, y0, 100, y0 + 60, 1, 1), 20);
+    // A profile in the plane y = y0 + 61, swept 62 mm towards -y: (u, v) is (x, z).
+    const kernel::Plane plane{Vec3{0, y0 + 61, 0}, Vec3{0, -1, 0}, Vec3{1, 0, 0}};
+    std::vector<kernel::ProfileCurve> curves;
+    if (apart) // the walls cross z 0 at x 44.5 and 55.5
+        curves = {line({34, 21}, {45, -1}, 31), line({45, -1}, {55, -1}, 34), line({55, -1}, {66, 21}, 32),
+                  line({66, 21}, {34, 21}, 33)};
+    else
+        curves = {line({40, 21}, {50, 0}, 31), line({50, 0}, {60, 21}, 32), line({60, 21}, {40, 21}, 33)};
+    JobContext ctx;
+    auto sweep = take(kernel::extrude(kernel::Profile{plane, {kernel::ProfileLoop{curves, 4}}}, 62, 0.0, ctx));
+    const NamingInput toolIn{kPocket, "extrude", {}, nullptr, &sweep.op.shape, sweep.origins};
+    const Body tool{sweep.op.shape, take(propagate(toolIn)).map};
+    auto result = take(kernel::boolean(kernel::BoolOp::Cut, b.shape, tool.shape, ctx));
+    const std::array<const ElementMap*, 2> maps{&b.map, &tool.map};
+    const std::array<const kernel::Shape*, 2> shapes{&b.shape, &tool.shape};
+    const NamingInput in{kPocket, "extrude", maps, &result.history, &result.shape, {}, shapes};
+    return Body{result.shape, take(propagate(in)).map};
+}
+
+// The line edge from a to b (either way round), if there is one.
+std::optional<SubId> lineEdge(const kernel::Shape& shape, Vec3 a, Vec3 b)
+{
+    auto near = [](const Vec3& p, const Vec3& q) {
+        return std::abs(p.x - q.x) < 1e-6 && std::abs(p.y - q.y) < 1e-6 && std::abs(p.z - q.z) < 1e-6;
+    };
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge); ++i) {
+        const auto c = take(kernel::curveInfo(shape, SubId{SubKind::Edge, i}));
+        if (c.type == kernel::CurveType::Line &&
+            ((near(c.start, a) && near(c.end, b)) || (near(c.start, b) && near(c.end, a))))
+            return SubId{SubKind::Edge, i};
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+TEST_CASE("An Exact answer that moved and now runs on into another element on the same surfaces is Broken",
+          "[naming][evidence]")
+{
+    // Two solids a V groove cut apart, touching along its apex on the bottom: the front bottom edge of the left one
+    // (x 0..50) and of the right one (x 50..100) lie on one line, between planes that are the same on both sides, and
+    // share the apex vertex, with nothing geometric between them (T-081a holdout4 5:9, where a sliver face did what the
+    // touching solids do here). The Exact stage's answer is the left one, and its pick-time evidence says it was picked
+    // 5 mm towards -y (it moved: it covers none of that territory) with no recorded neighbour touching it. Whether the
+    // pick now also runs on into the right one cannot be told: Broken. (Names cannot carry an edge through the edits
+    // that make such a shape, so the rule is driven directly: the resolver path is the holdout4 5:9 regression.)
+    const Body touching = grooved(5, false);
+    const auto left = lineEdge(touching.shape, Vec3{0, 5, 0}, Vec3{50, 5, 0});
+    const auto right = lineEdge(touching.shape, Vec3{50, 5, 0}, Vec3{100, 5, 0});
+    REQUIRE(left);
+    REQUIRE(right);
+    bool shared = false; // the two share the apex vertex
+    for (const SubId& v : kernel::adjacent(touching.shape, *left, SubKind::Vertex))
+        for (const SubId& e : kernel::adjacent(touching.shape, v, SubKind::Edge))
+            shared = shared || e == *right;
+    REQUIRE(shared);
+    const auto shifted = [](Territory t, std::int64_t dy) {
+        t.qMin[1] += dy;
+        t.qMax[1] += dy;
+        for (auto& p : t.points)
+            p[1] += dy;
+        return t;
+    };
+    constexpr std::int64_t kBack = -50000; // 5 mm, in quanta
+    TopoRef ref = resolverFor(touching)->makeRef(kBody, *left);
+    REQUIRE(ref.territory.known());
+    ref.territory = shifted(ref.territory, kBack);
+    ref.hint.qCy += kBack;
+    ref.pickNeighbours.clear();
+    const naming::detail::TerritoryCache cache(touching.shape);
+    const auto out = naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, ref);
+    REQUIRE(out.has_value());
+    CHECK(out->state == ResolveState::Broken);
+    CHECK(out->reason.find("runs on") != std::string::npos);
+
+    // The solids apart (a flat-bottomed groove): nothing continues the left edge, and the evidence does not object.
+    const Body apart = grooved(5, true);
+    const auto apartLeft = lineEdge(apart.shape, Vec3{0, 5, 0}, Vec3{44.5, 5, 0});
+    REQUIRE(apartLeft);
+    const naming::detail::TerritoryCache apartCache(apart.shape);
+    CHECK_FALSE(naming::detail::exactAgainstEvidence(apart.map, apart.shape, apartCache, *apartLeft, ref).has_value());
+
+    // A recorded neighbour that touched it at pick time (the line was already in stretches then): the stretch beyond
+    // the vertex may be that neighbour moved along with it, and the rule does not apply.
+    TopoRef stretches = ref;
+    PickNeighbour beyond;
+    beyond.relation = PickNeighbour::Relation::SameCarrier;
+    beyond.names = {foreignName("the stretch beyond the apex at pick time")};
+    beyond.territory = shifted(resolverFor(touching)->makeRef(kBody, *right).territory, kBack);
+    stretches.pickNeighbours.push_back(beyond);
+    CHECK_FALSE(
+        naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, stretches).has_value());
+    // Without evidence (an older document) nothing is checked.
+    CHECK_FALSE(naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, withoutEvidence(ref))
+                    .has_value());
+}
+
 TEST_CASE("With the input shapes, an input face the history reports deleted but the result absorbed lends its name",
           "[naming][evidence]")
 {

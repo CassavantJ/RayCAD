@@ -7,6 +7,8 @@
 // exactly 50 per part are judged; every replacement and every exclusion is printed by reason.
 // Gates: zero wrong-element resolutions, every answer not judged and every new-territory acceptance and congruence
 // conflict on the reviewed lists, no injectivity violation, every mutant caught, no usable Repaired, 1,000 judged.
+// A holdout block is gated the same way except for the answers not judged: at most kUnjudgedBudget, and once the
+// reviewed list has entries for the block, every one listed (checkGates).
 //
 // Seeds are fixed (part index and sequence index), the random numbers come from splitmix64 with our own
 // conversions (no std distributions, whose output differs between standard libraries), so a run is reproducible.
@@ -698,7 +700,26 @@ BlockResult runBlock(const char* title, const std::vector<Part>& parts, int perP
     return r;
 }
 
-void checkGates(const BlockResult& r, int perPart)
+// The most answers a holdout block may leave NOT JUDGED (oracle.h: no anchor). Every holdout block's first, unseen
+// run had at most 4 (holdout 1, holdout2 3, holdout3 4, holdout4 3: about 1 in 10,000 resolutions), before the
+// sliding-crossing rule judged most of them; a block with more is not passed on review entries made after the fact.
+constexpr long kUnjudgedBudget = 4;
+
+// How many entries of the reviewed list (reviewed_unjudged.txt) belong to the block whose keys start with `prefix`
+// ("holdout2 "; the tuned-on block's keys have no prefix and are not counted here).
+long listedFor(const std::string& prefix)
+{
+    long n = 0;
+    for (const auto& [key, why] : reviewedUnjudged())
+        n += key.compare(0, prefix.size(), prefix) == 0 ? 1 : 0;
+    return n;
+}
+
+// `holdoutPrefix`: empty for the block the naming code was tuned on, where every answer not judged must be on the
+// reviewed list. A holdout block (its key prefix) is first run unseen, when it cannot have reviewed entries: there
+// WRONG must be 0 and the answers not judged are printed and counted, and fail the block when there are more than
+// kUnjudgedBudget, or, once entries for the block are on the reviewed list, when one is not listed.
+void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPrefix = {})
 {
     if (std::getenv("RAYCAD_NAMING_ONLY") == nullptr) {
         CHECK(r.judged == static_cast<long>(perPart) * kPartCount);
@@ -709,7 +730,17 @@ void checkGates(const BlockResult& r, int perPart)
     CHECK(t.repairedUsable == 0);
     CHECK(t.selfCheckFailures == 0);
     CHECK(t.injectivity == 0);
-    CHECK(t.unjudged() == t.unjudgedReviewed);
+    if (holdoutPrefix.empty()) {
+        CHECK(t.unjudged() == t.unjudgedReviewed);
+    } else {
+        const long listed = listedFor(holdoutPrefix);
+        std::printf("%sblock: %ld answers not judged (budget %ld), %ld of them on the reviewed list, which lists %ld "
+                    "for this block\n",
+                    holdoutPrefix.c_str(), t.unjudged(), kUnjudgedBudget, t.unjudgedReviewed, listed);
+        CHECK(t.unjudged() <= kUnjudgedBudget);
+        if (listed > 0)
+            CHECK(t.unjudged() == t.unjudgedReviewed);
+    }
     CHECK(t.accepted == t.acceptedReviewed);
     CHECK(t.conflicts == t.conflictsReviewed);
     REQUIRE(t.wrong() == 0);
@@ -801,7 +832,7 @@ TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development
     const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Holdout", parts, kHoldoutPerPart, holdout);
     CHECK(kernel::testing::structuredExceptions() == guardBefore);
-    checkGates(r, kHoldoutPerPart);
+    checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
 TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the T-081a gate fixes",
@@ -818,7 +849,7 @@ TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the
     holdout.seedBase = 0x5EC0D000ull;
     holdout.keyPrefix = "holdout2 ";
     const BlockResult r = runBlock("Second holdout", parts, kHoldoutPerPart, holdout);
-    checkGates(r, kHoldoutPerPart);
+    checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
 TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the second holdout's findings were fixed",
@@ -835,7 +866,7 @@ TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the 
     holdout.seedBase = 0x7A11D000ull;
     holdout.keyPrefix = "holdout3 ";
     const BlockResult r = runBlock("Third holdout", parts, kHoldoutPerPart, holdout);
-    checkGates(r, kHoldoutPerPart);
+    checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
 TEST_CASE("Fourth holdout: 200 randomised sequences on seeds first run after the pick-time evidence was added",
@@ -853,7 +884,7 @@ TEST_CASE("Fourth holdout: 200 randomised sequences on seeds first run after the
     holdout.seedBase = 0x2B4D4000ull;
     holdout.keyPrefix = "holdout4 ";
     const BlockResult r = runBlock("Fourth holdout", parts, kHoldoutPerPart, holdout);
-    checkGates(r, kHoldoutPerPart);
+    checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
 // ---------------------------------------------------------------- oracle fixes on the corpus cases that showed them
@@ -866,7 +897,11 @@ struct Looked {
     Answer answer = Answer::Broken;
     std::vector<std::uint32_t> elements;
     Judgement judgement;
-    Judgement other; // the oracle's verdict on the wrong answer below
+    Judgement other;      // the oracle's verdict on the wrong answer below
+    Judgement own;        // its verdict on its own expected answer (Exact, Merged when merged, Split when several)
+    std::string crossing; // Expectation::crossing: how the sliding-crossing rule told E, if it did
+    std::string noAnchor; // Expectation::noAnchor
+    std::string reason;   // the resolver's reason
 };
 
 // Replays sequence `seq` of part `partIndex` of a block, and for the reference `id` judges also `wrong` (from its
@@ -889,7 +924,16 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, std::uint64_t seedBase
         for (const SubId& s : res.elements)
             l.elements.push_back(s.index);
         l.judgement = rr.judgement;
+        l.reason = res.reason;
         const Expectation x = expect(ref.record, now, samples);
+        l.crossing = x.crossing;
+        l.noAnchor = x.noAnchor;
+        const std::vector<std::uint32_t>& E = x.expected.elems;
+        l.own = judgeAnswer(x, ref.record, now, samples,
+                            E.size() > 1        ? Answer::Split
+                            : x.expected.merged ? Answer::Merged
+                                                : Answer::Exact,
+                            E);
         const auto [answer, elements] = wrong(x, l.elements);
         l.other = judgeAnswer(x, ref.record, now, samples, answer, elements);
         out.push_back(std::move(l));
@@ -947,4 +991,117 @@ TEST_CASE("Oracle (holdout3 16:1): where a separating cut is gone, the edge whol
     CHECK(looked[0].answer == Answer::Merged);
     CHECK(looked[0].judgement.verdict == Verdict::Correct);
     CHECK(looked[0].other.verdict == Verdict::WrongSilentMerge);
+}
+
+// ---------------------------------------------------------------- holdout4: the resolver rules and the oracle rule
+TEST_CASE("Regression (holdout4 9:9): a face piece part of whose territory the piece beyond a moved slot took is not "
+          "Exact",
+          "[naming][acceptance][t081a-gate]")
+{
+    // manifold_block_1: the slot R3 moves past the boundary of the split piece of import face I/i14 picked beside it,
+    // and the piece on the slot's far side takes a strip of what was picked. Names say Exact on the picked piece; the
+    // oracle expects both pieces (merged). The pick-time territory shows a point of the picked piece on the other
+    // piece now (exactAgainstEvidence): not Exact. Negative: Exact on the picked piece alone is incomplete.
+    const std::string id = "holdout4 raycad-synthetic/manifold_block_1.stp #9|face 33";
+    const std::vector<Looked> looked = replayAndLook(
+        9, 9, 0x2B4D4000ull, "holdout4 ", {id}, [](const Expectation& x, const std::vector<std::uint32_t>&) {
+            const std::vector<std::uint32_t>& E = x.expected.elems;
+            return std::make_pair(Answer::Exact, std::vector<std::uint32_t>(E.end() - 1, E.end()));
+        });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].reason);
+    CHECK(looked[0].answer == Answer::Broken);
+    CHECK_FALSE(isWrong(looked[0].judgement.verdict));
+    CHECK(looked[0].other.verdict == Verdict::WrongIncomplete);
+}
+
+TEST_CASE("Regression (holdout4 5:9): an edge that moved and runs on into another edge on the same surfaces is not "
+          "Exact",
+          "[naming][acceptance][t081a-gate]")
+{
+    // fixture_plate_1: the cut R4 moved by its width puts its wall on the plane of cut R5's start face (a sliver face
+    // between them keeps them apart), and the edge where that wall meets the bottom runs on past a vertex as the edge
+    // of R5's start face. Names say Exact on the first stretch; the oracle expects both. Not Exact
+    // (exactAgainstEvidence: the moved answer runs on into an element on the same line and planes). Negative: Exact on
+    // the first stretch alone is incomplete.
+    const std::string id = "holdout4 raycad-synthetic/fixture_plate_1.stp #9|edge 156";
+    const std::vector<Looked> looked = replayAndLook(
+        5, 9, 0x2B4D4000ull, "holdout4 ", {id}, [](const Expectation& x, const std::vector<std::uint32_t>&) {
+            const std::vector<std::uint32_t>& E = x.expected.elems;
+            return std::make_pair(Answer::Exact, std::vector<std::uint32_t>(E.begin(), E.begin() + 1));
+        });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].reason);
+    CHECK(looked[0].answer == Answer::Broken);
+    CHECK_FALSE(isWrong(looked[0].judgement.verdict));
+    CHECK(looked[0].other.verdict == Verdict::WrongIncomplete);
+}
+
+TEST_CASE("Oracle (holdout4 4:1): where a moved hole's seam meets a face, the one seam vertex continues the pick",
+          "[naming][acceptance][oracle-gate]")
+{
+    // fillet_block_1: the hole R5 (slanted to the top face I/i1) moves by its width. Its seam meets the top face in one
+    // vertex (on only those two faces) before and after; the map moves the picked vertex with the hole and projects it
+    // onto the edited carriers, 1.3 mm from where the seam now meets the face (the vertex slides along the rim), nearer
+    // to where the hole's other vertices on the top face at pick time (where its rim crossed the front face, gone now)
+    // map to. The sliding-crossing rule (a) takes the one seam vertex. Negative: another vertex is wrong.
+    const std::string id = "holdout4 raycad-synthetic/fillet_block_1.stp #1|vertex 15";
+    const std::vector<Looked> looked = replayAndLook(
+        4, 1, 0x2B4D4000ull, "holdout4 ", {id}, [](const Expectation& x, const std::vector<std::uint32_t>&) {
+            const std::uint32_t e = x.expected.elems.empty() ? 0 : x.expected.elems.front();
+            return std::make_pair(Answer::Exact, std::vector<std::uint32_t>{e == 0 ? 1u : e - 1});
+        });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].crossing << looked[0].noAnchor);
+    CHECK(looked[0].crossing.compare(0, 5, "seam:") == 0);
+    CHECK(looked[0].answer == Answer::Exact);
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    CHECK(isWrong(looked[0].other.verdict));
+}
+
+TEST_CASE("Oracle (holdout2 18:4): where a resized hole's wall crosses a face in two short arcs, each continues the "
+          "one whose mapped place is clearly nearest",
+          "[naming][acceptance][oracle-gate]")
+{
+    // 827-9999-905: the hole R4 is resized (radius x 1.32); its wall meets the import face I/i1 in two short arcs, one
+    // on each side, before and after. The map puts each picked arc 0.15 mm from its continuation, which is not overlap
+    // (the arcs slide along I/i1), so neither had an anchor. The sliding-crossing rule (b) takes, for each, the arc
+    // nearest its mapped place: the other arc, and the other picked arc's mapped place, are 1.6 mm away, over twice as
+    // far. Each expectation is judged correct as an answer; negative: each pick answered with the other arc is wrong.
+    const std::string a = "holdout2 nist-d2mi/827-9999-905.stp #4|edge 24";
+    const std::string b = "holdout2 nist-d2mi/827-9999-905.stp #4|edge 40";
+    const std::vector<Looked> looked = replayAndLook(
+        18, 4, 0x5EC0D000ull, "holdout2 ", {a, b}, [](const Expectation& x, const std::vector<std::uint32_t>&) {
+            for (const std::uint32_t e : x.strict.elems)
+                if (x.expected.elems.empty() || e != x.expected.elems.front())
+                    return std::make_pair(Answer::Exact, std::vector<std::uint32_t>{e});
+            return std::make_pair(Answer::Exact, std::vector<std::uint32_t>{});
+        });
+    REQUIRE(looked.size() == 2);
+    for (const Looked& l : looked) {
+        INFO(l.id << ": " << l.crossing << l.noAnchor);
+        CHECK(l.crossing.compare(0, 8, "nearest:") == 0);
+        CHECK(l.noAnchor.empty());
+        CHECK(l.own.verdict == Verdict::Correct);
+        CHECK(isWrong(l.other.verdict));
+    }
+}
+
+TEST_CASE("Oracle (holdout3 17:0): where another picked piece's mapped place falls on the nearest crossing, the "
+          "sliding-crossing rule does not judge",
+          "[naming][acceptance][oracle-gate]")
+{
+    // nist_ftc_11: the round cut R1 moves by its width; its wall crossed the import face I/i4 in four short pieces at
+    // pick time and crosses it in two now. The first pick's mapped place falls on one of the two, and so does another
+    // picked piece's (it is claimed); the other one is farther from the first pick than that piece's mapped place.
+    // No part is clearly the pick's: no anchor, and the resolver's answer is not judged.
+    const std::string a = "holdout3 nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #0|edge 5";
+    const std::vector<Looked> looked = replayAndLook(
+        17, 0, 0x7A11D000ull, "holdout3 ", {a},
+        [](const Expectation&, const std::vector<std::uint32_t>& got) { return std::make_pair(Answer::Merged, got); });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].crossing);
+    CHECK(looked[0].crossing.empty());
+    CHECK_FALSE(looked[0].noAnchor.empty());
+    CHECK(looked[0].judgement.verdict == Verdict::Unjudged);
 }
