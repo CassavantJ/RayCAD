@@ -452,10 +452,10 @@ QVariant FeatureTreeModel::data(const QModelIndex& index, int role) const
 
 QHash<int, QByteArray> FeatureTreeModel::roleNames() const
 {
-    return {{IdRole, "featureId"},          {NameRole, "featureName"},  {TypeRole, "featureType"},
-            {TypeTitleRole, "typeTitle"},   {IconRole, "iconName"},     {StatusRole, "status"},
-            {StatusTextRole, "statusText"}, {MessageRole, "message"},   {SuppressedRole, "suppressed"},
-            {RolledBackRole, "rolledBack"}, {IsSketchRole, "isSketch"}, {SketchShownRole, "sketchShown"},
+    return {{IdRole, "featureId"},          {NameRole, "featureName"},     {TypeRole, "featureType"},
+            {TypeTitleRole, "typeTitle"},   {IconRole, "iconName"},        {StatusRole, "status"},
+            {StatusTextRole, "statusText"}, {MessageRole, "message"},      {SuppressedRole, "suppressed"},
+            {RolledBackRole, "rolledBack"}, {IsSketchRole, "isSketch"},    {SketchShownRole, "sketchShown"},
             {IsDatumRole, "isDatum"},       {DatumShownRole, "datumShown"}};
 }
 
@@ -994,7 +994,9 @@ void FeatureTreeModel::drawDatums()
         const Vec3 c = frameCentre(p, box);
         const Vec3 x = p.xDir;
         const Vec3 y = yDirOf(p);
-        const auto at = [&](double u, double v) { return add(c, add(mul(x, u), mul(y, v))); };
+        const auto at = [&](double u, double v) {
+            return add(c, add(mul(x, u), mul(y, v)));
+        };
         const auto square = [&](double h) {
             std::vector<Vec3> segs;
             appendPolyline(segs, {at(-h, -h), at(h, -h), at(h, h), at(-h, h), at(-h, -h)});
@@ -1044,8 +1046,8 @@ bool FeatureTreeModel::pickDatumAt(qreal x, qreal y)
     auto* view = qobject_cast<ViewportItem*>(view_.data());
     if (view == nullptr || view->width() <= 0 || view->height() <= 0 || !planeWanted())
         return false;
-    const render::Ray ray = render::cameraRay(view->camera(), x, y, static_cast<int>(view->width()),
-                                              static_cast<int>(view->height()));
+    const render::Ray ray =
+        render::cameraRay(view->camera(), x, y, static_cast<int>(view->width()), static_cast<int>(view->height()));
     const std::optional<FeatureId> datum = datumAt(ray);
     if (!datum)
         return false;

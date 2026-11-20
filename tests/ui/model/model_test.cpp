@@ -1078,8 +1078,10 @@ TEST_CASE("editing a fillet picks in the model before it: its edges are selected
 
     // e2 keeps its stored reference as it was; e3's is new. The view shows the document's build again.
     const doc::Feature& edited = w.document()->state()->features.back();
-    const QJsonArray edges =
-        QJsonDocument::fromJson(QByteArray::fromStdString(edited.propsJson)).object().value(QStringLiteral("edges")).toArray();
+    const QJsonArray edges = QJsonDocument::fromJson(QByteArray::fromStdString(edited.propsJson))
+                                 .object()
+                                 .value(QStringLiteral("edges"))
+                                 .toArray();
     REQUIRE(edges.size() == 2);
     CHECK(edges.at(0) == storedEdges.at(1));
     CHECK(edges.at(1) != storedEdges.at(0));
@@ -1095,11 +1097,11 @@ TEST_CASE("editing a fillet picks in the model before it: its edges are selected
     w.settle();
     CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4));
     {
-        const QJsonArray back = QJsonDocument::fromJson(
-                                    QByteArray::fromStdString(w.document()->state()->features.back().propsJson))
-                                    .object()
-                                    .value(QStringLiteral("edges"))
-                                    .toArray();
+        const QJsonArray back =
+            QJsonDocument::fromJson(QByteArray::fromStdString(w.document()->state()->features.back().propsJson))
+                .object()
+                .value(QStringLiteral("edges"))
+                .toArray();
         CHECK(back == storedEdges);
     }
     w.checkNoWarnings();
@@ -1122,8 +1124,12 @@ TEST_CASE("datum planes are drawn in the view, hidden by their eye, and picked w
     REQUIRE(w.document()->state()->features.back().type == "datum_plane");
     const QString base = QStringLiteral("datum:") + QString::fromStdString(datum.value.toString());
     const QString frame = base + QStringLiteral(":frame");
-    const auto drawn = [&] { return !w.tree()->busy() && w.tree()->datumLines().has(frame); };
-    const auto gone = [&] { return !w.tree()->busy() && !w.tree()->datumLines().has(frame); };
+    const auto drawn = [&] {
+        return !w.tree()->busy() && w.tree()->datumLines().has(frame);
+    };
+    const auto gone = [&] {
+        return !w.tree()->busy() && !w.tree()->datumLines().has(frame);
+    };
     REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
     CHECK(w.tree()->datumLines().has(base + QStringLiteral(":inner")));
     CHECK(w.tree()->datumLines().has(base + QStringLiteral(":normal")));
@@ -1143,8 +1149,8 @@ TEST_CASE("datum planes are drawn in the view, hidden by their eye, and picked w
 
     // Its eye in the tree hides it and shows it again.
     QQuickItem* eye = nullptr;
-    REQUIRE(QTest::qWaitFor([&] { return (eye = w.find(QStringLiteral("datumVisibility.%1").arg(row))) && eye->isVisible(); },
-                            5000));
+    REQUIRE(QTest::qWaitFor(
+        [&] { return (eye = w.find(QStringLiteral("datumVisibility.%1").arg(row))) && eye->isVisible(); }, 5000));
     w.click(eye);
     REQUIRE(QTest::qWaitFor(gone, kTimeoutMs));
     CHECK(!w.tree()->get(row).value(QStringLiteral("datumShown")).toBool());
@@ -1173,8 +1179,7 @@ TEST_CASE("datum planes are drawn in the view, hidden by their eye, and picked w
     REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
     CHECK(w.tree()->planeWanted());
     w.clickScene(w.sceneOf(onDatum));
-    REQUIRE(QTest::qWaitFor([&] { return w.tool()->values().value(QStringLiteral("base")).toString() == base; },
-                            5000));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->values().value(QStringLiteral("base")).toString() == base; }, 5000));
     w.tool()->cancel();
 
     // The sketch mode's plane picker: a click on the datum puts the new sketch on it.

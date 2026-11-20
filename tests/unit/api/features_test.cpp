@@ -164,17 +164,17 @@ TEST_CASE("a part made through actions (sketch, extrude, fillet by model.referen
         // The model before the fillet (what its edit mode picks in): the edge has the index it had, and the reference
         // made there is the fillet's own. A feature that is not there is NotFound.
         {
-            const auto before = json::parse(
-                invoke(*app, "model.reference",
-                       R"({"body":")" + body + R"(","kind":"edge","index":)" + std::to_string(edge) +
-                           R"(,"before":")" + id('f', 3) + R"("})"));
+            const auto before = json::parse(invoke(*app, "model.reference",
+                                                   R"({"body":")" + body + R"(","kind":"edge","index":)" +
+                                                       std::to_string(edge) + R"(,"before":")" + id('f', 3) + R"("})"));
             REQUIRE(before);
             const json::Value* again = before->find("ref");
             REQUIRE(again != nullptr);
             CHECK(json::write(*again) == json::write(*ref));
             auto missing = app->wait(app->actions().invoke("model.reference",
-                                                           R"({"body":")" + body + R"(","kind":"edge","index":0,)"
-                                                                                   R"("before":")" +
+                                                           R"({"body":")" + body +
+                                                               R"(","kind":"edge","index":0,)"
+                                                               R"("before":")" +
                                                                id('f', 9) + R"("})",
                                                            Caller::User),
                                      kWait);
@@ -449,8 +449,8 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
         auto a = app->actions().invoke("sketch.constraint.set", widthArgs(29), Caller::User);
         auto b = app->actions().invoke("sketch.constraint.set", widthArgs(30), Caller::User);
         auto c = app->actions().invoke("sketch.constraint.set", widthArgs(31), Caller::User);
-        auto d = app->actions().invoke("feature.edit", R"({"id":")" + id('f', 1) + R"(","name":"Meander"})",
-                                       Caller::User);
+        auto d =
+            app->actions().invoke("feature.edit", R"({"id":")" + id('f', 1) + R"(","name":"Meander"})", Caller::User);
         // b waits behind a (still solving): its cancel completes it now, without a worker or a UI turn.
         b.cancel();
         CHECK(b.done());
@@ -508,9 +508,8 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
         REQUIRE(second != od);
         // The slow edit on the first document, by id; a quick one on the active (second) one, which is not queued
         // behind it.
-        auto slow = app->actions().invoke("sketch.constraint.set",
-                                          R"({"document":")" + od->id + R"(",)" + widthArgs(33).substr(1),
-                                          Caller::User);
+        auto slow = app->actions().invoke(
+            "sketch.constraint.set", R"({"document":")" + od->id + R"(",)" + widthArgs(33).substr(1), Caller::User);
         auto quick = app->actions().invoke(
             "param.set", R"({"id":")" + id('a', 1) + R"(","name":"w","expression":"5 mm","kind":"length"})",
             Caller::User);

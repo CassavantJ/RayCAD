@@ -1262,8 +1262,8 @@ void FeatureToolModel::selectStored()
         render::PickHit hit{item, s.kind, s.index, Vec3{}, 0};
         // Where it was "picked": the middle of the element (the radius handle stands there).
         if (const auto box = scene_->boundsOf(std::span<const render::PickHit>(&hit, 1)))
-            hit.point = Vec3{(box->min.x + box->max.x) / 2, (box->min.y + box->max.y) / 2,
-                             (box->min.z + box->max.z) / 2};
+            hit.point =
+                Vec3{(box->min.x + box->max.x) / 2, (box->min.y + box->max.y) / 2, (box->min.z + box->max.z) / 2};
         hits.push_back(hit);
     }
     selectStored_ = false;

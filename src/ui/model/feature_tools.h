@@ -291,15 +291,15 @@ private:
         std::uint32_t index = 0;
         int stored = 0; // index into storedRefs_
     };
-    doc::DocStatePtr baseState_;     // feature_edit::stateBefore of baseFrom_
-    doc::DocStatePtr baseFrom_;      // the document state it was made from
-    doc::BuildResultPtr baseBuild_;  // its build; null until built
+    doc::DocStatePtr baseState_;    // feature_edit::stateBefore of baseFrom_
+    doc::DocStatePtr baseFrom_;     // the document state it was made from
+    doc::BuildResultPtr baseBuild_; // its build; null until built
     std::uint64_t baseSerial_ = 0;
     bool baseBusy_ = false;
-    QJsonArray storedRefs_;          // the feature's own references (fillet / chamfer edges, a datum plane's face)
-    std::vector<StoredPick> located_; // where they are in the base (every piece of a split one)
-    std::vector<bool> storedFound_;   // per stored reference: found in the base
-    bool selectStored_ = false;       // the found ones are still to be selected (the base's meshes are on the way)
+    QJsonArray storedRefs_;             // the feature's own references (fillet / chamfer edges, a datum plane's face)
+    std::vector<StoredPick> located_;   // where they are in the base (every piece of a split one)
+    std::vector<bool> storedFound_;     // per stored reference: found in the base
+    bool selectStored_ = false;         // the found ones are still to be selected (the base's meshes are on the way)
     doc::DocStatePtr lastPreviewState_; // shown again against the base when it arrives
     doc::BuildResultPtr lastPreviewBuild_;
 

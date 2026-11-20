@@ -132,8 +132,9 @@ public:
         // Ordered actions go on their document's lane, which is fixed now (with "document" filled in when the
         // arguments leave it to the active document).
         const std::string lane = order != ActionOrder::Free ? laneOf(*entry, args) : std::string();
-        std::function<Result<ActionResult>(JobContext&)> work =
-            [app, entry, id = std::string(id), args = std::move(args), caller](JobContext& ctx) -> Result<ActionResult> {
+        std::function<Result<ActionResult>(JobContext&)> work = [app, entry, id = std::string(id),
+                                                                 args = std::move(args),
+                                                                 caller](JobContext& ctx) -> Result<ActionResult> {
             if (!entry) {
                 return fail(ErrorCode::NotFound, "There is no action named '" + id + "'");
             }
@@ -203,12 +204,11 @@ private:
             return;
         }
         l.running = true;
-        l.runner = app_.runJob<std::monostate>(
-            JobInfo{"Document commands", JobPriority::Interactive, false},
-            [this, lane](JobContext&) -> Result<std::monostate> {
-                drain(lane);
-                return std::monostate{};
-            });
+        l.runner = app_.runJob<std::monostate>(JobInfo{"Document commands", JobPriority::Interactive, false},
+                                               [this, lane](JobContext&) -> Result<std::monostate> {
+                                                   drain(lane);
+                                                   return std::monostate{};
+                                               });
     }
 
     // The runner: the lane's entries one at a time, in order, on this worker, until the lane is empty. It ignores its
