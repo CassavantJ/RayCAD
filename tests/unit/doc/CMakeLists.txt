@@ -11,6 +11,7 @@ add_executable(ray_doc_tests
     parametric_test.cpp
     rebuild_document_test.cpp
     rebuild_import_test.cpp
+    rebuild_reuse_test.cpp
     rebuild_test.cpp
     sketch_stability_test.cpp
     sketch_tool_commands_test.cpp
