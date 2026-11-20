@@ -46,6 +46,14 @@ namespace {
 // (upstream's literal).
 constexpr double kGroupTolerance = 1e-10;
 
+// A column of the sparse QR is dependent when its remaining norm is at most this times the largest column norm.
+// Upstream sets 1e-13 only after compute(), which does not refactor, so SparseQR's default applies there
+// (20 (m + n) eps times the largest norm, about 7e-12 at 1700 rows and columns). A QR without column pivoting
+// accumulates more error than the dense full-pivot one: a redundant horizontal on a 300-unknown grid left a residual
+// above that default in a Linux Clang build and was taken for an independent row. Rows whose residual is this small
+// are dependent for any sketch dimension in millimetres; whether they hold is then decided by the redundancy solve.
+constexpr double kSparseRankTolerance = 1e-10;
+
 Error cancelledError()
 {
     return Error{ErrorCode::Cancelled, "Sketch solve cancelled", {"sketch solver"}};
@@ -124,8 +132,8 @@ Eigen::SparseMatrix<double> sortedR(const Eigen::SparseMatrix<double>& r)
 }
 
 // Rank and dependent groups of one component's transposed Jacobian, its columns already in band order (colOf[k]: the
-// component column at position k), by SparseQR as System::makeSparseQRDecomposition does it: its default pivot
-// threshold (upstream sets its own only after compute(), which does not refactor). Upstream's elimination over the
+// component column at position k), by SparseQR as System::makeSparseQRDecomposition does it, but with
+// kSparseRankTolerance as its pivot threshold. Upstream's elimination over the
 // pivots turns a dependent column R(:, j) into D R11^-1 R(:rank, j) (D the diagonal of R11): here one sparse triangular
 // solve per dependent row, R kept sparse.
 void sparseDecompose(Component& c, const Eigen::SparseMatrix<double>& JG, const std::vector<int>& colOf,
@@ -133,6 +141,11 @@ void sparseDecompose(Component& c, const Eigen::SparseMatrix<double>& JG, const 
 {
     ++solverCounters().sparseDiagnoses;
     Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::NaturalOrdering<int>> qr;
+    double maxNorm = 0;
+    for (Eigen::Index j = 0; j < JG.cols(); ++j) {
+        maxNorm = std::max(maxNorm, JG.col(j).norm());
+    }
+    qr.setPivotThreshold(kSparseRankTolerance * (maxNorm > 0 ? maxNorm : 1.0));
     qr.compute(JG);
     c.rank = static_cast<int>(qr.rank());
     const int rc = static_cast<int>(JG.cols());
