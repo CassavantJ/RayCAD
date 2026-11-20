@@ -43,6 +43,10 @@
       "description": "Feature object hashes in rebuild order.",
       "items": { "$ref": "#/$defs/hash" }
     },
+    "rollback": {
+      "$ref": "#/$defs/uuid",
+      "description": "The rollback bar: the id of the last feature that is built; later features are kept but not built, and new features go in after it. Absent: the whole history. Never the last feature's id."
+    },
     "bodies": {
       "type": "array",
       "items": {

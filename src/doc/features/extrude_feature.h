@@ -2,8 +2,15 @@
 //
 // Props: {"sketch": "<sketch feature id>",
 //         "regions"?: [["<entity id>", ...], ...],   regions to sweep; all closed regions of the sketch when absent
-//         "distance": <length>, "direction"?: "normal" | "reverse", "symmetric"?: false, "draft"?: <angle, 0>,
-//         "operation": "new" | "join" | "cut" | "intersect", "target": "<body id>"}
+//         "extent"?: "distance" | "through_all",     "distance" when absent (every feature made before it existed)
+//         "distance": <length> (not with through_all), "direction"?: "normal" | "reverse", "symmetric"?: false,
+//         "draft"?: <angle, 0>, "operation": "new" | "join" | "cut" | "intersect", "target": "<body id>"}
+//
+// THROUGH ALL. The extent is stored, not a length: every rebuild works out the length from the target body as it is
+// just before the feature (its bounding box along the sketch normal, plus a margin), so the cut or join still goes
+// through after the body grows upstream. One side ("direction"), or both sides of the sketch when "symmetric".
+// It needs a target body, so it is refused for "new". A RayCAD from before "extent" ignores the key and fails the
+// feature for its missing distance, rather than building it blind.
 //
 // REGIONS. A region is picked by the sketch entities that bound its outer loop (the UI stores all of them). On rebuild
 // each stored list picks the region whose outer loop shares the most entities with it; a tie or no shared entity fails

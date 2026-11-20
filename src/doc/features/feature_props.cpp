@@ -2,6 +2,7 @@
 #include "feature_props.h"
 
 #include "../commands/args.h"
+#include "../document_impl.h"
 
 #include <ray/naming.h>
 
@@ -680,9 +681,10 @@ private:
         }
         feature.propsJson = **props;
         feature.suppressed = suppressed->value_or(false);
-        const std::size_t at = index->value_or(before.features.size());
+        // Without an index: right after the rollback bar (which moves past it), or at the end.
+        const std::size_t at = index->value_or(doc::detail::defaultInsertIndex(before));
         auto next = std::make_shared<DocState>(before);
-        next->features.insert(next->features.begin() + static_cast<std::ptrdiff_t>(at), feature);
+        doc::detail::insertFeature(*next, at, feature);
         if (auto ok = type->validate(*next, at, feature); !ok) {
             return tl::unexpected(ok.error());
         }

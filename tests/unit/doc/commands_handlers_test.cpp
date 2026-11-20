@@ -76,6 +76,7 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.reorder",
                                                         "feature.revolve.add",
                                                         "feature.revolve.edit",
+                                                        "feature.rollback",
                                                         "feature.sketch.add",
                                                         "feature.sketch.edit",
                                                         "feature.suppress",

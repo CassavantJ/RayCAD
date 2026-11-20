@@ -24,6 +24,7 @@
 // occur in the string values of its props, not on every parameter.
 #include "rebuild.h"
 
+#include "document_impl.h"
 #include "json.h"
 
 #include <ray/naming.h>
@@ -432,13 +433,23 @@ private:
         auto result = std::make_shared<BuildResult>();
         const std::size_t count = state->features.size();
         const double weight = count == 0 ? 1.0 : 1.0 / static_cast<double>(count);
+        // The rollback bar: features after it are kept but not built (the model as it was after the bar's feature).
+        const std::optional<std::size_t> bar = detail::rollbackIndex(*state);
 
-        for (const Feature& feature : state->features) {
+        for (std::size_t position = 0; position < count; ++position) {
+            const Feature& feature = state->features[position];
             if (auto cancelled = ctx.cancel.check(); !cancelled) {
                 return tl::unexpected(cancelled.error());
             }
             JobContext featureCtx{ctx.cancel, ctx.progress.sub(weight)};
             FeatureReport report{feature.id, FeatureStatus::Ok, {}, 0.0, false};
+            if (bar && position > *bar) {
+                report.status = FeatureStatus::NotBuilt;
+                report.message = "Rolled back: it comes after the rollback bar.";
+                result->reports.push_back(std::move(report));
+                featureCtx.progress.set(1.0);
+                continue;
+            }
             if (feature.suppressed) {
                 report.status = FeatureStatus::Suppressed;
                 result->reports.push_back(std::move(report));

@@ -143,6 +143,10 @@ std::string describeDocumentJson(const doc::DocState& state, const doc::BuildRes
             features.push(std::move(item));
         }
         root.set("features", std::move(features));
+        // The rollback bar (only while it is set, so documents that never used it describe as before).
+        if (state.rollback) {
+            root.set("rollback", Value::string(state.rollback->value.toString()));
+        }
 
         Value bodies = Value::array();
         std::set<BodyId> listed;

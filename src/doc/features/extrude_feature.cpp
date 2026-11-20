@@ -23,21 +23,33 @@ namespace {
 
 const std::string& schema()
 {
-    static const std::string text = objectSchema(
-        R"("sketch","distance","operation","target")",
-        R"("sketch":)" + uuidSchema() + R"(,"regions":)" + regionsSchema() + R"(,"distance":)" +
-            lengthSchema("Extrusion length") +
-            R"(,"direction":{"enum":["normal","reverse"],"default":"normal","description":"Along the sketch normal or )"
-            R"(against it"},"symmetric":{"type":"boolean","default":false,"description":"Half the distance to each )"
-            R"(side of the sketch"},"draft":)" +
-            angleSchema("Draft angle; positive tapers inwards; default 0") + R"(,"operation":)" + operationSchema() +
-            R"(,"target":)" + uuidSchema());
+    static const std::string text = [] {
+        std::string s = objectSchema(
+            R"("sketch","operation","target")",
+            R"("sketch":)" + uuidSchema() + R"(,"regions":)" + regionsSchema() +
+                R"(,"extent":{"enum":["distance",)"
+                R"("through_all"],"default":"distance","description":"distance: as long as 'distance'; through_all: )"
+                R"(through the whole target body, worked out again at every rebuild; cut, join and intersect only"},)"
+                R"("distance":)" +
+                lengthSchema("Extrusion length, for the extent distance") +
+                R"(,"direction":{"enum":["normal","reverse"],"default":"normal","description":"Along the sketch )"
+                R"(normal or against it"},"symmetric":{"type":"boolean","default":false,"description":"Half the )"
+                R"(distance to each side of the sketch; through_all: through the body on both sides"},"draft":)" +
+                angleSchema("Draft angle; positive tapers inwards; default 0") + R"(,"operation":)" +
+                operationSchema() + R"(,"target":)" + uuidSchema());
+        // 'distance' is required unless the extent is through_all.
+        s.pop_back();
+        s += R"(,"anyOf":[{"required":["distance"]},{"required":["extent"],"properties":{"extent":)"
+             R"({"const":"through_all"}}}]})";
+        return s;
+    }();
     return text;
 }
 
 struct ExtrudeProps {
     SweepCommon common;
-    Value distance;
+    bool throughAll = false; // "extent": "through_all"
+    Value distance;          // unused when throughAll
     bool reverse = false;
     bool symmetric = false;
     Value draft;
@@ -52,8 +64,8 @@ Result<ExtrudeProps> parse(const Feature& f, bool strict)
     }
     const PropsReader r(where, *root);
     if (strict) {
-        if (auto ok =
-                r.onlyKeys({"direction", "distance", "draft", "operation", "regions", "sketch", "symmetric", "target"});
+        if (auto ok = r.onlyKeys(
+                {"direction", "distance", "draft", "extent", "operation", "regions", "sketch", "symmetric", "target"});
             !ok) {
             return tl::unexpected(ok.error());
         }
@@ -64,7 +76,14 @@ Result<ExtrudeProps> parse(const Feature& f, bool strict)
         return tl::unexpected(common.error());
     }
     out.common = std::move(*common);
-    auto distance = r.numeric("distance", "distance");
+    // A feature without "extent" (every one made before it existed) is a distance extrude.
+    auto extent = r.choice("extent", "extent", {"distance", "through_all"}, "distance");
+    if (!extent) {
+        return tl::unexpected(extent.error());
+    }
+    out.throughAll = *extent == "through_all";
+    auto distance =
+        out.throughAll ? r.numeric("distance", "distance", Value::number(0.0)) : r.numeric("distance", "distance");
     auto direction = r.choice("direction", "direction", {"normal", "reverse"}, "normal");
     auto symmetric = r.optBool("symmetric", "symmetric", false);
     auto draft = r.numeric("draft", "draft", Value::number(0.0));
@@ -84,6 +103,57 @@ Result<ExtrudeProps> parse(const Feature& f, bool strict)
 std::string kernelMessage(const std::string& where, const Error& e)
 {
     return where + ": " + e.message;
+}
+
+// A through-all extrude: where the profile starts along the sketch normal (an offset from the sketch plane) and the
+// signed length that takes it through every part of the target body on the chosen side (both sides when
+// symmetric), from the body's bounding box as it is before this feature. A cut or intersect goes a margin past it so
+// it leaves no skin; a join ends at the box, so it adds nothing beyond the body.
+Result<std::pair<double, double>> throughAllSpan(const Feature& f, RebuildContext& ctx, const BodyId& target,
+                                                 const kernel::Plane& plane, bool bothSides, bool reverse, bool join)
+{
+    const std::string where = featureLabel(f);
+    auto shape = ctx.shapeOf(target);
+    if (!shape) {
+        return failed(shape.error().code,
+                      where + ": the body it goes through is not available: " + shape.error().message);
+    }
+    const std::optional<Vec3> normal = vunit(plane.normal);
+    if (!normal) {
+        return failed(ErrorCode::Internal, where + ": the sketch plane has no normal.");
+    }
+    const Box3 box = kernel::bounds(*shape);
+    double lo = 0, hi = 0;
+    bool first = true;
+    for (int corner = 0; corner < 8; ++corner) {
+        const Vec3 p{(corner & 1) ? box.max.x : box.min.x, (corner & 2) ? box.max.y : box.min.y,
+                     (corner & 4) ? box.max.z : box.min.z};
+        const double d = vdot(vsub(p, plane.origin), *normal);
+        lo = first ? d : std::min(lo, d);
+        hi = first ? d : std::max(hi, d);
+        first = false;
+    }
+    const double size = vnorm(vsub(box.max, box.min));
+    if (!(size > 0) || !std::isfinite(size)) {
+        return invalid(where + ": the body it goes through is empty.");
+    }
+    const double margin = join ? 0.0 : 1.0 + 0.01 * size; // mm past the body
+    constexpr double kTiny = 1e-7;
+    if (bothSides) {
+        const double from = std::min(lo, 0.0) - margin;
+        const double to = std::max(hi, 0.0) + margin;
+        return std::pair<double, double>(from, to - from);
+    }
+    if (!reverse) {
+        if (!(hi > kTiny)) {
+            return invalid(where + ": no part of the body lies on that side of the sketch; reverse the direction.");
+        }
+        return std::pair<double, double>(0.0, std::max(hi + margin, kTiny));
+    }
+    if (!(lo < -kTiny)) {
+        return invalid(where + ": no part of the body lies on that side of the sketch; reverse the direction.");
+    }
+    return std::pair<double, double>(0.0, lo - margin);
 }
 
 class ExtrudeType final : public IFeatureType,
@@ -118,8 +188,14 @@ public:
         }
         const DocumentParams params = documentParams(state);
         const std::string where = featureLabel(f);
-        if (auto ok = checkNumeric(props->distance, params, Parameter::Kind::Length, where, "distance"); !ok) {
-            return ok;
+        if (props->throughAll && props->common.operation == "new") {
+            return invalid(where + ": 'extent' through_all goes through a body: cut, join or intersect one (a new "
+                                   "body needs a distance).");
+        }
+        if (!props->throughAll) {
+            if (auto ok = checkNumeric(props->distance, params, Parameter::Kind::Length, where, "distance"); !ok) {
+                return ok;
+            }
         }
         if (auto ok = checkNumeric(props->draft, params, Parameter::Kind::Angle, where, "draft"); !ok) {
             return ok;
@@ -135,8 +211,10 @@ public:
             if (!props) {
                 return tl::unexpected(props.error());
             }
-            auto distance =
-                evaluateNumeric(props->distance, ctx.paramValues, Parameter::Kind::Length, where, "distance");
+            auto distance = props->throughAll ? Result<double>(0.0)
+                                              : evaluateNumeric(props->distance, ctx.paramValues,
+                                                                Parameter::Kind::Length, where, "distance");
+            // (through_all: the length comes from the body below)
             if (!distance) {
                 return tl::unexpected(distance.error());
             }
@@ -144,7 +222,7 @@ public:
             if (!draft) {
                 return tl::unexpected(draft.error());
             }
-            if (!(std::abs(*distance) > 1e-7)) {
+            if (!props->throughAll && !(std::abs(*distance) > 1e-7)) {
                 return invalid(where + ": the distance must not be zero.");
             }
             const Feature* sketchFeature = nullptr;
@@ -158,7 +236,16 @@ public:
             }
             kernel::Plane plane = (*artifact)->plane;
             double signedDistance = props->reverse ? -*distance : *distance;
-            if (props->symmetric) {
+            if (props->throughAll) {
+                // Through the whole target as it is now, so it stays through-all after edits upstream.
+                auto span = throughAllSpan(f, ctx, props->common.target, plane, props->symmetric, props->reverse,
+                                           props->common.operation == "join");
+                if (!span) {
+                    return tl::unexpected(span.error());
+                }
+                plane.origin = vadd(plane.origin, vmul(plane.normal, span->first));
+                signedDistance = span->second;
+            } else if (props->symmetric) {
                 const double full = std::abs(*distance);
                 plane.origin = vsub(plane.origin, vmul(plane.normal, full / 2));
                 signedDistance = full;

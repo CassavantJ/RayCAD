@@ -69,6 +69,7 @@ TEST_CASE("an extrude of a sketched rectangle makes a block named from the sketc
     block(m);
     const BuildResultPtr build = m.build();
     CHECK(report(*build, 2).status == FeatureStatus::Ok);
+    INFO(report(*build, 3).message);
     REQUIRE(report(*build, 3).status == FeatureStatus::Ok);
     CHECK(volumeOf(*build, 'b') == Catch::Approx(8000.0).epsilon(1e-12));
     const BuiltBody& body = bodyOf(*build, 'b');
@@ -196,6 +197,125 @@ TEST_CASE("join, cut, intersect, reverse, symmetric and draft extrudes have the 
         CHECK(volumeOf(*build, 'b') == Catch::Approx(8000.0).epsilon(1e-12));
         CHECK(m.state->bodies.size() == 2);
     }
+}
+
+TEST_CASE("through-all extrudes go through the body as it is at every rebuild", "[doc][parametric][throughall]")
+{
+    Model m;
+    block(m); // 40 x 20 x 10 from the origin
+    const auto through = [](std::uint64_t sketch, const std::string& operation, const std::string& extra = {}) {
+        return R"({"sketch":")" + uuid('f', sketch) + R"(","extent":"through_all","operation":")" + operation +
+               R"(","target":")" + uuid('b', 1) + "\"" + extra + "}";
+    };
+    SECTION("a cut from the bottom goes through, and still does after the block is made taller")
+    {
+        m.run(addFeature("sketch", 5, sketchProps(kXY, SketchJson().rect(1, 5, 5, 15, 15))));
+        m.run(addFeature("extrude", 6, through(5, "cut")));
+        // Stored as the extent, never as a length.
+        const std::string props = m.state->features.back().propsJson;
+        CHECK(props.find("\"extent\":\"through_all\"") != std::string::npos);
+        CHECK(props.find("distance") == std::string::npos);
+        BuildResultPtr build = m.build();
+        REQUIRE(report(*build, 6).status == FeatureStatus::Ok);
+        CHECK(volumeOf(*build, 'b') == Catch::Approx(8000.0 - 1000.0).epsilon(1e-9));
+        m.run(editFeature("extrude", 3, R"({"distance":"30 mm"})"));
+        build = m.build();
+        REQUIRE(report(*build, 6).status == FeatureStatus::Ok);
+        CHECK(volumeOf(*build, 'b') == Catch::Approx(24000.0 - 3000.0).epsilon(1e-9));
+        // Back to a 7 mm blind cut through the edit command: the extent goes, a distance comes.
+        m.run(editFeature("extrude", 6, R"({"extent":null,"distance":"7 mm"})"));
+        CHECK(volumeOf(*m.build(), 'b') == Catch::Approx(24000.0 - 700.0).epsilon(1e-9));
+    }
+    SECTION("the wrong side fails with a message saying to reverse it")
+    {
+        m.run(addFeature("sketch", 5, sketchProps(kXY, SketchJson().rect(1, 5, 5, 15, 15))));
+        m.run(addFeature("extrude", 6, through(5, "cut", R"(,"direction":"reverse")")));
+        const BuildResultPtr build = m.build();
+        CHECK(report(*build, 6).status == FeatureStatus::Failed);
+        CHECK(report(*build, 6).message.find("reverse the direction") != std::string::npos);
+    }
+    SECTION("both sides of a sketch in the middle of the block")
+    {
+        m.run(addFeature("datum_plane", 4, R"({"base":{"principal":"xy"},"offset":"5 mm"})"));
+        m.run(addFeature("sketch", 5,
+                         sketchProps(R"({"datum":")" + uuid('f', 4) + R"("})", SketchJson().rect(1, 5, 5, 15, 15))));
+        m.run(addFeature("extrude", 6, through(5, "cut", R"(,"symmetric":true)")));
+        CHECK(volumeOf(*m.build(), 'b') == Catch::Approx(8000.0 - 1000.0).epsilon(1e-9));
+    }
+    SECTION("a join from below the block ends at the block")
+    {
+        m.run(addFeature("datum_plane", 4, R"({"base":{"principal":"xy"},"offset":"-5 mm"})"));
+        m.run(addFeature("sketch", 5,
+                         sketchProps(R"({"datum":")" + uuid('f', 4) + R"("})", SketchJson().rect(1, 5, 5, 15, 15))));
+        m.run(addFeature("extrude", 6, through(5, "join")));
+        const BuildResultPtr build = m.build();
+        REQUIRE(report(*build, 6).status == FeatureStatus::Ok);
+        CHECK(volumeOf(*build, 'b') == Catch::Approx(8000.0 + 500.0).epsilon(1e-9));
+    }
+    SECTION("a new body cannot be through all; a distance extrude needs its distance")
+    {
+        m.run(addFeature("sketch", 5, sketchProps(kXY, SketchJson().rect(1, 5, 5, 15, 15))));
+        const Error error =
+            m.fails(addFeature("extrude", 6,
+                               R"({"sketch":")" + uuid('f', 5) +
+                                   R"(","extent":"through_all","operation":"new","target":")" + uuid('c', 1) + "\"}"));
+        CHECK(error.message.find("through_all") != std::string::npos);
+        const Error missing = m.fails(
+            addFeature("extrude", 6,
+                       R"({"sketch":")" + uuid('f', 5) + R"(","operation":"cut","target":")" + uuid('b', 1) + "\"}"));
+        CHECK(missing.message.find("distance") != std::string::npos);
+    }
+}
+
+TEST_CASE("the rollback bar: later features are not built, new ones go in at the bar, and it is undoable",
+          "[doc][parametric][rollback]")
+{
+    Model m;
+    block(m);
+    m.run(addFeature("sketch", 5, sketchProps(kXY, SketchJson().rect(1, 5, 5, 15, 15))));
+    m.run(addFeature("extrude", 6, extrudeProps(5, "3", "cut", 'b')));
+    m.run(addFeature("datum_plane", 7, R"({"base":{"principal":"xy"},"offset":"1 mm"})"));
+    REQUIRE(volumeOf(*m.build(), 'b') == Catch::Approx(8000.0 - 300.0).epsilon(1e-9));
+    const DocStatePtr whole = m.state;
+
+    // Rolled back to after the block: the cuts are kept but not built.
+    m.run(cmd("feature.rollback", R"({"to":")" + uuid('f', 3) + R"("})"));
+    REQUIRE(m.state->rollback.has_value());
+    CHECK(*m.state->rollback == featureId(3));
+    CHECK(m.state->features.size() == 5);
+    BuildResultPtr build = m.build();
+    CHECK(volumeOf(*build, 'b') == Catch::Approx(8000.0).epsilon(1e-9));
+    CHECK(report(*build, 5).status == FeatureStatus::NotBuilt);
+    CHECK(report(*build, 7).status == FeatureStatus::NotBuilt);
+    CHECK(report(*build, 7).message.find("Rolled back") != std::string::npos);
+    CHECK(m.state->stateHash() != whole->stateHash());
+
+    // A feature added without an index goes in at the bar, and the bar moves past it.
+    m.run(addFeature("datum_plane", 8, R"({"base":{"principal":"xy"},"offset":"2 mm"})"));
+    REQUIRE(m.state->features.size() == 6);
+    CHECK(m.state->features[2].id == featureId(8));
+    CHECK(*m.state->rollback == featureId(8));
+    build = m.build();
+    CHECK(report(*build, 8).status == FeatureStatus::Ok);
+    CHECK(report(*build, 5).status == FeatureStatus::NotBuilt);
+    // With an explicit index below the bar it stays rolled back, and the bar stays.
+    m.run(addFeature("datum_plane", 9, R"({"base":{"principal":"xy"},"offset":"3 mm"})", R"(,"index":6)"));
+    CHECK(*m.state->rollback == featureId(8));
+    CHECK(report(*m.build(), 9).status == FeatureStatus::NotBuilt);
+
+    // Removing the bar's feature moves the bar to the one before; moving it nowhere is refused.
+    m.run(cmd("feature.remove", R"({"id":")" + uuid('f', 8) + R"("})"));
+    CHECK(*m.state->rollback == featureId(3));
+    CHECK(m.fails(cmd("feature.rollback", R"({"to":")" + uuid('f', 3) + R"("})")).message.find("already") !=
+          std::string::npos);
+    // Rolled to the last feature, or forward: the whole history.
+    m.run(cmd("feature.rollback", R"({"to":")" + uuid('f', 9) + R"("})"));
+    CHECK_FALSE(m.state->rollback.has_value());
+    CHECK(m.fails(cmd("feature.rollback", "{}")).message.find("not rolled back") != std::string::npos);
+    m.run(cmd("feature.rollback", R"({"to":")" + uuid('f', 6) + R"("})"));
+    m.run(cmd("feature.rollback", R"({"to":null})"));
+    CHECK_FALSE(m.state->rollback.has_value());
+    CHECK(volumeOf(*m.build(), 'b') == Catch::Approx(8000.0 - 300.0).epsilon(1e-9));
 }
 
 TEST_CASE("a revolve turns a region about a sketch line or a world axis", "[doc][parametric]")
