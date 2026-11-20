@@ -204,6 +204,40 @@ private:
         return "The picked element no longer exists.";
     }
 
+    // An answer to a pick that had measure never holds an element of zero measure (detail::zeroMeasure; T-081a
+    // holdout5 1:7): such elements are left out, and an answer left with none is Broken.
+    static Resolved withoutZeroMeasure(const kernel::Shape& shape, const Fingerprint& hint, Resolved r)
+    {
+        if (r.state == ResolveState::Broken || r.elements.empty())
+            return r;
+        std::erase_if(r.elements, [&](const kernel::SubId& s) { return detail::zeroMeasure(shape, s, hint); });
+        if (r.elements.empty())
+            return broken("All that is left of the picked element has no area (or length).");
+        return r;
+    }
+
+    // A Split or Merged answer from the names followed through the build, against the pick-time evidence. A Split of
+    // one piece (its other pieces had no measure, or the pieces of the name ended on one element) is the picked
+    // element less what the edit took, and gets what an element found by name gets: the Exact stage's evidence rules
+    // (detail::exactAgainstEvidence). When they do not object it stays Split, not Exact: the picked name itself was not
+    // found, and Exact says it was (naming.h). Any other Split or Merged answer must be all of the pick
+    // (detail::completeAgainstEvidence).
+    static Resolved againstEvidence(const ResolverBody& body, const detail::TerritoryCache& territories,
+                                    const TopoRef& ref, Resolved r)
+    {
+        r = withoutZeroMeasure(body.shape, ref.hint, std::move(r));
+        if (r.state == ResolveState::Split && r.elements.size() == 1) {
+            if (auto evidence =
+                    detail::exactAgainstEvidence(body.map, body.shape, territories, r.elements.front(), ref))
+                return std::move(*evidence);
+            return r;
+        }
+        if (r.state == ResolveState::Split || r.state == ResolveState::Merged)
+            if (auto evidence = detail::completeAgainstEvidence(body.map, body.shape, territories, r.elements, ref))
+                return std::move(*evidence);
+        return r;
+    }
+
     Resolved resolveStages(const TopoRef& ref) const
     {
         const ResolverBody* body = findBody(ref.body);
@@ -213,10 +247,10 @@ private:
             return broken("The reference is damaged: it holds no usable name.");
         const Lookup lookup = lookUp(body->map, ref);
         if (auto result = exact(*body, territoriesOf(body), ref, lookup))
-            return std::move(*result);
+            return withoutZeroMeasure(body->shape, ref.hint, std::move(*result));
         // T-081a, in this order: lineage (Split, Merged), the family rule (Split, Merged), Repaired.
         if (auto result = detail::resolveThroughBuild(body->map, body->shape, ref))
-            return std::move(*result);
+            return againstEvidence(*body, territoriesOf(body), ref, std::move(*result));
         return broken(brokenReason(lookup, ref));
     }
 

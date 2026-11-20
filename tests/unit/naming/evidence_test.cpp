@@ -4,8 +4,10 @@
 
 #include "naming_test_util.h"
 
+#include <propagate.h>
 #include <territory.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <optional>
@@ -427,12 +429,13 @@ TEST_CASE("An Exact answer part of whose picked territory is now another element
 
 namespace {
 
-// A block 100 x 60 x 20 at y y0..y0+60, cut through by a groove along y whose walls meet the bottom: with `apart`, a
-// trapezoid with a flat bottom below the block (x 44.5..55.5 at z 0: two solids 11 mm apart), else a V whose apex
-// is on the bottom at x 50 (two solids touching along that line). The groove's walls carry the same tags either way.
-Body grooved(double y0, bool apart)
+// A block `length` x 60 x 20 at y y0..y0+60, cut through by a groove along y whose walls meet the bottom: with
+// `apart`, a trapezoid with a flat bottom below the block (x 44.5..55.5 at z 0: two solids 11 mm apart), else a V whose
+// apex is on the bottom at x 50 (two solids touching along that line). The groove's walls carry the same tags either
+// way.
+Body grooved(double y0, bool apart, double length = 100)
 {
-    const Body b = extrude(kBlock, 0, rectangle(0, y0, 100, y0 + 60, 1, 1), 20);
+    const Body b = extrude(kBlock, 0, rectangle(0, y0, length, y0 + 60, 1, 1), 20);
     // A profile in the plane y = y0 + 61, swept 62 mm towards -y: (u, v) is (x, z).
     const kernel::Plane plane{Vec3{0, y0 + 61, 0}, Vec3{0, -1, 0}, Vec3{1, 0, 0}};
     std::vector<kernel::ProfileCurve> curves;
@@ -528,6 +531,133 @@ TEST_CASE("An Exact answer that moved and now runs on into another element on th
     // Without evidence (an older document) nothing is checked.
     CHECK_FALSE(naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, withoutEvidence(ref))
                     .has_value());
+}
+
+TEST_CASE("An Exact answer that stops short of where the pick ran, the rest on the same line under another name, is "
+          "not Exact",
+          "[naming][evidence]")
+{
+    // The completeness check where nothing moved (T-081a holdout5 1:2: a hole met the face beside a picked edge and
+    // put a vertex on it 0.18 mm from its end; the stretch beyond kept no name of the pick). A block 51 mm long has a V
+    // groove whose apex touches its bottom at x 50: the front bottom edge is now 0..50 (`left`) and 50..51 (`right`,
+    // on the sliver solid beyond the apex), on one line between planes that are the same on both sides. The edge was
+    // picked on the plain block, 0..51: every point of its territory is on `left` (nothing moved), and `right` lies
+    // inside where it was picked. The pick came apart into the two, and that set is provably all of it (a picked line
+    // segment is exactly its box's stretch of its line): Split {left, right}.
+    const Body touching = grooved(5, false, 51);
+    const auto left = lineEdge(touching.shape, Vec3{0, 5, 0}, Vec3{50, 5, 0});
+    const auto right = lineEdge(touching.shape, Vec3{50, 5, 0}, Vec3{51, 5, 0});
+    REQUIRE(left);
+    REQUIRE(right);
+    const naming::detail::TerritoryCache cache(touching.shape);
+    auto pickOn = [](double length) {
+        const Body plain = extrude(kBlock, 0, rectangle(0, 5, length, 65, 1, 1), 20);
+        const auto edge = lineEdge(plain.shape, Vec3{0, 5, 0}, Vec3{length, 5, 0});
+        REQUIRE(edge);
+        return resolverFor(plain)->makeRef(kBody, *edge);
+    };
+    const TopoRef whole = pickOn(51);
+    REQUIRE(whole.territory.known());
+    const naming::detail::Probe onLeft(touching.shape, *left);
+    REQUIRE(onLeft.count(whole.territory) == whole.territory.points.size());
+    const auto split = naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, whole);
+    REQUIRE(split.has_value());
+    CHECK(split->state == ResolveState::Split);
+    std::vector<SubId> both{*left, *right};
+    std::sort(both.begin(), both.end());
+    CHECK(split->elements == both);
+
+    // Picked 0..50.5: `right` reaches into where it was picked but also beyond it (the edge grew past the vertex), so
+    // the set is not provably the pick: Broken.
+    const TopoRef shorter = pickOn(50.5);
+    const auto broken = naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, shorter);
+    REQUIRE(broken.has_value());
+    CHECK(broken->state == ResolveState::Broken);
+    CHECK(broken->reason.find("runs on") != std::string::npos);
+
+    // Picked 0..50: `right` only touches where it was picked, at the vertex; `left` is all of the pick.
+    const TopoRef exact = pickOn(50);
+    CHECK_FALSE(
+        naming::detail::completeAgainstEvidence(touching.map, touching.shape, cache, {*left}, exact).has_value());
+    CHECK_FALSE(naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, exact).has_value());
+    // Without evidence (an older document) nothing is checked.
+    CHECK_FALSE(naming::detail::exactAgainstEvidence(touching.map, touching.shape, cache, *left, withoutEvidence(whole))
+                    .has_value());
+}
+
+namespace {
+
+// `body` with the line edge from a to b chamfered by `size` (feature kBelow).
+Body chamfered(const Body& body, double size, Vec3 a, Vec3 b)
+{
+    const auto edge = lineEdge(body.shape, a, b);
+    REQUIRE(edge);
+    JobContext ctx;
+    const std::array<SubId, 1> edges{*edge};
+    auto result = take(kernel::chamfer(body.shape, edges, size, ctx));
+    const std::array<const ElementMap*, 1> maps{&body.map};
+    const NamingInput in{kBelow, "chamfer", maps, &result.history, &result.shape, {}};
+    return Body{result.shape, take(propagate(in)).map};
+}
+
+// A block 76.2 x 50.8 x 31.75 with its two right-hand edges along y chamfered (0.762 at the top, 0.82 at the bottom),
+// cut by a rectangle 2hw x 2hh, turned about y, in the plane through o = (75.972, 50.7999992, 16.514) facing +y, swept
+// 27.909 mm towards -y (T-081a holdout5 1:7, the import's other chamfers left out). The random harness put the plane
+// through a mesh sample of the back face (single precision), 7.6e-7 mm inside it: the cut leaves a slab of material
+// that thin, and where the cut runs out through the right face the slab's end is a face of the right face's plane,
+// 30 mm long and 7.6e-7 mm wide (kernel::boolean, with or without its same-domain unification).
+Body backCut(double hw, double hh)
+{
+    Body b = extrude(kBlock, 0, rectangle(0, 0, 76.2, 50.8, 1, 1), 31.75);
+    b = chamfered(b, 0.762, Vec3{76.2, 0, 31.75}, Vec3{76.2, 50.8, 31.75});
+    b = chamfered(b, 0.82, Vec3{76.2, 0, 0}, Vec3{76.2, 50.8, 0});
+    const kernel::Plane plane{Vec3{75.9721684, 50.7999992, 16.5142589}, Vec3{0, 1, 0},
+                              Vec3{0.94812155, 0, -0.317908046}};
+    JobContext ctx;
+    auto sweep =
+        take(kernel::extrude(kernel::Profile{plane, {rectangle(-hw, -hh, hw, hh, 41, 5)}}, -27.9085221, 0.0, ctx));
+    const NamingInput toolIn{kPocket, "extrude", {}, nullptr, &sweep.op.shape, sweep.origins};
+    const Body tool{sweep.op.shape, take(propagate(toolIn)).map};
+    auto result = take(kernel::boolean(kernel::BoolOp::Cut, b.shape, tool.shape, ctx));
+    const std::array<const ElementMap*, 2> maps{&b.map, &tool.map};
+    const std::array<const kernel::Shape*, 2> shapes{&b.shape, &tool.shape};
+    const NamingInput in{kPocket, "extrude", maps, &result.history, &result.shape, {}, shapes};
+    return Body{result.shape, take(propagate(in)).map};
+}
+
+} // namespace
+
+TEST_CASE("A piece of zero area is never part of an answer", "[naming][evidence]")
+{
+    // T-081a holdout5 1:7. The right face (x 76.2) is picked with the cut as first made: it runs out through the right
+    // face only where it is narrow, and the face stays whole. The cut made larger takes all of the right face from y
+    // 22.9 to the back, except the slab's end, a face of zero area (zeroMeasure: 7.6e-7 mm wide): the right face's
+    // name comes apart into the big piece and that one. The answer is the big piece alone: Split (the name is gone),
+    // which its own evidence does not object to.
+    const Body picked = backCut(9.135638, 13.318216);
+    const auto right = faceAt(picked.shape, Vec3{76.2, 5, 15}, Vec3{1, 0, 0});
+    REQUIRE(right);
+    const TopoRef ref = resolverFor(picked)->makeRef(kBody, *right);
+    REQUIRE(ref.territory.known());
+
+    const Body larger = backCut(10.555159, 15.387637);
+    const auto piece = faceAt(larger.shape, Vec3{76.2, 5, 15}, Vec3{1, 0, 0});
+    REQUIRE(piece);
+    std::vector<SubId> zero; // faces of the right face's plane with (next to) no area
+    for (std::uint32_t i = 0; i < larger.shape.count(SubKind::Face); ++i) {
+        const auto info = take(kernel::surfaceInfo(larger.shape, SubId{SubKind::Face, i}));
+        if (info.type == kernel::SurfaceType::Plane && std::abs(info.axis.x) > 0.999 && info.area < 1e-3 &&
+            std::abs(info.centroid.x - 76.2) < 1e-3)
+            zero.push_back(SubId{SubKind::Face, i});
+    }
+    REQUIRE(zero.size() == 1);
+    CHECK(naming::detail::zeroMeasure(larger.shape, zero.front(), ref.hint));
+    CHECK_FALSE(naming::detail::zeroMeasure(larger.shape, *piece, ref.hint));
+    const Resolved r = resolverFor(larger)->resolve(ref);
+    CHECK(r.state == ResolveState::Split);
+    CHECK(r.elements == std::vector<SubId>{*piece});
+    CHECK(r.usable());
+    CHECK_FALSE(r.postableWithoutReview());
 }
 
 TEST_CASE("With the input shapes, an input face the history reports deleted but the result absorbed lends its name",

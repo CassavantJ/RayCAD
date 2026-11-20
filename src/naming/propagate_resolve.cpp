@@ -801,6 +801,12 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
             if (s.kind != ref.kind)
                 return broken("The picked element's name now belongs to an element of another kind.");
         std::vector<SubId> elements(all.elements.begin(), all.elements.end());
+        // A piece of zero measure is not part of the answer (zeroMeasure; holdout5 1:7).
+        if (all.split) {
+            std::erase_if(elements, [&](const SubId& s) { return zeroMeasure(shape, s, ref.hint); });
+            if (elements.empty())
+                return broken("The picked element came apart, and none of its pieces has any area (or length).");
+        }
         for (const SubId& s : elements)
             if (!neighboursStillAround(map, shape, s, ref))
                 return broken("The picked element no longer lies on the faces it was picked on.");
@@ -856,6 +862,9 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 continue;
             if (wasAlone && members.size() > 1) {
                 std::sort(elements.begin(), elements.end());
+                std::erase_if(elements, [&](const SubId& s) { return zeroMeasure(shape, s, ref.hint); });
+                if (elements.empty())
+                    continue;
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||
@@ -893,6 +902,31 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
 }
 
 } // namespace
+
+bool zeroMeasure(const kernel::Shape& shape, kernel::SubId element, const Fingerprint& hint)
+{
+    try {
+        // The picked element had measure: more than a quantum of length, or of width (area over the box diagonal).
+        if (static_cast<double>(std::abs(hint.qArea)) <= kZeroWidth * kLengthQuantaPerMm)
+            return false;
+        // The measure as the kernel gives it now; an element whose geometry cannot be read is not known to have none.
+        if (element.kind == SubKind::Face) {
+            const auto info = kernel::surfaceInfo(shape, element);
+            const auto box = elementBox(shape, element);
+            if (!info || !box)
+                return false;
+            const double diagonal = norm(sub(box->max, box->min));
+            return std::abs(info->area) <= kZeroWidth * std::max(diagonal, kZeroWidth);
+        }
+        if (element.kind == SubKind::Edge) {
+            const auto info = kernel::curveInfo(shape, element);
+            return info && std::abs(info->length) <= kZeroWidth;
+        }
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
 
 bool edgeContinuesUnderOtherName(const ElementMap& map, const kernel::Shape& shape, kernel::SubId edge)
 {

@@ -109,4 +109,12 @@ bool holdsHintCentre(const kernel::Shape& shape, kernel::SubId face, const Finge
 // a resized hole's wall was split, and the edge where it meets a cut's floor is in two named stretches). Never throws.
 bool edgeContinuesUnderOtherName(const ElementMap& map, const kernel::Shape& shape, kernel::SubId edge);
 
+// Is `element` an edge or face of zero measure (an edge no longer than kZeroWidth, a face no wider: its area, read from
+// the kernel now, over its box diagonal) while the picked element (`hint`, the reference's) had measure? An element
+// whose geometry cannot be read is not. Such an element is never part of an answer: resolveThroughBuild
+// leaves zero-measure pieces out of a Split before checking them (and a Split none of whose pieces has any measure is
+// Broken), and the resolver leaves them out of every answer. (A degenerate edge picked as such, at a sphere's pole,
+// had no measure at pick time either, and still resolves to itself.) Never throws.
+bool zeroMeasure(const kernel::Shape& shape, kernel::SubId element, const Fingerprint& hint);
+
 } // namespace ray::naming::detail

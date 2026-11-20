@@ -90,20 +90,44 @@ std::vector<PickNeighbour> pickNeighboursOf(const ElementMap& map, const kernel:
 std::optional<Box3> elementBox(const kernel::Shape& shape, kernel::SubId sub);
 
 // ---------------------------------------------------------------- the resolver's evidence rules (naming.h TopoRef)
+// The completeness check: is a name-based answer (`answer`: the Exact element, the Split pieces, the Merged element)
+// all of what was picked? nullopt when the evidence does not object (or there is none, or the reference is to a
+// vertex). The picked element's place is known while the answer still covers some of its own territory (the picked
+// element's box at pick time); otherwise the answer moved and its place now is not known. An element of the answer's
+// kind outside the answer holds part of what was picked when
+//  - (by territory, holdout4 9:9) the place is known and it covers a point of the picked element's own territory that
+//    the answer no longer covers, on the answer's carrier (`territories`: plane on the same side, cylinder, line,
+//    circle), an edge also between the answer's surfaces (as in the continuation test below: a stretch of the picked
+//    line that now lies between other surfaces is where the pick was, not what was picked). Points on nothing are
+//    territory cut away, which an answer may lose;
+//  - (by continuation) it continues an answer element with nothing geometric between them: shares a vertex (an edge)
+//    or an edge (a face) with it, on the same carrier, an edge also with each of its faces equal to or on the carrier
+//    of one of the answer element's, and
+//      - (holdout5 1:2) the place is known, it reaches into the place (overlaps the picked box along every axis it
+//        extends along), and it was not apart from the pick at pick time (it carries no name the pick or a recorded
+//        neighbour had, and covers no point of a recorded neighbour's territory: a face's box is a coarse stand-in for
+//        its place, and the boundary between the pick and a neighbour may move a little): the answer stopped short of
+//        where the pick ran, and the rest is under another name;
+//      - (holdout4 5:9) the place is not known and no recorded neighbour touched the picked element at pick time
+//        (boxes within the extent tolerance; a neighbour without a known box counts as touching): which stretch of the
+//        run is the moved pick cannot be told. When a recorded neighbour touched it, the pick was already one stretch
+//        of a longer run (the two arcs of one hole's rim), and the run may simply have moved with it.
+// When some element holds part of the pick: Split with the fuller set when it can be shown to be all of the pick (edges
+// on a line or a circle with a known place only: every edge on the answer's line or circle reaching into the picked
+// box is in it, each added one inside the picked segment, or arc as the hint and the circle tell it, between the
+// answer's surfaces, under no name the pick or a recorded neighbour had, and the set fits the evidence as Split pieces
+// must, piecesFitEvidence); else Broken.
+std::optional<Resolved> completeAgainstEvidence(const ElementMap& map, const kernel::Shape& shape,
+                                                const TerritoryCache& territories,
+                                                const std::vector<kernel::SubId>& answer, const TopoRef& ref);
+
 // The Exact stage's answer `element` against the reference's evidence; nullopt when the evidence does not object (or
 // there is none, or the element is unchanged: its fingerprint matches the hint). Otherwise, the first that applies:
 //  - the element covers a point of a recorded neighbour's territory: Merged when it also still covers a point of the
 //    picked element's own territory (it took the neighbour in), else Broken (it lies over the neighbour's place and
 //    not where it was picked); a vertex is never Merged;
-//  - (holdout4) the element (a face or edge) still covers some of its own territory, and a point of that territory it
-//    no longer covers lies on another element of the same kind on the same carrier (`territories`: plane on the same
-//    side, cylinder, line, circle): part of what was picked is that element's now: Broken. Otherwise, covering some of
-//    its own territory, it is not objected to;
-//  - (holdout4) the element (a face or edge) covers none of its own territory, no recorded neighbour touched it at
-//    pick time (boxes within the extent tolerance; a neighbour without a known box counts as touching), and it now
-//    shares a vertex (an edge) or an edge (a face) with another element of its kind on the same carrier, an edge also
-//    with each of that one's faces equal to or on the carrier of one of its own: it runs on into that element with
-//    nothing between them: Broken;
+//  - the completeness check (completeAgainstEvidence) on {element} objects: its answer (Split with the fuller set, or
+//    Broken). Otherwise, covering some of its own territory, the element is not objected to;
 //  - the element covers none of its own territory (it moved, or what was picked of it is gone), grew, and every name of
 //    a recorded sibling is gone from the map: the pieces may have joined where it is now: Merged (not a vertex);
 //  - the element covers none of its own territory and a recorded sibling's names lead to one element now whose shift

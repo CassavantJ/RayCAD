@@ -67,6 +67,14 @@ bool needsHint(const TopoName& name);
 // grown: a few quanta of rounding (1e-4 mm, 1e-4 mm^2 each).
 inline constexpr double kGrowthSlackQuanta = 20.0;
 
+// Below this extent, mm, an element has none: an edge this long or shorter, a face no wider (its area over its box
+// diagonal) is of zero measure within the precision names are recorded at (the fingerprint's quantum, 1e-4 mm). The
+// resolver never answers with such an element for a pick that had measure (T-081a holdout5 1:7: a cut whose start
+// plane lay 7.6e-7 mm inside the part's back face left a slab of material that thin, and the slab's end, a face 30 mm
+// long and under 1e-6 mm wide, came out as a second piece of the face the cut trimmed): a downstream feature cannot
+// use it. A real sliver (holdout3 17:8: a cylinder piece 0.02 mm long and 0.007 mm wide) is not of zero measure.
+inline constexpr double kZeroWidth = 1e-4;
+
 // Checks the table (sorted, every name has a record, ids and families recomputed, kinds agree) and builds
 // the derived indexes. A table that breaks a rule is an Internal error, or FormatError when `fromFile`.
 Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile);

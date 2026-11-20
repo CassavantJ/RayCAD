@@ -1126,3 +1126,54 @@ TEST_CASE("Oracle (holdout3 17:0): where another picked piece's mapped place fal
     CHECK_FALSE(looked[0].noAnchor.empty());
     CHECK(looked[0].judgement.verdict == Verdict::Unjudged);
 }
+
+// ---------------------------------------------------------------- holdout5: the completeness check, zero-measure
+// pieces
+TEST_CASE(
+    "Regression (holdout5 1:2): an edge that now stops short of where it was picked, the rest on its circle under "
+    "another name, is not Exact",
+    "[naming][acceptance][t081a-gate]")
+{
+    // chamfer_block_2: the inserted hole X1 meets the face beside the picked arc (where R1's wall meets a piece of the
+    // import face) and puts a vertex on the arc 0.18 mm from its end; the arc keeps its name up to the vertex (86) and
+    // the stretch beyond is another edge (87) on the same circle between the same surfaces. Nothing moved, so every
+    // point of the pick's territory is still on 86. Names say Exact {86}; the oracle expects {86 87}. The completeness
+    // check (completeAgainstEvidence) finds 87 continuing 86 inside where the arc was picked, and the two are provably
+    // all of it: Split {86 87}. Negative: Exact on 86 alone is incomplete.
+    const std::string id = "holdout5 raycad-synthetic/chamfer_block_2.stp #2|edge 94";
+    const std::vector<Looked> looked = replayAndLook(
+        1, 2, 0x6C3A9000ull, "holdout5 ", {id}, [](const Expectation& x, const std::vector<std::uint32_t>&) {
+            const std::vector<std::uint32_t>& E = x.expected.elems;
+            return std::make_pair(Answer::Exact, std::vector<std::uint32_t>(E.begin(), E.begin() + 1));
+        });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].reason);
+    CHECK(looked[0].answer == Answer::Split);
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    CHECK(looked[0].other.verdict == Verdict::WrongIncomplete);
+}
+
+TEST_CASE(
+    "Regression (holdout5 1:7): a face of zero area the kernel leaves as a piece of a trimmed face is not part of "
+    "the answer",
+    "[naming][acceptance][t081a-gate]")
+{
+    // chamfer_block_2: the cut R4, resized, starts 7.6e-7 mm inside the part's back face (its plane goes through a mesh
+    // sample of that face, y 50.7999992) and now runs out through the right face I/i5, which it trims to y 0..22.9. It
+    // leaves a slab of material that thin, whose end on the right face (17: x 76.2, y 50.8, z 0.82..30.99, 7.6e-7 mm
+    // wide) is a face of next to no area besides the piece (16), and the name of I/i5 splits into the two. The oracle
+    // expects {16}; the resolver said Split {16 17}. A piece of zero measure is never part of an answer (zeroMeasure);
+    // the one piece left keeps what its own evidence says (exactAgainstEvidence: nothing objects) and stays Split (the
+    // picked name is gone). Negative: Split with the zero-area face as well is wrong.
+    const std::string id = "holdout5 raycad-synthetic/chamfer_block_2.stp #7|face 16";
+    const std::vector<Looked> looked = replayAndLook(1, 7, 0x6C3A9000ull, "holdout5 ", {id},
+                                                     [](const Expectation& x, const std::vector<std::uint32_t>&) {
+                                                         return std::make_pair(Answer::Split, x.strict.elems);
+                                                     });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].reason);
+    CHECK(looked[0].answer == Answer::Split);
+    CHECK(looked[0].elements.size() == 1);
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    CHECK(isWrong(looked[0].other.verdict));
+}
