@@ -1,7 +1,6 @@
 // Test support for the kernel tests (task T-004). See shape_testing.h.
 #include "shape_testing.h"
 
-#include "boolean_internal.h"
 #include "shape_impl.h"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -47,18 +46,6 @@ Result<Shape> makeCutBody()
         const TopoDS_Shape cylinder =
             BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(50, 30, -5), gp_Dir(0, 0, 1)), 8.0, 30.0).Shape();
         BRepAlgoAPI_Cut cut(box, cylinder);
-        if (!cut.IsDone() || cut.HasErrors())
-            return tl::unexpected(detail::makeError(ErrorCode::KernelFailure, "cut failed", "testing"));
-        return detail::wrap(cut.Shape());
-    });
-}
-
-Result<Shape> makeSkinnedPocket(double skin)
-{
-    return detail::guarded("kernel::testing::makeSkinnedPocket", [skin]() -> Result<Shape> {
-        const TopoDS_Shape box = BRepPrimAPI_MakeBox(30.0, 50.8, 20.0).Shape();
-        const TopoDS_Shape tool = BRepPrimAPI_MakeBox(gp_Pnt(10, 42.8 - skin, 5), gp_Pnt(40, 50.8 - skin, 15)).Shape();
-        BRepAlgoAPI_Cut cut(box, tool);
         if (!cut.IsDone() || cut.HasErrors())
             return tl::unexpected(detail::makeError(ErrorCode::KernelFailure, "cut failed", "testing"));
         return detail::wrap(cut.Shape());
@@ -273,12 +260,6 @@ std::string rawState(const Shape& shape)
     if (!ok)
         out = "rawState failed: " + ok.error().message;
     return out;
-}
-
-Result<std::vector<SubId>> sliverFaces(const Shape& shape)
-{
-    return detail::guarded("testing::sliverFaces",
-                           [&]() -> Result<std::vector<SubId>> { return detail::sliverFaces(shape); });
 }
 
 std::uint64_t structuredExceptions() noexcept

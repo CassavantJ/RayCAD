@@ -2,27 +2,18 @@
 // boolean_internal.h.
 #include "boolean_internal.h"
 
-#include <BRepAdaptor_Surface.hxx>
-#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
-#include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
-#include <GeomAbs_SurfaceType.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
-#include <TopoDS_Face.hxx>
-#include <gp_Pln.hxx>
-#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <utility>
 
 namespace ray::kernel::detail {
@@ -197,73 +188,6 @@ double solidVolume(const TopoDS_Shape& shape)
         total += props.Mass();
     }
     return total;
-}
-
-std::vector<SubId> sliverFaces(const Shape& shape, const std::vector<bool>& involved)
-{
-    std::vector<bool> sliver;
-    if (shape.isNull())
-        return {};
-    const ShapeIndex& faces = shape.impl->subs[kindSlot(SubKind::Face)];
-    sliver.assign(static_cast<std::size_t>(faces.Extent()), false);
-    const auto counts = [&](std::size_t index) {
-        return involved.empty() || (index < involved.size() && involved[index]);
-    };
-    struct PlanarFace {
-        std::size_t index;
-        gp_Pnt origin;
-        gp_Dir normal; // outward: the plane's normal, reversed for a reversed face
-        std::optional<Bnd_Box> box;
-    };
-    std::vector<PlanarFace> planar;
-    for (int i = 1; i <= faces.Extent(); ++i) {
-        const TopoDS_Face face = TopoDS::Face(faces.FindKey(i));
-        const auto index = static_cast<std::size_t>(i - 1);
-        // Area and perimeter only of the faces asked about (integrating every face of a large body costs as much as
-        // its volume).
-        if (counts(index)) {
-            GProp_GProps area;
-            BRepGProp::SurfaceProperties(face, area);
-            GProp_GProps length;
-            BRepGProp::LinearProperties(face, length);
-            if (length.Mass() > 0.0 && 2.0 * area.Mass() / length.Mass() < kSliverWidth)
-                sliver[index] = true;
-        }
-        const BRepAdaptor_Surface surface(face, false);
-        if (surface.GetType() != GeomAbs_Plane)
-            continue;
-        const gp_Pln plane = surface.Plane();
-        PlanarFace p{index, plane.Location(), plane.Axis().Direction(), std::nullopt};
-        if (face.Orientation() == TopAbs_REVERSED)
-            p.normal.Reverse();
-        planar.push_back(std::move(p));
-    }
-    // Boxes only for the faces of a candidate pair.
-    const auto boxOf = [&](PlanarFace& p) -> const Bnd_Box& {
-        if (!p.box) {
-            p.box.emplace();
-            BRepBndLib::Add(faces.FindKey(static_cast<int>(p.index) + 1), *p.box, false);
-            p.box->Enlarge(kSliverWidth);
-        }
-        return *p.box;
-    };
-    // Parallel within about 1.4e-6 rad: over a 100 mm face that is 1.4e-4 mm, the order of kSliverWidth.
-    constexpr double kOpposite = -1.0 + 1e-12;
-    for (std::size_t a = 0; a < planar.size(); ++a)
-        for (std::size_t b = a + 1; b < planar.size(); ++b) {
-            PlanarFace& A = planar[a];
-            PlanarFace& B = planar[b];
-            if ((!counts(A.index) && !counts(B.index)) || A.normal.Dot(B.normal) > kOpposite)
-                continue;
-            const double apart = std::abs(gp_Vec(A.origin, B.origin).Dot(gp_Vec(A.normal)));
-            if (apart < kSliverWidth && !boxOf(A).IsOut(boxOf(B)))
-                sliver[A.index] = sliver[B.index] = true;
-        }
-    std::vector<SubId> out;
-    for (std::size_t i = 0; i < sliver.size(); ++i)
-        if (sliver[i])
-            out.push_back(SubId{SubKind::Face, static_cast<std::uint32_t>(i)});
-    return out;
 }
 
 Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, std::string_view where)

@@ -16,10 +16,6 @@ namespace ray::kernel::testing {
 // BRepAlgoAPI_Cut directly (not through kernel::boolean).
 Result<Shape> makeCutBody();
 
-// A 30 x 50.8 x 20 box with a pocket 8 deep cut by BRepAlgoAPI_Cut directly (not through kernel::boolean) from
-// x = 10 out through the x = 30 side, z = 5 to 15, whose ceiling lies `skin` below the top face y = 50.8.
-Result<Shape> makeSkinnedPocket(double skin);
-
 // A compound holding the same 10 x 20 x 30 box twice: as built, and moved by (200, 0, 0) through a
 // TopLoc_Location on the shared TShape.
 Result<Shape> makeLocatedCompound();
@@ -66,9 +62,6 @@ Status meshAndShare(const Shape& shape);
 // only a cache or a flag changes, which serialize() deliberately ignores. For the immutability tests, which
 // require that no kernel call changes even that. Empty for a null shape.
 std::string rawState(const Shape& shape);
-
-// The faces of `shape` the kernel counts as slivers: narrower than 1e-4 mm (boolean_internal.h kSliverWidth).
-Result<std::vector<SubId>> sliverFaces(const Shape& shape);
 
 // How many structured exceptions (access violations and the like inside OCCT) the kernel's guard has caught in
 // this process. Always 0 off Windows: there nothing catches them and the process dies.
