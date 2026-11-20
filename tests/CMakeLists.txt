@@ -118,3 +118,28 @@ if(RAY_SANITIZE MATCHES "thread")
     endfunction()
     ray_tsan_ui_workers("${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
+
+# ---------- Debug timeouts ----------
+# A Debug build runs unoptimised OpenCASCADE, oneTBB and Qt (vcpkg's and Qt's debug libraries) and our own code at
+# /Od: the corpus, blend and naming suites take four to eight times as long as in Release (ray_kernel_tests about
+# 120 s in Release, past its 900 s limit in Debug). Every test's timeout (the CTest presets' 300 s when it sets none)
+# is RAY_DEBUG_TIMEOUT_FACTOR times longer in the Debug configuration; Release and RelWithDebInfo keep theirs. A
+# timeout is a guard against hangs, not a performance budget: the benchmarks check their budgets themselves.
+set(RAY_DEBUG_TIMEOUT_FACTOR 4)
+function(ray_debug_timeouts dir)
+    get_property(_tests DIRECTORY "${dir}" PROPERTY TESTS)
+    foreach(_test IN LISTS _tests)
+        get_property(_timeout TEST "${_test}" DIRECTORY "${dir}" PROPERTY TIMEOUT)
+        if(NOT _timeout)
+            set(_timeout 300)
+        endif()
+        math(EXPR _debug "${_timeout} * ${RAY_DEBUG_TIMEOUT_FACTOR}")
+        set_property(TEST "${_test}" DIRECTORY "${dir}" PROPERTY TIMEOUT
+                     "$<IF:$<CONFIG:Debug>,${_debug},${_timeout}>")
+    endforeach()
+    get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+    foreach(_subdir IN LISTS _subdirs)
+        ray_debug_timeouts("${_subdir}")
+    endforeach()
+endfunction()
+ray_debug_timeouts("${CMAKE_CURRENT_SOURCE_DIR}")
