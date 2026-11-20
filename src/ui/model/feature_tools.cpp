@@ -256,8 +256,10 @@ const BodyOverlay& FeatureToolModel::overlay() const
 
 bool FeatureToolModel::previewBusy() const
 {
+    // Busy until what the panel shows is final: references of picked edges still resolving, a preview scheduled but
+    // not started yet (the next event loop pass starts it), one building, or its meshes still being made.
     const bool meshing = scene_ && scene_->preview().owner() == this && scene_->preview().meshing();
-    return previewBusy_ || previewPending_ || meshing;
+    return edgesPending_ || previewTimer_.isActive() || previewBusy_ || previewPending_ || meshing;
 }
 
 FeatureToolModel* FeatureToolModel::create(QQmlEngine* qml, QJSEngine*)
@@ -658,6 +660,8 @@ void FeatureToolModel::close()
     committing_ = false;
     previewBusy_ = previewPending_ = false;
     storedEdges_ = QJsonArray();
+    ++edgeSerial_; // answers for this tool's picks still on their way are dropped
+    edgesPending_ = false;
     dragKey_.clear();
     if (tree_)
         tree_->setToolSketch(std::nullopt);
@@ -1002,6 +1006,7 @@ void FeatureToolModel::applyEdges()
             break;
     }
     const std::uint64_t serial = ++edgeSerial_;
+    edgesPending_ = !wanted.empty();
     if (wanted.empty()) {
         if (!face) {
             edges_ = storedEdges_;
@@ -1022,6 +1027,11 @@ void FeatureToolModel::applyEdges()
                          {QStringLiteral("kind"), face ? QStringLiteral("face") : QStringLiteral("edge")},
                          {QStringLiteral("index"), static_cast<int>(wanted[i].index)}};
         JobHandle<api::ActionResult> job = a->actions().invoke("model.reference", jsonText(args), api::Caller::User);
+        if (!job.valid()) { // no answer will come: leave the picks as they were
+            ++edgeSerial_;
+            edgesPending_ = false;
+            return;
+        }
         QPointer<FeatureToolModel> self(this);
         job.then([self, serial, refs, left, failedMessage, i, face, points](Result<api::ActionResult> r) {
             if (!self || serial != self->edgeSerial_)
@@ -1032,6 +1042,7 @@ void FeatureToolModel::applyEdges()
                 *failedMessage = qs(r.error().message);
             if (--*left > 0)
                 return;
+            self->edgesPending_ = false;
             if (face) {
                 self->faceRef_ = (*refs)[0];
             } else {
@@ -1419,7 +1430,9 @@ void FeatureToolModel::startPreview()
     ++previewSerial_;
     previewBase_ = d->state();
     previewBusy_ = true;
-    setStatus(QStringLiteral("building"), QString());
+    // The message about the last values stays while the new ones build, so the panel does not change size twice
+    // for every change (and nothing in it moves under the pointer).
+    setStatus(QStringLiteral("building"), message_, messageField_);
     d->beginPreview(*cmd);
     if (const auto error = d->previewError()) {
         previewBusy_ = false;

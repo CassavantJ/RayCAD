@@ -224,9 +224,11 @@ struct Window {
         click("featureOk");
         const bool done =
             QTest::qWaitFor([&] { return !tool()->active() && document()->undoCount() == before + 1; }, kTimeoutMs);
-        INFO("commit: tool active " << tool()->active() << ", status '" << tool()->previewStatus().toStdString()
-                                    << "', message '" << tool()->message().toStdString() << "', undo steps "
-                                    << document()->undoCount() << " (before " << before << ")");
+        INFO("commit: tool active " << tool()->active() << ", committing " << tool()->committing() << ", jobs "
+                                    << host->app()->activeJobs().size() << ", status '"
+                                    << tool()->previewStatus().toStdString() << "', message '"
+                                    << tool()->message().toStdString() << "', undo steps " << document()->undoCount()
+                                    << " (before " << before << ")");
         REQUIRE(done);
         settle();
     }
@@ -951,13 +953,26 @@ TEST_CASE("fillet edges are picked and unpicked in the view while the preview is
     w.previewed();
     w.shot("fillet_before_commit");
     {
+        // The pick's preview is only scheduled when its references arrive: the tool counts as busy until then, so
+        // waiting for "previewed" means the panel is final.
         QQuickItem* ok = w.find(QStringLiteral("featureOk"));
         REQUIRE(ok != nullptr);
-        const QPointF c = ok->mapToScene(QPointF(ok->width() / 2, ok->height() / 2));
-        QQuickItem* under = w.window()->contentItem()->childAt(c.x(), c.y());
-        INFO("OK at " << c.x() << "," << c.y() << " enabled " << ok->isEnabled() << " visible " << ok->isVisible()
-                      << ", top item there " << (under ? under->objectName().toStdString() : std::string("none")));
         CHECK(ok->isEnabled());
+        // OK stays where it is while a preview builds (the status line comes and goes below it).
+        w.grab();
+        const QPointF centre(ok->width() / 2, ok->height() / 2);
+        const QPointF before = ok->mapToScene(centre);
+        w.typeInto(QStringLiteral("radius"), QStringLiteral("2.5 mm"));
+        CHECK(w.tool()->previewBusy()); // scheduled: busy from the change on
+        REQUIRE(QTest::qWaitFor(
+            [&] { return w.tool()->previewStatus() == QStringLiteral("building") || !w.tool()->previewBusy(); },
+            kTimeoutMs));
+        w.grab();
+        CHECK(ok->mapToScene(centre) == before);
+        w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
+        w.previewed();
+        w.grab();
+        CHECK(ok->mapToScene(centre) == before);
     }
     w.commit();
     const double fillet = (1 - kPi / 4) * 2 * 2 * 40;

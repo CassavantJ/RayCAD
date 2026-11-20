@@ -269,6 +269,7 @@ private:
     std::vector<Vec3> edgePoints_; // where each selected edge was picked (for the radius handle)
     QJsonObject faceRef_;          // datum plane on a face
     std::uint64_t edgeSerial_ = 0;
+    bool edgesPending_ = false; // model.reference answers for the picked edges still to come
 
     // The chosen sketch.
     std::optional<kernel::Plane> plane_;

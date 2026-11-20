@@ -429,16 +429,6 @@ Item {
                            : FeatureTool.previewStatus === "failed" ? Theme.error : Theme.textSecondary
                     text: FeatureTool.message
                 }
-                Label {
-                    objectName: "featurePreviewState"
-                    secondary: true
-                    font: Theme.smallFont
-                    text: FeatureTool.previewStatus === "building" ? qsTr("Building the preview…")
-                          : FeatureTool.previewStatus === "failed" ? qsTr("The preview shows the last values that built")
-                          : ""
-                    visible: text !== ""
-                }
-
                 Row {
                     spacing: Theme.spacingS
                     layoutDirection: Qt.RightToLeft
@@ -457,6 +447,17 @@ Item {
                         toolTipText: qsTr("Close without changing the document (Esc)")
                         onClicked: FeatureTool.cancel()
                     }
+                }
+                // Below the buttons, so that OK and Cancel never move while a preview builds (the line comes and
+                // goes with every change: a click on OK must not land where it was a moment ago).
+                Label {
+                    objectName: "featurePreviewState"
+                    secondary: true
+                    font: Theme.smallFont
+                    text: FeatureTool.previewStatus === "building" ? qsTr("Building the preview…")
+                          : FeatureTool.previewStatus === "failed" ? qsTr("The preview shows the last values that built")
+                          : ""
+                    visible: text !== ""
                 }
             }
         }
