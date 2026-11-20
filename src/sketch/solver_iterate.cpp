@@ -25,8 +25,10 @@
 #include "solver_iterate.h"
 
 #include <Eigen/Dense>
+#include <Eigen/OrderingMethods>
 #include <Eigen/SparseCholesky>
 #include <Eigen/SparseCore>
+#include <Eigen/SparseQR>
 
 #include <algorithm>
 #include <cmath>
@@ -413,7 +415,334 @@ int sqpSparse(GCS::SubSystem* subsysA, GCS::SubSystem* subsysB, int maxIter, dou
     return ret;
 }
 
-int dogLeg(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToken* cancel)
+SolverCounters& solverCounters()
+{
+    thread_local SolverCounters counters;
+    return counters;
+}
+
+void bandOrder(const std::vector<std::vector<int>>& colRows, int nRows, std::vector<int>& colOf,
+               std::vector<int>& rowPos)
+{
+    const int n = static_cast<int>(colRows.size());
+    std::vector<std::vector<int>> rowCols(static_cast<std::size_t>(nRows));
+    for (int j = 0; j < n; ++j) {
+        for (int r : colRows[static_cast<std::size_t>(j)]) {
+            rowCols[static_cast<std::size_t>(r)].push_back(j);
+        }
+    }
+    std::vector<int> degree(static_cast<std::size_t>(n), 0);
+    for (int j = 0; j < n; ++j) {
+        for (int r : colRows[static_cast<std::size_t>(j)]) {
+            degree[static_cast<std::size_t>(j)] += static_cast<int>(rowCols[static_cast<std::size_t>(r)].size()) - 1;
+        }
+    }
+    std::vector<char> seen(static_cast<std::size_t>(n), 0);
+    std::vector<int> order;
+    order.reserve(static_cast<std::size_t>(n));
+    std::vector<int> byDegree(static_cast<std::size_t>(n));
+    for (int j = 0; j < n; ++j) {
+        byDegree[static_cast<std::size_t>(j)] = j;
+    }
+    const auto lessDegree = [&](int a, int b) {
+        const int da = degree[static_cast<std::size_t>(a)], db = degree[static_cast<std::size_t>(b)];
+        return da != db ? da < db : a < b;
+    };
+    std::sort(byDegree.begin(), byDegree.end(), lessDegree);
+    std::vector<int> next;
+    for (int start : byDegree) {
+        if (seen[static_cast<std::size_t>(start)]) {
+            continue;
+        }
+        seen[static_cast<std::size_t>(start)] = 1;
+        std::size_t head = order.size();
+        order.push_back(start);
+        while (head < order.size()) {
+            const int j = order[head++];
+            next.clear();
+            for (int r : colRows[static_cast<std::size_t>(j)]) {
+                for (int k : rowCols[static_cast<std::size_t>(r)]) {
+                    if (!seen[static_cast<std::size_t>(k)]) {
+                        seen[static_cast<std::size_t>(k)] = 1;
+                        next.push_back(k);
+                    }
+                }
+            }
+            std::sort(next.begin(), next.end(), lessDegree);
+            order.insert(order.end(), next.begin(), next.end());
+        }
+    }
+    colOf.assign(order.rbegin(), order.rend());
+    rowPos.assign(static_cast<std::size_t>(nRows), -1);
+    int placed = 0;
+    for (int j : colOf) {
+        for (int r : colRows[static_cast<std::size_t>(j)]) {
+            if (rowPos[static_cast<std::size_t>(r)] < 0) {
+                rowPos[static_cast<std::size_t>(r)] = placed++;
+            }
+        }
+    }
+    for (int r = 0; r < nRows; ++r) { // unknowns no row touches (none inside a component)
+        if (rowPos[static_cast<std::size_t>(r)] < 0) {
+            rowPos[static_cast<std::size_t>(r)] = placed++;
+        }
+    }
+}
+
+namespace {
+
+// DogLeg's tolerances and iteration limit, as System::solve_DL picks them.
+struct DlSettings {
+    double tolg, tolx, tolf;
+    int maxIterNumber;
+};
+
+DlSettings dlSettings(const GCS::System& s, bool redundant, int xsize)
+{
+    if (redundant) {
+        return {s.DL_tolgRedundant, s.DL_tolxRedundant, s.DL_tolfRedundant,
+                s.sketchSizeMultiplierRedundant ? s.maxIterRedundant * xsize : s.maxIterRedundant};
+    }
+    return {s.DL_tolg, s.DL_tolx, s.DL_tolf, s.sketchSizeMultiplier ? s.maxIter * xsize : s.maxIter};
+}
+
+// An Eigen ordering functor (the COLAMD convention: perm.indices()(column) = its new position) giving bandOrder's
+// column order. On sketch Jacobians it leaves less fill than COLAMD (a chain of 900 unknowns: R 2.5 times smaller).
+struct BandOrdering {
+    template <typename MatrixType>
+    void operator()(const MatrixType& mat, Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, int>& perm)
+    {
+        std::vector<std::vector<int>> colRows(static_cast<std::size_t>(mat.cols()));
+        for (Eigen::Index j = 0; j < mat.outerSize(); ++j) {
+            for (typename MatrixType::InnerIterator it(mat, j); it; ++it) {
+                colRows[static_cast<std::size_t>(it.col())].push_back(static_cast<int>(it.row()));
+            }
+        }
+        std::vector<int> colOf, rowPos;
+        bandOrder(colRows, static_cast<int>(mat.rows()), colOf, rowPos);
+        perm.resize(static_cast<Eigen::Index>(colOf.size()));
+        for (std::size_t k = 0; k < colOf.size(); ++k) {
+            perm.indices()(colOf[k]) = static_cast<int>(k);
+        }
+    }
+};
+
+// The Gauss-Newton step of the sparse DogLeg: the least-norm solution of J h = b when J has no more rows than columns,
+// the least-squares solution otherwise.
+//  - First through sparse Cholesky (SparseQp: the pattern of K, the products that make it up and the fill-reducing
+//    ordering are worked out once per subsystem): least norm h = J^T K^-1 b with K = J J^T; least squares
+//    h = K^-1 J^T b with K = J^T J. Accepted when K factors and h solves J h = b (least norm), or the normal equations
+//    (least squares), to kCholeskyResidual relative.
+//  - Otherwise (and from then on for this subsystem: a J of deficient rank stays so), through a sparse QR (Eigen's
+//    SparseQR with BandOrdering and its default rank threshold), which drops a vanishing pivot instead of dividing by
+//    it: several times slower than the Cholesky step.
+constexpr double kCholeskyResidual = 1e-8;
+
+class SparseGaussStep {
+public:
+    bool step(const Eigen::SparseMatrix<double, Eigen::RowMajor>& J, const Eigen::VectorXd& b, Eigen::VectorXd& h)
+    {
+        const bool wide = J.rows() <= J.cols(); // QR of J^T, a tall matrix
+        if (useCholesky_) {
+            if (wide) {
+                if (cholesky_.factor(J) == 0) {
+                    h = J.transpose() * cholesky_.Kinv(b);
+                    if (h.allFinite() && (J * h - b).norm() <= kCholeskyResidual * b.norm()) {
+                        return true;
+                    }
+                }
+            } else {
+                Jt_ = J.transpose();
+                if (cholesky_.factor(Jt_) == 0) {
+                    const Eigen::VectorXd jtb = Jt_ * b;
+                    h = cholesky_.Kinv(jtb);
+                    if (h.allFinite() && (Jt_ * (J * h) - jtb).norm() <= kCholeskyResidual * jtb.norm()) {
+                        return true;
+                    }
+                }
+            }
+            useCholesky_ = false;
+        }
+        if (wide) {
+            A_ = J.transpose();
+        } else {
+            A_ = J;
+        }
+        A_.makeCompressed();
+        if (!analysed_) {
+            qr_.analyzePattern(A_);
+            analysed_ = true;
+        }
+        qr_.factorize(A_);
+        if (qr_.info() != Eigen::Success) {
+            return false;
+        }
+        if (!wide) {
+            h = qr_.solve(b);
+            return qr_.info() == Eigen::Success;
+        }
+        // J^T P = Q R, so J = P R^T Q^T, and J h = b reads R^T (Q^T h) = P^T b. With r = rank, the least-norm h has
+        // Q^T h = (R11^-T (P^T b)_head(r), 0).
+        const Eigen::Index r = qr_.rank();
+        const Eigen::VectorXd pb = qr_.colsPermutation().transpose() * b;
+        Eigen::VectorXd w = Eigen::VectorXd::Zero(A_.rows());
+        if (r > 0) {
+            // A row-major copy sorts the entries (matrixR() leaves them unsorted; the triangular solve needs them
+            // sorted).
+            const Eigen::SparseMatrix<double, Eigen::RowMajor> R = qr_.matrixR();
+            const Eigen::SparseMatrix<double, Eigen::RowMajor> R11 = R.topLeftCorner(r, r);
+            w.head(r) = R11.transpose().triangularView<Eigen::Lower>().solve(pb.head(r));
+        }
+        h = qr_.matrixQ() * w;
+        return true;
+    }
+
+private:
+    SparseQp cholesky_;
+    bool useCholesky_ = true;
+    Eigen::SparseMatrix<double, Eigen::RowMajor> Jt_;
+    Eigen::SparseMatrix<double> A_;
+    Eigen::SparseQR<Eigen::SparseMatrix<double>, BandOrdering> qr_;
+    bool analysed_ = false;
+};
+// System::solve_DL with the Jacobian kept sparse (SparseJac) and SparseGaussStep for the Gauss-Newton step; every other
+// statement is the dense loop's.
+int dogLegSparse(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToken* cancel, bool redundant)
+{
+    const int xsize = subsys->pSize();
+    const int csize = subsys->cSize();
+    const DlSettings dl = dlSettings(settings, redundant, xsize);
+    ++solverCounters().sparseDogLegs;
+
+    Eigen::VectorXd x(xsize), x_new(xsize);
+    Eigen::VectorXd fx(csize), fx_new(csize);
+    Eigen::VectorXd g(xsize), h_sd(xsize), h_gn(xsize), h_dl(xsize);
+
+    subsys->redirectParams();
+    GCS::VEC_pD plist;
+    subsys->getParamList(plist);
+    SparseJac Jx, Jx_new;
+    Jx.build(subsys, plist, xsize);
+    Jx_new.build(subsys, plist, xsize);
+    SparseGaussStep gauss;
+
+    double err;
+    subsys->getParams(x);
+    subsys->calcResidual(fx, err);
+    Jx.eval();
+
+    g = Jx.J.transpose() * (-fx);
+
+    double g_inf = g.lpNorm<Eigen::Infinity>();
+    double fx_inf = fx.lpNorm<Eigen::Infinity>();
+
+    const double divergingLim = 1e6 * err + 1e12;
+
+    double delta = 0.1;
+    double alpha = 0.;
+    double nu = 2.;
+    int iter = 0, stop = 0, reduce = 0;
+    while (!stop) {
+        if (fx_inf <= dl.tolf) {
+            stop = 1;
+            break;
+        } else if (g_inf <= dl.tolg) {
+            stop = 2;
+            break;
+        } else if (delta <= dl.tolx * (dl.tolx + x.norm())) {
+            stop = 2;
+            break;
+        } else if (iter >= dl.maxIterNumber) {
+            stop = 4;
+            break;
+        } else if (err > divergingLim || err != err) {
+            stop = 6;
+            break;
+        }
+        if (cancelled(cancel)) {
+            subsys->revertParams();
+            return kSolveCancelled;
+        }
+
+        alpha = g.squaredNorm() / (Jx.J * g).squaredNorm();
+        h_sd = alpha * g;
+
+        if (!gauss.step(Jx.J, -fx, h_gn)) {
+            break;
+        }
+
+        const double rel_error = (Jx.J * h_gn + fx).norm() / fx.norm();
+        if (rel_error > 1e15) {
+            break;
+        }
+
+        if (h_gn.norm() < delta) {
+            h_dl = h_gn;
+            if (h_dl.norm() <= dl.tolx * (dl.tolx + x.norm())) {
+                stop = 5;
+                break;
+            }
+        } else if (alpha * g.norm() >= delta) {
+            h_dl = (delta / (alpha * g.norm())) * h_sd;
+        } else {
+            double beta = 0;
+            Eigen::VectorXd b = h_gn - h_sd;
+            const double bb = (b.transpose() * b).norm();
+            const double gb = (h_sd.transpose() * b).norm();
+            const double c = (delta + h_sd.norm()) * (delta - h_sd.norm());
+            if (gb > 0) {
+                beta = c / (gb + std::sqrt(gb * gb + c * bb));
+            } else {
+                beta = (std::sqrt(gb * gb + c * bb) - gb) / bb;
+            }
+            h_dl = h_sd + beta * b;
+        }
+
+        double err_new;
+        x_new = x + h_dl;
+        subsys->setParams(x_new);
+        subsys->calcResidual(fx_new, err_new);
+        Jx_new.eval();
+
+        const double dL = err - 0.5 * (fx + Jx.J * h_dl).squaredNorm();
+        const double dF = err - err_new;
+        double rho = dL / dF;
+
+        if (dF > 0 && dL > 0) {
+            x = x_new;
+            // Same pattern, built the same way: only the values differ.
+            std::copy(Jx_new.J.valuePtr(), Jx_new.J.valuePtr() + Jx_new.J.nonZeros(), Jx.J.valuePtr());
+            fx = fx_new;
+            err = err_new;
+            g = Jx.J.transpose() * (-fx);
+            g_inf = g.lpNorm<Eigen::Infinity>();
+            fx_inf = fx.lpNorm<Eigen::Infinity>();
+        } else {
+            rho = -1;
+        }
+
+        if (std::fabs(rho - 1.) < 0.2 && h_dl.norm() > delta / 3. && reduce <= 0) {
+            delta = 3 * delta;
+            nu = 2;
+            reduce = 0;
+        } else if (rho < 0.25) {
+            delta = delta / nu;
+            nu = 2 * nu;
+            reduce = 2;
+        } else {
+            reduce--;
+        }
+        iter++;
+    }
+
+    subsys->revertParams();
+    solverCounters().dogLegIterations += iter;
+    return (stop == 1) ? GCS::Success : GCS::Failed;
+}
+
+} // namespace
+
+int dogLeg(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToken* cancel, const DogLegOptions& options)
 {
     const int xsize = subsys->pSize();
     const int csize = subsys->cSize();
@@ -421,12 +750,17 @@ int dogLeg(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToke
     if (xsize == 0) {
         return GCS::Success;
     }
+    if (xsize >= options.denseLimit || csize >= options.denseLimit) {
+        return dogLegSparse(subsys, settings, cancel, options.redundantSolving);
+    }
+    ++solverCounters().denseDogLegs;
 
-    const double tolg = settings.DL_tolg;
-    const double tolx = settings.DL_tolx;
-    const double tolf = settings.DL_tolf;
+    const DlSettings dl = dlSettings(settings, options.redundantSolving, xsize);
+    const double tolg = dl.tolg;
+    const double tolx = dl.tolx;
+    const double tolf = dl.tolf;
 
-    const int maxIterNumber = (settings.sketchSizeMultiplier ? settings.maxIter * xsize : settings.maxIter);
+    const int maxIterNumber = dl.maxIterNumber;
 
     Eigen::VectorXd x(xsize), x_new(xsize);
     Eigen::VectorXd fx(csize), fx_new(csize);
@@ -571,6 +905,7 @@ int dogLeg(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToke
     }
 
     subsys->revertParams();
+    solverCounters().dogLegIterations += iter;
 
     return (stop == 1) ? GCS::Success : GCS::Failed;
 }
@@ -703,8 +1038,10 @@ std::unique_ptr<Prepared> prepare(const GCS::VEC_pD& plistIn, const std::vector<
     return P;
 }
 
-int solvePrepared(Prepared& p, const GCS::System& settings, const CancelToken* cancel)
+int solvePrepared(Prepared& p, const GCS::System& settings, const CancelToken* cancel, int denseLimit)
 {
+    DogLegOptions dl;
+    dl.denseLimit = denseLimit;
     bool isReset = false;
     int res = GCS::Success;
     for (std::size_t cid = 0; cid < p.sub.size(); ++cid) {
@@ -724,9 +1061,9 @@ int solvePrepared(Prepared& p, const GCS::System& settings, const CancelToken* c
             }
             r = sqpSparse(sub, aux, settings.maxIter, settings.convergence, p.caches[cid].get());
         } else if (sub) {
-            r = dogLeg(sub, settings, cancel);
+            r = dogLeg(sub, settings, cancel, dl);
         } else if (aux) {
-            r = dogLeg(aux, settings, cancel);
+            r = dogLeg(aux, settings, cancel, dl);
         }
         if (r == kSolveCancelled) {
             return r;

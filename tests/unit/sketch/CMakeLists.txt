@@ -8,6 +8,7 @@ add_executable(ray_sketch_tests
     solver_drag_test.cpp
     solver_determinism_test.cpp
     solver_cancel_test.cpp
+    solver_scale_test.cpp
     drag_s11_test.cpp
     property_test.cpp
     loops_test.cpp

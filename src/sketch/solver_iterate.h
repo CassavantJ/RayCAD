@@ -25,7 +25,7 @@
 //    SubSystem per component for tag >= 0 constraints and one for the temporary drag constraints), over a constraint
 //    list the caller chooses (System keeps its own private);
 //  - dogLeg(): System::solve_DL line for line, plus a cancellation check between iterations. Same bits as PlaneGCS
-//    (tested);
+//    (tested) below kDenseLimit; at or above it the same loop with a sparse Jacobian and a sparse Gauss step;
 //  - sqpSparse(): the drag iteration System::solve(SubSystem*, SubSystem*) with the same QP, line search and BFGS
 //    update, solved through a sparse Jacobian, K = A A^T by sparse Cholesky with a cached ordering, and the BFGS matrix
 //    kept as identity plus rank-2 updates (spike S11). Agrees with PlaneGCS to 1e-9, not bit for bit.
@@ -34,6 +34,8 @@
 // PlaneGCS (third_party/planegcs), unmodified.
 #include "GCS.h"
 #include "SubSystem.h"
+
+#include "solver_internal.h"
 
 #include <ray/core.h>
 
@@ -71,12 +73,27 @@ std::unique_ptr<Prepared> prepare(const GCS::VEC_pD& plist, const std::vector<GC
 // that list): resets to the reference, then per component the sparse drag iteration when it has temporary
 // constraints, else DogLeg. `settings` supplies maxIter, convergence and the DogLeg tolerances. Returns the worst
 // GCS::SolveStatus, or kSolveCancelled once `cancel` (may be null) reads cancelled between iterations.
-int solvePrepared(Prepared& p, const GCS::System& settings, const CancelToken* cancel);
+int solvePrepared(Prepared& p, const GCS::System& settings, const CancelToken* cancel, int denseLimit = kDenseLimit);
 // GCS::System::applySolution() over a Prepared system.
 void applyPrepared(Prepared& p);
 
-// System::solve_DL(subsys, false), with a cancellation check before every iteration.
-int dogLeg(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToken* cancel);
+struct DogLegOptions {
+    bool redundantSolving = false; // System::solve_DL's isRedundantsolving: the *Redundant tolerances and iterations
+    int denseLimit = kDenseLimit;  // kDenseLimit
+};
+// System::solve_DL(subsys, isRedundantsolving), with a cancellation check before every iteration. Below the dense
+// limit it is upstream's loop statement for statement (same bits); at or above it the same loop with a sparse Jacobian
+// and a sparse QR Gauss step (kDenseLimit).
+int dogLeg(GCS::SubSystem* subsys, const GCS::System& settings, const CancelToken* cancel,
+           const DogLegOptions& options = {});
+
+// A band ordering of a sparse matrix given by the rows of each column, for the sparse QRs of the diagnosis and the
+// DogLeg step: the columns in reverse Cuthill-McKee order of the graph in which two columns are adjacent when they
+// share a row (each connected part started from a column of least degree, lowest index first; neighbours visited by
+// degree, then index), the rows in the order the reordered columns first reach them. colOf[k] is the column placed at
+// position k; rowPos[r] the position of row r. Deterministic, and independent of entity ids beyond the canonical order.
+void bandOrder(const std::vector<std::vector<int>>& colRows, int nRows, std::vector<int>& colOf,
+               std::vector<int>& rowPos);
 
 // The sparse form of System::solve(subsysA, subsysB): subsysA holds the sketch constraints, subsysB the temporary
 // ones whose error is minimised. `cache` (may be null) keeps the sparse structure of this pair across calls.

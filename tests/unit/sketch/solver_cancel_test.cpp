@@ -52,7 +52,9 @@ TEST_CASE("Cancelling a running 200-curve solve returns within the documented ti
     }
     double worstLatency = 0;
     int cancelledRuns = 0;
-    for (int delayMs : {5, 40, 120, 250, 400}) {
+    // Since the per-component diagnosis and sparse DogLeg (pre-M2) the whole solve takes tens of ms in an optimised
+    // build, so the first delays are short.
+    for (int delayMs : {1, 5, 40, 120, 250}) {
         CancelSource source;
         JobContext ctx{source.token(), {}};
         Result<SolveResult> result = tl::unexpected(Error{ErrorCode::Internal, "not run", {}});
@@ -72,9 +74,9 @@ TEST_CASE("Cancelling a running 200-curve solve returns within the documented ti
             worstLatency = std::max(worstLatency, latency);
         }
     }
-    std::printf("sketch cancel: uncancelled %d-curve solve %.0f ms; %d of 5 runs cancelled, worst latency %.0f ms\n",
+    std::printf("sketch cancel: uncancelled %d-curve solve %.1f ms; %d of 5 runs cancelled, worst latency %.0f ms\n",
                 g.curves, fullMs, cancelledRuns, worstLatency);
-    CHECK(cancelledRuns >= 1);
+    CHECK((cancelledRuns >= 1 || fullMs < 2)); // a solve that ends within 1 ms cannot be caught
     // Documented bound: one diagnosis or one DogLeg iteration. Measured on the reference machine; a loaded machine
     // gets twice the uncancelled solve as slack.
     CHECK(worstLatency <= std::max(1000.0, 2 * fullMs));
