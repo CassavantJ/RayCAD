@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """raycad-cli end to end (task T-017): import a STEP file and save it, reopen the .raycad file with the STEP file
 gone and compare the state hash and every body's content hash, export, list and invoke actions, and check the exit
-codes and messages of failures.
+codes and messages of failures. With --errors, also create an empty document with new.
 
 With --recovery (and --helper, the api tests' helper process that is killed like a crash): recover --list, recover
 and recover --discard.
@@ -85,6 +85,39 @@ def roundtrip(cli, step, work, env):
     expect(code == 0, "invoke param.set exited %d: %s" % (code, err))
     code, out, err = run(cli, "hash", saved, env=env)
     expect(code == 0 and out.strip() != "state " + state, "the saved command did not change the state hash")
+
+
+def new_document(cli, work, env):
+    """new -o: an empty document, saved, that reopens with the same state, plus its failures."""
+    saved = os.path.join(work, "empty.raycad")
+    code, out, err = run(cli, "new", "-o", saved, env=env)
+    expect(code == 0, "new exited %d: %s" % (code, err))
+    state, description = parse_info(out)
+    expect(state is not None and description is not None, "new printed no state and description: %r" % out)
+    expect(os.path.isfile(saved), "new wrote no file")
+    if description is None:
+        return
+    expect(description["stateHash"] == state, "the description of the new document names another state hash")
+    expect(description["bodies"] == [], "a new document has bodies: %r" % description["bodies"])
+    code, out, err = run(cli, "info", saved, env=env)
+    expect(code == 0, "info on the new document exited %d: %s" % (code, err))
+    reopened_state, reopened = parse_info(out)
+    expect(reopened_state == state, "reopened state %s differs from the new document's %s" % (reopened_state, state))
+    expect(reopened == description, "the description of the new document differs after reopening")
+
+    # Two new documents are the same document: a new document's state does not depend on time or ids.
+    again = os.path.join(work, "empty2.raycad")
+    code, out, err = run(cli, "new", "-o", again, "--template", "default", env=env)
+    expect(code == 0 and parse_info(out)[0] == state, "a second new document hashes differently: %r" % out)
+
+    code, out, err = run(cli, "new", "-o", saved, env=env)
+    expect(code != 0 and "error" in err, "new over an existing file without --overwrite gave %d %r" % (code, err))
+    code, out, err = run(cli, "new", "-o", saved, "--overwrite", env=env)
+    expect(code == 0, "new --overwrite exited %d: %s" % (code, err))
+    code, out, err = run(cli, "new", "-o", os.path.join(work, "t.raycad"), "--template", "nope", env=env)
+    expect(code == 4 and "template" in err, "an unknown template gave %d %r" % (code, err))
+    code, out, err = run(cli, "new", env=env)
+    expect(code == 2, "new without -o gave %d" % code)
 
 
 def errors(cli, work, env):
@@ -217,6 +250,7 @@ def main():
         roundtrip(args.cli, args.step, args.work, env)
     if args.errors:
         errors(args.cli, args.work, env)
+        new_document(args.cli, args.work, env)
     if FAILURES:
         print("cli_roundtrip: %d failure(s)" % len(FAILURES), file=sys.stderr)
         return 1
