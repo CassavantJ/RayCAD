@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <regex>
 #include <string>
 #include <thread>
@@ -49,41 +50,49 @@ double volumeOf(const Shape& shape)
 }
 
 // The straight edge from a to b (either direction).
+// (The helpers below end in `if (!found) FAIL(...)` and one return: MSVC 14.51 Debug reports the return after a
+// FAIL as unreachable code, C4702, which /WX turns into an error.)
 SubId lineEdge(const Shape& shape, Vec3 a, Vec3 b)
 {
-    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge); ++i) {
+    std::optional<SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge) && !found; ++i) {
         const SubId id{SubKind::Edge, i};
         const CurveInfo info = take(curveInfo(shape, id));
         if (info.type != CurveType::Line)
             continue;
         if ((close(info.start, a, 1e-9) && close(info.end, b, 1e-9)) ||
             (close(info.start, b, 1e-9) && close(info.end, a, 1e-9)))
-            return id;
+            found = id;
     }
-    FAIL("no straight edge between the given points");
-    return {};
+    if (!found)
+        FAIL("no straight edge between the given points");
+    return found.value_or(SubId{});
 }
 
 // The circular edge with this centre and radius.
 SubId circleEdge(const Shape& shape, Vec3 centre, double radius)
 {
-    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge); ++i) {
+    std::optional<SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge) && !found; ++i) {
         const SubId id{SubKind::Edge, i};
         const CurveInfo info = take(curveInfo(shape, id));
         if (info.type == CurveType::Circle && close(info.center, centre, 1e-9) && close(info.radius, radius, 1e-9))
-            return id;
+            found = id;
     }
-    FAIL("no circular edge with the given centre and radius");
-    return {};
+    if (!found)
+        FAIL("no circular edge with the given centre and radius");
+    return found.value_or(SubId{});
 }
 
 SubId vertexAt(const Shape& shape, Vec3 p)
 {
-    for (std::uint32_t i = 0; i < shape.count(SubKind::Vertex); ++i)
+    std::optional<SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Vertex) && !found; ++i)
         if (close(take(vertexPoint(shape, SubId{SubKind::Vertex, i})), p, 1e-9))
-            return SubId{SubKind::Vertex, i};
-    FAIL("no vertex at the given point");
-    return {};
+            found = SubId{SubKind::Vertex, i};
+    if (!found)
+        FAIL("no vertex at the given point");
+    return found.value_or(SubId{});
 }
 
 void checkValid(const OpResult& op)

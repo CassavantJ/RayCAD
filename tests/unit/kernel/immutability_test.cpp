@@ -427,11 +427,12 @@ Shape importFirst(const std::string& relative)
     auto imported = importStep((fs::path(RAY_CORPUS_DIR) / relative).string(), ImportOptions{}, ctx);
     INFO(relative);
     REQUIRE(imported.has_value());
-    for (const ImportedBody& body : imported->bodies)
-        if (body.shape.count(SubKind::Solid) > 0)
-            return body.shape;
-    FAIL("no solid in " << relative);
-    return {};
+    const auto solid = std::find_if(imported->bodies.begin(), imported->bodies.end(),
+                                    [](const ImportedBody& body) { return body.shape.count(SubKind::Solid) > 0; });
+    // One return after the check: MSVC 14.51 Debug reports a return after FAIL as unreachable code (C4702).
+    if (solid == imported->bodies.end())
+        FAIL("no solid in " << relative);
+    return solid == imported->bodies.end() ? Shape{} : solid->shape;
 }
 
 // Runs the chain on `base` with every check: no call changes any shape, and the chain gives the same bytes when run

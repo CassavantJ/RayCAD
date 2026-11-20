@@ -23,6 +23,9 @@ constexpr const char* kUsage =
     "\n"
     "commands:\n"
     "  --version                          print the version\n"
+    "  new -o <out.raycad> [--template ID] [--overwrite]\n"
+    "                                     create an empty document and save it; prints the state hash and the\n"
+    "                                     document description\n"
     "  import <in.step|in.iges> -o <out.raycad> [--heal none|reader|full] [--overwrite]\n"
     "                                     import a STEP or IGES file, rebuild and save it as a RayCAD document;\n"
     "                                     prints the state hash and the document description\n"
@@ -126,7 +129,7 @@ std::string quoted(const std::string& s)
 
 struct Args {
     std::vector<std::string> positional;
-    std::string output, heal, search, open, caller = "user";
+    std::string output, heal, search, open, templateId, caller = "user";
     double chordTol = 0.01;
     int limit = 0;
     int threads = 0;
@@ -257,6 +260,32 @@ int cmdRecover(Session& s, const Args& a)
         return report(saved.error());
     }
     s.describe(**od, true);
+    return 0;
+}
+
+int cmdNew(Session& s, const Args& a)
+{
+    if (a.positional.size() != 1 || a.output.empty()) {
+        return usageError("new needs -o <out.raycad> and no input file");
+    }
+    // Through the file.new action, so a template id is checked like any caller's.
+    const std::string args = "{\"template\":" + quoted(a.templateId) + "}";
+    auto made = s.app()->wait(s.app()->actions().invoke("file.new", args, ray::api::Caller::User));
+    if (!made) {
+        return report(made.error());
+    }
+    ray::api::OpenDocument* od = s.app()->active();
+    if (od == nullptr) {
+        return report(Error{ErrorCode::Internal, "file.new made no document", {}});
+    }
+    if (auto st = s.app()->waitForBuild(*od); !st) {
+        return report(st.error());
+    }
+    auto saved = s.app()->wait(s.app()->save(*od, a.output, a.overwrite));
+    if (!saved) {
+        return report(saved.error());
+    }
+    s.describe(*od, true);
     return 0;
 }
 
@@ -430,7 +459,8 @@ int run(std::vector<std::string> argv)
             return 0;
         }
         if (arg == "-o" || arg == "--output" || arg == "--heal" || arg == "--search" || arg == "--open" ||
-            arg == "--caller" || arg == "--chord-tol" || arg == "--limit" || arg == "--threads") {
+            arg == "--caller" || arg == "--template" || arg == "--chord-tol" || arg == "--limit" ||
+            arg == "--threads") {
             const std::string* v = value(arg.c_str());
             if (!v) {
                 return kExitUsage;
@@ -445,6 +475,8 @@ int run(std::vector<std::string> argv)
                 a.open = *v;
             } else if (arg == "--caller") {
                 a.caller = *v;
+            } else if (arg == "--template") {
+                a.templateId = *v;
             } else {
                 char* end = nullptr;
                 const double d = std::strtod(v->c_str(), &end);
@@ -483,14 +515,17 @@ int run(std::vector<std::string> argv)
         std::printf("raycad-cli %s\n", RAY_VERSION_STRING);
         return 0;
     }
-    if (command != "import" && command != "info" && command != "hash" && command != "export" && command != "actions" &&
-        command != "invoke" && command != "recover") {
+    if (command != "new" && command != "import" && command != "info" && command != "hash" && command != "export" &&
+        command != "actions" && command != "invoke" && command != "recover") {
         return usageError("unknown command '" + command + "'");
     }
     Session s(a.threads);
     if (s.app() == nullptr) {
         std::fprintf(stderr, "raycad-cli: error: the application could not start\n");
         return kExitFailed;
+    }
+    if (command == "new") {
+        return cmdNew(s, a);
     }
     if (command == "import") {
         return cmdImport(s, a);
