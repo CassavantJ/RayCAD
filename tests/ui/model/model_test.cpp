@@ -40,6 +40,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QTemporaryDir>
@@ -984,6 +985,150 @@ TEST_CASE("fillet edges are picked and unpicked in the view while the preview is
     // The preview slot is free and the body answers picks as it is drawn again.
     CHECK(w.tool()->overlay().owner() == nullptr);
     CHECK(viewport->pickMode(w.host->scene()->itemForBody(0)) == render::PickMode::WhenVisible);
+    w.checkNoWarnings();
+}
+
+TEST_CASE("editing a fillet picks in the model before it: its edges are selected, Ctrl takes one off, Shift adds",
+          "[model][pick][edit]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.view()->fitAll();
+    w.settle();
+    // Edges of the block (the model before the fillet keeps these indices: it is the same build).
+    const auto e1 = edgeAlongX(w, 0, 10);
+    const auto e2 = edgeAlongX(w, 25, 10);
+    const auto e3 = edgeAlongX(w, 0, 0);
+    const auto selectedEdges = [&] {
+        std::set<std::uint32_t> out;
+        const render::ItemId item = w.host->scene()->itemForBody(0);
+        for (const ui::SelectionEntry& e : w.host->selection()->entries()) {
+            if (e.hit.kind == kernel::SubKind::Edge && e.hit.item == item)
+                out.insert(e.hit.subIndex);
+        }
+        return out;
+    };
+    const auto clickEdge = [&](const std::pair<std::uint32_t, Vec3>& e, Qt::KeyboardModifiers mods) {
+        w.host->selection()->applyClick(
+            render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Edge, e.first, e.second, 0}, mods);
+    };
+
+    // A fillet on e1 and e2.
+    openTool(w, "model.tool.fillet", "fillet");
+    clickEdge(e1, Qt::NoModifier);
+    clickEdge(e2, Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
+    w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
+    w.previewed();
+    w.commit();
+    const double fillet = (1 - kPi / 4) * 2 * 2 * 40;
+    CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4));
+    REQUIRE(w.host->scene()->meshOf(0) != nullptr);
+    CHECK(w.host->scene()->meshOf(0)->faces.size() > 6); // the filleted block
+    const doc::Feature filletFeature = w.document()->state()->features.back();
+    REQUIRE(filletFeature.type == "fillet");
+    const QJsonArray storedEdges = QJsonDocument::fromJson(QByteArray::fromStdString(filletFeature.propsJson))
+                                       .object()
+                                       .value(QStringLiteral("edges"))
+                                       .toArray();
+    REQUIRE(storedEdges.size() == 2);
+
+    // Edit it: the view shows the block as it was before the fillet (6 faces) under the preview, and the fillet's
+    // own edges are selected in it.
+    w.tree()->setCurrentIndex(w.tree()->count() - 1);
+    REQUIRE(w.run("model.feature.edit"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
+    w.previewed(); // busy until the model before it is shown and its edges are selected
+    CHECK(w.tool()->editBaseReady());
+    CHECK(w.host->session()->showingModel());
+    REQUIRE(w.host->scene()->bodyCount() == 1);
+    REQUIRE(w.host->scene()->meshOf(0) != nullptr);
+    CHECK(w.host->scene()->meshOf(0)->faces.size() == 6);
+    CHECK(w.tool()->pickCount() == 2);
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e1.first, e2.first});
+    CHECK(w.tool()->overlay().owner() == w.tool());
+    CHECK(w.tool()->overlay().itemCount() == 1); // the preview stands in for the block
+    render::IRenderViewport* viewport = w.host->scene()->viewport();
+    REQUIRE(viewport != nullptr);
+    CHECK(viewport->pickMode(w.host->scene()->itemForBody(0)) == render::PickMode::Always);
+    w.shot("fillet_edit_stored_edges");
+    // Unchanged, the props are the stored ones exactly.
+    {
+        auto props = w.tool()->propsJson();
+        REQUIRE(props);
+        const QJsonObject p = QJsonDocument::fromJson(QByteArray::fromStdString(*props)).object();
+        CHECK(p.value(QStringLiteral("edges")).toArray() == storedEdges);
+    }
+
+    // Ctrl-click takes e1 off; Shift-click adds e3 (with the preview shown, on the model before the fillet).
+    clickEdge(e1, Qt::ControlModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, kTimeoutMs));
+    w.previewed();
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e2.first});
+    clickEdge(e3, Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
+    w.previewed();
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e2.first, e3.first});
+    w.shot("fillet_edit_changed_edges");
+    w.commit();
+
+    // e2 keeps its stored reference as it was; e3's is new. The view shows the document's build again.
+    const doc::Feature& edited = w.document()->state()->features.back();
+    const QJsonArray edges =
+        QJsonDocument::fromJson(QByteArray::fromStdString(edited.propsJson)).object().value(QStringLiteral("edges")).toArray();
+    REQUIRE(edges.size() == 2);
+    CHECK(edges.at(0) == storedEdges.at(1));
+    CHECK(edges.at(1) != storedEdges.at(0));
+    CHECK(edges.at(1) != storedEdges.at(1));
+    CHECK(!w.host->session()->showingModel());
+    for (int i = 0; i < w.tree()->count(); ++i)
+        CHECK(w.status(i) == QStringLiteral("ok"));
+    CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4)); // two 40 mm edges again
+    CHECK(w.host->scene()->meshOf(0)->faces.size() > 6);
+
+    // Undo restores the first fillet; the edit is one step.
+    w.undo();
+    w.settle();
+    CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4));
+    {
+        const QJsonArray back = QJsonDocument::fromJson(
+                                    QByteArray::fromStdString(w.document()->state()->features.back().propsJson))
+                                    .object()
+                                    .value(QStringLiteral("edges"))
+                                    .toArray();
+        CHECK(back == storedEdges);
+    }
+    w.checkNoWarnings();
+}
+
+TEST_CASE("editing an extrude shows the model before it under the preview; cancel shows the part again",
+          "[model][edit]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    const std::string hash = w.stateHash();
+    w.tree()->setCurrentIndex(1);
+    REQUIRE(w.run("model.feature.edit"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
+    w.previewed();
+    // Nothing was built before the first extrude: the scene shows no body, the preview shows the edited block.
+    CHECK(w.tool()->editBaseReady());
+    CHECK(w.host->session()->showingModel());
+    CHECK(w.host->scene()->bodyCount() == 0);
+    CHECK(w.tool()->overlay().itemCount() == 1);
+    w.tool()->cancel();
+    w.settle();
+    CHECK(!w.host->session()->showingModel());
+    REQUIRE(w.host->scene()->bodyCount() == 1);
+    CHECK(w.volume() == Approx(10000).epsilon(1e-6));
+    CHECK(w.stateHash() == hash);
     w.checkNoWarnings();
 }
 

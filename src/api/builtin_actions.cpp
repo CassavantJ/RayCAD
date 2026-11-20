@@ -8,6 +8,8 @@
 
 #include "../doc/features/hole_standards.h"
 
+#include <ray_api/feature_edit.h>
+
 #include <optional>
 #include <string>
 #include <utility>
@@ -396,7 +398,9 @@ Result<Value> topoRefJson(const naming::TopoRef& ref)
     return json::parse(naming::toJson(ref));
 }
 
-// model.reference: a persistent reference to an element of the latest build of a document (T-096).
+// model.reference: a persistent reference to an element of the latest build of a document (T-096), or of the model
+// as it was just before a feature ("before": what the feature tools pick in while they edit that feature). It runs
+// on a worker: the model before a feature is built there (from the rebuilder's cache, so it is quick).
 Status addModelActions(AppImpl& app)
 {
     Value kind =
@@ -406,6 +410,9 @@ Status addModelActions(AppImpl& app)
     index.set("minimum", Value::integer(0));
     Value body = prop("string", "The body id");
     body.set("pattern", Value::string(kUuidPattern));
+    Value before = prop("string", "A feature id: the element is one of the model as it was just before that feature "
+                                  "(the rollback bar on the feature before it), not of the latest build");
+    before.set("pattern", Value::string(kUuidPattern));
     ActionInfo info{"model.reference",
                     "Reference Element",
                     "Model",
@@ -414,23 +421,41 @@ Status addModelActions(AppImpl& app)
                     schemaOf(Value::object({{"body", std::move(body)},
                                             {"kind", std::move(kind)},
                                             {"index", std::move(index)},
+                                            {"before", std::move(before)},
                                             {"document", documentProp()}}),
                              {"body", "kind", "index"}),
                     "",
                     false,
                     false,
                     false};
+    app.runOnWorker(info.id);
     return app.actions().add(
-        std::move(info), [&app](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+        std::move(info), [&app](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
             auto args = parseArgs(argsJson);
             if (!args) {
                 return tl::unexpected<Error>(args.error());
             }
-            auto entry = app.resolve(args->stringOr("document", ""));
-            if (!entry) {
-                return tl::unexpected<Error>(entry.error());
+            auto guard = claimOnUi(app, args->stringOr("document", ""), ctx);
+            if (!guard) {
+                return tl::unexpected<Error>(guard.error());
             }
-            const doc::BuildResultPtr build = (*entry)->od.document->build();
+            const OpenDocument& od = (*guard)->get()->od; // stays while claimed
+            doc::BuildResultPtr build;
+            if (const std::string beforeId = args->stringOr("before", ""); !beforeId.empty()) {
+                const doc::DocStatePtr state = od.document->state();
+                const doc::DocStatePtr snapshot =
+                    feature_edit::stateBefore(*state, FeatureId{Uuid::fromString(beforeId)});
+                if (!snapshot) {
+                    return fail(ErrorCode::NotFound, "The document has no feature " + beforeId);
+                }
+                auto built = feature_edit::buildSnapshot(app, od.id, snapshot, ctx);
+                if (!built) {
+                    return tl::unexpected<Error>(built.error());
+                }
+                build = std::move(*built);
+            } else {
+                build = od.document->build();
+            }
             if (!build) {
                 return fail(ErrorCode::NotFound,
                             "The document has not been built yet; try again when the rebuild ends");

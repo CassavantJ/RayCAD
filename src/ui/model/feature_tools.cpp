@@ -199,6 +199,11 @@ FeatureToolModel::FeatureToolModel(SceneController* scene, SelectionModel* selec
             if (scene_ && scene_->preview().owner() == this)
                 emit statusChanged();
         });
+        // Edit mode: the stored references are selected in the model before the feature once its meshes are shown.
+        connect(scene_, &SceneController::stateChanged, this, [this] {
+            if (selectStored_)
+                selectStored();
+        });
     }
     if (session_) {
         connect(session_, &Session::documentChanged, this, [this] {
@@ -239,6 +244,8 @@ FeatureToolModel::~FeatureToolModel()
         d->cancelPreview();
     if (scene_)
         scene_->preview().clear(this);
+    if (session_)
+        session_->clearShownModel(this);
     lines_.reset();
     unsubscribe();
 }
@@ -257,9 +264,11 @@ const BodyOverlay& FeatureToolModel::overlay() const
 bool FeatureToolModel::previewBusy() const
 {
     // Busy until what the panel shows is final: references of picked edges still resolving, a preview scheduled but
-    // not started yet (the next event loop pass starts it), one building, or its meshes still being made.
+    // not started yet (the next event loop pass starts it), one building, or its meshes still being made; when
+    // editing, also the model before the feature and the selection of the stored references in it.
     const bool meshing = scene_ && scene_->preview().owner() == this && scene_->preview().meshing();
-    return edgesPending_ || previewTimer_.isActive() || previewBusy_ || previewPending_ || meshing;
+    return edgesPending_ || previewTimer_.isActive() || previewBusy_ || previewPending_ || meshing || baseBusy_ ||
+           selectStored_;
 }
 
 FeatureToolModel* FeatureToolModel::create(QQmlEngine* qml, QJSEngine*)
@@ -434,6 +443,9 @@ void FeatureToolModel::onDocumentChanged()
         return;
     if (previewBusy_)
         previewBusy_ = false;
+    // Editing: the model before the feature is made again from the new state (its picks start from the stored ones).
+    if (editId_ && d->state() != baseFrom_)
+        loadBase();
     emit optionsChanged();
     schedulePreview();
 }
@@ -586,7 +598,16 @@ void FeatureToolModel::open(const QString& type, std::optional<FeatureId> editId
     regionPicks_.clear();
     pointPicks_.clear();
     edges_ = QJsonArray();
-    storedEdges_ = QJsonArray();
+    storedRefs_ = QJsonArray();
+    located_.clear();
+    storedFound_.clear();
+    selectStored_ = false;
+    baseState_.reset();
+    baseFrom_.reset();
+    baseBuild_.reset();
+    baseBusy_ = false;
+    lastPreviewState_.reset();
+    lastPreviewBuild_.reset();
     edgePoints_.clear();
     faceRef_ = QJsonObject();
     plane_.reset();
@@ -617,16 +638,24 @@ void FeatureToolModel::open(const QString& type, std::optional<FeatureId> editId
             filterSaved_ = true;
             selection_->setFilterMask(static_cast<std::uint8_t>(render::PickFilter::Edges));
         }
-        // Edges selected before the tool opened are its edges (added to the stored ones when editing); the view's
-        // clicks add and remove edges from then on, with the preview shown.
-        storedEdges_ = edges_;
-        if (editId_ && selection_)
-            selection_->clear(); // the edit starts from the feature's own edges
+        // A new fillet: the edges selected before the tool opened are its edges. An edit: the feature's own edges,
+        // selected in the model before it once that is shown (loadBase). The view's clicks add and remove edges from
+        // then on, with the preview shown.
+        if (editId_) {
+            storedRefs_ = edges_;
+            if (selection_)
+                selection_->clear();
+        }
         applyEdges();
     } else if (type_ == QLatin1String("datum_plane") && selection_) {
         savedFilter_ = selection_->filterMask();
         filterSaved_ = true;
         selection_->setFilterMask(static_cast<std::uint8_t>(render::PickFilter::Faces));
+        if (editId_) {
+            if (!faceRef_.isEmpty())
+                storedRefs_.append(faceRef_);
+            selection_->clear();
+        }
     }
     emit activeChanged();
     emit valuesChanged();
@@ -634,6 +663,8 @@ void FeatureToolModel::open(const QString& type, std::optional<FeatureId> editId
     emit picksChanged();
     emit offerChanged();
     loadSketch();
+    if (editId_)
+        loadBase();
     schedulePreview();
 }
 
@@ -659,12 +690,25 @@ void FeatureToolModel::close()
     previewStatus_.clear();
     committing_ = false;
     previewBusy_ = previewPending_ = false;
-    storedEdges_ = QJsonArray();
+    storedRefs_ = QJsonArray();
+    located_.clear();
+    storedFound_.clear();
+    selectStored_ = false;
+    ++baseSerial_; // a model-before job still running is dropped
+    baseBusy_ = false;
+    baseState_.reset();
+    baseFrom_.reset();
+    baseBuild_.reset();
+    lastPreviewState_.reset();
+    lastPreviewBuild_.reset();
     ++edgeSerial_; // answers for this tool's picks still on their way are dropped
     edgesPending_ = false;
     dragKey_.clear();
     if (tree_)
         tree_->setToolSketch(std::nullopt);
+    // Editing: the document's build is shown again (the scene's new body set clears the selection).
+    if (session_)
+        session_->clearShownModel(this);
     if (was) {
         emit activeChanged();
         emit valuesChanged();
@@ -978,38 +1022,23 @@ void FeatureToolModel::loadThreads()
     });
 }
 
-// Fillet and chamfer edges, or the datum plane's face, from the view's selection (references through
-// model.reference, which reads the document's latest build: the build the view shows).
+// Fillet and chamfer edges, or the datum plane's face, from the view's selection: references through model.reference,
+// which reads the document's latest build (the build the view shows) or, when editing, the model before the feature
+// (the model the view shows then). A selected element that is one of the feature's stored references keeps that
+// reference as it is.
 void FeatureToolModel::applyEdges()
 {
     api::IApp* a = app();
     if (a == nullptr || !selection_ || !scene_)
         return;
     const bool face = type_ == QLatin1String("datum_plane");
-    struct Want {
-        BodyId body;
-        std::uint32_t index;
-        Vec3 point;
-    };
-    std::vector<Want> wanted;
-    for (const SelectionEntry& e : selection_->entries()) {
-        if (!e.sub) // a pending entry knows its face or edge already (only a vertex waits for it)
-            continue;
-        const kernel::SubKind kind = face ? kernel::SubKind::Face : kernel::SubKind::Edge;
-        if (e.sub->kind != kind)
-            continue;
-        const api::viewer::Body* body = scene_->body(e.body);
-        if (body == nullptr)
-            continue;
-        wanted.push_back(Want{body->id, e.sub->index, e.hit.point});
-        if (face)
-            break;
-    }
-    const std::uint64_t serial = ++edgeSerial_;
-    edgesPending_ = !wanted.empty();
-    if (wanted.empty()) {
+    const bool editing = editId_.has_value();
+    if (editing && (!baseBuild_ || selectStored_)) {
+        // The model before the feature is not shown (or its stored references not selected) yet: they hold.
         if (!face) {
-            edges_ = storedEdges_;
+            ++edgeSerial_;
+            edgesPending_ = false;
+            edges_ = storedRefs_;
             edgePoints_.clear();
             emit picksChanged();
             updateHandles();
@@ -1017,15 +1046,65 @@ void FeatureToolModel::applyEdges()
         }
         return;
     }
-    auto refs = std::make_shared<std::vector<QJsonObject>>(wanted.size());
-    auto left = std::make_shared<int>(static_cast<int>(wanted.size()));
-    auto failedMessage = std::make_shared<QString>();
+    const kernel::SubKind kind = face ? kernel::SubKind::Face : kernel::SubKind::Edge;
+    struct Want {
+        BodyId body;
+        std::uint32_t index;
+        Vec3 point;
+        int stored; // the stored reference it is, or -1
+    };
+    std::vector<Want> wanted;
+    for (const SelectionEntry& e : selection_->entries()) {
+        if (!e.sub) // a pending entry knows its face or edge already (only a vertex waits for it)
+            continue;
+        if (e.sub->kind != kind)
+            continue;
+        const api::viewer::Body* body = scene_->body(e.body);
+        if (body == nullptr)
+            continue;
+        Want w{body->id, e.sub->index, e.hit.point, -1};
+        for (const StoredPick& s : located_) {
+            if (s.body == w.body && s.kind == kind && s.index == w.index)
+                w.stored = s.stored;
+        }
+        wanted.push_back(w);
+        if (face)
+            break;
+    }
+    // The stored references kept: those still selected, and those the model before the feature does not have (they
+    // go only with Clear).
+    std::vector<bool> keep(static_cast<std::size_t>(storedRefs_.size()), false);
+    for (std::size_t k = 0; k < keep.size(); ++k)
+        keep[k] = k < storedFound_.size() && !storedFound_[k];
+    std::vector<QJsonObject> known(wanted.size());
     std::vector<Vec3> points;
+    std::vector<std::size_t> ask; // the picks that need a new reference
     for (std::size_t i = 0; i < wanted.size(); ++i) {
         points.push_back(wanted[i].point);
+        if (wanted[i].stored >= 0) {
+            keep[static_cast<std::size_t>(wanted[i].stored)] = true;
+            known[i] = storedRefs_.at(wanted[i].stored).toObject();
+        } else {
+            ask.push_back(i);
+        }
+    }
+    const std::uint64_t serial = ++edgeSerial_;
+    if (wanted.empty() && face)
+        return; // the face stays until another is selected
+    edgesPending_ = !ask.empty();
+    if (ask.empty()) {
+        finishEdges(serial, face, known, points, keep, QString());
+        return;
+    }
+    auto refs = std::make_shared<std::vector<QJsonObject>>(std::move(known));
+    auto left = std::make_shared<int>(static_cast<int>(ask.size()));
+    auto failedMessage = std::make_shared<QString>();
+    for (const std::size_t i : ask) {
         QJsonObject args{{QStringLiteral("body"), idText(wanted[i].body.value)},
                          {QStringLiteral("kind"), face ? QStringLiteral("face") : QStringLiteral("edge")},
                          {QStringLiteral("index"), static_cast<int>(wanted[i].index)}};
+        if (editing)
+            args.insert(QStringLiteral("before"), idText(editId_->value)); // the model the view shows
         JobHandle<api::ActionResult> job = a->actions().invoke("model.reference", jsonText(args), api::Caller::User);
         if (!job.valid()) { // no answer will come: leave the picks as they were
             ++edgeSerial_;
@@ -1033,7 +1112,7 @@ void FeatureToolModel::applyEdges()
             return;
         }
         QPointer<FeatureToolModel> self(this);
-        job.then([self, serial, refs, left, failedMessage, i, face, points](Result<api::ActionResult> r) {
+        job.then([self, serial, refs, left, failedMessage, i, face, points, keep](Result<api::ActionResult> r) {
             if (!self || serial != self->edgeSerial_)
                 return;
             if (r)
@@ -1042,28 +1121,156 @@ void FeatureToolModel::applyEdges()
                 *failedMessage = qs(r.error().message);
             if (--*left > 0)
                 return;
-            self->edgesPending_ = false;
-            if (face) {
-                self->faceRef_ = (*refs)[0];
-            } else {
-                QJsonArray edges = self->storedEdges_; // editing: the feature's own edges, then the picked ones
-                std::vector<Vec3> at;
-                for (std::size_t k = 0; k < refs->size(); ++k) {
-                    if (!(*refs)[k].isEmpty() && !edges.contains((*refs)[k])) {
-                        edges.append((*refs)[k]);
-                        at.push_back(points[k]);
-                    }
-                }
-                self->edges_ = edges;
-                self->edgePoints_ = std::move(at);
-            }
-            if (!failedMessage->isEmpty())
-                self->setStatus(QStringLiteral("failed"), *failedMessage);
-            emit self->picksChanged();
-            self->updateHandles();
-            self->schedulePreview();
+            self->finishEdges(serial, face, *refs, points, keep, *failedMessage);
         });
     }
+}
+
+void FeatureToolModel::finishEdges(std::uint64_t serial, bool face, const std::vector<QJsonObject>& refs,
+                                   const std::vector<Vec3>& points, const std::vector<bool>& keep,
+                                   const QString& failed)
+{
+    if (serial != edgeSerial_)
+        return;
+    edgesPending_ = false;
+    if (face) {
+        if (!refs.empty())
+            faceRef_ = refs.front();
+    } else {
+        // The stored references kept, in their order, then the new picks.
+        QJsonArray edges;
+        for (std::size_t k = 0; k < keep.size() && k < static_cast<std::size_t>(storedRefs_.size()); ++k) {
+            if (keep[k])
+                edges.append(storedRefs_.at(static_cast<qsizetype>(k)));
+        }
+        std::vector<Vec3> at;
+        for (std::size_t k = 0; k < refs.size(); ++k) {
+            if (refs[k].isEmpty())
+                continue;
+            if (!edges.contains(refs[k]))
+                edges.append(refs[k]);
+            if (k < points.size())
+                at.push_back(points[k]);
+        }
+        edges_ = edges;
+        edgePoints_ = std::move(at);
+    }
+    if (!failed.isEmpty())
+        setStatus(QStringLiteral("failed"), failed);
+    emit picksChanged();
+    updateHandles();
+    schedulePreview();
+}
+
+// Edit mode: the model as it was just before the feature, built by the document's own rebuilder (its cache: nothing
+// new is built) on a worker, then shown under the preview; the stored references are found in it there too.
+void FeatureToolModel::loadBase()
+{
+    doc::Document* d = liveDoc();
+    api::IApp* a = app();
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    if (!editId_ || d == nullptr || a == nullptr || jobs == nullptr)
+        return;
+    const doc::DocStatePtr state = d->state();
+    doc::DocStatePtr base = api::feature_edit::stateBefore(*state, *editId_);
+    if (!base)
+        return;
+    baseFrom_ = state;
+    baseState_ = base;
+    baseBusy_ = true;
+    const std::uint64_t serial = ++baseSerial_;
+    std::vector<std::string> refs;
+    for (const QJsonValue& v : storedRefs_)
+        refs.push_back(jsonText(v.toObject()));
+    struct Base {
+        doc::BuildResultPtr build;
+        std::vector<std::optional<api::feature_edit::Located>> located; // per stored reference
+    };
+    const std::string docId = docId_;
+    JobHandle<std::shared_ptr<Base>> job = jobs->submit<std::shared_ptr<Base>>(
+        JobInfo{"Model before the feature", JobPriority::Interactive, false},
+        [a, docId, base, refs](JobContext& ctx) -> Result<std::shared_ptr<Base>> {
+            auto built = api::feature_edit::buildSnapshot(*a, docId, base, ctx);
+            if (!built)
+                return tl::unexpected(built.error());
+            if (!*built)
+                return tl::unexpected(Error{ErrorCode::Internal, "The rebuild returned no result", {}});
+            auto out = std::make_shared<Base>();
+            out->build = *built;
+            for (const std::string& r : refs)
+                out->located.push_back(api::feature_edit::locate(**built, r));
+            return out;
+        });
+    QPointer<FeatureToolModel> self(this);
+    job.then([self, serial](Result<std::shared_ptr<Base>> r) {
+        if (!self || serial != self->baseSerial_ || !self->active())
+            return;
+        self->baseBusy_ = false;
+        if (!r) {
+            // Picks then stay those of the document's build shown (the stored ones hold).
+            if (r.error().code != ErrorCode::Cancelled)
+                self->setStatus(QStringLiteral("failed"),
+                                trf("The model before the feature could not be built: %1").arg(qs(r.error().message)));
+            emit self->statusChanged();
+            return;
+        }
+        const kernel::SubKind kind =
+            self->type_ == QLatin1String("datum_plane") ? kernel::SubKind::Face : kernel::SubKind::Edge;
+        self->located_.clear();
+        self->storedFound_.assign(static_cast<std::size_t>(self->storedRefs_.size()), false);
+        for (std::size_t k = 0; k < (*r)->located.size() && k < self->storedFound_.size(); ++k) {
+            const auto& found = (*r)->located[k];
+            if (!found)
+                continue;
+            for (const kernel::SubId& sub : found->elements) {
+                if (sub.kind == kind)
+                    self->located_.push_back(StoredPick{found->body, kind, sub.index, static_cast<int>(k)});
+            }
+            self->storedFound_[k] = std::any_of(found->elements.begin(), found->elements.end(),
+                                                [&](const kernel::SubId& sub) { return sub.kind == kind; });
+        }
+        self->baseBuild_ = (*r)->build;
+        // Selected once the scene shows the model's meshes; picks hold the stored references until then.
+        self->selectStored_ = true;
+        if (self->session_)
+            self->session_->showModel(self, self->baseState_, self->baseBuild_);
+        self->selectStored();
+        // The preview shown so far was set against the document's build: set it against this model.
+        if (self->lastPreviewState_ && self->lastPreviewBuild_)
+            self->showPreview(*self->lastPreviewState_, *self->lastPreviewBuild_);
+        emit self->statusChanged();
+    });
+}
+
+void FeatureToolModel::selectStored()
+{
+    if (!selectStored_ || !scene_ || !selection_)
+        return;
+    if (scene_->meshing())
+        return; // the model's meshes are on their way (stateChanged calls again)
+    std::vector<render::PickHit> hits;
+    for (const StoredPick& s : located_) {
+        int index = -1;
+        for (int i = 0; i < scene_->bodyCount(); ++i) {
+            const api::viewer::Body* b = scene_->body(i);
+            if (b != nullptr && b->id == s.body)
+                index = i;
+        }
+        const render::ItemId item = scene_->itemForBody(index);
+        if (item == 0)
+            continue; // not shown (no viewport, or its mesh failed)
+        render::PickHit hit{item, s.kind, s.index, Vec3{}, 0};
+        // Where it was "picked": the middle of the element (the radius handle stands there).
+        if (const auto box = scene_->boundsOf(std::span<const render::PickHit>(&hit, 1)))
+            hit.point = Vec3{(box->min.x + box->max.x) / 2, (box->min.y + box->max.y) / 2,
+                             (box->min.z + box->max.z) / 2};
+        hits.push_back(hit);
+    }
+    selectStored_ = false;
+    if (hits.empty())
+        applyEdges();
+    else
+        selection_->applyBox(hits, Qt::NoModifier); // replaces the selection; its change applies the edges
 }
 
 // ---------- values ----------
@@ -1121,8 +1328,12 @@ void FeatureToolModel::clearPicks()
     regionPicks_.clear();
     pointPicks_.clear();
     if (blendType(type_)) {
+        ++edgeSerial_;
+        edgesPending_ = false;
         edges_ = QJsonArray();
-        storedEdges_ = QJsonArray();
+        storedRefs_ = QJsonArray(); // editing: the feature's own edges go too, also those the earlier model lacks
+        located_.clear();
+        storedFound_.clear();
         edgePoints_.clear();
         if (selection_)
             selection_->clear();
@@ -1463,6 +1674,8 @@ void FeatureToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPt
                                                                    : trf("The feature failed to build");
             setStatus(QStringLiteral("failed"), m);
         } else {
+            lastPreviewState_ = state;
+            lastPreviewBuild_ = build;
             showPreview(*state, *build);
             setStatus(report->status == doc::FeatureStatus::Warning ? QStringLiteral("warning") : QStringLiteral("ok"),
                       report->status == doc::FeatureStatus::Warning ? qs(report->message) : QString());
@@ -1480,7 +1693,8 @@ void FeatureToolModel::showPreview(const doc::DocState& state, const doc::BuildR
     std::vector<api::viewer::Body> bodies = api::viewer::bodiesFromDocument(state, build);
     std::set<BodyId> hide;
     {
-        const doc::BuildResultPtr current = d->build();
+        // What the scene shows: the model before the feature while editing (once built), else the latest build.
+        const doc::BuildResultPtr current = editId_ && baseBuild_ ? baseBuild_ : d->build();
         std::vector<api::viewer::Body> changed;
         for (api::viewer::Body& b : bodies) {
             bool same = false;
@@ -1745,7 +1959,8 @@ QString FeatureToolModel::pickHint() const
     if (type_ == QLatin1String("hole"))
         return trf("Click points of the sketch in the view to pick them");
     if (blendType(type_))
-        return editing() ? trf("Click edges in the view to add them (Shift adds more, Ctrl toggles)")
+        return editing() ? trf("The feature's edges are picked in the model before it: Ctrl-click takes one off, "
+                               "Shift-click adds one")
                          : trf("Click edges in the view (Shift adds, Ctrl toggles)");
     if (type_ == QLatin1String("datum_plane"))
         return trf("Select a planar face in the view");

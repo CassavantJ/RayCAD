@@ -354,8 +354,39 @@ void Session::detachDocument()
     docListener_ = 0;
     docId_.clear();
     shownBuild_.reset();
+    if (modelOwner_ != nullptr && scene_)
+        scene_->setFramingHeld(false);
+    modelOwner_ = nullptr; // a shown model belongs to the document it was made from
+    modelState_.reset();
+    modelBuild_.reset();
     ++docGeneration_;
     rebuildPoll_.stop();
+}
+
+void Session::showModel(const QObject* owner, doc::DocStatePtr state, doc::BuildResultPtr build)
+{
+    if (owner == nullptr || !state || !build || liveDoc() == nullptr)
+        return;
+    if (owner == modelOwner_ && state == modelState_ && build == modelBuild_)
+        return;
+    modelOwner_ = owner;
+    modelState_ = std::move(state);
+    modelBuild_ = std::move(build);
+    if (scene_)
+        scene_->setFramingHeld(true); // a passing model: the view stays where it is
+    syncScene(true);
+}
+
+void Session::clearShownModel(const QObject* owner)
+{
+    if (modelOwner_ == nullptr || owner != modelOwner_)
+        return;
+    modelOwner_ = nullptr;
+    modelState_.reset();
+    modelBuild_.reset();
+    if (scene_)
+        scene_->setFramingHeld(false);
+    syncScene(true);
 }
 
 void Session::attachActive()
@@ -449,6 +480,14 @@ void Session::syncScene(bool force)
     doc::Document* d = liveDoc();
     if (!scene_ || d == nullptr)
         return;
+    if (modelOwner_ != nullptr) {
+        // A tool's model (showModel) stands in for the document's builds until it is cleared.
+        if (!force)
+            return;
+        shownBuild_.reset(); // the document's build is shown again (forced) when the tool's model goes
+        scene_->syncFromDocument(modelState_, modelBuild_);
+        return;
+    }
     const doc::BuildResultPtr build = d->build();
     if (!force && build == shownBuild_)
         return;

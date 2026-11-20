@@ -10,6 +10,7 @@
 #include <ray/api.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,5 +40,25 @@ Result<double> evaluate(const doc::DocState& state, std::string_view expression,
 // the rollback bar is document state, DocState::rollback, built by the document's own rebuild.) Null when the
 // document is unknown to `app`.
 std::shared_ptr<doc::IRebuilder> makeSideRebuilder(IApp& app, const OpenDocument& document);
+
+// ---------- The model as it was before a feature (the feature tools' edit mode) ----------
+// `state` with the rollback bar on the feature before `feature` (DocState::rollback), so a rebuild stops there and
+// builds the model as it was just before it; when it is the first feature, `state` without features (nothing is
+// built). Null when `state` has no such feature.
+doc::DocStatePtr stateBefore(const doc::DocState& state, const FeatureId& feature);
+// Builds `snapshot` with the rebuilder of open document `documentId` (OpenDocument::id), so every feature unchanged
+// since its rebuilds comes from its cache (stateBefore() of the document's state builds nothing new). For snapshots
+// that are not the document's state. Runs on the calling thread: call it on a worker (any thread may call it).
+// NotFound when no such document is open.
+Result<doc::BuildResultPtr> buildSnapshot(IApp& app, const std::string& documentId, doc::DocStatePtr snapshot,
+                                          JobContext& ctx);
+// Where a stored reference (TopoRef JSON, as feature props hold it) is in `build`: its body and the elements it
+// resolves to (all pieces of a split element). nullopt when it does not parse or its resolution is not usable
+// (naming::Resolved::usable). Runs the resolver: call it on a worker.
+struct Located {
+    BodyId body;
+    std::vector<kernel::SubId> elements;
+};
+std::optional<Located> locate(const doc::BuildResult& build, std::string_view refJson);
 
 } // namespace ray::api::feature_edit

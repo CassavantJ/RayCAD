@@ -161,6 +161,27 @@ TEST_CASE("a part made through actions (sketch, extrude, fillet by model.referen
         volume = volumeOf(*od, body);
         CHECK(std::abs(volume - (8000.0 - 3.14159265358979 * 16 * 10 - (1 - 3.14159265358979 / 4) * 4 * 10)) < 1e-6);
 
+        // The model before the fillet (what its edit mode picks in): the edge has the index it had, and the reference
+        // made there is the fillet's own. A feature that is not there is NotFound.
+        {
+            const auto before = json::parse(
+                invoke(*app, "model.reference",
+                       R"({"body":")" + body + R"(","kind":"edge","index":)" + std::to_string(edge) +
+                           R"(,"before":")" + id('f', 3) + R"("})"));
+            REQUIRE(before);
+            const json::Value* again = before->find("ref");
+            REQUIRE(again != nullptr);
+            CHECK(json::write(*again) == json::write(*ref));
+            auto missing = app->wait(app->actions().invoke("model.reference",
+                                                           R"({"body":")" + body + R"(","kind":"edge","index":0,)"
+                                                                                   R"("before":")" +
+                                                               id('f', 9) + R"("})",
+                                                           Caller::User),
+                                     kWait);
+            REQUIRE_FALSE(missing);
+            CHECK(missing.error().code == ErrorCode::NotFound);
+        }
+
         // A dimension change by action, then undo.
         invoke(*app, "feature.extrude.edit", R"({"id":")" + id('f', 2) + R"(","props":{"distance":"12 mm"}})");
         REQUIRE(app->waitForBuild(*od, kWait));
