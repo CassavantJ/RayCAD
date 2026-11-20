@@ -43,6 +43,7 @@ struct DocEntry {
     std::string key; // pathKey(od.path), "" while unsaved
     std::shared_ptr<FileSource> fileSource;
     std::shared_ptr<doc::IObjectSource> objects; // od.objects, then the file
+    std::shared_ptr<doc::IRebuilder> rebuilder;  // the document's own (its cache serves feature_edit::buildSnapshot)
     std::atomic<int> busy{0};                    // app jobs using the document (close refuses meanwhile)
     std::mutex saveMutex;                        // one save at a time; an import into the document holds it too
     // Recovery journal (od.journal): made under journalMutex, from the UI thread or a worker.
@@ -162,7 +163,15 @@ public:
     // Submits `work` as a job; user-visible jobs are listed in activeJobs() with their progress until they end.
     template <class T>
     JobHandle<T> runJob(JobInfo info, std::function<Result<T>(JobContext&)> work);
+    // The same for a job that runs only when its handle's runDeferred() is called (IJobSystem::defer): an entry of a
+    // document's command queue (registry.cpp).
+    template <class T>
+    JobHandle<T> deferJob(JobInfo info, std::function<Result<T>(JobContext&)> work);
 
+    // Any thread: the id of the active document, "" when none is open.
+    std::string activeDocumentId() const;
+    // Any thread: the rebuilder of the open document `id` (null when there is none).
+    std::shared_ptr<doc::IRebuilder> rebuilderOf(std::string_view id) const;
     // UI thread. The document named by `id` ("" = the active one), or NotFound.
     Result<DocEntry*> resolve(std::string_view id);
     DocEntry* entryOf(const OpenDocument&);
@@ -247,6 +256,8 @@ private:
 
     AppImpl() = default;
     Status init(AppOptions options, std::unique_ptr<QueueDispatcher> owned);
+    template <class T>
+    JobHandle<T> trackJob(JobInfo info, std::function<Result<T>(JobContext&)> work, bool deferred);
     // UI thread. Takes ownership of `file` (may be null) and makes the document.
     Result<DocEntry*> addEntry(std::unique_ptr<store::IDocumentFile> file, doc::DocStatePtr initial, std::string path,
                                std::string title, bool readOnly, std::optional<store::LockInfo> lock);
@@ -307,8 +318,21 @@ private:
 template <class T>
 JobHandle<T> AppImpl::runJob(JobInfo info, std::function<Result<T>(JobContext&)> work)
 {
+    return trackJob<T>(std::move(info), std::move(work), false);
+}
+
+template <class T>
+JobHandle<T> AppImpl::deferJob(JobInfo info, std::function<Result<T>(JobContext&)> work)
+{
+    return trackJob<T>(std::move(info), std::move(work), true);
+}
+
+template <class T>
+JobHandle<T> AppImpl::trackJob(JobInfo info, std::function<Result<T>(JobContext&)> work, bool deferred)
+{
     // Every job is registered until its continuation runs on the UI thread, so ~AppImpl can cancel and wait for it
-    // (also with a job system the app does not own). Only user-visible ones are listed in activeJobs().
+    // (also with a job system the app does not own; a deferred job cancelled there ends at once). Only user-visible
+    // ones are listed in activeJobs().
     const bool visible = info.userVisible;
     std::uint64_t id = 0;
     {
@@ -335,7 +359,8 @@ JobHandle<T> AppImpl::runJob(JobInfo info, std::function<Result<T>(JobContext&)>
         JobContext inner{ctx.cancel, mine};
         return work(inner);
     };
-    JobHandle<T> handle = jobs_->submit<T>(std::move(info), std::move(wrapped));
+    JobHandle<T> handle = deferred ? jobs_->defer<T>(std::move(info), std::move(wrapped))
+                                   : jobs_->submit<T>(std::move(info), std::move(wrapped));
     {
         std::lock_guard<std::mutex> lock(jobsMutex_);
         if (auto it = tracked_.find(id); it != tracked_.end()) {

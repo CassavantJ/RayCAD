@@ -41,8 +41,11 @@ enum class Caller { User, Script, Agent };
 struct ActionResult { std::string resultJson; std::vector<std::string> warnings; };
 
 // The function behind an action. It receives the arguments validated against the schema, with the defaults of
-// missing top-level properties filled in, as canonical JSON. It runs inside the job invoke() returns: on a worker
-// when ActionInfo::longRunning, otherwise on the UI thread (posted through the app's dispatcher).
+// missing top-level properties filled in, as canonical JSON. It runs inside the job invoke() returns, on a worker
+// when ActionInfo::longRunning. An action registered through add() that is not long-running runs on the UI thread
+// (posted through the app's dispatcher). The app's built-in document command actions (every doc::Command, the
+// feature.* and sketch.* actions) are not long-running but run on a worker too, so a sketch solve never runs on the
+// UI thread (PLAN.md 7); they hop to the UI thread only to commit their result.
 using ActionFn = std::function<Result<ActionResult>(std::string_view argsJson, Caller, JobContext&)>;
 
 class IActionRegistry {
@@ -62,6 +65,12 @@ public:
     // id; InvalidArgument for arguments that fail the schema, with the JSON Pointer of the bad field in the
     // message (e.g. `/path`); Cancelled when the confirm hook declined (the action then did not run).
     // userVisible jobs (long-running ones) are listed in IApp::activeJobs while they run.
+    // Order: the built-in actions that change a document (its commands, edit.undo, edit.redo) run one at a time per
+    // document, in the order they were invoked, each on the result of the one before; file.save, file.saveAs and
+    // file.close start after the ones invoked before them (later ones do not wait for them). The queue of one
+    // document occupies at most one worker, whatever its length. Their "document" ("" or absent: the document active
+    // when invoke() is called) is fixed at the call. Cancelling one that is still queued ends it at once (Cancelled)
+    // and it never runs; the ones after it run as if it had not been invoked. Other actions are not ordered.
     virtual JobHandle<ActionResult> invoke(std::string_view id, std::string_view argsJson, Caller) = 0;
 };
 

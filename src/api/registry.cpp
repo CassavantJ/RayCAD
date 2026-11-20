@@ -1,11 +1,20 @@
 // The action registry (<ray/api.h> IActionRegistry): schema-checked, confirmation-gated invocation as jobs.
+//
+// Document queues (ActionOrder): an ordered action of a document is a deferred job (IJobSystem::defer) put on that
+// document's lane. One runner job per lane takes the entries in invoke() order and runs each on its own thread
+// (JobHandle::runDeferred), so a lane holds at most one worker however many entries wait, and a waiting entry holds
+// none: rebuilds and meshing keep the other workers. Cancelling a waiting entry completes it at once (the job system
+// claims it); the runner then finds it done and goes on. An After entry (save, close) is handed to a job of its own
+// when the runner reaches it, so it starts after the ordered entries before it and the ones after it do not wait.
 #include "app_impl.h"
 #include "schema.h"
 #include "search.h"
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
 
 namespace ray::api::detail {
 namespace {
@@ -119,40 +128,124 @@ public:
         info.userVisible = entry && entry->info.longRunning;
         AppImpl* app = &app_;
         const ActionOrder order = entry ? app_.orderOf(entry->info.id) : ActionOrder::Free;
-        // An ordered action waits for the last Ordered action invoked before it (which waited for the one before, and
-        // so on). The chain is taken and extended under one lock, so it follows the order of the invoke() calls.
-        std::unique_lock<std::mutex> chain(chainMutex_, std::defer_lock);
-        JobHandle<ActionResult> before;
-        if (order != ActionOrder::Free) {
-            chain.lock();
-            before = lastOrdered_;
+        std::string args(argsJson);
+        // Ordered actions go on their document's lane, which is fixed now (with "document" filled in when the
+        // arguments leave it to the active document).
+        const std::string lane = order != ActionOrder::Free ? laneOf(*entry, args) : std::string();
+        std::function<Result<ActionResult>(JobContext&)> work =
+            [app, entry, id = std::string(id), args = std::move(args), caller](JobContext& ctx) -> Result<ActionResult> {
+            if (!entry) {
+                return fail(ErrorCode::NotFound, "There is no action named '" + id + "'");
+            }
+            if (auto st = ctx.cancel.check(); !st) {
+                return tl::unexpected<Error>(st.error());
+            }
+            return run(*app, *entry, args, caller, ctx);
+        };
+        if (order == ActionOrder::Free) {
+            return app_.runJob<ActionResult>(std::move(info), std::move(work));
         }
-        JobHandle<ActionResult> job =
-            app_.runJob<ActionResult>(std::move(info),
-                                      [app, entry, id = std::string(id), args = std::string(argsJson), caller,
-                                       before](JobContext& ctx) mutable -> Result<ActionResult> {
-                                          if (!entry) {
-                                              return fail(ErrorCode::NotFound, "There is no action named '" + id + "'");
-                                          }
-                                          if (before.valid()) {
-                                              // Runs it here if it has not started yet, so waiting never needs a free
-                                              // worker; its result is its caller's. A cancel of this action is seen
-                                              // once it has ended.
-                                              (void)before.wait();
-                                              before = {};
-                                          }
-                                          if (auto st = ctx.cancel.check(); !st) {
-                                              return tl::unexpected<Error>(st.error());
-                                          }
-                                          return run(*app, *entry, args, caller, ctx);
-                                      });
-        if (order == ActionOrder::Ordered) {
-            lastOrdered_ = job;
-        }
+        JobHandle<ActionResult> job = app_.deferJob<ActionResult>(std::move(info), std::move(work));
+        enqueue(lane, job, order);
         return job;
     }
 
 private:
+    struct Queued {
+        JobHandle<ActionResult> job; // deferred: runs when the lane's runner gets to it
+        ActionOrder order = ActionOrder::Ordered;
+    };
+    // One document's queue. `runner` is the job draining it, valid while `running`.
+    struct Lane {
+        std::deque<Queued> waiting;
+        bool running = false;
+        JobHandle<std::monostate> runner;
+    };
+
+    // The document an ordered action is queued for: its "document" argument, else the active document now (then
+    // written into the arguments, so the action runs on the document it was queued for). Arguments that are not a
+    // JSON object, or a "document" that is not a string, are left for run() to refuse.
+    std::string laneOf(const Registered& entry, std::string& args) const
+    {
+        bool blank = true;
+        for (const char c : args) {
+            blank = blank && (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+        }
+        Result<json::Value> parsed = blank ? Result<json::Value>(json::Value::object()) : json::parse(args);
+        if (!parsed || !parsed->isObject()) {
+            return {};
+        }
+        if (const json::Value* named = parsed->find("document")) {
+            if (!named->isString()) {
+                return {};
+            }
+            if (!named->asString().empty()) {
+                return named->asString();
+            }
+        }
+        std::string active = app_.activeDocumentId();
+        const json::Value* properties = entry.schema.find("properties");
+        if (!active.empty() && properties != nullptr && properties->find("document") != nullptr) {
+            parsed->set("document", json::Value::string(active));
+            args = json::write(*parsed);
+        }
+        return active;
+    }
+
+    // Appends `job` to the lane and starts the lane's runner if none is running.
+    void enqueue(const std::string& lane, const JobHandle<ActionResult>& job, ActionOrder order)
+    {
+        std::lock_guard<std::mutex> lock(lanesMutex_);
+        Lane& l = lanes_[lane];
+        l.waiting.push_back(Queued{job, order});
+        // A runner cancelled before it ran (only the app's shutdown cancels it) never cleared `running`.
+        if (l.running && !l.runner.done()) {
+            return;
+        }
+        l.running = true;
+        l.runner = app_.runJob<std::monostate>(
+            JobInfo{"Document commands", JobPriority::Interactive, false},
+            [this, lane](JobContext&) -> Result<std::monostate> {
+                drain(lane);
+                return std::monostate{};
+            });
+    }
+
+    // The runner: the lane's entries one at a time, in order, on this worker, until the lane is empty. It ignores its
+    // own cancellation: an entry's cancel is the entry's, and at shutdown every entry is cancelled and ends at once.
+    void drain(const std::string& lane)
+    {
+        for (;;) {
+            Queued next;
+            {
+                std::lock_guard<std::mutex> lock(lanesMutex_);
+                auto it = lanes_.find(lane);
+                if (it == lanes_.end()) {
+                    return;
+                }
+                if (it->second.waiting.empty()) {
+                    lanes_.erase(it);
+                    return;
+                }
+                next = std::move(it->second.waiting.front());
+                it->second.waiting.pop_front();
+            }
+            if (next.job.done()) {
+                continue; // cancelled while it waited
+            }
+            if (next.order == ActionOrder::After) {
+                // Started now, after the ordered entries before it; the ones after it do not wait for it.
+                JobHandle<ActionResult> job = next.job;
+                (void)app_.jobs().submit<std::monostate>(JobInfo{"Document command", JobPriority::Normal, false},
+                                                         [job](JobContext&) mutable -> Result<std::monostate> {
+                                                             job.runDeferred();
+                                                             return std::monostate{};
+                                                         });
+                continue;
+            }
+            next.job.runDeferred();
+        }
+    }
     static Result<ActionResult> run(AppImpl& app, const Registered& entry, const std::string& argsJson, Caller caller,
                                     JobContext& ctx)
     {
@@ -214,8 +307,8 @@ private:
     AppImpl& app_;
     mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<const Registered>, std::less<>> actions_;
-    std::mutex chainMutex_;               // invoke(): the chain of ordered actions (ActionOrder)
-    JobHandle<ActionResult> lastOrdered_; // the last Ordered action invoked
+    std::mutex lanesMutex_;
+    std::map<std::string, Lane> lanes_; // the document queues (ActionOrder), by document id
 };
 
 } // namespace

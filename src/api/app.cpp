@@ -168,6 +168,23 @@ OpenDocument* AppImpl::active()
     return active_ ? &active_->od : nullptr;
 }
 
+std::string AppImpl::activeDocumentId() const
+{
+    std::lock_guard<std::mutex> lock(docsMutex_);
+    return active_ ? active_->od.id : std::string();
+}
+
+std::shared_ptr<doc::IRebuilder> AppImpl::rebuilderOf(std::string_view id) const
+{
+    std::lock_guard<std::mutex> lock(docsMutex_);
+    for (const auto& e : documents_) {
+        if (e->od.id == id) {
+            return e->rebuilder;
+        }
+    }
+    return nullptr;
+}
+
 void AppImpl::setActive(OpenDocument* od)
 {
     std::string id;
@@ -320,6 +337,7 @@ Result<DocEntry*> AppImpl::addEntry(NewEntry e)
     od.modified = e.modified;
     entry->fileSource = e.parts->fileSource;
     entry->objects = e.parts->chain;
+    entry->rebuilder = e.parts->rebuilder;
     entry->backing = std::move(e.journal.backing);
     entry->backingPath = std::move(e.journal.backingPath);
     entry->key = od.path.empty() ? std::string() : pathKey(od.path);
