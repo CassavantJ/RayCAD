@@ -42,6 +42,7 @@ struct SceneItem {
     Xform xform = Xform::identity();
     MeshStyle style{}; // Lines items: style.face and style.edge are the line colour
     bool visible = true;
+    PickMode pickMode = PickMode::WhenVisible;
     std::uint64_t geometryGeneration = 0; // changes whenever mesh or lines are replaced
     std::optional<Box3> localBounds;
     std::shared_ptr<ClosedCheck> closed; // Mesh items, new with every geometry (T-023)
@@ -152,6 +153,8 @@ public:
     std::optional<SectionPlane> section() const override { return state_.section; }
     void setDraftAnalysis(std::optional<DraftAnalysis>) override;
     std::optional<DraftAnalysis> draftAnalysis() const override { return state_.draft; }
+    void setPickMode(ItemId, PickMode) override;
+    PickMode pickMode(ItemId) const override;
 
     // For the hosts. takeSnapshot runs on the render thread while the UI thread is blocked (Qt Quick), or on the
     // UI thread (offscreen).
@@ -185,5 +188,15 @@ Status validateMesh(const kernel::Mesh&);
 std::optional<Box3> meshBounds(const kernel::Mesh&);
 // Bounds of `box` after the rigid transform.
 Box3 transformBox(const Box3& box, const Xform&);
+// Whether an item is drawn into the picking ID buffer, and whether the renderer needs it at all this frame (drawn,
+// or hidden but pickable).
+inline bool itemPickable(const SceneItem& item)
+{
+    return item.pickMode == PickMode::Always || (item.visible && item.pickMode == PickMode::WhenVisible);
+}
+inline bool itemNeeded(const SceneItem& item)
+{
+    return item.visible || item.pickMode == PickMode::Always;
+}
 
 } // namespace ray::render::detail

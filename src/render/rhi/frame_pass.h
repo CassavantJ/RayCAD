@@ -30,11 +30,15 @@ namespace ray::render::rhi {
 
 struct GpuItem;
 
-// One visible item of this frame, with where its ItemBlock sits in the uniform buffer.
+// One item of this frame, with where its ItemBlock sits in the uniform buffer. `drawn`: visible, so drawn into the
+// picture; `pickable`: drawn into the ID buffer (PickMode, viewport.h). A hidden item with PickMode::Always is listed
+// (not drawn, pickable) so that picks and its highlights see it.
 struct DrawItem {
     const detail::SceneItem* item = nullptr;
     const GpuItem* gpu = nullptr;
     quint32 itemUniformOffset = 0;
+    bool drawn = true;
+    bool pickable = true;
 };
 
 struct FrameContext {

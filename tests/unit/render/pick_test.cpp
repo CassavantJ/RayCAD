@@ -957,3 +957,71 @@ TEST_CASE("hover and selection highlights change the image where expected, in th
         CHECK(left.empty());
     }
 }
+
+TEST_CASE("pick modes: a Never item lets picks through; an Always item answers and highlights while hidden",
+          "[render][pick][pickmode]")
+{
+    constexpr int w = 320, h = 240;
+    BoxScene s = boxScene(w, h, Tier::Medium);
+    const FaceInfo& f = s.visible[0];
+    const Pixel at = pixelOf(project(s.cam, f.centre, w, h));
+    REQUIRE(itemOf(pickAt(*s.vp, at.x, at.y, kFaces)) == s.box.id);
+
+    // A preview that encloses the box: by default it takes the pick; as Never the box under it answers.
+    const Body preview = addBody(*s.vp, kernel::makeBox(Vec3{-2, -2, -2}, Vec3{42, 32, 22}));
+    CHECK(itemOf(pickAt(*s.vp, at.x, at.y, kFaces)) == preview.id);
+    CHECK(s.vp->pickMode(preview.id) == PickMode::WhenVisible);
+    s.vp->setPickMode(preview.id, PickMode::Never);
+    CHECK(s.vp->pickMode(preview.id) == PickMode::Never);
+    {
+        const auto hit = pickAt(*s.vp, at.x, at.y, kFaces);
+        REQUIRE(hit);
+        CHECK(hit->item == s.box.id);
+        CHECK(hit->subIndex == f.index);
+    }
+    CHECK(itemOf(pickAt(*s.vp, at.x, at.y, kBodies)) == s.box.id);
+
+    // The box hidden behind the preview: nothing answers, unless the box is Always pickable.
+    s.vp->setVisible(s.box.id, false);
+    CHECK(!pickAt(*s.vp, at.x, at.y, kAll).has_value());
+    s.vp->setPickMode(s.box.id, PickMode::Always);
+    {
+        const auto hit = pickAt(*s.vp, at.x, at.y, kFaces);
+        REQUIRE(hit);
+        CHECK(hit->item == s.box.id);
+        CHECK(hit->subIndex == f.index);
+    }
+    // Its edges answer too (the fillet tool picks them while its preview shows).
+    const auto edges = adjacentIndices(s.box.shape, SubId{SubKind::Face, f.index}, SubKind::Edge);
+    const kernel::EdgeRange* range = edgeRange(*s.box.mesh, *edges.begin());
+    REQUIRE(range);
+    const Vec3 mid = edgePoint(s.box, *range, range->vertexCount / 2);
+    const Pixel onEdge = pixelOf(project(s.cam, mid, w, h));
+    {
+        const auto hit = pickAt(*s.vp, onEdge.x, onEdge.y, kEdges);
+        REQUIRE(hit);
+        CHECK(hit->item == s.box.id);
+        CHECK(hit->kind == SubKind::Edge);
+    }
+
+    // The hidden box's highlights are drawn (outside the smaller preview's faces); a hidden WhenVisible one's are not.
+    s.vp->remove(preview.id);
+    const Body inner = addBody(*s.vp, kernel::makeBox(Vec3{4, 4, 4}, Vec3{36, 26, 16}));
+    s.vp->setPickMode(inner.id, PickMode::Never);
+    static_cast<void>(capture(*s.vp, w, h));
+    const Image base = capture(*s.vp, w, h);
+    const auto changedBy = [&](const Image& img) {
+        int n = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x)
+                n += maxChannelDiff(rgbAt(img, x, y), rgbAt(base, x, y)) > 8 ? 1 : 0;
+        }
+        return n;
+    };
+    const PickHit edgeHit{s.box.id, SubKind::Edge, *edges.begin(), mid, 0};
+    s.vp->setHighlight(std::span<const PickHit>(&edgeHit, 1), std::nullopt);
+    CHECK(changedBy(capture(*s.vp, w, h)) > 20);
+    s.vp->setPickMode(s.box.id, PickMode::WhenVisible);
+    CHECK(changedBy(capture(*s.vp, w, h)) == 0);
+    s.vp->setHighlight({}, std::nullopt);
+}

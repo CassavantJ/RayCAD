@@ -693,8 +693,8 @@ void SceneRenderer::syncItems(QRhiResourceUpdateBatch* u)
         it = present ? std::next(it) : gpu_.erase(it);
     }
     for (const detail::SceneItem& item : snap_.items) {
-        if (!item.visible)
-            continue; // uploaded when it becomes visible
+        if (!detail::itemNeeded(item))
+            continue; // uploaded when it becomes visible (or pickable while hidden)
         GpuItem& gpu = gpu_[item.id];
         const bool wantWide = item.kind == detail::ItemKind::Lines || (smoothEdges_ && item.style.showEdges) ||
                               std::binary_search(highlightWide_.begin(), highlightWide_.end(), item.id);
@@ -847,8 +847,8 @@ void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
     for (std::size_t i = 0; i < draws_.size(); ++i) {
         const detail::SceneItem& item = *draws_[i].item;
         const GpuItem& drawn = *draws_[i].gpu;
-        if (item.kind != detail::ItemKind::Mesh || !item.mesh || !item.localBounds || !drawn.indices ||
-            drawn.indexCount == 0)
+        if (!draws_[i].drawn || item.kind != detail::ItemKind::Mesh || !item.mesh || !item.localBounds ||
+            !drawn.indices || drawn.indexCount == 0)
             continue;
         if (transparency && item.style.opacity < 1.0f)
             continue; // see-through bodies get no cap
@@ -930,9 +930,9 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
         ++drawCalls;
     };
 
-    // 1. opaque faces
+    // 1. opaque faces (hidden pickable items are listed for picks and highlights only)
     for (const DrawItem& d : draws_) {
-        if (d.item->kind == detail::ItemKind::Mesh && !isBlended(d))
+        if (d.drawn && d.item->kind == detail::ItemKind::Mesh && !isBlended(d))
             drawFaces(d, set.meshOpaque.get());
     }
     // 1b. section caps (T-023, section.h): per closed body, mark its inside in the stencil, then fill the cap quad
@@ -954,6 +954,8 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
     }
     // 2. edges and lines
     for (const DrawItem& d : draws_) {
+        if (!d.drawn)
+            continue;
         if (d.item->kind == detail::ItemKind::Lines && set.lineWide) {
             drawWide(d);
         } else if (d.item->kind == detail::ItemKind::Lines || d.item->style.showEdges) {
@@ -970,7 +972,7 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
     }
     // 3. transparent faces, far to near (draws_ is already in that order for them)
     for (const DrawItem& d : draws_) {
-        if (d.item->kind == detail::ItemKind::Mesh && isBlended(d))
+        if (d.drawn && d.item->kind == detail::ItemKind::Mesh && isBlended(d))
             drawFaces(d, set.meshBlend.get());
     }
     // 4. selection, then hover (T-015)
@@ -1257,12 +1259,13 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
     draws_.clear();
     const quint32 itemBase = frameSlots * frameSlot;
     for (const detail::SceneItem& item : snap_.items) {
-        if (!item.visible)
+        if (!detail::itemNeeded(item))
             continue;
         const auto it = gpu_.find(item.id);
         if (it == gpu_.end())
             continue;
-        draws_.push_back(DrawItem{&item, &it->second, itemBase + quint32(draws_.size()) * itemSlot});
+        draws_.push_back(DrawItem{&item, &it->second, itemBase + quint32(draws_.size()) * itemSlot, item.visible,
+                                  detail::itemPickable(item)});
     }
     if (theme) {
         const double dpr = snap_.devicePixelRatio;

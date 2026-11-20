@@ -71,8 +71,14 @@ Token draftToken(DraftClass);
 // Hits: Face and Edge carry the kernel index (FaceRange::face, EdgeRange::edge); an addLines item answers as Edge
 // with the segment index; Bodies answers kind Solid, subIndex 0. `point` is the world point under the pixel, read
 // from the ID buffer's depth (a vertex hit gives the vertex itself). moveIndex is 0 until backplots exist.
-// Every visible item is pickable, see-through ones included.
+// Every visible item is pickable, see-through ones included, unless its PickMode says otherwise (below).
 constexpr int kPickTolerancePx = 6;
+
+// Which items answer picks. WhenVisible (every new item): pickable while it is visible. Never: drawn but never in the
+// ID buffer, so a pick goes through it to what lies under it (a feature preview, guides, picked-region outlines).
+// Always: in the ID buffer even while hidden, and its selection and hover highlights are drawn while hidden (the
+// body a preview stands in for: edges of the model as it is can still be picked while the preview shows the result).
+enum class PickMode : std::uint8_t { WhenVisible, Never, Always };
 // Vertex hits: kernel::Mesh has no vertex ids, so a Vertex PickHit's subIndex names one END of an edge polyline:
 // vertexCode(edge, lastEnd) with the edge's kernel index and whether it is the polyline's last point. Of all the edge
 // ends that meet at a vertex the smallest code is used, so a vertex always has the same code. The kernel vertex is
@@ -102,6 +108,9 @@ public:
     virtual std::optional<SectionPlane> section() const = 0;
     virtual void setDraftAnalysis(std::optional<DraftAnalysis>) = 0;
     virtual std::optional<DraftAnalysis> draftAnalysis() const = 0;
+    // See PickMode above. Unknown ids are ignored. Changes what the ID buffer holds (it is drawn again).
+    virtual void setPickMode(ItemId, PickMode) = 0;
+    virtual PickMode pickMode(ItemId) const = 0; // WhenVisible for an unknown id
 };
 
 // ---------- Camera helpers (pure math; the UI's navigation calls these, then setCamera) ----------

@@ -294,8 +294,9 @@ void PickPass::drawIds(const FrameContext& ctx)
         const QRhiCommandBuffer::DynamicOffset offsets[2] = {{0, ctx.frameUniformOffset}, {1, itemOffset}};
         cb->setShaderResources(ctx.bindings, 2, offsets);
     };
+    // Items that do not answer picks (PickMode::Never) are left out, so picks go through them.
     for (const DrawItem& d : ctx.draws) {
-        if (d.item->kind != detail::ItemKind::Mesh || !d.gpu->indices || d.gpu->indexCount == 0)
+        if (!d.pickable || d.item->kind != detail::ItemKind::Mesh || !d.gpu->indices || d.gpu->indexCount == 0)
             continue;
         use(faces_.get(), d.itemUniformOffset);
         const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
@@ -309,6 +310,8 @@ void PickPass::drawIds(const FrameContext& ctx)
             if (index >= ctx.draws.size())
                 continue;
             const DrawItem& d = ctx.draws[index];
+            if (!d.pickable)
+                continue;
             use(capStencil_.get(), d.itemUniformOffset);
             const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
             cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
@@ -320,6 +323,8 @@ void PickPass::drawIds(const FrameContext& ctx)
         }
     }
     for (const DrawItem& d : ctx.draws) {
+        if (!d.pickable)
+            continue;
         if (d.item->kind == detail::ItemKind::Lines) {
             if (!segments_ || !ctx.lineCorners || !d.gpu->wideEdges || d.gpu->segmentCount == 0)
                 continue;
@@ -352,6 +357,8 @@ std::shared_ptr<const detail::PickView> PickPass::makeView(const FrameContext& c
         std::fill(std::begin(view->invViewProj), std::end(view->invViewProj), 0.0);
     view->items.reserve(ctx.draws.size());
     for (const DrawItem& d : ctx.draws) {
+        if (!d.pickable)
+            continue;
         detail::PickItem item;
         item.id = d.item->id;
         item.lines = d.item->kind == detail::ItemKind::Lines;
