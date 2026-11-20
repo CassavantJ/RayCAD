@@ -22,4 +22,24 @@ void insertFeature(DocState& state, std::size_t at, Feature feature);
 // Removes feature `at`. When it held the rollback bar, the bar moves to the feature before it.
 void eraseFeature(DocState& state, std::size_t at);
 
+// ---------- Previews never solve a sketch (PLAN.md 7; implemented in document.cpp) ----------
+// Document::beginPreview applies its command on the UI thread, which is right only because no command a preview is
+// made of solves a sketch: the feature tools preview feature.<type>.add / .edit of the non-sketch types (extrude,
+// revolve, fillet, chamfer, hole, datum_plane), whose stored props are the props as given, and the feature tree
+// previews feature.reorder, which stores nothing. The scope marks the thread while beginPreview applies a command;
+// features::storedSketch, the one place a command solves, asserts that it is not inside one (and logs an error in a
+// release build). A preview that has to solve must apply its command with Document::prepare on a worker instead.
+class PreviewApplyScope {
+public:
+    PreviewApplyScope();
+    ~PreviewApplyScope();
+    PreviewApplyScope(const PreviewApplyScope&) = delete;
+    PreviewApplyScope& operator=(const PreviewApplyScope&) = delete;
+
+private:
+    bool outer_;
+};
+// True on a thread inside a PreviewApplyScope.
+bool applyingPreview();
+
 } // namespace ray::doc::detail

@@ -8,6 +8,7 @@
 // constraints), so the document keeps the rule whoever calls it.
 #include "parametric_test_util.h"
 
+#include "document_impl.h"
 #include "features/feature_props.h"
 #include "features/sketch_feature.h"
 #include "features/sketch_json.h"
@@ -951,6 +952,51 @@ TEST_CASE("a document saved before sketches were stored solved: a parameter edit
                                  [](const std::string& step) { return step.rfind("undo: the file's state", 0) == 0; }),
                   s.moved.end());
     s.requireIntact();
+}
+
+TEST_CASE("a preview never solves a sketch: the feature tools' commands and a reorder leave it as stored",
+          "[doc][sketch][solved-store][preview]")
+{
+    // Document::beginPreview applies its command on the UI thread (detail::PreviewApplyScope), so nothing the feature
+    // tools or the feature tree preview may reach a sketch solve. The stored rectangle does not meet its width
+    // dimension: anything that stored it solved would change its props (and trip the assertion in a debug build).
+    DocState old;
+    SketchJson r = rectangle(40, 20);
+    r.constraint(5, "fix", {1}).constraint(6, "distance", {5}, {}, 60.0);
+    Feature f;
+    f.id = featureId(2);
+    f.type = "sketch";
+    f.name = "Sketch 1";
+    f.propsJson = canonicalJson(sketchProps(R"({"principal":"xy"})", r));
+    old.features.push_back(f);
+    DocEnv env(4, std::make_shared<const DocState>(old));
+    REQUIRE(env.settle());
+    REQUIRE(env.run(addFeature("extrude", 3, extrudeProps(2, "\"10 mm\"", "new", 'b'))));
+    REQUIRE(env.settle());
+    const std::string stored = env.doc->state()->features.front().propsJson;
+    REQUIRE(stored == f.propsJson);
+    const Command previews[] = {
+        addFeature("extrude", 4, extrudeProps(2, "\"5 mm\"", "new", 'c')),
+        editFeature("extrude", 3, R"({"distance":"12 mm"})"),
+        addFeature("datum_plane", 5, R"({"base":{"principal":"xy"},"offset":"5 mm"})"),
+        addFeature("fillet", 6, R"({"edges":[],"radius":"1 mm"})"),
+        cmd("feature.reorder", R"({"id":")" + uuid('f', 3) + R"(","index":0})"),
+    };
+    for (const Command& c : previews) {
+        INFO(c.name);
+        env.doc->beginPreview(c);
+        CHECK(!ray::doc::detail::applyingPreview()); // the scope ends with the call
+        const DocStatePtr preview = env.doc->previewState();
+        if (!preview) {
+            continue; // refused (the fillet without edges): nothing was stored either
+        }
+        const auto sketchFeature = std::find_if(preview->features.begin(), preview->features.end(),
+                                                [](const Feature& g) { return g.id == featureId(2); });
+        REQUIRE(sketchFeature != preview->features.end());
+        CHECK(sketchFeature->propsJson == stored);
+    }
+    env.doc->cancelPreview();
+    CHECK(env.doc->state()->features.front().propsJson == stored);
 }
 
 namespace {

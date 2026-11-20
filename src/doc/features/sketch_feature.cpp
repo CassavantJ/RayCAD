@@ -3,7 +3,10 @@
 
 #include "sketch_json.h"
 
+#include "../document_impl.h"
+
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <exception>
 #include <map>
@@ -423,6 +426,12 @@ sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredS
     if (*holds) {
         return model;
     }
+    // A preview applies its command on the UI thread, so it must never get here (detail::PreviewApplyScope).
+    const bool inPreview = doc::detail::applyingPreview();
+    if (inPreview) {
+        log(LogLevel::Error, "doc", "A preview's command solved a sketch on the UI thread; apply it with prepare()");
+    }
+    assert(!inPreview && "a preview's command must not solve a sketch: apply it with Document::prepare on a worker");
     // The job's cancellation, not its progress (a command may store more than one sketch).
     JobContext ctx{job != nullptr ? job->cancel : CancelToken(), Progress()};
     if (ctx.cancel.cancelled()) {

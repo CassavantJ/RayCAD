@@ -292,6 +292,9 @@ Result<std::vector<Command>> commandLogFromJson(std::string_view json);
 // Previews: beginPreview(command) applies the command to the current snapshot off to the side and rebuilds that
 // snapshot as a job; it never changes state(), the stacks, dirty(), build() or the document listeners. A second
 // beginPreview replaces the first; cancelPreview, execute, undo and redo end it (and cancel its rebuild).
+// The command is applied on the calling (UI) thread, so it must be one that never solves a sketch: the feature
+// tools' feature.<type>.add / .edit of the non-sketch types and feature.reorder are such commands; a sketch command
+// is not (a debug build asserts). A preview that needs a solve applies its command with prepare() on a worker.
 class Document : public IDocument {
 public:
     // The preview snapshot, or null when no preview is active or the previewed command failed.
