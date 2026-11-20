@@ -194,7 +194,8 @@ std::optional<Vec3> arcMiddle(const Vec3& c, const Vec3& n, const Vec3& m, doubl
 // Where a line edge or a circular arc was picked, to tell whether another edge on the same line or circle lies inside
 // it. A line segment is exactly its box's stretch of its line. An arc is told by its middle direction and the cosine
 // of its half angle, from the hint (chord midpoint, length, radius) and the circle now (centre, axis): the chord
-// midpoint lies at r cos(half) from the centre, on the middle's side for an arc up to a half circle.
+// midpoint lies at r cos(half) from the centre, on the middle's side for an arc up to a half circle. A whole circle
+// holds every point of it.
 struct PickedPlace {
     bool line = false;
     Box3 box{};
@@ -209,18 +210,27 @@ struct PickedPlace {
         return d > 0.0 && dot(u, middle) / d >= cosHalf - tol / radius;
     }
 
-    // Does edge `info` (on the same line or circle) lie inside the place?
-    bool holds(const kernel::CurveInfo& info, const Box3& edgeBox) const
+    // Does edge `info` (on the same line or circle; its box and territory given) lie inside the place? An arc lies
+    // inside the picked arc when its ends and its territory points do (the territory's first point is its middle), or,
+    // without a territory, its ends and the middle its chord tells.
+    bool holds(const kernel::CurveInfo& info, const Box3& edgeBox, const Territory& territory) const
     {
         if (line)
             return insideBox(edgeBox, box, tol);
+        if (!onArc(info.start) || !onArc(info.end))
+            return false;
+        if (territory.known()) {
+            for (const auto& q : territory.points)
+                if (!onArc(fromQuanta(q)))
+                    return false;
+            return true;
+        }
         const Vec3 m =
             scaled(Vec3{info.start.x + info.end.x, info.start.y + info.end.y, info.start.z + info.end.z}, 0.5);
         const auto mid = arcMiddle(centre, axis, m, info.length / radius, radius);
         if (!mid)
             return false;
-        const Vec3 middlePoint{centre.x + radius * mid->x, centre.y + radius * mid->y, centre.z + radius * mid->z};
-        return onArc(info.start) && onArc(info.end) && onArc(middlePoint);
+        return onArc(Vec3{centre.x + radius * mid->x, centre.y + radius * mid->y, centre.z + radius * mid->z});
     }
 };
 
@@ -249,6 +259,15 @@ std::optional<PickedPlace> pickedPlace(const kernel::Shape& shape, SubId answer,
     const Vec3 m{static_cast<double>(hint.qCx) / kLengthQuantaPerMm, static_cast<double>(hint.qCy) / kLengthQuantaPerMm,
                  static_cast<double>(hint.qCz) / kLengthQuantaPerMm};
     const double angle = static_cast<double>(hint.qArea) / kLengthQuantaPerMm / r;
+    // A whole circle was picked (a hole's rim): every point of it is the pick's.
+    if (angle >= 2.0 * kPi * (1.0 - 1e-6)) {
+        const Vec3 x{1, 0, 0}, y{0, 1, 0};
+        const Vec3 any = std::abs(out.axis.x) < 0.9 ? x : y;
+        out.middle = minus(any, scaled(out.axis, dot(any, out.axis)));
+        out.middle = scaled(out.middle, 1.0 / length(out.middle));
+        out.cosHalf = -2.0;
+        return out;
+    }
     auto middle = arcMiddle(out.centre, out.axis, m, angle, r);
     // A half circle: its chord midpoint is the centre. The picked edge's territory points lie at 0.5, 0.3, 0.7, 0.15
     // and 0.85 of its length, symmetric about its middle (territory.h): with all of them, their mean direction from
@@ -309,7 +328,7 @@ std::optional<std::vector<SubId>> fullerAnswer(const ElementMap& map, const kern
             return std::nullopt;
         if (!reachesInto(*eBox, box, tol) && holders.count(e) == 0)
             continue;
-        if (!place->holds(*info, *eBox) || namedAtPick(map, e, ref) ||
+        if (!place->holds(*info, *eBox, territories.of(e)) || namedAtPick(map, e, ref) ||
             !continuesSeamlessly(shape, territories, answer.front(), e))
             return std::nullopt;
         out.insert(e);

@@ -433,9 +433,8 @@ namespace {
 // `apart`, a trapezoid with a flat bottom below the block (x 44.5..55.5 at z 0: two solids 11 mm apart), else a V whose
 // apex is on the bottom at x 50 (two solids touching along that line). The groove's walls carry the same tags either
 // way.
-Body grooved(double y0, bool apart, double length = 100)
+Body grooveCut(const Body& b, double y0, bool apart)
 {
-    const Body b = extrude(kBlock, 0, rectangle(0, y0, length, y0 + 60, 1, 1), 20);
     // A profile in the plane y = y0 + 61, swept 62 mm towards -y: (u, v) is (x, z).
     const kernel::Plane plane{Vec3{0, y0 + 61, 0}, Vec3{0, -1, 0}, Vec3{1, 0, 0}};
     std::vector<kernel::ProfileCurve> curves;
@@ -453,6 +452,32 @@ Body grooved(double y0, bool apart, double length = 100)
     const std::array<const kernel::Shape*, 2> shapes{&b.shape, &tool.shape};
     const NamingInput in{kPocket, "extrude", maps, &result.history, &result.shape, {}, shapes};
     return Body{result.shape, take(propagate(in)).map};
+}
+
+Body grooved(double y0, bool apart, double length = 100)
+{
+    return grooveCut(extrude(kBlock, 0, rectangle(0, y0, length, y0 + 60, 1, 1), 20), y0, apart);
+}
+
+// A block 100 x 60 x 20 at y 5..65 with a round hole of radius 10 through it about (50, 35) (feature kBelow).
+Body holed()
+{
+    const Body b = extrude(kBlock, 0, rectangle(0, 5, 100, 65, 1, 1), 20);
+    const kernel::ProfileLoop circle{
+        {kernel::ProfileCurve{kernel::ProfileCurve::Kind::Circle, {Vec2{50, 35}}, 10.0, true, 51}}, 6};
+    return boolean(b, kBelow, kernel::BoolOp::Cut, -1, circle, 22);
+}
+
+// The edges of the hole's rim on the bottom (z 0), sorted.
+std::vector<SubId> rimEdges(const kernel::Shape& shape)
+{
+    std::vector<SubId> out;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge); ++i) {
+        const auto c = take(kernel::curveInfo(shape, SubId{SubKind::Edge, i}));
+        if (c.type == kernel::CurveType::Circle && std::abs(c.center.z) < 1e-6 && std::abs(c.radius - 10) < 1e-6)
+            out.push_back(SubId{SubKind::Edge, i});
+    }
+    return out;
 }
 
 // The line edge from a to b (either way round), if there is one.
@@ -626,6 +651,41 @@ Body backCut(double hw, double hh)
 }
 
 } // namespace
+
+TEST_CASE("An Exact answer that is one arc of a picked circle now in several, on the same surfaces, is Split into all "
+          "of them",
+          "[naming][evidence]")
+{
+    // The completeness check on a circle (as holdout5 1:2 on an arc): the rim of a hole on the bottom face, picked
+    // whole, is split by a V groove whose apex touches the bottom along x 50: its arcs on either side lie on the same
+    // circle between the same plane and cylinder. An answer that is one of them (the names cannot carry the rim through
+    // to that, so the rule is driven directly) leaves points of the rim's territory on the others: the pick came
+    // apart, and the arcs together are all of it.
+    const Body plain = holed();
+    const std::vector<SubId> rim = rimEdges(plain.shape);
+    REQUIRE(rim.size() == 1);
+    const TopoRef ref = resolverFor(plain)->makeRef(kBody, rim.front());
+    REQUIRE(ref.territory.known());
+    const Body split = grooveCut(holed(), 5, false);
+    const std::vector<SubId> arcs = rimEdges(split.shape);
+    REQUIRE(arcs.size() >= 2);
+    const naming::detail::TerritoryCache cache(split.shape);
+    const auto out = naming::detail::exactAgainstEvidence(split.map, split.shape, cache, arcs.front(), ref);
+    REQUIRE(out.has_value());
+    INFO(out->reason);
+    CHECK(out->state == ResolveState::Split);
+    CHECK(out->elements == arcs);
+    // The same with the groove apart (a flat bottom 11 mm wide): the rim lost its stretch across the groove, and
+    // the arcs left are still all of it.
+    const Body apart = grooveCut(holed(), 5, true);
+    const std::vector<SubId> left = rimEdges(apart.shape);
+    REQUIRE(left.size() >= 2);
+    const naming::detail::TerritoryCache apartCache(apart.shape);
+    const auto pieces = naming::detail::exactAgainstEvidence(apart.map, apart.shape, apartCache, left.front(), ref);
+    REQUIRE(pieces.has_value());
+    CHECK(pieces->state == ResolveState::Split);
+    CHECK(pieces->elements == left);
+}
 
 TEST_CASE("A piece of zero area is never part of an answer", "[naming][evidence]")
 {
