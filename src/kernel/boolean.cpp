@@ -16,6 +16,15 @@
 // (ShapeUpgrade_UnifySameDomain turned 10 of 496 valid results into invalid solids in spike S9).
 // Cancel: OCCT polls JobIndicator::UserBreak() during the boolean; a cancelled call returns Error{Cancelled}.
 //
+// SLIVERS (boolean_internal.h). A sketch placed through a single-precision point picked on a face lies up to about
+// 1e-6 mm off it, and a cut from there leaves a skin that thin over the pocket (the naming test harness hit one
+// 7.6e-7 mm thick: y = 50.7999992 against a face at y = 50.8). OCCT is right to keep it: 7.6e-7 is more than its
+// Precision::Confusion (1e-7). So when the result has a sliver that involves a face from the tool, the boolean is run
+// again with OCCT's fuzzy option at kSliverWidth (1e-4 mm), which takes elements that close to be coincident, and
+// that result is returned, with a warning, if it passes every check above and has no sliver. Otherwise the first
+// result is returned with a warning naming the sliver faces. A boolean without slivers runs exactly as before, so
+// its result and history do not change.
+//
 // IMMUTABLE INPUTS (PLAN.md section 7 rule 1). Non-destructive mode is not enough: on OCCT 8.0.1 Build() clears
 // the Free flag of both argument solids and SimplifyResult() adds pcurves to edges the result shares with the
 // arguments (their canonical bytes change), and UnifySameDomain can make a B-spline surface periodic in place. With
@@ -43,9 +52,11 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace ray::kernel {
 
@@ -130,11 +141,34 @@ std::string noOpMessage(BoolOp op)
 
 struct Attempt {
     Result<OpResult> result;
-    bool invalid = false; // failed check 1 (retrying without unification may help)
+    bool invalid = false;       // failed check 1 (retrying without unification may help)
+    std::vector<SubId> slivers; // of a successful result: its sliver faces that involve the tool (SLIVERS above)
 };
 
-Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, double targetVolume, double toolVolume,
-                JobContext& ctx, std::string_view where)
+// The result faces that come from a face of the tool (a Modified or Generated entry of input 1), by SubId index.
+std::vector<bool> toolFaces(const OpResult& out)
+{
+    std::vector<bool> fromTool(out.shape.count(SubKind::Face), false);
+    for (const HistoryEntry& entry : out.history.entries)
+        if (entry.inputIndex == 1 && entry.source.kind == SubKind::Face &&
+            entry.relation != HistoryEntry::Relation::Deleted)
+            for (const SubId& r : entry.results)
+                if (r.kind == SubKind::Face && r.index < fromTool.size())
+                    fromTool[r.index] = true;
+    return fromTool;
+}
+
+std::string faceList(std::span<const SubId> faces)
+{
+    std::string text;
+    for (std::size_t i = 0; i < faces.size(); ++i)
+        text += (i == 0 ? "" : ", ") + std::to_string(faces[i].index);
+    return text;
+}
+
+// `fuzzy` > 0: OCCT treats elements closer than that as coincident (BOPAlgo fuzzy option).
+Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, double fuzzy, double targetVolume,
+                double toolVolume, JobContext& ctx, std::string_view where)
 {
     // OCCT works on private copies (boolean_internal.h PrivateCopy): Build and SimplifyResult write into the TShapes
     // of their arguments. Fresh copies for every attempt, so the retry without unification does not see what the
@@ -156,6 +190,8 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     maker.SetOperation(occtOperation(op));
     maker.SetRunParallel(false);
     maker.SetNonDestructive(true);
+    if (fuzzy > 0.0)
+        maker.SetFuzzyValue(fuzzy);
     occ::handle<detail::JobIndicator> indicator = new detail::JobIndicator(ctx, 0.0, 0.8, words.stage);
     maker.Build(indicator->Start());
     if (ctx.cancel.cancelled() || maker.HasError(STANDARD_TYPE(BOPAlgo_AlertUserBreak)))
@@ -239,7 +275,26 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     const std::vector<SubId> orphans = detail::orphanFaces(out.history, out.shape);
     if (!orphans.empty())
         out.warnings.push_back(detail::orphanWarning(orphans));
-    return {std::move(out)};
+    std::vector<SubId> slivers = detail::sliverFaces(out.shape, toolFaces(out));
+    return {std::move(out), false, std::move(slivers)};
+}
+
+// The unified attempt, and the plain one if unifying made the solid invalid (see the file comment).
+Attempt attemptBoth(BoolOp op, const Shape& target, const Shape& tool, double fuzzy, double targetVolume,
+                    double toolVolume, JobContext& ctx, std::string_view where)
+{
+    Attempt unified = attempt(op, target, tool, true, fuzzy, targetVolume, toolVolume, ctx, where);
+    if (unified.result || !unified.invalid)
+        return unified;
+    if (auto ok = ctx.cancel.check(); !ok)
+        return {tl::unexpected(detail::cancelledError(where))};
+    Attempt plain = attempt(op, target, tool, false, fuzzy, targetVolume, toolVolume, ctx, where);
+    if (!plain.result)
+        return unified;
+    plain.result->warnings.insert(plain.result->warnings.begin(),
+                                  "Faces that lie on one surface were left as separate faces: merging them made the "
+                                  "solid invalid.");
+    return plain;
 }
 
 } // namespace
@@ -261,22 +316,29 @@ Result<OpResult> boolean(BoolOp op, const Shape& target, const Shape& tool, JobC
         const double toolVolume = detail::solidVolume(detail::occt(tool));
         if (!(targetVolume > 0.0) || !(toolVolume > 0.0))
             return tl::unexpected(kernelFailure("A body without volume cannot take part in a boolean.", where));
-        Attempt unified = attempt(op, target, tool, true, targetVolume, toolVolume, ctx, where);
-        if (unified.result || !unified.invalid) {
-            if (unified.result)
-                ctx.progress.set(1.0, "Done");
-            return std::move(unified.result);
+        Attempt exact = attemptBoth(op, target, tool, 0.0, targetVolume, toolVolume, ctx, where);
+        if (exact.result && !exact.slivers.empty()) {
+            // SLIVERS: a tool face a rounding error off a face of the body. Again with OCCT's fuzzy option, so the
+            // two count as one; kept only if that removes every sliver.
+            if (auto ok = ctx.cancel.check(); !ok)
+                return tl::unexpected(detail::cancelledError(where));
+            Attempt fuzzy = attemptBoth(op, target, tool, detail::kSliverWidth, targetVolume, toolVolume, ctx, where);
+            if (fuzzy.result && fuzzy.slivers.empty()) {
+                fuzzy.result->warnings.push_back(
+                    "Faces of the tool less than 0.0001 mm from faces of the body were taken to lie on them, so the "
+                    "result has no skin, step or gap that thin.");
+                exact = std::move(fuzzy);
+            } else {
+                exact.result->warnings.push_back(
+                    "The result has material or a gap thinner than 0.0001 mm at face" +
+                    std::string(exact.slivers.size() == 1 ? " " : "s ") + faceList(exact.slivers) +
+                    ": a face of the tool lies a rounding error off a face of the body. Place the sketch on the face "
+                    "itself.");
+            }
         }
-        if (auto ok = ctx.cancel.check(); !ok)
-            return tl::unexpected(detail::cancelledError(where));
-        Attempt plain = attempt(op, target, tool, false, targetVolume, toolVolume, ctx, where);
-        if (!plain.result)
-            return std::move(unified.result);
-        plain.result->warnings.insert(plain.result->warnings.begin(),
-                                      "Faces that lie on one surface were left as separate faces: merging them "
-                                      "made the solid invalid.");
-        ctx.progress.set(1.0, "Done");
-        return std::move(plain.result);
+        if (exact.result)
+            ctx.progress.set(1.0, "Done");
+        return std::move(exact.result);
     });
 }
 
