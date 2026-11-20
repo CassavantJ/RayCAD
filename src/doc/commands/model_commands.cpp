@@ -4,15 +4,19 @@
 //   feature.add       {"id", "type", "name", "props": {...}, "suppressed"?: false, "index"?: <end>}
 //                     inserts a new feature at `index` (0 to the feature count). The id comes from the caller, so
 //                     replay gives the same document. `type` is 1 to 64 of A-Z a-z 0-9 _ . -; props are not checked
-//                     against the type's schema here (the rebuilder reports bad props as a failed feature).
-//   feature.edit      {"id", "name"?, "props"?}        replaces the name and/or the whole props object
+//                     against the type's schema here (the rebuilder reports bad props as a failed feature). A sketch's
+//                     props are stored with its coordinates solved, as feature.sketch.add stores them.
+//   feature.edit      {"id", "name"?, "props"?}        replaces the name and/or the whole props object (a sketch's
+//                     stored solved)
 //   feature.remove    {"id"}
 //   feature.reorder   {"id", "index"}                  moves the feature to `index` of the resulting list
 //   feature.suppress  {"id", "suppressed"}
 //   param.set         {"id", "name"?, "expression"?, "kind"?}   kind: "length" | "angle" | "count" | "unitless"
 //                     adds the parameter (all three fields required) or changes the given fields of an existing one.
 //                     The name must be a valid, unreserved and unused identifier. If the parameters evaluated before
-//                     the change, they must still evaluate after it (no cycle, unknown name or unit mismatch).
+//                     the change, they must still evaluate after it (no cycle, unknown name or unit mismatch). Every
+//                     sketch with a dimension whose value the change alters is stored solved again in the same step
+//                     (features::storeDependentSketches).
 //   body.set          {"id", "name"?, "role"?, "color"?, "visible"?}  role: "part" | "fixture" | "stock_model";
 //                     color: [r, g, b, a] from 0 to 1, stored as float. Adds the body (name and role required;
 //                     color defaults to [0.72, 0.74, 0.78, 1], visible to true) or changes the given fields.
@@ -23,6 +27,8 @@
 #include "commands.h"
 
 #include "../expr.h"
+#include "../features/feature_props.h"
+#include "../features/sketch_feature.h"
 #include "../json_number.h"
 
 #include <algorithm>
@@ -47,7 +53,9 @@ using json::Value;
         return tl::unexpected(var.error());                                                                            \
     }
 
-using ApplyFn = Result<DocStatePtr> (*)(const DocState& before, std::string_view argsJson);
+// `job` is the job the command runs in (Document::prepare), null for IDocument::execute: what may solve a sketch
+// passes it on for cancellation.
+using ApplyFn = Result<DocStatePtr> (*)(const DocState& before, std::string_view argsJson, JobContext* job);
 
 class ModelCommand final : public ICommandHandler {
 public:
@@ -57,11 +65,21 @@ public:
     bool changesToolpathsOrGcode() const override { return false; }
     Result<DocStatePtr> apply(DocStatePtr before, std::string_view argsJson) const override
     {
+        return run(before, argsJson, nullptr);
+    }
+    Result<DocStatePtr> applyWithJob(DocStatePtr before, std::string_view argsJson, JobContext& ctx) const override
+    {
+        return run(before, argsJson, &ctx);
+    }
+
+private:
+    Result<DocStatePtr> run(const DocStatePtr& before, std::string_view argsJson, JobContext* job) const
+    {
         if (!before) {
             return invalidArgument(std::string(name_) + ": there is no document snapshot to apply it to");
         }
         try {
-            return fn_(*before, argsJson);
+            return fn_(*before, argsJson, job);
         } catch (const std::bad_alloc&) {
             return tl::unexpected(Error{ErrorCode::Internal, std::string(name_) + ": out of memory", {}});
         } catch (...) {
@@ -69,7 +87,6 @@ public:
         }
     }
 
-private:
     std::string_view name_;
     std::string_view schema_;
     ApplyFn fn_;
@@ -118,7 +135,7 @@ constexpr std::string_view kFeatureSuppress = "feature.suppress";
 constexpr std::string_view kParamSet = "param.set";
 constexpr std::string_view kBodySet = "body.set";
 
-Result<DocStatePtr> featureAdd(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> featureAdd(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_DOC_TRY(args, Args::parse(kFeatureAdd, argsJson, {"id", "index", "name", "props", "suppressed", "type"}));
     RAY_DOC_TRY(id, args->id("id"));
@@ -145,10 +162,13 @@ Result<DocStatePtr> featureAdd(const DocState& before, std::string_view argsJson
     auto next = copyOf(before);
     const std::size_t at = index->value_or(next->features.size());
     next->features.insert(next->features.begin() + static_cast<std::ptrdiff_t>(at), std::move(feature));
+    // A sketch is stored solved, as feature.sketch.add stores it (features::storedPropsOf).
+    RAY_DOC_TRY(stored, features::storedPropsOf(*next, next->features[at], job));
+    next->features[at].propsJson = std::move(*stored);
     return next;
 }
 
-Result<DocStatePtr> featureEdit(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> featureEdit(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_DOC_TRY(args, Args::parse(kFeatureEdit, argsJson, {"id", "name", "props"}));
     RAY_DOC_TRY(index, existingFeature(*args, before));
@@ -164,11 +184,13 @@ Result<DocStatePtr> featureEdit(const DocState& before, std::string_view argsJso
     }
     if (*props) {
         feature.propsJson = std::move(**props);
+        RAY_DOC_TRY(stored, features::storedPropsOf(*next, feature, job)); // a sketch: stored solved
+        feature.propsJson = std::move(*stored);
     }
     return next;
 }
 
-Result<DocStatePtr> featureRemove(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> featureRemove(const DocState& before, std::string_view argsJson, JobContext*)
 {
     RAY_DOC_TRY(args, Args::parse(kFeatureRemove, argsJson, {"id"}));
     RAY_DOC_TRY(index, existingFeature(*args, before));
@@ -177,7 +199,7 @@ Result<DocStatePtr> featureRemove(const DocState& before, std::string_view argsJ
     return next;
 }
 
-Result<DocStatePtr> featureReorder(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> featureReorder(const DocState& before, std::string_view argsJson, JobContext*)
 {
     RAY_DOC_TRY(args, Args::parse(kFeatureReorder, argsJson, {"id", "index"}));
     RAY_DOC_TRY(from, existingFeature(*args, before));
@@ -193,7 +215,7 @@ Result<DocStatePtr> featureReorder(const DocState& before, std::string_view args
     return next;
 }
 
-Result<DocStatePtr> featureSuppress(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> featureSuppress(const DocState& before, std::string_view argsJson, JobContext*)
 {
     RAY_DOC_TRY(args, Args::parse(kFeatureSuppress, argsJson, {"id", "suppressed"}));
     RAY_DOC_TRY(index, existingFeature(*args, before));
@@ -223,7 +245,7 @@ Result<std::optional<Parameter::Kind>> optKind(const Args& args)
     return args.error("kind", "must be one of length, angle, count, unitless");
 }
 
-Result<DocStatePtr> paramSet(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> paramSet(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_DOC_TRY(args, Args::parse(kParamSet, argsJson, {"expression", "id", "kind", "name"}));
     RAY_DOC_TRY(id, args->id("id"));
@@ -282,6 +304,11 @@ Result<DocStatePtr> paramSet(const DocState& before, std::string_view argsJson)
             return args->error(field, "would leave the parameters invalid: " + values.error().message);
         }
     }
+    // The sketches whose dimensions the change reaches, stored solved in this step (the rebuild must not be the only
+    // one to see the new shape: the document, a save, undo and the next sketch command would hold the old one).
+    if (auto st = features::storeDependentSketches(before, *next, job); !st) {
+        return tl::unexpected(st.error());
+    }
     return next;
 }
 
@@ -330,7 +357,7 @@ Result<std::optional<std::array<float, 4>>> optColor(const Args& args)
     return std::optional<std::array<float, 4>>(color);
 }
 
-Result<DocStatePtr> bodySet(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> bodySet(const DocState& before, std::string_view argsJson, JobContext*)
 {
     RAY_DOC_TRY(args, Args::parse(kBodySet, argsJson, {"color", "id", "name", "role", "visible"}));
     RAY_DOC_TRY(id, args->id("id"));

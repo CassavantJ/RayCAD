@@ -40,9 +40,18 @@ struct Editing {
     std::size_t index = 0;
     Sketch model;
     FeatureId feature;
+    JobContext* job = nullptr; // the job the command runs in (Document::prepare); null for IDocument::execute
 };
 
-Result<Editing> open(const Args& args, const DocState& before)
+// The message names the command, as Args errors do.
+tl::unexpected<Error> cancelled(const Args& args)
+{
+    tl::unexpected<Error> e = args.error("the sketch solve was cancelled");
+    e.value().code = ErrorCode::Cancelled;
+    return e;
+}
+
+Result<Editing> open(const Args& args, const DocState& before, JobContext* job)
 {
     RAY_TRY(id, args.id("id"));
     const auto it = std::find_if(before.features.begin(), before.features.end(),
@@ -60,8 +69,13 @@ Result<Editing> open(const Args& args, const DocState& before)
     // The shape as it is shown now: a parameter edit (param.set) changes a dimensioned sketch without a sketch
     // command, and a file from before stored sketches solved holds other coordinates; trim, extend, offset, split
     // and fillet compute on this model. Already solved (the usual case): one pass over the constraints.
-    out.model = storedSketch(before, std::move(*model));
+    StoredSketch outcome = StoredSketch::AsGiven;
+    out.model = storedSketch(before, std::move(*model), &outcome, job);
+    if (outcome == StoredSketch::Cancelled) {
+        return cancelled(args);
+    }
     out.feature = FeatureId{*id};
+    out.job = job;
     return out;
 }
 
@@ -123,7 +137,12 @@ Result<std::string> withLabels(const std::string& where, const std::string& prop
 Result<DocStatePtr> commit(Editing& e, const Sketch& model, const std::string& command, const LabelEdits& labels = {})
 {
     Feature& feature = e.next->features[e.index];
-    RAY_TRY(props, withSketch(feature, storedSketch(*e.next, model)));
+    StoredSketch outcome = StoredSketch::AsGiven;
+    const Sketch stored = storedSketch(*e.next, model, &outcome, e.job);
+    if (outcome == StoredSketch::Cancelled) {
+        return failed(ErrorCode::Cancelled, command + ": the sketch solve was cancelled");
+    }
+    RAY_TRY(props, withSketch(feature, stored));
     RAY_TRY(labelled, withLabels(command, *props, model, labels));
     feature.propsJson = std::move(*labelled);
     const auto registry = builtinFeatureRegistry();
@@ -529,10 +548,10 @@ constexpr std::string_view kOffset = "sketch.offset";
 constexpr std::string_view kFillet = "sketch.fillet";
 constexpr std::string_view kDimensionPlace = "sketch.dimension.place";
 
-Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kSet, argsJson, {"id", "plane", "sketch"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(sketchValue, args->optValue("sketch"));
     if (*sketchValue == nullptr) {
         return args->error("sketch", "is required");
@@ -555,10 +574,10 @@ Result<DocStatePtr> sketchSet(const DocState& before, std::string_view argsJson)
     return commit(*e, *model, std::string(kSet));
 }
 
-Result<DocStatePtr> entityAdd(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> entityAdd(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kEntityAdd, argsJson, {"constraints", "entities", "id"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(entities, arrayArg(*args, "entities"));
     // T-092: the constraints a drawing tool inferred go in with the entities, as the same undo step.
     RAY_TRY(constraints, args->optValue("constraints"));
@@ -569,10 +588,10 @@ Result<DocStatePtr> entityAdd(const DocState& before, std::string_view argsJson)
     return commit(*e, *model, std::string(kEntityAdd));
 }
 
-Result<DocStatePtr> entityRemove(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> entityRemove(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kEntityRemove, argsJson, {"entities", "id"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(ids, idList(*args, "entities"));
     std::set<SketchEntId> removed;
     for (const Uuid& id : *ids) {
@@ -661,10 +680,10 @@ Status takeSolved(const Args& args, Sketch& model)
     return {};
 }
 
-Result<DocStatePtr> constraintAdd(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> constraintAdd(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kConstraintAdd, argsJson, {"constraints", "id", "labels", "solved"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(constraints, arrayArg(*args, "constraints"));
     RAY_TRY(model, merged(e->model, nullptr, *constraints, std::string(kConstraintAdd)));
     RAY_TRY(labels, labelArg(*args, "labels", *model));
@@ -674,10 +693,10 @@ Result<DocStatePtr> constraintAdd(const DocState& before, std::string_view argsJ
 
 // T-093: where a dimension's value label sits, as an offset from the dimension's own anchor (the UI decides the
 // anchor: the middle of a distance, the centre of a circle, the vertex of an angle). Props only; no geometry changes.
-Result<DocStatePtr> dimensionPlace(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> dimensionPlace(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kDimensionPlace, argsJson, {"constraint", "id", "offset"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(id, args->id("constraint"));
     const auto it = std::find_if(e->model.constraints.begin(), e->model.constraints.end(),
                                  [&](const Constraint& c) { return c.id == *id; });
@@ -701,10 +720,10 @@ Result<DocStatePtr> dimensionPlace(const DocState& before, std::string_view args
     return commit(*e, e->model, std::string(kDimensionPlace), edits);
 }
 
-Result<DocStatePtr> constraintRemove(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> constraintRemove(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kConstraintRemove, argsJson, {"constraints", "id", "solved"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(ids, idList(*args, "constraints"));
     Sketch model = e->model;
     for (const Uuid& id : *ids) {
@@ -719,11 +738,11 @@ Result<DocStatePtr> constraintRemove(const DocState& before, std::string_view ar
     return commit(*e, model, std::string(kConstraintRemove));
 }
 
-Result<DocStatePtr> constraintSet(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> constraintSet(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args,
             Args::parse(kConstraintSet, argsJson, {"constraint", "driven", "expression", "id", "solved", "value"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(id, args->id("constraint"));
     RAY_TRY(expression, args->optString("expression"));
     RAY_TRY(value, args->optValue("value"));
@@ -764,10 +783,10 @@ Result<DocStatePtr> constraintSet(const DocState& before, std::string_view argsJ
     return commit(*e, model, std::string(kConstraintSet));
 }
 
-Result<DocStatePtr> split(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> split(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kSplit, argsJson, {"at", "entity", "id", "newEntity", "newPoint"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(entityId, args->id("entity"));
     RAY_TRY(at, pointArg(*args, "at"));
     Sketch model = e->model;
@@ -804,10 +823,10 @@ Result<DocStatePtr> split(const DocState& before, std::string_view argsJson)
     return commit(*e, model, std::string(kSplit));
 }
 
-Result<DocStatePtr> trim(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> trim(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kTrim, argsJson, {"at", "entity", "id", "newEntity", "newPoints"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(entityId, args->id("entity"));
     RAY_TRY(at, pointArg(*args, "at"));
     Sketch model = e->model;
@@ -982,10 +1001,10 @@ bool pointUsedElsewhere(const Sketch& s, const SketchEntId& point, const SketchE
     });
 }
 
-Result<DocStatePtr> construction(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> construction(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kConstruction, argsJson, {"construction", "entities", "id"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(ids, idList(*args, "entities"));
     RAY_TRY(on, args->boolean("construction"));
     Sketch model = e->model;
@@ -999,10 +1018,10 @@ Result<DocStatePtr> construction(const DocState& before, std::string_view argsJs
     return commit(*e, model, std::string(kConstruction));
 }
 
-Result<DocStatePtr> extend(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> extend(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kExtend, argsJson, {"at", "entity", "id", "newPoint"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(entityId, args->id("entity"));
     RAY_TRY(at, pointArg(*args, "at"));
     Sketch model = e->model;
@@ -1141,10 +1160,10 @@ Vec2 nearestOn(const Curve& cv, Vec2 p)
     return len2(sub2(p, cv.a)) < len2(sub2(p, cv.b)) ? cv.a : cv.b;
 }
 
-Result<DocStatePtr> offset(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> offset(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kOffset, argsJson, {"distance", "entities", "id", "side"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(ids, idList(*args, "entities"));
     RAY_TRY(side, pointArg(*args, "side"));
     RAY_TRY(distanceValue, args->optValue("distance"));
@@ -1344,10 +1363,10 @@ Result<DocStatePtr> offset(const DocState& before, std::string_view argsJson)
     return commit(*e, model, std::string(kOffset));
 }
 
-Result<DocStatePtr> fillet(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> fillet(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_TRY(args, Args::parse(kFillet, argsJson, {"id", "newEntity", "point", "radius"}));
-    RAY_TRY(e, open(*args, before));
+    RAY_TRY(e, open(*args, before, job));
     RAY_TRY(pointId, args->id("point"));
     RAY_TRY(radiusValue, args->optValue("radius"));
     if (*radiusValue == nullptr || !(*radiusValue)->isNumber() || !((*radiusValue)->asNumber() > 0) ||
@@ -1438,7 +1457,7 @@ Result<DocStatePtr> fillet(const DocState& before, std::string_view argsJson)
 
 #undef RAY_TRY
 
-using ApplyFn = Result<DocStatePtr> (*)(const DocState&, std::string_view);
+using ApplyFn = Result<DocStatePtr> (*)(const DocState&, std::string_view, JobContext*);
 
 class SketchCommand final : public ICommandHandler {
 public:
@@ -1451,11 +1470,21 @@ public:
     bool changesToolpathsOrGcode() const override { return false; }
     Result<DocStatePtr> apply(DocStatePtr before, std::string_view argsJson) const override
     {
+        return run(before, argsJson, nullptr);
+    }
+    Result<DocStatePtr> applyWithJob(DocStatePtr before, std::string_view argsJson, JobContext& ctx) const override
+    {
+        return run(before, argsJson, &ctx);
+    }
+
+private:
+    Result<DocStatePtr> run(const DocStatePtr& before, std::string_view argsJson, JobContext* job) const
+    {
         if (!before) {
             return invalid(std::string(name_) + ": there is no document snapshot to apply it to");
         }
         try {
-            return fn_(*before, argsJson);
+            return fn_(*before, argsJson, job);
         } catch (const std::bad_alloc&) {
             return failed(ErrorCode::Internal, std::string(name_) + ": out of memory");
         } catch (...) {
@@ -1463,7 +1492,6 @@ public:
         }
     }
 
-private:
     std::string_view name_;
     std::string schema_;
     ApplyFn fn_;

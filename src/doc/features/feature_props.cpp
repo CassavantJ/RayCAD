@@ -551,6 +551,23 @@ const ParametricType* parametricType(std::string_view type, const IFeatureType**
     return dynamic_cast<const ParametricType*>(t);
 }
 
+} // namespace
+
+Result<std::string> storedPropsOf(const DocState& state, const Feature& feature, JobContext* job)
+{
+    const ParametricType* type = parametricType(feature.type, nullptr);
+    if (type == nullptr) {
+        return feature.propsJson;
+    }
+    auto stored = type->storedProps(state, feature, job);
+    if (!stored && stored.error().code == ErrorCode::Cancelled) {
+        return stored;
+    }
+    return stored ? std::move(*stored) : feature.propsJson;
+}
+
+namespace {
+
 // Bodies other features of `state` (not `self`) create.
 Status checkCreatedBodies(const DocState& state, const Feature& self, const std::vector<BodyId>& created,
                           const std::string& command)
@@ -619,11 +636,21 @@ public:
 
     Result<DocStatePtr> apply(DocStatePtr before, std::string_view argsJson) const override
     {
+        return run(before, argsJson, nullptr);
+    }
+    Result<DocStatePtr> applyWithJob(DocStatePtr before, std::string_view argsJson, JobContext& ctx) const override
+    {
+        return run(before, argsJson, &ctx);
+    }
+
+private:
+    Result<DocStatePtr> run(const DocStatePtr& before, std::string_view argsJson, JobContext* job) const
+    {
         if (!before) {
             return invalid(name_ + ": there is no document snapshot to apply it to");
         }
         try {
-            return edit_ ? applyEdit(*before, argsJson) : applyAdd(*before, argsJson);
+            return edit_ ? applyEdit(*before, argsJson, job) : applyAdd(*before, argsJson, job);
         } catch (const std::bad_alloc&) {
             return failed(ErrorCode::Internal, name_ + ": out of memory");
         } catch (...) {
@@ -631,8 +658,7 @@ public:
         }
     }
 
-private:
-    Result<DocStatePtr> applyAdd(const DocState& before, std::string_view argsJson) const
+    Result<DocStatePtr> applyAdd(const DocState& before, std::string_view argsJson, JobContext* job) const
     {
         auto args = commands::Args::parse(name_, argsJson, {"bodyName", "id", "index", "name", "props", "suppressed"});
         if (!args) {
@@ -686,7 +712,7 @@ private:
         if (auto ok = type->validate(*next, at, feature); !ok) {
             return tl::unexpected(ok.error());
         }
-        auto stored = type->storedProps(*next, feature);
+        auto stored = type->storedProps(*next, feature, job);
         if (!stored) {
             return tl::unexpected(stored.error());
         }
@@ -699,7 +725,7 @@ private:
         return DocStatePtr(std::move(next));
     }
 
-    Result<DocStatePtr> applyEdit(const DocState& before, std::string_view argsJson) const
+    Result<DocStatePtr> applyEdit(const DocState& before, std::string_view argsJson, JobContext* job) const
     {
         auto args = commands::Args::parse(name_, argsJson, {"id", "name", "props"});
         if (!args) {
@@ -759,7 +785,7 @@ private:
         if (auto ok = type->validate(*next, at, feature); !ok) {
             return tl::unexpected(ok.error());
         }
-        auto stored = type->storedProps(*next, feature);
+        auto stored = type->storedProps(*next, feature, job);
         if (!stored) {
             return tl::unexpected(stored.error());
         }

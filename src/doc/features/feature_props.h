@@ -146,15 +146,23 @@ public:
     // document's bodies.
     virtual std::vector<BodyId> createdBodies(const Feature&) const { return {}; }
     // The props the add and edit commands store for `feature`, checked by validate() as it stands in `state`: by
-    // default its props unchanged. A sketch stores its coordinates solved (sketch_feature.h, storedSketch).
-    virtual Result<std::string> storedProps(const DocState& state, const Feature& feature) const
+    // default its props unchanged. A sketch stores its coordinates solved (sketch_feature.h, storedSketch), in the
+    // command's job `job` when it runs in one (may be null), and fails with Cancelled when that is cancelled.
+    virtual Result<std::string> storedProps(const DocState& state, const Feature& feature, JobContext* job) const
     {
         (void)state;
+        (void)job;
         return feature.propsJson;
     }
     // The user-facing title of the type: "Extrude", "Sketch", ...
     virtual std::string_view title() const = 0;
 };
+
+// The props the generic commands (feature.add, feature.edit) store for `feature` as it stands in `state`: its type's
+// storedProps when the type is a parametric one (a sketch: its coordinates solved), so a sketch written through them
+// is stored as the sketch commands store it. The props unchanged when the type is not parametric or they do not read
+// (those commands do not check props; the rebuild reports them). Fails only with Cancelled (`job` cancelled).
+Result<std::string> storedPropsOf(const DocState& state, const Feature& feature, JobContext* job);
 
 // The two commands of one parametric type (`type` must be registered in builtinFeatureRegistry()).
 //   feature.<type>.add   {"id", "name"?, "props", "index"?, "suppressed"?, "bodyName"?}

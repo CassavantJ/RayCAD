@@ -58,9 +58,9 @@ struct Shared {
     std::uint64_t buildGeneration = 0;
 };
 
-// Runs the handler on the canonical arguments; never throws.
+// Runs the handler on the canonical arguments (in the job `job`, when given: Document::prepare); never throws.
 Result<DocStatePtr> applyCommand(const CommandRegistry& registry, const Command& command, const DocStatePtr& before,
-                                 std::string& canonicalArgs)
+                                 std::string& canonicalArgs, JobContext* job = nullptr)
 {
     const ICommandHandler* handler = registry.find(command.name);
     if (handler == nullptr) {
@@ -72,7 +72,8 @@ Result<DocStatePtr> applyCommand(const CommandRegistry& registry, const Command&
     }
     Result<DocStatePtr> after = [&]() -> Result<DocStatePtr> {
         try {
-            return handler->apply(before, canonicalArgs);
+            return job != nullptr ? handler->applyWithJob(before, canonicalArgs, *job)
+                                  : handler->apply(before, canonicalArgs);
         } catch (const std::bad_alloc&) {
             return failure(ErrorCode::Internal, command.name + ": out of memory");
         } catch (...) {
@@ -286,13 +287,7 @@ public:
                 }
                 after = std::move(*result);
                 // Everything that can fail happens before the first change, so a failure leaves no trace.
-                ids = idsOf(s_->listeners);
-                UndoEntry entry{Command{command.name, std::move(args), command.label}, s_->current, after};
-                s_->undo.push_back(std::move(entry));
-                s_->redo.clear();
-                s_->current = after;
-                dropPreviewLocked();
-                scheduleRebuildLocked();
+                ids = installLocked(Command{command.name, std::move(args), command.label}, s_->current, after);
             }
             notify(dispatcher_, s_, after, std::move(ids));
             return after;
@@ -300,6 +295,47 @@ public:
             return failure(ErrorCode::Internal, command.name + ": out of memory");
         } catch (...) {
             return failure(ErrorCode::Internal, command.name + ": unexpected failure");
+        }
+    }
+
+    Result<PreparedCommand> prepare(const Command& command, JobContext& ctx) const override
+    {
+        try {
+            const DocStatePtr before = state();
+            // Outside the mutex: the snapshot is immutable, and the UI thread must not wait for the solve.
+            std::string args;
+            auto result = applyCommand(*registry_, command, before, args, &ctx);
+            if (!result) {
+                return tl::unexpected(std::move(result.error()));
+            }
+            return PreparedCommand{Command{command.name, std::move(args), command.label}, before, std::move(*result)};
+        } catch (const std::bad_alloc&) {
+            return failure(ErrorCode::Internal, command.name + ": out of memory");
+        } catch (...) {
+            return failure(ErrorCode::Internal, command.name + ": unexpected failure");
+        }
+    }
+
+    Result<DocStatePtr> commit(PreparedCommand prepared) override
+    {
+        try {
+            DocStatePtr after = prepared.after;
+            std::vector<int> ids;
+            {
+                std::lock_guard<std::mutex> lock(s_->mutex);
+                if (!prepared.before || !after || prepared.before != s_->current) {
+                    return failure(ErrorCode::InvalidArgument,
+                                   prepared.command.name +
+                                       ": the document changed after the command was prepared; prepare it again");
+                }
+                ids = installLocked(std::move(prepared.command), s_->current, after);
+            }
+            notify(dispatcher_, s_, after, std::move(ids));
+            return after;
+        } catch (const std::bad_alloc&) {
+            return failure(ErrorCode::Internal, prepared.command.name + ": out of memory");
+        } catch (...) {
+            return failure(ErrorCode::Internal, prepared.command.name + ": unexpected failure");
         }
     }
 
@@ -519,6 +555,19 @@ private:
         s_->buildJob.then([dispatcher, weak, generation, state](Result<BuildResultPtr> built) {
             finishBuild(*dispatcher, weak, generation, state, std::move(built));
         });
+    }
+
+    // Caller holds the mutex. Makes `after` the current state as the result of `command` (canonical arguments) on
+    // `before`: one undo entry, redo cleared, the preview ended, a rebuild scheduled. Returns the listeners to notify.
+    std::vector<int> installLocked(Command command, DocStatePtr before, const DocStatePtr& after)
+    {
+        std::vector<int> ids = idsOf(s_->listeners);
+        s_->undo.push_back(UndoEntry{std::move(command), std::move(before), after});
+        s_->redo.clear();
+        s_->current = after;
+        dropPreviewLocked();
+        scheduleRebuildLocked();
+        return ids;
     }
 
     // Caller holds the mutex.

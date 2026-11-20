@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,6 +50,14 @@ struct DocEntry {
     bool journalOff = false;                       // a journal write failed: no journal until a save-as
     std::unique_ptr<store::IDocumentFile> backing; // never-saved document: the file its journal belongs to
     std::string backingPath;
+};
+
+// How an action is ordered against the actions invoked before it (registry.cpp). The document commands run their
+// work on workers (a sketch solve: PLAN.md 7), so one invoked later could otherwise overtake one still solving.
+enum class ActionOrder {
+    Free,    // runs as soon as its job runs
+    Ordered, // starts after every Ordered action invoked before it has ended (document commands, undo, redo)
+    After,   // the same, but later Ordered actions do not wait for it (save, close: they see the edits before them)
 };
 
 // A journal made on a worker before (or for) a document: for a never-saved document with its backing file.
@@ -177,6 +186,21 @@ public:
 
     // UI thread: executes a command on the document (recovery-journal seam), returning the new state.
     Result<doc::DocStatePtr> execute(DocEntry& entry, const doc::Command& command);
+    // UI thread: commits a command prepared on a worker (doc::Document::commit), with the same journal record as
+    // execute(). InvalidArgument when the document changed after it was prepared.
+    Result<doc::DocStatePtr> commit(DocEntry& entry, doc::PreparedCommand prepared);
+    // Actions whose function runs on the worker of their job although they are not long-running (no progress, not
+    // listed in activeJobs()): the document commands, whose sketch solves must not run on the UI thread (PLAN.md 7).
+    // Marked while the built-in actions are registered, before any action runs; read-only after that.
+    void runOnWorker(std::string id) { workerActions_.insert(std::move(id)); }
+    bool runsOnWorker(std::string_view id) const { return workerActions_.count(id) != 0; }
+    // The order of an action (ActionOrder; Free when never set). Set like runOnWorker.
+    void setOrder(std::string id, ActionOrder order) { orders_[std::move(id)] = order; }
+    ActionOrder orderOf(std::string_view id) const
+    {
+        const auto it = orders_.find(id);
+        return it == orders_.end() ? ActionOrder::Free : it->second;
+    }
     Status undo(DocEntry& entry, bool redo);
     // UI thread: close (the busy check is the caller's). `keepJournal`: leave the journal (and backing file) for
     // recovery at the next start instead of deleting it.
@@ -243,6 +267,8 @@ private:
     void jobProgress(std::uint64_t id, double fraction, std::string_view stage);
     void jobEnded(std::uint64_t id);
     std::string untitledName();
+    // UI thread: the journal record of a command the document has just made its state (execute, commit).
+    void journalExecuted(DocEntry& entry, const doc::Command& command, const doc::DocStatePtr& state);
 
     // Members are destroyed in reverse order; ~AppImpl() first stops the jobs and closes the documents.
     std::unique_ptr<QueueDispatcher> ownedDispatcher_;
@@ -255,6 +281,8 @@ private:
     std::shared_ptr<doc::FeatureRegistry> featureTypes_;
     std::shared_ptr<const doc::CommandRegistry> commands_;
     std::unique_ptr<IActionRegistry> actions_;
+    std::set<std::string, std::less<>> workerActions_;       // runOnWorker
+    std::map<std::string, ActionOrder, std::less<>> orders_; // setOrder
     std::string userDataDir_;
     std::unique_ptr<RecentFiles> recent_;
     std::shared_ptr<SettingsStore> settings_;

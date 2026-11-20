@@ -457,16 +457,34 @@ Result<doc::DocStatePtr> AppImpl::execute(DocEntry& entry, const doc::Command& c
     }
     auto result = entry.od.document->execute(command);
     if (result) {
-        std::lock_guard<std::mutex> lock(entry.journalMutex);
-        if (entry.od.journal && !entry.journalOff) {
-            // The command as the document executed it (canonical arguments).
-            const std::optional<doc::Command> executed = entry.od.document->undoCommand();
-            if (auto st = entry.od.journal->append(executed ? *executed : command, *result); !st) {
-                journalFailedLocked(entry, st.error());
-            }
-        }
+        journalExecuted(entry, command, *result);
     }
     return result;
+}
+
+Result<doc::DocStatePtr> AppImpl::commit(DocEntry& entry, doc::PreparedCommand prepared)
+{
+    if (auto error = ensureJournal(entry)) {
+        journalFailed(entry, *error);
+    }
+    const doc::Command command = prepared.command;
+    auto result = entry.od.document->commit(std::move(prepared));
+    if (result) {
+        journalExecuted(entry, command, *result);
+    }
+    return result;
+}
+
+void AppImpl::journalExecuted(DocEntry& entry, const doc::Command& command, const doc::DocStatePtr& state)
+{
+    std::lock_guard<std::mutex> lock(entry.journalMutex);
+    if (entry.od.journal && !entry.journalOff) {
+        // The command as the document executed it (canonical arguments).
+        const std::optional<doc::Command> executed = entry.od.document->undoCommand();
+        if (auto st = entry.od.journal->append(executed ? *executed : command, state); !st) {
+            journalFailedLocked(entry, st.error());
+        }
+    }
 }
 
 Status AppImpl::undo(DocEntry& entry, bool redo)

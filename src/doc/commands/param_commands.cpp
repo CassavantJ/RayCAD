@@ -12,6 +12,7 @@
 #include "commands.h"
 
 #include "../expr.h"
+#include "../features/sketch_feature.h"
 #include "../json.h"
 
 #include <algorithm>
@@ -206,7 +207,7 @@ std::ptrdiff_t paramIndex(const DocState& state, const ParamId& id)
     return it == state.parameters.end() ? -1 : it - state.parameters.begin();
 }
 
-Result<DocStatePtr> paramRename(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> paramRename(const DocState& before, std::string_view argsJson, JobContext* job)
 {
     RAY_DOC_TRY(args, Args::parse(kParamRename, argsJson, {"id", "name"}));
     RAY_DOC_TRY(id, args->id("id"));
@@ -238,10 +239,15 @@ Result<DocStatePtr> paramRename(const DocState& before, std::string_view argsJso
             return args->error("name", "would leave the parameters invalid: " + values.error().message);
         }
     }
+    // Values do not change, but a dimension that named the new name before (one no command checked, from
+    // feature.add or an older file) now evaluates: that sketch is stored solved in this step.
+    if (auto st = features::storeDependentSketches(before, *next, job); !st) {
+        return tl::unexpected(st.error());
+    }
     return DocStatePtr(std::move(next));
 }
 
-Result<DocStatePtr> paramRemove(const DocState& before, std::string_view argsJson)
+Result<DocStatePtr> paramRemove(const DocState& before, std::string_view argsJson, JobContext*)
 {
     RAY_DOC_TRY(args, Args::parse(kParamRemove, argsJson, {"id"}));
     RAY_DOC_TRY(id, args->id("id"));
@@ -265,7 +271,7 @@ Result<DocStatePtr> paramRemove(const DocState& before, std::string_view argsJso
 
 #undef RAY_DOC_TRY
 
-using ApplyFn = Result<DocStatePtr> (*)(const DocState& before, std::string_view argsJson);
+using ApplyFn = Result<DocStatePtr> (*)(const DocState& before, std::string_view argsJson, JobContext* job);
 
 class ParamCommand final : public ICommandHandler {
 public:
@@ -275,11 +281,21 @@ public:
     bool changesToolpathsOrGcode() const override { return false; }
     Result<DocStatePtr> apply(DocStatePtr before, std::string_view argsJson) const override
     {
+        return run(before, argsJson, nullptr);
+    }
+    Result<DocStatePtr> applyWithJob(DocStatePtr before, std::string_view argsJson, JobContext& ctx) const override
+    {
+        return run(before, argsJson, &ctx);
+    }
+
+private:
+    Result<DocStatePtr> run(const DocStatePtr& before, std::string_view argsJson, JobContext* job) const
+    {
         if (!before) {
             return invalidArgument(std::string(name_) + ": there is no document snapshot to apply it to");
         }
         try {
-            return fn_(*before, argsJson);
+            return fn_(*before, argsJson, job);
         } catch (const std::bad_alloc&) {
             return tl::unexpected(Error{ErrorCode::Internal, std::string(name_) + ": out of memory", {}});
         } catch (...) {
@@ -287,7 +303,6 @@ public:
         }
     }
 
-private:
     std::string_view name_;
     std::string_view schema_;
     ApplyFn fn_;

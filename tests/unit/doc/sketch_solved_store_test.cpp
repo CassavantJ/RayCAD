@@ -22,7 +22,9 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace ray;
@@ -155,20 +157,23 @@ std::string text(double v)
 
 // A document whose sketch is checked after every step.
 struct Session {
+    Session() = default;
+    explicit Session(DocStatePtr initial) : env(4, std::move(initial)) {}
+
     DocEnv env;
     std::vector<std::string> moved;    // steps after which a solve of what is stored moves it
     std::vector<std::string> unsolved; // steps after which the sketch does not solve at all
     std::vector<std::string> reopened; // steps after which saving and opening changed the shape
 
     DocStatePtr state() const { return env.doc->state(); }
-    const Feature& feature(const DocState& s) const
+    const Feature& feature(const DocState& s, std::uint64_t n = 2) const
     {
         for (const Feature& f : s.features) {
-            if (f.id == featureId(2)) {
+            if (f.id == featureId(n)) {
                 return f;
             }
         }
-        FAIL("no sketch feature");
+        FAIL("no feature " << n);
         return s.features.front();
     }
     sketch::Sketch stored() const
@@ -771,6 +776,540 @@ TEST_CASE("a drag's result is stored without another solve; a changed sketch is 
     CHECK(!*sketch::constraintsHold(evaluated(*s.state(), off)));
 }
 
+namespace {
+
+std::string paramSet(std::uint64_t n, const std::string& fields)
+{
+    return R"({"id":")" + uuid('a', n) + R"(",)" + fields + "}";
+}
+
+// A rectangle 40 x 20 with corner 1 fixed, its width the parameter w and its height h (= w / 2), and a 5 mm extrude
+// of it into body 'b'; a second sketch (feature 3) uses no parameter.
+void dimensionedByParameters(Session& s)
+{
+    s.run("parameter w", cmd("param.set", paramSet(1, R"("name":"w","expression":"40 mm","kind":"length")")));
+    s.run("parameter h", cmd("param.set", paramSet(2, R"("name":"h","expression":"w / 2","kind":"length")")));
+    SketchJson r = rectangle(40, 20);
+    r.constraint(5, "fix", {1}).constraint(6, "distance", {5}, "w").constraint(7, "distance", {8}, "h");
+    s.run("rectangle", addFeature("sketch", 2, sketchProps(R"({"principal":"xy"})", r)));
+    SketchJson other;
+    other.rect(1, 100, 0, 110, 10)
+        .constraint(1, "horizontal", {5})
+        .constraint(2, "horizontal", {7})
+        .constraint(3, "vertical", {8})
+        .constraint(4, "vertical", {6})
+        .constraint(5, "distance", {5}, {}, 10.0);
+    s.run("a sketch with no parameter", addFeature("sketch", 3, sketchProps(R"({"principal":"xy"})", other)));
+    s.run("extrude", addFeature("extrude", 4, extrudeProps(2, "5", "new", 'b')));
+}
+
+} // namespace
+
+TEST_CASE("a parameter edit stores every sketch it changes solved, in the same undo step",
+          "[doc][sketch][solved-store]")
+{
+    // param.set is not a sketch command, but a dimension that names the parameter (directly, or through another
+    // parameter) changes the sketch: the document must hold the shape the rebuild shows, so the saved file, the next
+    // solve and the geometry built from it agree.
+    Session s;
+    dimensionedByParameters(s);
+    const std::string untouched = s.feature(*s.state(), 3).propsJson;
+
+    s.run("w set to 15", cmd("param.set", paramSet(1, R"("expression":"15 mm")")));
+    CHECK(pointIn(s.stored(), 3).x == Catch::Approx(15));
+    CHECK(pointIn(s.stored(), 3).y == Catch::Approx(7.5));  // h = w / 2 follows
+    CHECK(s.feature(*s.state(), 3).propsJson == untouched); // a sketch the change does not reach is not rewritten
+    {
+        auto build = s.env.rebuild(s.state());
+        CHECK(report(*build, 2).status == FeatureStatus::Ok);
+        INFO("extrude: " << report(*build, 4).message);
+        CHECK(volumeOf(*build, 'b') == Catch::Approx(15 * 7.5 * 5).epsilon(1e-9));
+    }
+
+    s.undo("undo w");
+    CHECK(pointIn(s.stored(), 3).x == Catch::Approx(40));
+    s.redo("redo w");
+    CHECK(pointIn(s.stored(), 3).x == Catch::Approx(15));
+
+    s.run("h set to a number", cmd("param.set", paramSet(2, R"("expression":"12 mm")")));
+    CHECK(pointIn(s.stored(), 3).y == Catch::Approx(12));
+    s.run("w renamed (param.rename: values unchanged)", cmd("param.rename", paramSet(1, R"("name":"width")")));
+    CHECK(pointIn(s.stored(), 3).x == Catch::Approx(15));
+    s.run("width set to 22", cmd("param.set", paramSet(1, R"("expression":"22 mm")")));
+    CHECK(pointIn(s.stored(), 3).x == Catch::Approx(22));
+    CHECK(s.feature(*s.state(), 3).propsJson == untouched);
+    s.requireIntact();
+}
+
+TEST_CASE("feature.add and feature.edit store a sketch solved, as feature.sketch.add does",
+          "[doc][sketch][solved-store]")
+{
+    // The generic commands (a script, an agent, a journal replay) write a sketch's props as given; the document must
+    // still hold the solved shape. Width dimension 60 on a 40 mm rectangle, corner 1 fixed.
+    Session s;
+    SketchJson r = rectangle(40, 20);
+    r.constraint(5, "fix", {1}).constraint(6, "distance", {5}, {}, 60.0).constraint(7, "distance", {8}, {}, 20.0);
+    s.run("feature.add of a sketch",
+          cmd("feature.add", R"({"id":")" + uuid('f', 2) + R"(","type":"sketch","name":"Sketch 1","props":)" +
+                                 sketchProps(R"({"principal":"xy"})", r) + "}"));
+    CHECK(pointIn(s.stored(), 2).x == Catch::Approx(60));
+    CHECK(pointIn(s.stored(), 3).x == Catch::Approx(60));
+
+    sketch::Sketch m = s.stored();
+    for (sketch::Entity& e : m.entities) {
+        if (e.id == SketchEntId{Uuid::fromString(ent(3))}) {
+            std::get<sketch::Point>(e.geom).p.y += 7; // off its constraints (height 20)
+        }
+    }
+    s.run("feature.edit of a sketch",
+          cmd("feature.edit", R"({"id":")" + uuid('f', 2) + R"(","props":{"plane":{"principal":"xy"},"sketch":)" +
+                                  modelJson(m) + "}}"));
+    CHECK(pointIn(s.stored(), 3).y == Catch::Approx(20));
+    s.run("feature.edit of the name only", cmd("feature.edit", R"({"id":")" + uuid('f', 2) + R"(","name":"Base"})"));
+
+    // feature.add checks no expression: a dimension naming a parameter that does not exist yet is stored as given;
+    // adding the parameter (param.set) is what makes it solve, and that step stores it solved.
+    SketchJson d;
+    d.point(20, 100, 0).point(21, 130, 0).line(22, 20, 21);
+    d.constraint(20, "fix", {20}).constraint(21, "horizontal", {22}).constraint(22, "distance", {22}, "len");
+    s.run("feature.add of a sketch naming an unknown parameter",
+          cmd("feature.add", R"({"id":")" + uuid('f', 5) + R"(","type":"sketch","name":"Sketch 2","props":)" +
+                                 sketchProps(R"({"principal":"xy"})", d) + "}"));
+    const auto lineLength = [&] {
+        auto v = features::sketchOfFeature(s.feature(*s.state(), 5), false);
+        REQUIRE(v);
+        return distance(pointIn(*v, 20), pointIn(*v, 21));
+    };
+    CHECK(lineLength() == Catch::Approx(30)); // as given: the dimension does not evaluate
+    s.run("parameter len added", cmd("param.set", paramSet(3, R"("name":"len","expression":"12 mm","kind":"length")")));
+    CHECK(lineLength() == Catch::Approx(12));
+    s.requireIntact();
+}
+
+TEST_CASE("a parameter renamed to the name a dimension already used stores that sketch solved",
+          "[doc][sketch][solved-store]")
+{
+    // A dimension naming "len" before any parameter has that name (feature.add checks no expression; an older file
+    // may hold one). Renaming the parameter "size" (12 mm) to "len" changes no value, but that dimension now
+    // evaluates: param.rename must store the sketch solved, as param.set does.
+    Session s;
+    s.run("parameter size", cmd("param.set", paramSet(1, R"("name":"size","expression":"12 mm","kind":"length")")));
+    SketchJson d;
+    d.point(20, 100, 0).point(21, 130, 0).line(22, 20, 21);
+    d.constraint(20, "fix", {20}).constraint(21, "horizontal", {22}).constraint(22, "distance", {22}, "len");
+    REQUIRE(s.env.doc->execute(cmd("feature.add", R"({"id":")" + uuid('f', 5) +
+                                                      R"(","type":"sketch","name":"Sketch 2","props":)" +
+                                                      sketchProps(R"({"principal":"xy"})", d) + "}")));
+    const auto lineLength = [&] {
+        auto v = features::sketchOfFeature(s.feature(*s.state(), 5), false);
+        REQUIRE(v);
+        return distance(pointIn(*v, 20), pointIn(*v, 21));
+    };
+    CHECK(lineLength() == Catch::Approx(30));
+    REQUIRE(s.env.doc->execute(cmd("param.rename", paramSet(1, R"("name":"len")"))));
+    CHECK(lineLength() == Catch::Approx(12));
+    // Renaming it on (the dimension's expression follows: values unchanged) leaves the sketch as it is.
+    const std::string solved = s.feature(*s.state(), 5).propsJson;
+    REQUIRE(s.env.doc->execute(cmd("param.rename", paramSet(1, R"("name":"length")"))));
+    CHECK(lineLength() == Catch::Approx(12));
+    CHECK(s.feature(*s.state(), 5).propsJson.find("\"expression\":\"length\"") != std::string::npos);
+    CHECK(solved.find("\"expression\":\"len\"") != std::string::npos);
+}
+
+TEST_CASE("a document saved before sketches were stored solved: a parameter edit solves on from the shape shown",
+          "[doc][sketch][solved-store]")
+{
+    // A file from before every command stored its sketch solved: the rectangle's width dimension says 60 while the
+    // stored lines are 40 long. Opening it changes nothing (no solve on load: the rebuild shows the solve of what is
+    // stored). A parameter edit stores the sketch solved, from the shape that was shown.
+    DocState old;
+    Parameter h;
+    h.id = ParamId{Uuid::fromString(uuid('a', 1))};
+    h.name = "h";
+    h.expression = "20 mm";
+    h.kind = Parameter::Kind::Length;
+    old.parameters.push_back(h);
+    SketchJson r = rectangle(40, 20);
+    r.constraint(5, "fix", {1}).constraint(6, "distance", {5}, {}, 60.0).constraint(7, "distance", {8}, "h");
+    Feature f;
+    f.id = featureId(2);
+    f.type = "sketch";
+    f.name = "Sketch 1";
+    f.propsJson = canonicalJson(sketchProps(R"({"principal":"xy"})", r));
+    old.features.push_back(f);
+    Session s(std::make_shared<const DocState>(old));
+    CHECK(pointIn(s.stored(), 2).x == 40); // as the file has it
+    const sketch::Sketch shown = s.shown();
+    CHECK(pointIn(shown, 2).x == Catch::Approx(60));
+
+    s.run("h set to 25", cmd("param.set", paramSet(1, R"("expression":"25 mm")")));
+    CHECK(pointIn(s.stored(), 2).x == Catch::Approx(60));
+    CHECK(pointIn(s.stored(), 3).y == Catch::Approx(25));
+    s.undo("undo: the file's state again");
+    CHECK(pointIn(s.stored(), 2).x == 40);
+    s.redo("redo");
+    // The undo step back to the file's state is the one place a stored sketch is not solved; it is what the file held.
+    s.moved.erase(std::remove_if(s.moved.begin(), s.moved.end(),
+                                 [](const std::string& step) { return step.rfind("undo: the file's state", 0) == 0; }),
+                  s.moved.end());
+    s.requireIntact();
+}
+
+namespace {
+
+// ---------- Hard sketches for timing the solve a command makes on the calling (UI) thread ----------
+
+// A meander of `periods` x (line, semicircle, line back, semicircle) with every joint tangent, line lengths and arc
+// radii dimensioned and the first line's ends fixed: fully constrained, every curve coupled to the one before. 10
+// entities per period. With `redundant`, every line is also horizontal (implied by the tangents: redundant).
+SketchJson meander(int periods, bool redundant)
+{
+    constexpr double L = 30, R = 2;
+    SketchJson s;
+    std::uint64_t e = 10, c = 10;
+    std::uint64_t prevEnd = e++;
+    s.point(prevEnd, 0, 0);
+    s.constraint(c++, "fix", {prevEnd});
+    std::uint64_t prevCurve = 0;
+    for (int k = 0; k < periods; ++k) {
+        const double y0 = 4 * R * k;
+        const std::uint64_t p1 = e++, cA = e++, p2 = e++, p3 = e++, cB = e++, p4 = e++;
+        const std::uint64_t lA = e++, aA = e++, lB = e++, aB = e++;
+        s.point(p1, L, y0).point(cA, L, y0 + R).point(p2, L, y0 + 2 * R);
+        s.point(p3, 0, y0 + 2 * R).point(cB, 0, y0 + 3 * R).point(p4, 0, y0 + 4 * R);
+        s.line(lA, prevEnd, p1).arc(aA, cA, p1, p2, true).line(lB, p2, p3).arc(aB, cB, p3, p4, false);
+        if (k == 0) {
+            s.constraint(c++, "fix", {p1});
+        } else {
+            s.constraint(c++, "tangent", {prevCurve, lA, prevEnd});
+            s.constraint(c++, "distance", {lA}, {}, L);
+        }
+        s.constraint(c++, "tangent", {lA, aA, p1}).constraint(c++, "radius", {aA}, {}, R);
+        s.constraint(c++, "tangent", {aA, lB, p2}).constraint(c++, "distance", {lB}, {}, L);
+        s.constraint(c++, "tangent", {lB, aB, p3}).constraint(c++, "radius", {aB}, {}, R);
+        if (redundant) {
+            s.constraint(c++, "horizontal", {lB});
+            if (k > 0) {
+                s.constraint(c++, "horizontal", {lA});
+            }
+        }
+        prevEnd = p4;
+        prevCurve = aB;
+    }
+    return s;
+}
+
+// An n x n grid of 10 mm cells: (n+1)^2 points joined by 2n(n+1) lines sharing them, every line horizontal or
+// vertical, the bottom row's and left column's lengths dimensioned and the corner fixed: exactly determined. With
+// `allLengths`, every line's length is the parameter s (consistent but heavily redundant).
+SketchJson grid(int n, bool allLengths)
+{
+    SketchJson s;
+    const auto pt = [n](int i, int j) {
+        return static_cast<std::uint64_t>(100000 + i * (n + 1) + j);
+    };
+    for (int i = 0; i <= n; ++i) {
+        for (int j = 0; j <= n; ++j) {
+            s.point(pt(i, j), 10.0 * i, 10.0 * j);
+        }
+    }
+    std::uint64_t line = 500000, c = 10;
+    s.constraint(c++, "fix", {pt(0, 0)});
+    for (int i = 0; i <= n; ++i) {
+        for (int j = 0; j <= n; ++j) {
+            if (i < n) {
+                s.line(line, pt(i, j), pt(i + 1, j)).constraint(c++, "horizontal", {line});
+                if (allLengths) {
+                    s.constraint(c++, "distance", {line}, "s");
+                } else if (j == 0) {
+                    s.constraint(c++, "distance", {line}, {}, 10.0);
+                }
+                ++line;
+            }
+            if (j < n) {
+                s.line(line, pt(i, j), pt(i, j + 1)).constraint(c++, "vertical", {line});
+                if (allLengths) {
+                    s.constraint(c++, "distance", {line}, "s");
+                } else if (i == 0) {
+                    s.constraint(c++, "distance", {line}, {}, 10.0);
+                }
+                ++line;
+            }
+        }
+    }
+    return s;
+}
+
+// A chain of `links` lines of length 1 from a fixed point, almost straight (a zig-zag of 1e-3 rad), whose far end is
+// held by a point-to-point distance close to the full length: the system is near its singular (fully stretched)
+// configuration, where the Jacobian loses rank.
+SketchJson stretchedChain(int links, double slack)
+{
+    SketchJson s;
+    double x = 0;
+    s.point(10, 0, 0);
+    for (int i = 0; i < links; ++i) {
+        const double a = (i % 2 ? 1 : -1) * 1e-3;
+        x += std::cos(a);
+        s.point(static_cast<std::uint64_t>(11 + i), x, (i % 2 ? 0 : -std::sin(1e-3)));
+        s.line(static_cast<std::uint64_t>(100000 + i), static_cast<std::uint64_t>(10 + i),
+               static_cast<std::uint64_t>(11 + i));
+        s.constraint(static_cast<std::uint64_t>(100 + i), "distance", {static_cast<std::uint64_t>(100000 + i)}, {},
+                     1.0);
+    }
+    s.constraint(1, "fix", {10}).constraint(2, "horizontal", {10, static_cast<std::uint64_t>(10 + links)});
+    s.constraint(3, "distance", {10, static_cast<std::uint64_t>(10 + links)}, {}, x - slack);
+    return s;
+}
+
+double msSince(std::chrono::steady_clock::time_point t0)
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+struct Timing {
+    double add = 0;   // feature.sketch.add (the given geometry already satisfies the constraints: a check, no solve)
+    double edit = 0;  // the slowest of the edits (each needs a full solve)
+    double solve = 0; // a bare solve of the edited sketch (solver time alone)
+    std::string status;
+    std::size_t entities = 0, constraints = 0;
+};
+
+const char* statusName(sketch::SolveStatus s)
+{
+    switch (s) {
+    case sketch::SolveStatus::FullyConstrained:
+        return "full";
+    case sketch::SolveStatus::UnderConstrained:
+        return "under";
+    case sketch::SolveStatus::OverConstrained:
+        return "redundant";
+    case sketch::SolveStatus::Conflicting:
+        return "conflicting";
+    case sketch::SolveStatus::Failed:
+        return "failed";
+    }
+    return "?";
+}
+
+// Adds the sketch (with parameter s = 10 mm), then runs each edit, timing the command (which solves on the calling
+// thread) and a bare solve of the result.
+Timing timeSketch(const SketchJson& model, const std::vector<Command>& edits)
+{
+    Session s;
+    Timing t;
+    REQUIRE(s.env.doc->execute(cmd("param.set", paramSet(9, R"("name":"s","expression":"10 mm","kind":"length")"))));
+    auto t0 = std::chrono::steady_clock::now();
+    REQUIRE(s.env.doc->execute(addFeature("sketch", 2, sketchProps(R"({"principal":"xy"})", model))));
+    t.add = msSince(t0);
+    for (const Command& c : edits) {
+        t0 = std::chrono::steady_clock::now();
+        auto r = s.env.doc->execute(c);
+        const double ms = msSince(t0);
+        if (!r) {
+            FAIL(c.name << ": " << r.error().message);
+        }
+        t.edit = std::max(t.edit, ms);
+    }
+    const sketch::Sketch stored = s.stored();
+    t.entities = stored.entities.size();
+    t.constraints = stored.constraints.size();
+    t0 = std::chrono::steady_clock::now();
+    const sketch::SolveResult r = solveOf(*s.state(), stored);
+    t.solve = msSince(t0);
+    t.status = statusName(r.status);
+    return t;
+}
+
+void printTiming(const char* what, const Timing& t)
+{
+    std::printf("%-58s %5zu ent %5zu con  add %8.1f  edit %8.1f  solve %8.1f ms  (%s)\n", what, t.entities,
+                t.constraints, t.add, t.edit, t.solve, t.status.c_str());
+    std::fflush(stdout);
+}
+
+} // namespace
+
+TEST_CASE("a sketch command prepared on a worker commits the state execute makes; cancel and stale commits change "
+          "nothing",
+          "[doc][sketch][solved-store]")
+{
+    // Document::prepare applies a command on the calling thread (a worker) without touching the document;
+    // Document::commit makes it the state on the UI thread. The sketch solve runs inside prepare, cancellably.
+    Session s;
+    dimensionedByParameters(s);
+    Session twin; // the same steps through execute
+    dimensionedByParameters(twin);
+    REQUIRE(hashOf(s.state()) == hashOf(twin.state()));
+    const DocStatePtr start = s.state();
+    const std::size_t undos = s.env.doc->undoCount();
+    const Command edit = cmd("sketch.constraint.set", constraintSet(6, R"("expression":"33 mm")"), "Edit width");
+
+    std::optional<Result<PreparedCommand>> prepared;
+    std::thread worker([&] {
+        JobContext ctx;
+        prepared.emplace(s.env.doc->prepare(edit, ctx));
+    });
+    worker.join();
+    REQUIRE(prepared->has_value());
+    CHECK(s.state() == start); // prepare changes nothing
+    CHECK(s.env.doc->undoCount() == undos);
+    CHECK((*prepared)->before == start);
+    REQUIRE(twin.env.doc->execute(edit));
+    CHECK(hashOf((*prepared)->after) == hashOf(twin.state()));
+
+    SECTION("commit makes it the state, with one undo step")
+    {
+        auto committed = s.env.doc->commit(std::move(**prepared));
+        REQUIRE(committed);
+        CHECK(hashOf(s.state()) == hashOf(twin.state()));
+        CHECK(pointIn(s.stored(), 2).x == Catch::Approx(33));
+        CHECK(s.env.doc->undoCount() == undos + 1);
+        REQUIRE(s.env.doc->undoCommand());
+        CHECK(s.env.doc->undoCommand()->name == "sketch.constraint.set");
+        CHECK(s.env.doc->undoCommand()->label == "Edit width");
+        s.undo("undo the committed edit");
+        CHECK(s.state() == start);
+        s.redo("redo it");
+        CHECK(hashOf(s.state()) == hashOf(twin.state()));
+        s.requireIntact();
+    }
+    SECTION("a commit after another change is refused and changes nothing")
+    {
+        REQUIRE(s.env.doc->execute(cmd("param.set", paramSet(1, R"("expression":"35 mm")"))));
+        const DocStatePtr now = s.state();
+        auto refused = s.env.doc->commit(std::move(**prepared));
+        REQUIRE(!refused);
+        CHECK(refused.error().code == ErrorCode::InvalidArgument);
+        CHECK(s.state() == now);
+    }
+    SECTION("a cancelled prepare returns Cancelled")
+    {
+        CancelSource cancel;
+        cancel.cancel();
+        JobContext ctx{cancel.token(), Progress()};
+        auto r = s.env.doc->prepare(edit, ctx);
+        REQUIRE(!r);
+        CHECK(r.error().code == ErrorCode::Cancelled);
+        CHECK(s.state() == start);
+        // So do the other commands that may solve: param.set and the generic feature commands.
+        auto p = s.env.doc->prepare(cmd("param.set", paramSet(1, R"("expression":"21 mm")")), ctx);
+        REQUIRE(!p);
+        CHECK(p.error().code == ErrorCode::Cancelled);
+        SketchJson off = rectangle(40, 20);
+        off.constraint(5, "fix", {1}).constraint(6, "distance", {5}, {}, 70.0);
+        auto f = s.env.doc->prepare(cmd("feature.add", R"({"id":")" + uuid('f', 9) +
+                                                           R"(","type":"sketch","name":"S","props":)" +
+                                                           sketchProps(R"({"principal":"xy"})", off) + "}"),
+                                    ctx);
+        REQUIRE(!f);
+        CHECK(f.error().code == ErrorCode::Cancelled);
+    }
+}
+
+TEST_CASE("cancelling a long sketch solve in prepare returns promptly", "[doc][sketch][solved-store]")
+{
+    // A tangent chain whose solve takes long (hundreds of ms in a release build); cancelled from another thread while
+    // the solve runs, prepare returns Cancelled well before the solve would have ended.
+    Session s;
+    REQUIRE(s.env.doc->execute(addFeature("sketch", 2, sketchProps(R"({"principal":"xy"})", meander(15, false)))));
+    const Command edit = cmd("sketch.constraint.set", constraintSet(15, R"("value":28)"));
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        JobContext ctx;
+        REQUIRE(s.env.doc->prepare(edit, ctx)); // the whole solve, for comparison
+    }
+    const double full = msSince(t0);
+    CancelSource cancel;
+    std::optional<Result<PreparedCommand>> r;
+    double took = 0;
+    std::thread worker([&] {
+        JobContext ctx{cancel.token(), Progress()};
+        const auto t1 = std::chrono::steady_clock::now();
+        r.emplace(s.env.doc->prepare(edit, ctx));
+        took = msSince(t1);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(full / 10) + 1));
+    cancel.cancel();
+    worker.join();
+    INFO("full solve " << full << " ms, cancelled prepare " << took << " ms");
+    REQUIRE(r);
+    if (*r) {
+        SUCCEED("the solve ended before the cancel arrived");
+    } else {
+        CHECK(r->error().code == ErrorCode::Cancelled);
+        CHECK(took < full);
+    }
+}
+
+// The timings of the solve a sketch command makes (printed; run one family with its tag, e.g.
+// "[.sketch-solve-timing][meander]"). Each edit forces a full solve inside the command. The constraint ids edited are
+// those the generators give: meander dimension c15 (the second line's length, which moves all that follows), the
+// grid's first bottom length (c12: moves a column), the stretched chain's end distance c3.
+namespace {
+Command setValue(std::uint64_t c, double v)
+{
+    return cmd("sketch.constraint.set", constraintSet(c, R"("value":)" + num(v)));
+}
+} // namespace
+
+TEST_CASE("time the solve of a tangent chain (printed)", "[.sketch-solve-timing][meander]")
+{
+    for (int periods : {10, 25, 50, 100}) {
+        const std::string what = "meander, tangent chain, " + std::to_string(periods) + " periods";
+        printTiming(what.c_str(),
+                    timeSketch(meander(periods, false), {setValue(15, 28), setValue(15, 33), setValue(15, 30)}));
+        const std::string red = what + ", redundant";
+        printTiming(red.c_str(),
+                    timeSketch(meander(periods, true), {setValue(15, 28), setValue(15, 33), setValue(15, 30)}));
+    }
+}
+
+TEST_CASE("time the solve of a grid (printed)", "[.sketch-solve-timing][grid]")
+{
+    for (int n : {10, 15, 22}) {
+        const std::string what = "grid " + std::to_string(n) + "x" + std::to_string(n) + ", exactly determined";
+        printTiming(what.c_str(), timeSketch(grid(n, false), {setValue(12, 12), setValue(12, 9), setValue(12, 10)}));
+        const std::string red =
+            "grid " + std::to_string(n) + "x" + std::to_string(n) + ", every length = s (param.set)";
+        printTiming(red.c_str(), timeSketch(grid(n, true), {cmd("param.set", paramSet(9, R"("expression":"12 mm")")),
+                                                            cmd("param.set", paramSet(9, R"("expression":"9 mm")"))}));
+    }
+}
+
+TEST_CASE("time the solve of a chain near its singular configuration (printed)", "[.sketch-solve-timing][stretched]")
+{
+    for (int links : {200, 500, 1000}) {
+        const std::string what = "stretched chain, " + std::to_string(links) + " links, near singular";
+        const double full = links; // fully stretched
+        printTiming(what.c_str(),
+                    timeSketch(stretchedChain(links, 1e-4),
+                               {setValue(3, full - 1e-6), setValue(3, full - 1e-3), setValue(3, full - 1e-9)}));
+        const std::string bad = "stretched chain, " + std::to_string(links) + " links, edited past full length";
+        printTiming(bad.c_str(), timeSketch(stretchedChain(links, 1e-4), {setValue(3, full + 0.5)}));
+    }
+}
+
+TEST_CASE("time the solve of a long under-constrained chain (printed)", "[.sketch-solve-timing][zigzag]")
+{
+    // The 200-line zig-zag chain of the timing test below, up to ten times longer.
+    for (int lines : {500, 1000, 2000}) {
+        SketchJson chain;
+        for (int i = 0; i <= lines; ++i) {
+            chain.point(static_cast<std::uint64_t>(100000 + i), i * 0.5, (i % 2) * 0.4);
+        }
+        for (int i = 0; i < lines; ++i) {
+            chain.line(static_cast<std::uint64_t>(200000 + i), static_cast<std::uint64_t>(100000 + i),
+                       static_cast<std::uint64_t>(100001 + i));
+            chain.constraint(static_cast<std::uint64_t>(300000 + i), "distance",
+                             {static_cast<std::uint64_t>(200000 + i)}, {}, std::hypot(0.5, 0.4));
+        }
+        chain.constraint(1, "fix", {100000});
+        const std::string what = "zig-zag chain, " + std::to_string(lines) + " lines, under-constrained";
+        printTiming(what.c_str(), timeSketch(chain, {setValue(300000, 0.7),
+                                                     setValue(static_cast<std::uint64_t>(300000 + lines / 2), 0.8)}));
+    }
+}
 TEST_CASE("time a sketch command takes on a 200-curve sketch (printed)", "[.sketch-store-timing]")
 {
     // A zig-zag chain of 200 lines with fixed lengths and its first point fixed (the drag test's sketch), then one

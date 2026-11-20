@@ -66,8 +66,10 @@ enum class StoredSketch {
     AsGiven,   // every constraint held at the given coordinates already (or there is nothing to solve): no solve
     Solved,    // the coordinates were replaced by a solve's
     NotSolved, // the solve failed, the constraints conflict, or an expression does not evaluate: kept as given
+    Cancelled, // `job` was cancelled before or during the solve: kept as given; the command fails with Cancelled
 };
-// The model as a command stores it (every sketch.* command, feature.sketch.add and .edit): with the coordinates the
+// The model as a command stores it (every sketch.* command, feature.sketch.add and .edit, feature.add and .edit of a
+// sketch, and param.set for the sketches it changes, storeDependentSketches): with the coordinates the
 // rebuild's solve gives (points, circle radii), so the document holds the shape the person sees and every later solve
 // (a new constraint, a dimension edit, a drag, a drawing step on this geometry, a reload) starts from it. A solve from
 // other coordinates can land on another solution (a tangent arc the other way round, a point on the far side of a
@@ -76,7 +78,19 @@ enum class StoredSketch {
 // stored as given. A model whose constraints hold at its coordinates already is returned unchanged without a solve
 // (sketch::constraintsHold), so a commit of an already solved shape (a drag, a caller's "solved") costs one pass
 // over the constraints. A failed or conflicting solve never replaces the coordinates: they stay as given and the
-// rebuild reports the status.
-sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredSketch* outcome = nullptr);
+// rebuild reports the status. The solve runs on the calling thread: a worker when the command runs in a job
+// (Document::prepare), whose cancellation `job` carries (null: not cancellable, e.g. IDocument::execute).
+sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredSketch* outcome = nullptr,
+                            JobContext* job = nullptr);
+
+// After a change of the document parameters that is not a sketch command (param.set, param.rename): every sketch of
+// `next` with a
+// dimension whose value differs between `before`'s parameters and `next`'s (named directly or through another
+// parameter; one that starts or stops evaluating counts) is stored again as the sketch commands store it: the shape
+// shown before the change (storedSketch over `before`), solved on with the new values (storedSketch over `next`). So
+// the document, a saved file and the geometry built from it hold the same shape, and undo of the change restores the
+// shape before it. A sketch the change does not reach is not touched (no solve, no new props). A solve here runs on
+// the calling thread, like the sketch commands' (sketch_commands.h); Cancelled when `job` is cancelled.
+Status storeDependentSketches(const DocState& before, DocState& next, JobContext* job = nullptr);
 
 } // namespace ray::doc::features

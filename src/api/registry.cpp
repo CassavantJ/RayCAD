@@ -118,15 +118,38 @@ public:
         info.priority = entry && entry->info.longRunning ? JobPriority::Normal : JobPriority::Interactive;
         info.userVisible = entry && entry->info.longRunning;
         AppImpl* app = &app_;
-        return app_.runJob<ActionResult>(std::move(info),
-                                         [app, entry, id = std::string(id), args = std::string(argsJson),
-                                          caller](JobContext& ctx) -> Result<ActionResult> {
-                                             if (!entry) {
-                                                 return fail(ErrorCode::NotFound,
-                                                             "There is no action named '" + id + "'");
-                                             }
-                                             return run(*app, *entry, args, caller, ctx);
-                                         });
+        const ActionOrder order = entry ? app_.orderOf(entry->info.id) : ActionOrder::Free;
+        // An ordered action waits for the last Ordered action invoked before it (which waited for the one before, and
+        // so on). The chain is taken and extended under one lock, so it follows the order of the invoke() calls.
+        std::unique_lock<std::mutex> chain(chainMutex_, std::defer_lock);
+        JobHandle<ActionResult> before;
+        if (order != ActionOrder::Free) {
+            chain.lock();
+            before = lastOrdered_;
+        }
+        JobHandle<ActionResult> job =
+            app_.runJob<ActionResult>(std::move(info),
+                                      [app, entry, id = std::string(id), args = std::string(argsJson), caller,
+                                       before](JobContext& ctx) mutable -> Result<ActionResult> {
+                                          if (!entry) {
+                                              return fail(ErrorCode::NotFound, "There is no action named '" + id + "'");
+                                          }
+                                          if (before.valid()) {
+                                              // Runs it here if it has not started yet, so waiting never needs a free
+                                              // worker; its result is its caller's. A cancel of this action is seen
+                                              // once it has ended.
+                                              (void)before.wait();
+                                              before = {};
+                                          }
+                                          if (auto st = ctx.cancel.check(); !st) {
+                                              return tl::unexpected<Error>(st.error());
+                                          }
+                                          return run(*app, *entry, args, caller, ctx);
+                                      });
+        if (order == ActionOrder::Ordered) {
+            lastOrdered_ = job;
+        }
+        return job;
     }
 
 private:
@@ -179,7 +202,7 @@ private:
         if (auto st = ctx.cancel.check(); !st) {
             return tl::unexpected<Error>(st.error());
         }
-        if (info.longRunning) {
+        if (info.longRunning || app.runsOnWorker(info.id)) {
             return entry.fn(canonical, caller, ctx);
         }
         const ActionFn& fn = entry.fn;
@@ -191,6 +214,8 @@ private:
     AppImpl& app_;
     mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<const Registered>, std::less<>> actions_;
+    std::mutex chainMutex_;               // invoke(): the chain of ordered actions (ActionOrder)
+    JobHandle<ActionResult> lastOrdered_; // the last Ordered action invoked
 };
 
 } // namespace

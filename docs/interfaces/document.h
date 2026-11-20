@@ -209,6 +209,20 @@ public:
     virtual std::string_view argsSchemaJson() const = 0;
     virtual bool changesToolpathsOrGcode() const = 0;       // true => automation must get user confirmation
     virtual Result<DocStatePtr> apply(DocStatePtr before, std::string_view argsJson) const = 0;   // pure function
+    // The same, run as part of a job (Document::prepare, on a worker): a handler whose work can take long (the sketch
+    // commands, which solve) checks ctx.cancel and returns Error{Cancelled}. Same result as apply() otherwise.
+    // By default apply().
+    virtual Result<DocStatePtr> applyWithJob(DocStatePtr before, std::string_view argsJson, JobContext& ctx) const {
+        (void)ctx;
+        return apply(std::move(before), argsJson);
+    }
+};
+
+// A command applied off the UI thread (Document::prepare), waiting to become the document's state (Document::commit).
+struct PreparedCommand {
+    Command command;      // arguments in canonical form
+    DocStatePtr before;   // the snapshot it was applied to
+    DocStatePtr after;    // the result
 };
 
 class IDocument {
@@ -305,6 +319,16 @@ public:
     // dirty() is true while state() is not the snapshot that was current at the last markClean() (or at creation).
     // The store calls this after a save.
     virtual void markClean() = 0;
+
+    // Commands whose work can take long (a sketch solve, PLAN.md 7) run in two steps so the UI thread never waits:
+    // prepare() on a worker applies the command to state() as it is at the call (ICommandHandler::applyWithJob, with
+    // `ctx` for cancellation) and changes nothing; commit() on the UI thread then makes the result the new state as
+    // execute() would (one undo entry with the canonical arguments, the preview ended, a rebuild scheduled, the
+    // listeners notified) if state() is still prepared.before. If it is not (another change came in between), commit()
+    // changes nothing and fails with InvalidArgument; the caller prepares again or executes. Commands are pure
+    // functions of (snapshot, arguments), so a committed prepared command is exactly what execute() would have made.
+    virtual Result<PreparedCommand> prepare(const Command&, JobContext& ctx) const = 0;   // any thread
+    virtual Result<DocStatePtr> commit(PreparedCommand) = 0;                                // UI thread
 };
 
 // `dispatcher` must outlive the document and queue posted functions, never run them inside post() (core.h).

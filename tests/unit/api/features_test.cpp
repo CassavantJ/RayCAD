@@ -8,10 +8,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <map>
 #include <string>
+#include <thread>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
 using ray::ErrorCode;
@@ -202,4 +206,184 @@ TEST_CASE("model.reference explains what it cannot reference", "[api][features]"
     REQUIRE_FALSE(none);
     CHECK(none.error().code == ErrorCode::NotFound);
     CHECK_THAT(none.error().message, ContainsSubstring("no body"));
+}
+
+namespace {
+
+// A tangent chain (a meander of lines and semicircles, every joint tangent, lengths and radii dimensioned, the first
+// line fixed) whose solve is long: `periods` x 10 entities. Constraint c15 is the second line's length; changing it
+// moves everything after it.
+std::string meanderSketch(int periods)
+{
+    constexpr double L = 30, R = 2;
+    std::vector<std::string> entities, constraints;
+    int e = 10, c = 10;
+    const auto pt = [&](int n, double x, double y) {
+        entities.push_back(R"({"id":")" + id('e', n) + R"(","type":"point","x":)" + std::to_string(x) + R"(,"y":)" +
+                           std::to_string(y) + "}");
+    };
+    const auto line = [&](int n, int a, int b) {
+        entities.push_back(R"({"id":")" + id('e', n) + R"(","type":"line","a":")" + id('e', a) + R"(","b":")" +
+                           id('e', b) + R"("})");
+    };
+    const auto arc = [&](int n, int center, int a, int b, bool ccw) {
+        entities.push_back(R"({"id":")" + id('e', n) + R"(","type":"arc","center":")" + id('e', center) +
+                           R"(","start":")" + id('e', a) + R"(","end":")" + id('e', b) + R"(","ccw":)" +
+                           (ccw ? "true" : "false") + "}");
+    };
+    const auto con = [&](const char* type, std::vector<int> refs, double value = -1) {
+        std::string r;
+        for (int ref : refs) {
+            r += (r.empty() ? "\"" : ",\"") + id('e', ref) + "\"";
+        }
+        constraints.push_back(R"({"id":")" + id('c', c++) + R"(","type":")" + type + R"(","refs":[)" + r + "]" +
+                              (value >= 0 ? R"(,"value":)" + std::to_string(value) : std::string()) + "}");
+    };
+    int prevEnd = e++;
+    pt(prevEnd, 0, 0);
+    con("fix", {prevEnd});
+    int prevCurve = 0;
+    for (int k = 0; k < periods; ++k) {
+        const double y0 = 4 * R * k;
+        const int p1 = e++, cA = e++, p2 = e++, p3 = e++, cB = e++, p4 = e++;
+        const int lA = e++, aA = e++, lB = e++, aB = e++;
+        pt(p1, L, y0);
+        pt(cA, L, y0 + R);
+        pt(p2, L, y0 + 2 * R);
+        pt(p3, 0, y0 + 2 * R);
+        pt(cB, 0, y0 + 3 * R);
+        pt(p4, 0, y0 + 4 * R);
+        line(lA, prevEnd, p1);
+        arc(aA, cA, p1, p2, true);
+        line(lB, p2, p3);
+        arc(aB, cB, p3, p4, false);
+        if (k == 0) {
+            con("fix", {p1});
+        } else {
+            con("tangent", {prevCurve, lA, prevEnd});
+            con("distance", {lA}, L);
+        }
+        con("tangent", {lA, aA, p1});
+        con("radius", {aA}, R);
+        con("tangent", {aA, lB, p2});
+        con("distance", {lB}, L);
+        con("tangent", {lB, aB, p3});
+        con("radius", {aB}, R);
+        prevEnd = p4;
+        prevCurve = aB;
+    }
+    std::string out = R"({"entities":[)";
+    for (std::size_t i = 0; i < entities.size(); ++i) {
+        out += (i ? "," : "") + entities[i];
+    }
+    out += R"(],"constraints":[)";
+    for (std::size_t i = 0; i < constraints.size(); ++i) {
+        out += (i ? "," : "") + constraints[i];
+    }
+    return out + "]}";
+}
+
+std::string widthArgs(double value)
+{
+    return R"({"id":")" + id('f', 1) + R"(","constraint":")" + id('c', 15) + R"(","value":)" + std::to_string(value) +
+           "}";
+}
+
+// Drives the UI queue until `job` is done; returns the longest time the UI thread spent in one turn of the queue.
+template <class T>
+double longestUiTurn(ray::api::HeadlessApp& app, ray::JobHandle<T>& job)
+{
+    double longest = 0;
+    const auto deadline = std::chrono::steady_clock::now() + kWait;
+    while (!job.done() && std::chrono::steady_clock::now() < deadline) {
+        const auto t0 = std::chrono::steady_clock::now();
+        const std::size_t ran = app.runPending();
+        longest =
+            std::max(longest, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        if (ran == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    return longest;
+}
+
+} // namespace
+
+TEST_CASE("a sketch command's solve runs on a worker; commands keep their order; cancel changes nothing",
+          "[api][features][sketch-threading]")
+{
+    auto app = makeTestApp("");
+    invoke(*app, "file.new", "{}");
+    OpenDocument* od = app->active();
+    REQUIRE(od != nullptr);
+    // Grow the sketch until one edit's solve takes 150 ms or more on this build and machine.
+    int periods = 4;
+    double solveMs = 0;
+    for (;;) {
+        invoke(*app, "feature.sketch.add",
+               R"({"id":")" + id('f', 1) + R"(","props":{"plane":{"principal":"xy"},"sketch":)" +
+                   meanderSketch(periods) + "}}");
+        const auto t0 = std::chrono::steady_clock::now();
+        auto job = app->actions().invoke("sketch.constraint.set", widthArgs(28), Caller::User);
+        const double ui = longestUiTurn(*app, job);
+        solveMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        REQUIRE(job.wait());
+        INFO(periods << " periods: the edit took " << solveMs << " ms, the longest UI turn " << ui << " ms");
+        if (solveMs >= 150 || periods >= 64) {
+            // The solve did not run in a UI turn (before, IDocument::execute solved inside one).
+            CHECK(ui < solveMs / 2);
+            break;
+        }
+        periods *= 2;
+        invoke(*app, "feature.remove", R"({"id":")" + id('f', 1) + R"("})");
+    }
+
+    SECTION("a command invoked after a slow one waits for it and applies on its result")
+    {
+        // The first adds a point 9 mm from the fixed start (a full solve); the second fixes that point: run before the
+        // first committed, it would fail.
+        auto first = app->actions().invoke("sketch.entity.add",
+                                           R"({"id":")" + id('f', 1) + R"(","entities":[{"id":")" + id('e', 900001) +
+                                               R"(","type":"point","x":5,"y":-5}],"constraints":[{"id":")" +
+                                               id('c', 900001) + R"(","type":"distance","refs":[")" + id('e', 10) +
+                                               R"(",")" + id('e', 900001) + R"("],"value":9}]})",
+                                           Caller::User);
+        auto second =
+            app->actions().invoke("sketch.constraint.add",
+                                  R"({"id":")" + id('f', 1) + R"(","constraints":[{"id":")" + id('c', 900002) +
+                                      R"(","type":"fix","refs":[")" + id('e', 900001) + R"("]}]})",
+                                  Caller::User);
+        auto r1 = app->wait(first, kWait);
+        auto r2 = app->wait(second, kWait);
+        INFO((r1 ? std::string("first ok") : "first: " + r1.error().message));
+        INFO((r2 ? std::string("second ok") : "second: " + r2.error().message));
+        REQUIRE(r1);
+        REQUIRE(r2);
+        REQUIRE(od->document->undoCommand());
+        CHECK(od->document->undoCommand()->name == "sketch.constraint.add");
+        invoke(*app, "edit.undo", "{}");
+        REQUIRE(od->document->undoCommand());
+        CHECK(od->document->undoCommand()->name == "sketch.entity.add");
+    }
+    SECTION("a command cancelled while it solves changes nothing")
+    {
+        const std::string before = od->document->state()->stateHash().hex();
+        const std::size_t undos = od->document->undoCount();
+        auto job = app->actions().invoke("sketch.constraint.set", widthArgs(31), Caller::User);
+        const auto t0 = std::chrono::steady_clock::now();
+        (void)app->runUntil(
+            [&] {
+                return std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(static_cast<int>(solveMs / 4));
+            },
+            kWait);
+        job.cancel();
+        auto r = app->wait(job, kWait);
+        if (r) {
+            SUCCEED("the edit finished before the cancel");
+        } else {
+            CHECK(r.error().code == ErrorCode::Cancelled);
+            CHECK(od->document->state()->stateHash().hex() == before);
+            CHECK(od->document->undoCount() == undos);
+        }
+    }
 }

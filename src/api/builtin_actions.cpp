@@ -8,6 +8,7 @@
 
 #include "../doc/features/hole_standards.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -220,6 +221,59 @@ std::string commandSchema(std::string_view commandSchemaJson)
     return json::canonical(schema);
 }
 
+// A document command, from the worker its action runs on (AppImpl::runOnWorker), so the UI thread never waits for
+// what it computes (a sketch solve: PLAN.md 7). The registry starts it only after the document commands, undos and
+// redos invoked before it have ended (ActionOrder::Ordered), so it applies on their result, as IDocument::execute on
+// the UI thread did.
+//   1. UI thread: the document is claimed, so it cannot close meanwhile.
+//   2. Here: the command is applied to the document's state (Document::prepare; a solve stops when the action is
+//      cancelled).
+//   3. UI thread: it is committed with its journal record (AppImpl::commit). If the state changed in between (a change
+//      made outside the ordered actions), it is prepared again on the new state; after three such misses it is
+//      executed on the UI thread, so it always ends.
+Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const doc::Command& command, JobContext& ctx)
+{
+    auto guard = claimOnUi(app, docId, ctx);
+    if (!guard) {
+        return tl::unexpected<Error>(guard.error());
+    }
+    DocEntry& entry = *(*guard)->get();
+    constexpr int kPrepares = 3;
+    for (int attempt = 1;; ++attempt) {
+        // od.document is set when the entry is made and stays while it is claimed; prepare() may run on any thread.
+        auto prepared = entry.od.document->prepare(command, ctx);
+        if (!prepared) {
+            return tl::unexpected<Error>(prepared.error());
+        }
+        const bool last = attempt >= kPrepares;
+        auto done = app.bridge().call<std::optional<Value>>(
+            [&app, &entry, &prepared, &command, last]() -> Result<std::optional<Value>> {
+                if (entry.od.document->state() != prepared->before) {
+                    if (!last) {
+                        return std::optional<Value>(); // changed meanwhile: prepare again
+                    }
+                    auto executed = app.execute(entry, command);
+                    if (!executed) {
+                        return tl::unexpected<Error>(executed.error());
+                    }
+                    return std::optional<Value>(documentResult(entry.od));
+                }
+                auto committed = app.commit(entry, std::move(*prepared));
+                if (!committed) {
+                    return tl::unexpected<Error>(committed.error());
+                }
+                return std::optional<Value>(documentResult(entry.od));
+            },
+            ctx.cancel);
+        if (!done) {
+            return tl::unexpected<Error>(done.error());
+        }
+        if (*done) {
+            return result(std::move(**done));
+        }
+    }
+}
+
 Status addCommandActions(AppImpl& app)
 {
     const doc::CommandRegistry& commands = app.commandTypes();
@@ -244,27 +298,21 @@ Status addCommandActions(AppImpl& app)
         info.changesDocument = true;
         info.changesToolpathsOrGcode = handler->changesToolpathsOrGcode();
         const std::string title = info.title;
-        auto fn = [&app, name, title](std::string_view argsJson, Caller, JobContext&) -> Result<ActionResult> {
+        auto fn = [&app, name, title](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
             auto args = parseArgs(argsJson);
             if (!args) {
                 return tl::unexpected<Error>(args.error());
             }
             const std::string docId = args->stringOr("document", "");
             args->erase("document");
-            auto entry = app.resolve(docId);
-            if (!entry) {
-                return tl::unexpected<Error>(entry.error());
-            }
             std::string label = title;
             if (const Value* n = args->find("name"); n && n->isString()) {
                 label += " " + n->asString();
             }
-            auto executed = app.execute(**entry, doc::Command{name, json::canonical(*args), label});
-            if (!executed) {
-                return tl::unexpected<Error>(executed.error());
-            }
-            return result(documentResult((*entry)->od));
+            return runCommand(app, docId, doc::Command{name, json::canonical(*args), label}, ctx);
         };
+        app.runOnWorker(info.id);
+        app.setOrder(info.id, ActionOrder::Ordered);
         if (auto st = app.actions().add(std::move(info), std::move(fn)); !st) {
             return st;
         }
@@ -663,6 +711,13 @@ Status registerBuiltinActions(AppImpl& app)
     }
 
     // ---- edit ----
+    // Undo and redo wait for the document commands invoked before them (and the commands after them wait in turn);
+    // save and close wait for those before them, so they see their edits (ActionOrder).
+    app.setOrder("edit.undo", ActionOrder::Ordered);
+    app.setOrder("edit.redo", ActionOrder::Ordered);
+    app.setOrder("file.save", ActionOrder::After);
+    app.setOrder("file.saveAs", ActionOrder::After);
+    app.setOrder("file.close", ActionOrder::After);
     for (const bool redo : {false, true}) {
         st = add(ActionInfo{redo ? "edit.redo" : "edit.undo", redo ? "Redo" : "Undo", "Edit",
                             redo ? "Repeats the last undone change" : "Reverts the last change",

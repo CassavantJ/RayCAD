@@ -3,9 +3,10 @@
 // they are not, they are derived from the sketch feature, the entity and the sketch's size, so a replay gives the
 // same ids. Coordinates are mm in the sketch plane. Each stores the sketch with its coordinates solved, in the same
 // undo step (sketch_feature.h, storedSketch): one pass over the constraints when they hold already (a drag's result,
-// a caller's "solved"), else a full solve on the calling thread; a failed or conflicting solve keeps the coordinates
-// the command produced and the rebuild reports it. Trim, extend, offset, split and fillet therefore compute on the
-// shape that is shown.
+// a caller's "solved"), else a full solve on the calling thread: a worker when the command runs as an action
+// (Document::prepare; cancelling the action stops the solve and the command fails with Cancelled), the UI thread
+// only through IDocument::execute. A failed or conflicting solve keeps the coordinates the command produced and the
+// rebuild reports it. Trim, extend, offset, split and fillet therefore compute on the shape that is shown.
 //
 //   sketch.set               {"id", "sketch", "plane"?}         replaces the whole model (and the plane)
 //   sketch.entity.add        {"id", "entities": [...], "constraints"?: [...]}

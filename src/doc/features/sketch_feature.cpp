@@ -185,14 +185,17 @@ public:
         return {};
     }
 
-    Result<std::string> storedProps(const DocState& state, const Feature& f) const override
+    Result<std::string> storedProps(const DocState& state, const Feature& f, JobContext* job) const override
     {
         auto props = parse(f, false);
         if (!props) {
             return tl::unexpected(props.error());
         }
         StoredSketch outcome = StoredSketch::AsGiven;
-        sketch::Sketch model = storedSketch(state, std::move(props->model), &outcome);
+        sketch::Sketch model = storedSketch(state, std::move(props->model), &outcome, job);
+        if (outcome == StoredSketch::Cancelled) {
+            return failed(ErrorCode::Cancelled, featureLabel(f) + ": the sketch solve was cancelled");
+        }
         if (outcome != StoredSketch::Solved) {
             return f.propsJson;
         }
@@ -396,7 +399,7 @@ Result<std::string> withSketch(const Feature& feature, const sketch::Sketch& mod
     return json::write(Value::object(std::move(members)));
 }
 
-sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredSketch* outcome)
+sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredSketch* outcome, JobContext* job)
 {
     const auto report = [&](StoredSketch o) {
         if (outcome != nullptr) {
@@ -420,9 +423,18 @@ sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredS
     if (*holds) {
         return model;
     }
-    JobContext ctx;
+    // The job's cancellation, not its progress (a command may store more than one sketch).
+    JobContext ctx{job != nullptr ? job->cancel : CancelToken(), Progress()};
+    if (ctx.cancel.cancelled()) {
+        report(StoredSketch::Cancelled);
+        return model;
+    }
     const auto solver = sketch::makePlaneGcsSolver();
     auto solved = solver->solve(evaluated, ctx);
+    if (!solved && solved.error().code == ErrorCode::Cancelled) {
+        report(StoredSketch::Cancelled);
+        return model;
+    }
     if (!solved || solved->status == sketch::SolveStatus::Failed ||
         solved->status == sketch::SolveStatus::Conflicting) {
         report(StoredSketch::NotSolved);
@@ -456,6 +468,86 @@ sketch::Sketch storedSketch(const DocState& state, sketch::Sketch model, StoredS
     }
     report(StoredSketch::Solved);
     return out;
+}
+
+namespace {
+
+// What the driving dimensions with an expression evaluate to over `params`, in constraint order (nullopt for one that
+// does not evaluate).
+std::vector<std::optional<double>> dimensionValues(const sketch::Sketch& model,
+                                                   const std::map<std::string, double>& params)
+{
+    std::vector<std::optional<double>> out;
+    for (const sketch::Constraint& c : model.constraints) {
+        if (!c.expression || c.driven) {
+            continue;
+        }
+        const Parameter::Kind kind =
+            c.type == sketch::ConstraintType::Angle ? Parameter::Kind::Angle : Parameter::Kind::Length;
+        auto v = evaluateNumeric(Value::string(*c.expression), params, kind, "sketch", "dimension");
+        out.push_back(v ? std::optional<double>(*v) : std::nullopt);
+    }
+    return out;
+}
+
+// The same entities (ids and kinds) in the same order.
+bool sameEntities(const sketch::Sketch& a, const sketch::Sketch& b)
+{
+    return std::equal(a.entities.begin(), a.entities.end(), b.entities.begin(), b.entities.end(),
+                      [](const sketch::Entity& x, const sketch::Entity& y) {
+                          return x.id == y.id && x.geom.index() == y.geom.index();
+                      });
+}
+
+} // namespace
+
+Status storeDependentSketches(const DocState& before, DocState& next, JobContext* job)
+{
+    const DocumentParams was = documentParams(before);
+    const DocumentParams now = documentParams(next);
+    if (was.values == now.values && was.error == now.error) {
+        return {};
+    }
+    for (Feature& f : next.features) {
+        if (f.type != kSketchType) {
+            continue;
+        }
+        auto model = sketchOfFeature(f, false);
+        if (!model || dimensionValues(*model, was.values) == dimensionValues(*model, now.values)) {
+            continue; // unreadable (the rebuild reports it) or not reached by the change
+        }
+        // The shape shown before the change (the sketch as `before` holds it, its expressions as they were: a pass
+        // over the constraints when it was stored solved), solved on with the new values, as a sketch command opens
+        // and commits a sketch. The change touched only expressions, so the entities are the same ones.
+        StoredSketch shownOutcome = StoredSketch::AsGiven;
+        StoredSketch outcome = StoredSketch::AsGiven;
+        const auto old = std::find_if(before.features.begin(), before.features.end(),
+                                      [&](const Feature& b) { return b.id == f.id && b.type == kSketchType; });
+        if (old != before.features.end()) {
+            if (auto earlier = sketchOfFeature(*old, false)) {
+                sketch::Sketch shown = storedSketch(before, std::move(*earlier), &shownOutcome, job);
+                if (shownOutcome == StoredSketch::Cancelled) {
+                    return failed(ErrorCode::Cancelled, featureLabel(f) + ": the sketch solve was cancelled");
+                }
+                if (sameEntities(shown, *model)) {
+                    model->entities = std::move(shown.entities);
+                } else {
+                    shownOutcome = StoredSketch::AsGiven;
+                }
+            }
+        }
+        sketch::Sketch solved = storedSketch(next, std::move(*model), &outcome, job);
+        if (outcome == StoredSketch::Cancelled) {
+            return failed(ErrorCode::Cancelled, featureLabel(f) + ": the sketch solve was cancelled");
+        }
+        if (shownOutcome != StoredSketch::Solved && outcome != StoredSketch::Solved) {
+            continue;
+        }
+        if (auto props = withSketch(f, solved)) {
+            f.propsJson = std::move(*props);
+        }
+    }
+    return {};
 }
 
 std::unique_ptr<IFeatureType> makeSketchFeatureType()
