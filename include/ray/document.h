@@ -68,6 +68,11 @@ struct DocState {
     std::vector<Feature> features;        // ordered history; the order IS the rebuild order
     std::vector<Body> bodies;
     std::shared_ptr<const cam::CamState> cam;
+    // The rollback bar: the last feature the rebuild builds. Later features stay in the history but are not built
+    // (reported NotBuilt, "rolled back"); a feature added without an index goes in right after it and the bar moves
+    // past it. nullopt (always, when it would name the last feature) means the whole history. Saved and undone like
+    // any other change ("feature.rollback"); stored in the manifest as "rollback" only when set.
+    std::optional<FeatureId> rollback;
     std::string extraJson;
     Hash256 stateHash() const;            // hash of canonical serialisation; equals the stored object hash
 };
@@ -256,8 +261,8 @@ public:
 private:
     std::map<std::string, std::unique_ptr<ICommandHandler>, std::less<>> handlers_;
 };
-// Registers feature.add, feature.edit, feature.remove, feature.reorder, feature.suppress, param.set, body.set and
-// document.import. Their argument objects are described by argsSchemaJson().
+// Registers feature.add, feature.edit, feature.remove, feature.reorder, feature.suppress, feature.rollback,
+// param.set, body.set and document.import. Their argument objects are described by argsSchemaJson().
 Status registerBuiltinCommands(CommandRegistry&);
 // A registry holding just the built-in commands; null only when memory runs out.
 std::shared_ptr<const CommandRegistry> builtinCommandRegistry();

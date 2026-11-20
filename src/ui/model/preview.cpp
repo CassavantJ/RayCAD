@@ -31,12 +31,18 @@ BodyOverlay::~BodyOverlay()
         restoreScene();
 }
 
-void BodyOverlay::show(std::vector<api::viewer::Body> bodies, std::set<BodyId> hide, bool hideAll,
+void BodyOverlay::show(const QObject* owner, std::vector<api::viewer::Body> bodies, std::set<BodyId> hide, bool hideAll,
                        render::MeshStyle style)
 {
     IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
     if (jobs == nullptr)
         return;
+    if (owner_ != nullptr && owner_ != owner) {
+        const QObject* previous = owner_;
+        reset();
+        emit released(previous);
+    }
+    owner_ = owner;
     job_.cancel();
     const std::uint64_t serial = ++serial_;
     auto shared = std::make_shared<const std::vector<api::viewer::Body>>(std::move(bodies));
@@ -72,15 +78,26 @@ void BodyOverlay::show(std::vector<api::viewer::Body> bodies, std::set<BodyId> h
             if (!mesh)
                 continue;
             self->meshes_.push_back(mesh);
-            if (viewport != nullptr)
-                self->items_.push_back(viewport->addMesh(mesh, Xform::identity(), style));
+            if (viewport != nullptr) {
+                const render::ItemId item = viewport->addMesh(mesh, Xform::identity(), style);
+                if (item != 0)
+                    viewport->setPickMode(item, render::PickMode::Never); // picks go to the model under it
+                self->items_.push_back(item);
+            }
         }
         self->applyHidden();
         emit self->shown();
     });
 }
 
-void BodyOverlay::clear()
+void BodyOverlay::clear(const QObject* owner)
+{
+    if (owner_ != nullptr && owner != owner_)
+        return;
+    reset();
+}
+
+void BodyOverlay::reset()
 {
     job_.cancel();
     job_ = {};
@@ -91,6 +108,7 @@ void BodyOverlay::clear()
     active_ = false;
     hide_.clear();
     hideAll_ = false;
+    owner_ = nullptr;
 }
 
 void BodyOverlay::removeItems()
@@ -117,7 +135,10 @@ void BodyOverlay::applyHidden()
         if (body == nullptr || item == 0)
             continue;
         const bool hidden = hideAll_ || hide_.count(body->id) != 0;
-        viewport->setVisible(item, hidden ? false : scene_->bodyVisible(i));
+        const bool shown = scene_->bodyVisible(i);
+        viewport->setVisible(item, hidden ? false : shown);
+        // A body the preview stands in for still answers picks (and shows what is picked on it), if the user shows it.
+        viewport->setPickMode(item, hidden && shown ? render::PickMode::Always : render::PickMode::WhenVisible);
     }
 }
 
@@ -128,8 +149,10 @@ void BodyOverlay::restoreScene()
         return;
     for (int i = 0; i < scene_->bodyCount(); ++i) {
         const render::ItemId item = scene_->itemForBody(i);
-        if (item != 0)
-            viewport->setVisible(item, scene_->bodyVisible(i));
+        if (item == 0)
+            continue;
+        viewport->setVisible(item, scene_->bodyVisible(i));
+        viewport->setPickMode(item, render::PickMode::WhenVisible);
     }
 }
 
@@ -148,6 +171,8 @@ void LineOverlay::push(Set& s)
     s.item = viewport != nullptr && !s.segments.empty()
                  ? viewport->addLines(std::span<const Vec3>(s.segments), s.colour, s.width, s.dashed)
                  : 0;
+    if (s.item != 0)
+        viewport->setPickMode(s.item, render::PickMode::Never); // guides: picks go to the model under them
 }
 
 void LineOverlay::drop(Set& s)

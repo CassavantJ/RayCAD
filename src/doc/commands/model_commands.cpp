@@ -2,15 +2,19 @@
 //
 // Arguments (JSON objects; any other key is rejected; ids are lower-case UUIDs, never the nil one):
 //   feature.add       {"id", "type", "name", "props": {...}, "suppressed"?: false, "index"?: <end>}
-//                     inserts a new feature at `index` (0 to the feature count). The id comes from the caller, so
+//                     inserts a new feature at `index` (0 to the feature count; without it, right after the rollback
+//                     bar, or at the end when the history is not rolled back). A feature that goes in right after
+//                     the bar moves the bar past it (DocState::rollback). The id comes from the caller, so
 //                     replay gives the same document. `type` is 1 to 64 of A-Z a-z 0-9 _ . -; props are not checked
 //                     against the type's schema here (the rebuilder reports bad props as a failed feature). A sketch's
 //                     props are stored with its coordinates solved, as feature.sketch.add stores them.
 //   feature.edit      {"id", "name"?, "props"?}        replaces the name and/or the whole props object (a sketch's
 //                     stored solved)
-//   feature.remove    {"id"}
+//   feature.remove    {"id"}                           (the rollback bar on it moves to the feature before)
 //   feature.reorder   {"id", "index"}                  moves the feature to `index` of the resulting list
 //   feature.suppress  {"id", "suppressed"}
+//   feature.rollback  {"to"?: "<feature id>" | null}   moves the rollback bar after that feature; without "to" (or
+//                     null, or the last feature) the whole history is built again. Moving it nowhere is refused.
 //   param.set         {"id", "name"?, "expression"?, "kind"?}   kind: "length" | "angle" | "count" | "unitless"
 //                     adds the parameter (all three fields required) or changes the given fields of an existing one.
 //                     The name must be a valid, unreserved and unused identifier. If the parameters evaluated before
@@ -26,6 +30,7 @@
 #include "args.h"
 #include "commands.h"
 
+#include "../document_impl.h"
 #include "../expr.h"
 #include "../features/feature_props.h"
 #include "../features/sketch_feature.h"
@@ -104,12 +109,12 @@ std::ptrdiff_t indexOf(const std::vector<T>& items, const IdT& id)
     return it == items.end() ? -1 : it - items.begin();
 }
 
-Result<std::size_t> existingFeature(const Args& args, const DocState& state)
+Result<std::size_t> existingFeature(const Args& args, const DocState& state, std::string_view key = "id")
 {
-    RAY_DOC_TRY(id, args.id("id"));
+    RAY_DOC_TRY(id, args.id(key));
     const std::ptrdiff_t index = indexOf(state.features, FeatureId{*id});
     if (index < 0) {
-        return args.error("id", "names no feature of this document (" + id->toString() + ")");
+        return args.error(key, "names no feature of this document (" + id->toString() + ")");
     }
     return static_cast<std::size_t>(index);
 }
@@ -132,6 +137,7 @@ constexpr std::string_view kFeatureEdit = "feature.edit";
 constexpr std::string_view kFeatureRemove = "feature.remove";
 constexpr std::string_view kFeatureReorder = "feature.reorder";
 constexpr std::string_view kFeatureSuppress = "feature.suppress";
+constexpr std::string_view kFeatureRollback = "feature.rollback";
 constexpr std::string_view kParamSet = "param.set";
 constexpr std::string_view kBodySet = "body.set";
 
@@ -160,8 +166,8 @@ Result<DocStatePtr> featureAdd(const DocState& before, std::string_view argsJson
     feature.propsJson = std::move(**props);
     feature.suppressed = suppressed->value_or(false);
     auto next = copyOf(before);
-    const std::size_t at = index->value_or(next->features.size());
-    next->features.insert(next->features.begin() + static_cast<std::ptrdiff_t>(at), std::move(feature));
+    const std::size_t at = index->value_or(detail::defaultInsertIndex(*next));
+    detail::insertFeature(*next, at, std::move(feature));
     // A sketch is stored solved, as feature.sketch.add stores it (features::storedPropsOf).
     RAY_DOC_TRY(stored, features::storedPropsOf(*next, next->features[at], job));
     next->features[at].propsJson = std::move(*stored);
@@ -195,7 +201,7 @@ Result<DocStatePtr> featureRemove(const DocState& before, std::string_view argsJ
     RAY_DOC_TRY(args, Args::parse(kFeatureRemove, argsJson, {"id"}));
     RAY_DOC_TRY(index, existingFeature(*args, before));
     auto next = copyOf(before);
-    next->features.erase(next->features.begin() + static_cast<std::ptrdiff_t>(*index));
+    detail::eraseFeature(*next, *index);
     return next;
 }
 
@@ -212,6 +218,25 @@ Result<DocStatePtr> featureReorder(const DocState& before, std::string_view args
     Feature moved = std::move(features[*from]);
     features.erase(features.begin() + static_cast<std::ptrdiff_t>(*from));
     features.insert(features.begin() + static_cast<std::ptrdiff_t>(**to), std::move(moved));
+    detail::normalizeRollback(*next); // the bar stays with its feature
+    return next;
+}
+
+Result<DocStatePtr> featureRollback(const DocState& before, std::string_view argsJson)
+{
+    RAY_DOC_TRY(args, Args::parse(kFeatureRollback, argsJson, {"to"}));
+    RAY_DOC_TRY(to, args->optValue("to"));
+    auto next = copyOf(before);
+    if (*to == nullptr || (*to)->isNull()) {
+        next->rollback.reset(); // roll forward to the end
+    } else {
+        RAY_DOC_TRY(index, existingFeature(*args, before, "to"));
+        next->rollback = before.features[*index].id;
+        detail::normalizeRollback(*next);
+    }
+    if (next->rollback == before.rollback) {
+        return args->error(next->rollback ? "the rollback bar is there already" : "the history is not rolled back");
+    }
     return next;
 }
 
@@ -424,6 +449,10 @@ constexpr std::string_view kFeatureReorderSchema =
 constexpr std::string_view kFeatureSuppressSchema =
     R"({"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,)"
     R"("required":["id","suppressed"],"properties":{"id":)" RAY_DOC_UUID R"(,"suppressed":{"type":"boolean"}}})";
+constexpr std::string_view kFeatureRollbackSchema =
+    R"({"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,)"
+    R"("properties":{"to":{"anyOf":[)" RAY_DOC_UUID R"(,{"type":"null"}],"description":"The last feature to build; )"
+    R"(absent or null rolls forward to the end of the history"}}})";
 constexpr std::string_view kParamSetSchema =
     R"({"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,)"
     R"("required":["id"],"minProperties":2,"properties":{"id":)" RAY_DOC_UUID
@@ -448,6 +477,7 @@ std::vector<std::unique_ptr<ICommandHandler>> makeModelCommandHandlers()
     out.push_back(std::make_unique<ModelCommand>(kFeatureRemove, kFeatureRemoveSchema, &featureRemove));
     out.push_back(std::make_unique<ModelCommand>(kFeatureReorder, kFeatureReorderSchema, &featureReorder));
     out.push_back(std::make_unique<ModelCommand>(kFeatureSuppress, kFeatureSuppressSchema, &featureSuppress));
+    out.push_back(std::make_unique<ModelCommand>(kFeatureRollback, kFeatureRollbackSchema, &featureRollback));
     out.push_back(std::make_unique<ModelCommand>(kParamSet, kParamSetSchema, &paramSet));
     out.push_back(std::make_unique<ModelCommand>(kBodySet, kBodySetSchema, &bodySet));
     return out;

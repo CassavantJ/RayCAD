@@ -45,6 +45,9 @@ var paths = {
     // T-092: the sketch tools (a pencil on a plane; the drawing tools by the shape they make).
     "sketch": { d: "M 2 13.5 H 9 M 6.5 11.5 L 12.75 5.25 L 14.25 6.75 L 8 13 L 6 13.5 Z M 11.5 6.5 L 13 8" },
     "select": { d: "M 4 2.5 L 12 9.25 L 8.25 9.75 L 10.5 13.75 L 9 14.5 L 6.75 10.5 L 4 13 Z" },
+    // A point: a small ring on short cross-hair ticks that stop clear of it.
+    "point": { d: "M 9.75 8 A 1.75 1.75 0 1 1 6.25 8 A 1.75 1.75 0 1 1 9.75 8 Z "
+                  + "M 8 1.75 V 4.25 M 8 11.75 V 14.25 M 1.75 8 H 4.25 M 11.75 8 H 14.25" },
     "line": { d: "M 3 13 L 13 3 M 4.5 13 A 1.5 1.5 0 1 1 1.5 13 A 1.5 1.5 0 1 1 4.5 13 Z "
                  + "M 14.5 3 A 1.5 1.5 0 1 1 11.5 3 A 1.5 1.5 0 1 1 14.5 3 Z" },
     "rectangle": { d: "M 2.5 4 H 13.5 V 12 H 2.5 Z" },

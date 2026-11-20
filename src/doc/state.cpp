@@ -3,7 +3,9 @@
 // A DocState is stored as one manifest object plus one object per feature, all canonical JSON (json.h):
 //
 //   manifest  {"bodies":[Body...],"features":["<feature object hash>"...],"parameters":[Parameter...],
-//              "schema":1,"settings":Settings, ...unknown keys}
+//              "rollback"?:"<feature uuid>","schema":1,"settings":Settings, ...unknown keys}
+//   ("rollback", the rollback bar, only while it is set; an older RayCAD keeps it as an unknown key and builds the
+//   whole history.)
 //   Settings  {"decimals":4,"material":"<uuid>"|null,"units":"inch"|"metric", ...}
 //   Parameter {"expression":"4 in","id":"<uuid>","kind":"length"|"angle"|"count"|"unitless","name":"width", ...}
 //   Body      {"color":[r,g,b,a],"id":"<uuid>","name":"Bracket","role":"part"|"fixture"|"stock_model",
@@ -18,6 +20,7 @@
 // extraJson is ignored on writing. The manifest's "cam" key (the CAM object, PLAN.md 3.1) is not interpreted
 // yet: it is kept like an unknown key, and DocState::cam is neither written nor read (the CAM tasks add it).
 // The schema schemas/doc.manifest.schema.json and schemas/doc.feature.schema.json describe both objects.
+#include "document_impl.h"
 #include "json.h"
 #include "json_number.h"
 
@@ -162,12 +165,16 @@ StateObjects serialize(const DocState& state)
                                  {"material", s.material.value == Uuid{} ? Value() : idValue(s.material.value)},
                                  {"units", text(s.units == UnitSystem::Inch ? "inch" : "metric")}},
                                 s.extraJson);
-    Value manifest = objectWith({{"bodies", Value::array(std::move(bodies))},
-                                 {"features", Value::array(std::move(featureHashes))},
-                                 {"parameters", Value::array(std::move(params))},
-                                 {"schema", Value::number(kSchema)},
-                                 {"settings", std::move(settings)}},
-                                state.extraJson);
+    std::vector<Member> members{{"bodies", Value::array(std::move(bodies))},
+                                {"features", Value::array(std::move(featureHashes))},
+                                {"parameters", Value::array(std::move(params))}};
+    // The rollback bar only when it is set, so a document that never used it keeps its bytes and hash.
+    if (state.rollback) {
+        members.push_back({"rollback", idValue(state.rollback->value)});
+    }
+    members.push_back({"schema", Value::number(kSchema)});
+    members.push_back({"settings", std::move(settings)});
+    Value manifest = objectWith(std::move(members), state.extraJson);
     out.manifest = json::write(manifest);
     return out;
 }
@@ -398,7 +405,7 @@ Result<DocState> deserialize(std::string_view manifestBytes,
         return tl::unexpected(schema.error());
     }
     DocState state;
-    state.extraJson = extrasOf(manifest, {"bodies", "features", "parameters", "schema", "settings"});
+    state.extraJson = extrasOf(manifest, {"bodies", "features", "parameters", "rollback", "schema", "settings"});
 
     // Settings.
     {
@@ -493,6 +500,16 @@ Result<DocState> deserialize(std::string_view manifestBytes,
         state.features.push_back(std::move(*feature));
     }
 
+    // The rollback bar: a feature of this document other than the last (anything else means the whole history).
+    if (manifest.find("rollback") != nullptr) {
+        auto id = readId(manifest, "rollback", "manifest");
+        if (!id) {
+            return tl::unexpected(id.error());
+        }
+        state.rollback = FeatureId{*id};
+        detail::normalizeRollback(state);
+    }
+
     // Bodies.
     auto bodies = field(manifest, "bodies", Value::Type::Array, "manifest");
     if (!bodies) {
@@ -542,6 +559,65 @@ Result<DocState> deserialize(std::string_view manifestBytes,
 }
 
 } // namespace
+
+// ---------- The rollback bar ----------
+namespace detail {
+
+std::optional<std::size_t> rollbackIndex(const DocState& state)
+{
+    if (!state.rollback) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < state.features.size(); ++i) {
+        if (state.features[i].id == *state.rollback) {
+            return i + 1 < state.features.size() ? std::optional<std::size_t>(i) : std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+void normalizeRollback(DocState& state)
+{
+    if (!rollbackIndex(state)) {
+        state.rollback.reset();
+    }
+}
+
+std::size_t defaultInsertIndex(const DocState& state)
+{
+    const auto at = rollbackIndex(state);
+    return at ? *at + 1 : state.features.size();
+}
+
+void insertFeature(DocState& state, std::size_t at, Feature feature)
+{
+    const auto bar = rollbackIndex(state);
+    at = std::min(at, state.features.size());
+    const FeatureId id = feature.id;
+    state.features.insert(state.features.begin() + static_cast<std::ptrdiff_t>(at), std::move(feature));
+    if (bar && at == *bar + 1) {
+        state.rollback = id;
+    }
+    normalizeRollback(state);
+}
+
+void eraseFeature(DocState& state, std::size_t at)
+{
+    if (at >= state.features.size()) {
+        return;
+    }
+    if (state.rollback && state.features[at].id == *state.rollback) {
+        if (at > 0) {
+            state.rollback = state.features[at - 1].id;
+        } else {
+            state.rollback.reset();
+        }
+    }
+    state.features.erase(state.features.begin() + static_cast<std::ptrdiff_t>(at));
+    normalizeRollback(state);
+}
+
+} // namespace detail
 
 StateObjects serializeState(const DocState& state)
 {

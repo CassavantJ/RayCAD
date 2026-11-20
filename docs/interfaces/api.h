@@ -239,8 +239,8 @@ std::unique_ptr<HeadlessApp> makeHeadlessApp(std::vector<std::string> libraryRoo
 std::unique_ptr<HeadlessApp> makeHeadlessApp(AppOptions);   // AppOptions::dispatcher must be null
 
 // ---------- Queries (read-only, safe from any thread on a snapshot) ----------
-// Canonical JSON: {"bodies":[...],"features":[...],"parameters":[...],"settings":{...},"stateHash":"<hex>"}; every
-// feature with its build status, every body with its built shape's content hash and sub-shape counts. It holds
+// Canonical JSON: {"bodies":[...],"features":[...],"parameters":[...],"rollback"?:"<feature id>","settings":{...},
+// "stateHash":"<hex>"} ("rollback" only while the history is rolled back); every feature with its build status, every body with its built shape's content hash and sub-shape counts. It holds
 // nothing that depends on timing, so it is identical for identical inputs.
 std::string describeDocumentJson(const doc::DocState&, const doc::BuildResult&);     // feature tree, bodies, params
 std::string describeCamJson(const doc::DocState&, const std::map<OperationId, cam::OpState>&);

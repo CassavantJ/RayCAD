@@ -30,6 +30,7 @@
 namespace ray::ui {
 
 class AppContext;
+class BodyOverlay;
 class SceneController;
 
 // An immutable view of the current bodies, shared with jobs (selection references, the properties read-out).
@@ -151,6 +152,10 @@ public:
     // Bounds of the given selection hits in world coordinates (from the display meshes); nullopt if none.
     std::optional<Box3> boundsOf(std::span<const render::PickHit> hits) const;
 
+    // The one preview slot (model/preview.h): bodies shown in place of the scene's own, such as a feature tool's
+    // live preview. Its items never answer picks; the scene bodies it hides still do.
+    BodyOverlay& preview() const { return *preview_; }
+
     // Cancels the running mesh jobs (the job slot's Cancel and Esc). `quiet`: no status message.
     void cancelJobs(bool quiet = false);
     // The selection tells the tree which bodies hold selected elements.
@@ -203,6 +208,7 @@ private:
     bool presetPending_ = false;
     bool fineWanted_ = false;
     SceneTreeModel* tree_ = nullptr;
+    std::unique_ptr<BodyOverlay> preview_;
 };
 
 } // namespace ray::ui

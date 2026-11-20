@@ -39,205 +39,71 @@ QString trc(const char* text)
     return QCoreApplication::translate(kTrContext, text);
 }
 
-// ---------- View commands: what the UI can do that no registry action does ----------
-struct UiCommand {
-    const char* id;
-    const char* title;
-    const char* category;
-    const char* description;
-    const char* shortcut; // QKeySequence::PortableText
-};
+// ---------- View commands: what the UI can do that no registry action does (ui_commands.h) ----------
+// The general ones, run here (runUi). The measure, section, sketch, constraint and model commands are declared in the
+// files that run them; allUiCommands() gathers every table.
 // clang-format off
-constexpr UiCommand kUiCommands[] = {
+constexpr UiCommand kGeneralCommands[] = {
     {"ui.commandPalette", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Command Palette"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "General"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Searches every command and runs it"), "Ctrl+K"},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Searches every command and runs it"), "Ctrl+K", CommandContext::Global, ""},
     {"ui.keyboardShortcuts", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Keyboard Shortcuts"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "General"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows and changes the keyboard shortcuts"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows and changes the keyboard shortcuts"), "", CommandContext::Global, ""},
     {"ui.settings", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Settings"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "General"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows and changes units, appearance, graphics and navigation"), "Ctrl+,"},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows and changes units, appearance, graphics and navigation"), "Ctrl+,", CommandContext::Global, ""},
     {"view.fitAll", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Fit All"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Frames everything shown"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Frames everything shown"), "", CommandContext::Global, ""},
     {"view.fitSelection", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Fit Selection"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Frames the selected elements"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Frames the selected elements"), "", CommandContext::Global, ""},
     {"view.front", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Front View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the front"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the front"), "", CommandContext::Global, ""},
     {"view.back", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Back View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the back"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the back"), "", CommandContext::Global, ""},
     {"view.left", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Left View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the left"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the left"), "", CommandContext::Global, ""},
     {"view.right", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Right View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the right"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from the right"), "", CommandContext::Global, ""},
     {"view.top", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Top View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks down at the model"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks down at the model"), "", CommandContext::Global, ""},
     {"view.bottom", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Bottom View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks up at the model"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks up at the model"), "", CommandContext::Global, ""},
     {"view.iso", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Isometric View"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from a corner"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Looks at the model from a corner"), "", CommandContext::Global, ""},
     {"view.toggleProjection", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Perspective Projection"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Switches between perspective and orthographic projection"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Switches between perspective and orthographic projection"), "", CommandContext::Global, ""},
     {"view.hideSelectedBodies", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hide Body"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hides the bodies of the selected elements"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hides the bodies of the selected elements"), "", CommandContext::Global, ""},
     {"view.isolateSelectedBodies", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Show Only This Body"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hides every body except those of the selected elements"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hides every body except those of the selected elements"), "", CommandContext::Global, ""},
     {"view.showAllBodies", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Show All Bodies"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows every hidden body"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows every hidden body"), "", CommandContext::Global, ""},
     {"selection.clear", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Clear Selection"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selection"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Deselects everything"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Deselects everything"), "", CommandContext::Global, ""},
     {"selection.selectBody", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Select Body"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selection"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selects the bodies of the selected faces, edges and vertices"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selects the bodies of the selected faces, edges and vertices"), "", CommandContext::Global, ""},
     {"selection.copyProperties", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy Properties"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selection"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the selected element's measured values as text"), ""},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the selected element's measured values as text"), "", CommandContext::Global, ""},
     {"selection.copyCoordinates", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy Coordinates"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selection"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the selected vertex's X, Y and Z in mm"), ""},
-    // T-022: the measure tool (measure_model.h runs these and the measure.* actions on the selection).
-    {"measure.tool", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows the Measure panel and measures the selection"), "M"},
-    {"measure.pin", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Pin Measurement"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Keeps the current measurement shown while other things are selected"),
-     ""},
-    {"measure.clearPinned", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Clear Pinned Measurements"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Removes every pinned measurement"), ""},
-    {"measure.copyAll", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copy All Measurements"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the current and the pinned measurements as text"), ""},
-    {"measure.minInternalCornerRadius", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Minimum Internal Corner Radius"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Measure"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "The smallest internal corner radius: the largest cutter that fits"),
-     ""},
-    // T-023: section view and draft analysis (section_model.h).
-    {"view.section.toggle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Section View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Cuts the model with a plane to show its inside"), ""},
-    {"view.section.fromFace", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Section Parallel to Face"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Cuts the model parallel to the selected planar face"), ""},
-    {"view.draft.toggle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draft Analysis"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Colours faces by their draft angle to the pull direction"), ""},
-    {"view.draft.fromFace", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Pull Direction from Face"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "View"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draft analysis with the selected planar face's normal as the pull"),
-     ""},
-    // T-092: the sketch mode (sketch/sketch_mode.h runs these; feature.sketch.add from the palette goes there too).
-    {"sketch.mode.new", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Starts a new sketch on a plane or a planar face"), "Shift+S"},
-    {"sketch.mode.finish", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Finish Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Leaves the sketch being edited (every step is saved already)"),
-     "Ctrl+Return"},
-    {"sketch.tool.select", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Select in Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selects and drags sketch points and curves"), ""},
-    {"sketch.tool.line", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Line"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws connected lines; type a length and angle"), "L"},
-    {"sketch.tool.rectangle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rectangle"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a rectangle from two corners"), "R"},
-    {"sketch.tool.circle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Circle"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a circle from its centre and a point or a diameter"), "C"},
-    {"sketch.tool.arc3", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Three-Point Arc"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws an arc through its start, its end and a point on it"), "A"},
-    {"sketch.tool.arcCenter", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Centre Arc"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws an arc from its centre, start and end"), "Shift+A"},
-    {"sketch.tool.arcTangent", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Tangent Arc"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws an arc that continues a line or arc smoothly"), "Shift+T"},
-    {"sketch.tool.slot", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Slot"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a straight slot from its two centres and width"), "S"},
-    {"sketch.tool.spline", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Spline"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a smooth curve through control points"), "B"},
-    {"sketch.tool.construction", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Construction Geometry"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Toggles construction for the selection, or for what is drawn next"),
-     "X"},
-    {"sketch.tool.trim", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Trim"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Removes the piece of a curve between crossings"), "T"},
-    {"sketch.tool.extend", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Extend"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Grows a line or arc to the next curve"), "Shift+E"}, // E: Extrude (T-098)
-    {"sketch.tool.offset", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Offset"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies a chain of curves at a distance"), "O"},
-    {"sketch.tool.fillet", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch Fillet"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rounds the corner of two lines"), "Shift+C"},
-    // T-098: the feature tools and the feature tree (model/feature_tools.h runs these).
-    {"model.tool.extrude", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Extrude…"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Extrude panel: sketch regions into a new body, or joined to, cut from or intersected with one"), "E"},
-    {"model.tool.revolve", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Revolve…"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Revolve panel: sketch regions turned about an axis"), "Shift+R"},
-    {"model.tool.fillet", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Fillet…"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Fillet panel: rounds the edges picked in the view"), "Shift+G"},
-    {"model.tool.chamfer", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Chamfer…"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Chamfer panel: bevels the edges picked in the view"), "Shift+B"},
-    {"model.tool.hole", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hole…"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Hole panel: drilled, tapped, counterbored or countersunk holes at sketch points"), "Shift+H"},
-    {"model.tool.datumPlane", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Datum Plane…"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Datum Plane panel: a plane offset from a principal plane, a datum or a face"), "Shift+D"},
-    {"model.feature.edit", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Edit Feature"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the feature selected in the model tree for editing"), ""},
-    {"model.feature.rename", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rename Feature"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Renames the feature selected in the model tree"), "F2"},
-    {"model.feature.suppress", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Suppress or Unsuppress Feature"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Switches the feature selected in the model tree off or on again"), ""},
-    {"model.feature.delete", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Delete Feature"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Deletes the feature selected in the model tree"), ""},
-    {"model.rollback.end", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Roll Forward to the End"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows the whole history again after a rollback"), ""},
-    {"model.parameters", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Parameters"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows the parameter table in the model panel"), ""},
-    // T-093: constraints and dimensions (sketch/constraints_model.h runs these).
-#define RAY_SKETCH_CONSTRAIN(name, title, description, key)                                                            \
-    {"sketch.constrain." name, QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", title),                                     \
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"), QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", description), \
-     key}
-    RAY_SKETCH_CONSTRAIN("dimension", "Smart Dimension", "Dimensions what is picked: length, distance, angle, radius or diameter", "D"),
-    RAY_SKETCH_CONSTRAIN("coincident", "Coincident", "Joins two points, or puts a point on a curve", "I"),
-    RAY_SKETCH_CONSTRAIN("horizontal", "Horizontal", "Makes lines, or two points, horizontal", "H"),
-    RAY_SKETCH_CONSTRAIN("vertical", "Vertical", "Makes lines, or two points, vertical", "V"),
-    RAY_SKETCH_CONSTRAIN("parallel", "Parallel", "Makes lines parallel", "Shift+P"),
-    RAY_SKETCH_CONSTRAIN("perpendicular", "Perpendicular", "Makes two lines perpendicular", "Shift+L"),
-    RAY_SKETCH_CONSTRAIN("tangent", "Tangent", "Makes an arc or circle tangent to a line, arc or circle", "G"),
-    RAY_SKETCH_CONSTRAIN("equal", "Equal", "Makes lines the same length, or arcs and circles the same radius", "Q"),
-    RAY_SKETCH_CONSTRAIN("midpoint", "Midpoint", "Puts a point at the middle of a line", "Shift+M"),
-    RAY_SKETCH_CONSTRAIN("concentric", "Concentric", "Gives two arcs or circles the same centre", "Shift+O"),
-    RAY_SKETCH_CONSTRAIN("collinear", "Collinear", "Puts two lines on one line", "Shift+N"),
-    RAY_SKETCH_CONSTRAIN("symmetric", "Symmetric", "Makes two points symmetric about a line or a point", "Shift+Y"),
-    RAY_SKETCH_CONSTRAIN("fix", "Fix", "Holds points or curves where they are", "Shift+K"),
-    RAY_SKETCH_CONSTRAIN("driven", "Driven Dimension", "Makes the selected dimension driven (a reference) or driving again", ""),
-    RAY_SKETCH_CONSTRAIN("delete", "Delete Constraint", "Deletes the selected constraint or dimension", ""),
-#undef RAY_SKETCH_CONSTRAIN
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies the selected vertex's X, Y and Z in mm"), "", CommandContext::Global, ""},
 };
 // clang-format on
 
@@ -365,7 +231,22 @@ Command fromUi(const UiCommand& u)
     c.category = trc(u.category);
     c.description = trc(u.description);
     c.defaultShortcut = QString::fromLatin1(u.shortcut);
+    c.context = u.context;
     return c;
+}
+
+// Registry actions a UI command stands for (UiCommand::fronts): the palette lists the UI command only.
+const std::set<QString>& frontedActions()
+{
+    static const std::set<QString> fronted = [] {
+        std::set<QString> out;
+        for (const UiCommand& u : allUiCommands()) {
+            for (const QString& id : QString::fromLatin1(u.fronts).split(QLatin1Char(' '), Qt::SkipEmptyParts))
+                out.insert(id);
+        }
+        return out;
+    }();
+    return fronted;
 }
 
 // How well `query` names a command: 6 exact, 5 prefix, 4 a word starts with it, 3 substring, 2 subsequence of the
@@ -477,6 +358,23 @@ QString summarize(const QString& title, const api::ActionResult& result)
 
 } // namespace
 
+std::span<const UiCommand> generalUiCommands()
+{
+    return kGeneralCommands;
+}
+
+const std::vector<UiCommand>& allUiCommands()
+{
+    static const std::vector<UiCommand> all = [] {
+        std::vector<UiCommand> out;
+        for (const std::span<const UiCommand> table : {generalUiCommands(), measureUiCommands(), sectionUiCommands(),
+                                                       sketchUiCommands(), constraintUiCommands(), modelUiCommands()})
+            out.insert(out.end(), table.begin(), table.end());
+        return out;
+    }();
+    return all;
+}
+
 CommandCatalog::CommandCatalog(AppContext* context, SceneController* scene, SelectionModel* selection,
                                ViewportProvider viewport, QObject* parent)
     : QObject(parent), context_(context), scene_(scene), selection_(selection), viewport_(std::move(viewport))
@@ -530,11 +428,13 @@ std::vector<Command> CommandCatalog::commands() const
     std::set<QString> ids;
     if (api::IApp* app = context_ ? context_->app() : nullptr) {
         for (const api::ActionInfo& a : app->actions().all()) {
-            out.push_back(fromAction(a));
-            ids.insert(out.back().id);
+            ids.insert(qs(a.id));
+            if (!frontedActions().count(qs(a.id))) { // the UI command that stands for it is listed instead
+                out.push_back(fromAction(a));
+            }
         }
     }
-    for (const UiCommand& u : kUiCommands) {
+    for (const UiCommand& u : allUiCommands()) {
         if (!ids.count(QString::fromLatin1(u.id))) {
             out.push_back(fromUi(u));
         }
@@ -551,7 +451,7 @@ std::optional<Command> CommandCatalog::find(const QString& id) const
             return fromAction(*a);
         }
     }
-    for (const UiCommand& u : kUiCommands) {
+    for (const UiCommand& u : allUiCommands()) {
         if (id == QLatin1String(u.id)) {
             return fromUi(u);
         }
@@ -568,14 +468,16 @@ std::vector<Command> CommandCatalog::search(const QString& query) const
         const QByteArray q = utf8(query.trimmed());
         std::set<QString> found;
         for (const api::ActionInfo& a : app->actions().search(view(q), 0)) {
-            registry.push_back(fromAction(a));
-            found.insert(registry.back().id);
+            found.insert(qs(a.id));
+            if (!frontedActions().count(qs(a.id))) {
+                registry.push_back(fromAction(a));
+            }
         }
         // Titles with punctuation ("Open...") typed as shown: the registry's matcher may not take them, the
         // title match below does. They come after the registry's own results.
         for (const api::ActionInfo& a : app->actions().all()) {
             ids.insert(qs(a.id));
-            if (!found.count(qs(a.id))) {
+            if (!found.count(qs(a.id)) && !frontedActions().count(qs(a.id))) {
                 Command c = fromAction(a);
                 if (const int t = matchTier(query, c); t >= 3) {
                     missed.emplace_back(t, std::move(c));
@@ -588,7 +490,7 @@ std::vector<Command> CommandCatalog::search(const QString& query) const
         registry.push_back(std::move(c));
     }
     std::vector<std::pair<int, Command>> ui;
-    for (const UiCommand& u : kUiCommands) {
+    for (const UiCommand& u : allUiCommands()) {
         if (ids.count(QString::fromLatin1(u.id))) {
             continue;
         }

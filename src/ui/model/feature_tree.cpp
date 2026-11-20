@@ -8,7 +8,6 @@
 #include "feature_tools.h"
 #include "model_util.h"
 
-#include <ray_api/feature_edit.h>
 #include <ray_api/sketch_edit.h>
 
 #include <QtCore/QCoreApplication>
@@ -124,7 +123,7 @@ std::vector<QString> bodiesMade(const doc::Feature& f)
 
 FeatureTreeModel::FeatureTreeModel(SceneController* scene, Session* session, AppContext* context, QObject* parent)
     : QAbstractListModel(parent), scene_(scene), session_(session), context_(context),
-      rollbackOverlay_(std::make_unique<BodyOverlay>(scene)), sketchLines_(std::make_unique<LineOverlay>(scene))
+      sketchLines_(std::make_unique<LineOverlay>(scene))
 {
     if (session_) {
         connect(session_, &Session::documentChanged, this, [this] {
@@ -135,7 +134,6 @@ FeatureTreeModel::FeatureTreeModel(SceneController* scene, Session* session, App
                 rollback_ = -1;
                 current_ = -1;
                 sketchOverride_.clear();
-                rollbackOverlay_->clear();
                 sketchLines_->clear();
                 emit rollbackChanged();
                 emit currentChanged();
@@ -148,9 +146,7 @@ FeatureTreeModel::FeatureTreeModel(SceneController* scene, Session* session, App
 
 FeatureTreeModel::~FeatureTreeModel()
 {
-    rollbackJob_.cancel();
     sketchJob_.cancel();
-    rollbackOverlay_.reset();
     sketchLines_.reset();
     unsubscribe();
 }
@@ -245,8 +241,6 @@ void FeatureTreeModel::unsubscribe()
     docListener_ = previewListener_ = 0;
     docId_.clear();
     ++docGeneration_;
-    sideRebuilder_.reset();
-    sideRebuilderDoc_.clear();
     checking_ = false;
 }
 
@@ -257,9 +251,16 @@ void FeatureTreeModel::sync()
     doc::Document* d = liveDoc();
     const doc::DocStatePtr state = d ? d->state() : nullptr;
     const doc::BuildResultPtr build = d ? d->build() : nullptr;
-    const bool stateChanged = state != shownState_;
     shownState_ = state;
     shownBuild_ = build;
+    // The document's rollback bar.
+    int bar = -1;
+    if (state && state->rollback) {
+        for (std::size_t i = 0; i + 1 < state->features.size(); ++i) {
+            if (state->features[i].id == *state->rollback)
+                bar = static_cast<int>(i);
+        }
+    }
     std::vector<Row> rows;
     if (state) {
         std::map<FeatureId, const doc::FeatureReport*> reports;
@@ -277,7 +278,10 @@ void FeatureTreeModel::sync()
             row.suppressed = f.suppressed;
             row.sketch = f.type == "sketch";
             const auto it = reports.find(f.id);
-            if (f.suppressed) {
+            if (bar >= 0 && static_cast<int>(rows.size()) > bar) {
+                row.status = QStringLiteral("rolledBack");
+                row.statusText = trt("Rolled back");
+            } else if (f.suppressed) {
                 row.status = QStringLiteral("suppressed");
                 row.statusText = trt("Suppressed");
             } else if (it == reports.end()) {
@@ -321,9 +325,11 @@ void FeatureTreeModel::sync()
         endResetModel();
     }
     ++revision_;
-    if (rollback_ >= count() - 1 && rollback_ >= 0) {
-        rollback_ = -1;
+    if (bar != rollback_) {
+        rollback_ = bar;
         emit rollbackChanged();
+        if (!rows_.empty())
+            emit dataChanged(index(0), index(count() - 1), {RolledBackRole});
     }
     if (current_ >= count()) {
         current_ = -1;
@@ -331,8 +337,6 @@ void FeatureTreeModel::sync()
     }
     emit changed();
     updateSketchLines();
-    if (stateChanged && rollback_ >= 0)
-        updateRollbackView();
 }
 
 int FeatureTreeModel::rowCount(const QModelIndex& parent) const
@@ -509,6 +513,10 @@ bool FeatureTreeModel::edit(int row)
         setMessage(trt("An imported body has no properties to edit"));
         return false;
     }
+    if (rollback_ >= 0 && row > rollback_) {
+        setMessage(trt("%1 is rolled back: move the rollback bar below it to edit it").arg(r.name));
+        return false;
+    }
     return tool_ && tool_->edit(idText(id->value));
 }
 
@@ -634,67 +642,20 @@ void FeatureTreeModel::finishReorderCheck(doc::DocStatePtr state, doc::BuildResu
 }
 
 // ---------- rollback ----------
-void FeatureTreeModel::setRollback(int index)
+bool FeatureTreeModel::rollTo(int index)
 {
-    if (index < -1)
-        index = -1;
-    if (index >= count() - 1)
+    if (index < -1 || index >= count() - 1)
         index = -1;
     if (index == rollback_)
-        return;
-    rollback_ = index;
-    emit rollbackChanged();
-    if (!rows_.empty())
-        emit dataChanged(this->index(0), this->index(count() - 1), {RolledBackRole});
-    updateRollbackView();
-    updateSketchLines();
-}
-
-void FeatureTreeModel::setRollbackOverlaySuspended(bool suspended)
-{
-    if (suspended == rollbackSuspended_)
-        return;
-    rollbackSuspended_ = suspended;
-    updateRollbackView();
-}
-
-void FeatureTreeModel::updateRollbackView()
-{
-    rollbackJob_.cancel();
-    rollbackJob_ = {};
-    const std::uint64_t serial = ++rollbackSerial_;
-    doc::Document* d = liveDoc();
-    api::IApp* a = app();
-    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
-    if (rollback_ < 0 || rollbackSuspended_ || d == nullptr || a == nullptr || jobs == nullptr) {
-        rollbackOverlay_->clear();
-        return;
+        return false;
+    if (tool_ && tool_->active()) {
+        setMessage(trt("Close the feature panel before moving the rollback bar"));
+        return false;
     }
-    api::OpenDocument* od = document();
-    if (!sideRebuilder_ || sideRebuilderDoc_ != docId_) {
-        sideRebuilder_ = od ? api::feature_edit::makeSideRebuilder(*a, *od) : nullptr;
-        sideRebuilderDoc_ = docId_;
-    }
-    if (!sideRebuilder_)
-        return;
-    auto truncated = std::make_shared<doc::DocState>(*d->state());
-    if (truncated->features.size() > static_cast<std::size_t>(rollback_) + 1)
-        truncated->features.resize(static_cast<std::size_t>(rollback_) + 1);
-    const doc::DocStatePtr state = truncated;
-    auto rebuilder = sideRebuilder_;
-    rollbackJob_ = jobs->submit<doc::BuildResultPtr>(
-        JobInfo{"Rolled-back model", JobPriority::Interactive, false},
-        [rebuilder, state](JobContext& ctx) -> Result<doc::BuildResultPtr> { return rebuilder->rebuild(state, ctx); });
-    QPointer<FeatureTreeModel> self(this);
-    rollbackJob_.then([self, serial, state](Result<doc::BuildResultPtr> build) {
-        if (!self || serial != self->rollbackSerial_)
-            return;
-        self->rollbackJob_ = {};
-        if (!build || !*build || self->rollback_ < 0)
-            return;
-        render::MeshStyle style{render::Token::ModelFace, render::Token::ModelEdge, 1.0f, true, false};
-        self->rollbackOverlay_->show(api::viewer::bodiesFromDocument(*state, **build), {}, true, style);
-    });
+    QJsonObject args;
+    if (const auto id = featureAt(index))
+        args.insert(QStringLiteral("to"), idText(id->value));
+    return run(QStringLiteral("feature.rollback"), jsonText(args), index < 0 ? trt("Roll forward") : trt("Roll back"));
 }
 
 // ---------- sketches in the view ----------

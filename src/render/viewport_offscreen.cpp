@@ -101,6 +101,8 @@ public:
     std::optional<SectionPlane> section() const override { return front_->section(); }
     void setDraftAnalysis(std::optional<DraftAnalysis> d) override { front_->setDraftAnalysis(d); }
     std::optional<DraftAnalysis> draftAnalysis() const override { return front_->draftAnalysis(); }
+    void setPickMode(ItemId id, PickMode m) override { front_->setPickMode(id, m); }
+    PickMode pickMode(ItemId id) const override { return front_->pickMode(id); }
 
     // ----- IViewport -----
     ItemId addMesh(std::shared_ptr<const kernel::Mesh> m, const Xform& x, MeshStyle s) override

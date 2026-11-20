@@ -1,6 +1,6 @@
 // What the desktop feature tools and feature tree (src/ui/model, task T-098) need from doc beyond the actions,
-// without Qt: the closed regions of a sketch as the extrude and revolve features pick them, and a rebuilder for
-// showing the model rolled back to an earlier feature.
+// without Qt: the closed regions of a sketch as the extrude and revolve features pick them, numeric fields as the
+// rebuild reads them, and a side rebuilder.
 //
 // src/ui may link only api and render (PLAN.md 1.1), so it never calls doc's private helpers itself. Documents change
 // only through the actions (feature.<type>.add / .edit, feature.*, param.*); these helpers only read. Not one of the
@@ -35,8 +35,9 @@ Result<std::vector<Region>> regionsOf(const doc::DocState& state, const FeatureI
 Result<double> evaluate(const doc::DocState& state, std::string_view expression, bool angle);
 
 // A rebuilder that reads the same objects as the document's own (imported BREP objects, in memory or in its file),
-// with its own cache: for building a snapshot that is not the document's state, such as the history rolled back to an
-// earlier feature. Null when the document is unknown to `app`.
+// with its own cache: for building a snapshot that is not the document's state. (Rolling back no longer needs it:
+// the rollback bar is document state, DocState::rollback, built by the document's own rebuild.) Null when the
+// document is unknown to `app`.
 std::shared_ptr<doc::IRebuilder> makeSideRebuilder(IApp& app, const OpenDocument& document);
 
 } // namespace ray::api::feature_edit

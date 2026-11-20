@@ -1,6 +1,12 @@
 // The `Shortcuts` QML singleton (task T-021): the one keyboard-shortcut manager. It binds every command of the
-// catalog (palette_commands.h) to its key: ActionInfo::defaultShortcut unless the user's map says otherwise.
+// catalog (palette_commands.h) to its key: the default each command declares where it is registered
+// (ActionInfo::defaultShortcut for registry actions, UiCommand::shortcut for the UI's own, ui_commands.h) unless the
+// user's map says otherwise.
 //
+//   Contexts      Every command's key works in a context (ui_commands.h): Global everywhere, Model while no sketch
+//                 is edited, Sketch while one is. One key may serve one Model and one Sketch command; any other
+//                 sharing (two in one context, or one of them Global) is a conflict. The context now is
+//                 CommandCatalog::activeContext().
 //   Keys          A key press in the main window that matches a bound key runs the command (CommandCatalog::trigger),
 //                 unless a text field (TextInput, TextEdit) has the focus, the focused item claims the key itself
 //                 (it accepts the ShortcutOverride, as Qt's own shortcuts allow), or a key is being recorded.
@@ -24,7 +30,10 @@
 #include <QtCore/QVariantMap>
 #include <QtQml/QQmlEngine>
 
+#include "ui_commands.h"
+
 #include <map>
+#include <vector>
 
 class QKeyEvent;
 class QQuickWindow;
@@ -65,17 +74,20 @@ public:
     QString sequence(const QString& id) const;
     Q_INVOKABLE QString shortcutText(const QString& id) const;
     Q_INVOKABLE QString defaultShortcutText(const QString& id) const;
-    // The command bound to a key ("" for none).
+    // The command a key runs now, in the active context ("" for none).
     Q_INVOKABLE QString commandFor(const QString& sequence) const;
-    // Keys two commands are bound to at once (from an edited file, or clashing defaults): one line each.
+    // Keys two commands are bound to at once in one context (from an edited file, or clashing defaults): one line
+    // each.
     Q_INVOKABLE QStringList conflicts() const;
 
     // The settings panel's rows, filtered by title, category, id or key text (case-insensitive), sorted by category
-    // then title: { id, title, category, shortcut (native), sequence (portable), isDefault, defaultShortcut }.
+    // then title: { id, title, category, context ("" everywhere, "Model", "Sketch"; translated), shortcut (native),
+    // sequence (portable), isDefault, defaultShortcut }.
     Q_INVOKABLE QVariantList rows(const QString& filter = QString()) const;
 
     // Binds `sequence` (PortableText, "" to unbind) to the command. Result: { ok, conflictId, conflictTitle, message }.
-    // A key owned by another command is a conflict: nothing changes unless `replace`, which unbinds the other one.
+    // A key owned by another command of an overlapping context is a conflict: nothing changes unless `replace`,
+    // which unbinds the other one.
     Q_INVOKABLE QVariantMap assign(const QString& id, const QString& sequence, bool replace = false);
     Q_INVOKABLE QVariantMap reset(const QString& id, bool replace = false);
     Q_INVOKABLE void resetAll();
@@ -99,6 +111,7 @@ protected:
 private:
     struct Binding {
         QString title, category, defaultSequence;
+        CommandContext context = CommandContext::Global;
     };
     void ensure() const;
     void rebuild() const;
@@ -116,8 +129,8 @@ private:
     mutable QString dir_;
     mutable std::map<QString, QString> overrides_; // id -> PortableText ("" = no shortcut)
     mutable std::map<QString, Binding> commandsById_;
-    mutable std::map<QString, QString> effective_; // id -> PortableText, bound commands only
-    mutable std::map<QString, QString> byKey_;     // PortableText -> id (the first by id when two share it)
+    mutable std::map<QString, QString> effective_;          // id -> PortableText, bound commands only
+    mutable std::map<QString, std::vector<QString>> byKey_; // PortableText -> ids bound to it, by id
     mutable QStringList conflicts_;
 };
 

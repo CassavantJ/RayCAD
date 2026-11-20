@@ -22,6 +22,7 @@
 #include "session.h"
 #include "shortcuts.h"
 #include "theme_object.h"
+#include "ui_commands.h"
 #include "viewport_item.h"
 #include "viewport_navigation.h"
 
@@ -47,6 +48,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -410,13 +412,29 @@ TEST_CASE("every registered action appears in the palette; typing sav puts Save 
     PaletteModel& model = *w.model();
     const std::vector<api::ActionInfo> all = w.app()->actions().all();
     REQUIRE(all.size() > 15);
+    // A registry action that a UI command stands for (ui_commands.h, UiCommand::fronts) appears as that command.
+    std::map<QString, QString> frontedBy;
+    for (const ray::ui::UiCommand& u : ray::ui::allUiCommands()) {
+        for (const QString& id : QString::fromLatin1(u.fronts).split(QLatin1Char(' '), Qt::SkipEmptyParts))
+            frontedBy[id] = QString::fromLatin1(u.id);
+    }
+    CHECK(frontedBy.count(QStringLiteral("feature.extrude.add")) == 1);
     // An empty query lists everything.
-    CHECK(model.count() >= static_cast<int>(all.size()));
+    CHECK(model.count() >= static_cast<int>(all.size() - frontedBy.size()));
     for (const api::ActionInfo& a : all) {
-        const QString title = QString::fromStdString(a.title);
+        const QString id = QString::fromStdString(a.id);
         INFO("action " << a.id << " '" << a.title << "'");
+        if (const auto f = frontedBy.find(id); f != frontedBy.end()) {
+            const auto c = w.commands()->find(f->second);
+            REQUIRE(c.has_value());
+            w.search()->setProperty("text", c->title);
+            CHECK(model.indexOf(id) < 0); // listed once, as the UI command
+            CHECK(model.indexOf(f->second) >= 0);
+            continue;
+        }
+        const QString title = QString::fromStdString(a.title);
         w.search()->setProperty("text", title);
-        const int row = model.indexOf(QString::fromStdString(a.id));
+        const int row = model.indexOf(id);
         CHECK(row >= 0);
         CHECK(model.indexOfTitle(title) >= 0);
     }

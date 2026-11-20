@@ -129,20 +129,9 @@ Item {
             }
             Label {
                 objectName: "featurePickText"
-                width: root.fieldWidth - clearPicks.width - pickToggle.width - 2 * Theme.spacingXs
+                width: root.fieldWidth - clearPicks.width - Theme.spacingXs
                 anchors.verticalCenter: parent.verticalCenter
                 text: FeatureTool.pickText
-            }
-            ToolButton {
-                id: pickToggle
-                objectName: "featurePickToggle"
-                visible: root.blend
-                width: visible ? implicitWidth : 0
-                compact: true
-                iconName: "select"
-                checked: FeatureTool.picking
-                toolTipText: FeatureTool.picking ? qsTr("Done picking: show the preview") : qsTr("Pick edges in the view")
-                onClicked: FeatureTool.picking = !FeatureTool.picking
             }
             ToolButton {
                 id: clearPicks
@@ -253,8 +242,17 @@ Item {
                     label: qsTr("Body")
                     choices: FeatureTool.active ? root.bodyChoices() : []
                 }
-                FieldRow {
+                ChoiceRow {
                     visible: root.type === "extrude"
+                    key: "extent"
+                    label: qsTr("End")
+                    choices: [
+                        { value: "distance", text: qsTr("Distance") },
+                        { value: "through_all", text: qsTr("Through all") }
+                    ]
+                }
+                FieldRow {
+                    visible: root.type === "extrude" && root.values["extent"] !== "through_all"
                     key: "distance"
                     label: qsTr("Distance")
                 }
@@ -275,10 +273,12 @@ Item {
                     text: qsTr("Reverse direction")
                 }
                 SwitchRow {
+                    readonly property bool through: root.values["extent"] === "through_all"
                     visible: root.type === "extrude"
                     key: "symmetric"
-                    text: qsTr("Symmetric")
-                    toolTipText: qsTr("Half the distance to each side of the sketch")
+                    text: through ? qsTr("Both sides") : qsTr("Symmetric")
+                    toolTipText: through ? qsTr("Through the whole body on both sides of the sketch")
+                                         : qsTr("Half the distance to each side of the sketch")
                 }
                 FieldRow {
                     visible: root.type === "extrude"
@@ -435,7 +435,6 @@ Item {
                     font: Theme.smallFont
                     text: FeatureTool.previewStatus === "building" ? qsTr("Building the preview…")
                           : FeatureTool.previewStatus === "failed" ? qsTr("The preview shows the last values that built")
-                          : FeatureTool.picking ? qsTr("The preview is hidden while you pick")
                           : ""
                     visible: text !== ""
                 }

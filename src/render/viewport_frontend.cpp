@@ -340,6 +340,20 @@ void ViewportFrontend::setVisible(ItemId id, bool visible)
     }
 }
 
+void ViewportFrontend::setPickMode(ItemId id, PickMode mode)
+{
+    if (SceneItem* item = find(id); item && item->pickMode != mode) {
+        item->pickMode = mode;
+        changed(true, false); // the ID buffer holds other items now (and a hidden item's highlights may show)
+    }
+}
+
+PickMode ViewportFrontend::pickMode(ItemId id) const
+{
+    const auto it = items_.find(id);
+    return it == items_.end() ? PickMode::WhenVisible : it->second.pickMode;
+}
+
 void ViewportFrontend::remove(ItemId id)
 {
     if (items_.erase(id) > 0)

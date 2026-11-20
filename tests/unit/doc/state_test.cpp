@@ -214,6 +214,37 @@ TEST_CASE("an empty snapshot round-trips", "[doc][state]")
     CHECK(loaded->settings.material == ray::MaterialId{});
 }
 
+TEST_CASE("the rollback bar is stored only while it is set, and an older document reads as not rolled back",
+          "[doc][state][rollback]")
+{
+    const DocState plain = sample();
+    const StateObjects before = ray::doc::serializeState(plain);
+    CHECK_THAT(before.manifest, !ContainsSubstring("rollback")); // documents without it keep their bytes and hash
+
+    DocState rolled = sample();
+    rolled.rollback = rolled.features[1].id;
+    const StateObjects objects = ray::doc::serializeState(rolled);
+    CHECK_THAT(objects.manifest, ContainsSubstring(R"("rollback":"f0000000-0000-4000-8000-000000000002")"));
+    CHECK(rolled.stateHash() != plain.stateHash()); // undo and save see it as a change
+    const auto loaded = load(objects.manifest, objectsOf(objects));
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded->rollback.has_value());
+    CHECK(*loaded->rollback == rolled.features[1].id);
+    CHECK(loaded->stateHash() == rolled.stateHash());
+    CHECK(loaded->extraJson.empty());
+
+    // A bar on the last feature, or on no feature of the document, is the whole history.
+    for (const char* text : {"f0000000-0000-4000-8000-000000000003", "f0000000-0000-4000-8000-0000000000ff"}) {
+        const std::string manifest = withMembers(before.manifest, std::string(R"("rollback":")") + text + "\"");
+        const auto read = load(manifest, objectsOf(before));
+        REQUIRE(read.has_value());
+        CHECK_FALSE(read->rollback.has_value());
+    }
+    // Not an id: refused.
+    const auto bad = load(withMembers(before.manifest, R"("rollback":42)"), objectsOf(before));
+    CHECK_FALSE(bad.has_value());
+}
+
 TEST_CASE("every change shows in the hash", "[doc][state]")
 {
     const DocState base = sample();

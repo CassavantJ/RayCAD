@@ -7,6 +7,7 @@
 #include "../session.h"
 #include "../sketch/sketch_geom.h"
 #include "../sketch/sketch_mode.h"
+#include "../ui_commands.h"
 #include "../units.h"
 #include "../viewport_item.h"
 #include "../viewport_navigation.h"
@@ -28,6 +29,60 @@
 namespace ray::ui {
 
 using namespace modelui;
+
+namespace {
+// T-098: the feature tools and the feature tree (FeatureToolModel runs these). The tool keys work while no sketch
+// is edited.
+// clang-format off
+constexpr UiCommand kModelCommands[] = {
+    {"model.tool.extrude", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Extrude…"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Extrude panel: sketch regions into a new body, or joined to, cut from or intersected with one"), "E", CommandContext::Model, "feature.extrude.add"},
+    {"model.tool.revolve", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Revolve…"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Revolve panel: sketch regions turned about an axis"), "Shift+R", CommandContext::Model, "feature.revolve.add"},
+    {"model.tool.fillet", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Fillet…"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Fillet panel: rounds the edges picked in the view"), "Shift+G", CommandContext::Model, "feature.fillet.add"},
+    {"model.tool.chamfer", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Chamfer…"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Chamfer panel: bevels the edges picked in the view"), "Shift+B", CommandContext::Model, "feature.chamfer.add"},
+    {"model.tool.hole", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Hole…"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Hole panel: drilled, tapped, counterbored or countersunk holes at sketch points"), "Shift+H", CommandContext::Model, "feature.hole.add"},
+    {"model.tool.datumPlane", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Datum Plane…"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the Datum Plane panel: a plane offset from a principal plane, a datum or a face"), "Shift+D", CommandContext::Model, "feature.datum_plane.add"},
+    {"model.feature.edit", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Edit Feature"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the feature selected in the model tree for editing"), "", CommandContext::Global, "feature.edit"},
+    {"model.feature.rename", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rename Feature"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Renames the feature selected in the model tree"), "F2", CommandContext::Global, ""},
+    {"model.feature.suppress", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Suppress or Unsuppress Feature"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Switches the feature selected in the model tree off or on again"), "", CommandContext::Global, "feature.suppress"},
+    {"model.feature.delete", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Delete Feature"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Deletes the feature selected in the model tree"), "", CommandContext::Global, "feature.remove"},
+    {"model.rollback.here", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Roll Back to Here"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Builds the history only up to the feature selected in the model tree; new features go in after it"), "", CommandContext::Global, "feature.rollback"},
+    {"model.rollback.end", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Roll Forward to the End"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Builds the whole history again after a rollback"), "", CommandContext::Global, ""},
+    {"model.parameters", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Parameters"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Model"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows the parameter table in the model panel"), "", CommandContext::Global, ""},
+};
+// clang-format on
+
+} // namespace
+
+std::span<const UiCommand> modelUiCommands()
+{
+    return kModelCommands;
+}
 
 namespace {
 
@@ -134,12 +189,17 @@ std::optional<double> closestOnLine(Vec3 p, Vec3 d, const render::Ray& ray)
 FeatureToolModel::FeatureToolModel(SceneController* scene, SelectionModel* selection, Session* session,
                                    AppContext* context, QObject* parent)
     : QObject(parent), scene_(scene), selection_(selection), session_(session), context_(context),
-      overlay_(std::make_unique<BodyOverlay>(scene)), lines_(std::make_unique<LineOverlay>(scene))
+      lines_(std::make_unique<LineOverlay>(scene))
 {
     previewTimer_.setSingleShot(true);
     previewTimer_.setInterval(0);
     connect(&previewTimer_, &QTimer::timeout, this, [this] { startPreview(); });
-    connect(overlay_.get(), &BodyOverlay::shown, this, [this] { emit statusChanged(); });
+    if (scene_) {
+        connect(&scene_->preview(), &BodyOverlay::shown, this, [this] {
+            if (scene_ && scene_->preview().owner() == this)
+                emit statusChanged();
+        });
+    }
     if (session_) {
         connect(session_, &Session::documentChanged, this, [this] {
             if (!session_)
@@ -158,7 +218,7 @@ FeatureToolModel::FeatureToolModel(SceneController* scene, SelectionModel* selec
         connect(selection_, &SelectionModel::changed, this, [this] {
             if (!active())
                 return;
-            if (blendType(type_) && picking_)
+            if (blendType(type_))
                 applyEdges();
             if (type_ == QLatin1String("datum_plane") &&
                 values_.value(QStringLiteral("base")).toString() == QLatin1String("face"))
@@ -175,12 +235,29 @@ FeatureToolModel::~FeatureToolModel()
         for (const ToolType& t : kTools)
             commands_->setUiHandler(QStringLiteral("feature.%1.add").arg(QLatin1String(t.type)), {});
     }
-    sideJob_.cancel();
     if (doc::Document* d = liveDoc(); d != nullptr && active())
         d->cancelPreview();
-    overlay_.reset();
+    if (scene_)
+        scene_->preview().clear(this);
     lines_.reset();
     unsubscribe();
+}
+
+bool FeatureToolModel::picking() const
+{
+    return active() && blendType(type_);
+}
+
+const BodyOverlay& FeatureToolModel::overlay() const
+{
+    static BodyOverlay* const none = new BodyOverlay(nullptr); // without a scene: an empty slot (never freed)
+    return scene_ ? scene_->preview() : *none;
+}
+
+bool FeatureToolModel::previewBusy() const
+{
+    const bool meshing = scene_ && scene_->preview().owner() == this && scene_->preview().meshing();
+    return previewBusy_ || previewPending_ || meshing;
 }
 
 FeatureToolModel* FeatureToolModel::create(QQmlEngine* qml, QJSEngine*)
@@ -316,7 +393,7 @@ void FeatureToolModel::subscribe()
             self->onDocumentChanged();
     });
     previewListener_ = doc_->subscribePreview([self, generation](doc::DocStatePtr state, doc::BuildResultPtr build) {
-        if (self && self->docGeneration_ == generation && self->previewBusy_ && !self->previewSide_)
+        if (self && self->docGeneration_ == generation && self->previewBusy_)
             self->onPreviewBuilt(std::move(state), std::move(build));
     });
 }
@@ -333,8 +410,6 @@ void FeatureToolModel::unsubscribe()
     docListener_ = previewListener_ = 0;
     docId_.clear();
     ++docGeneration_;
-    sideRebuilder_.reset();
-    sideRebuilderDoc_.clear();
 }
 
 void FeatureToolModel::onDocumentChanged()
@@ -355,7 +430,7 @@ void FeatureToolModel::onDocumentChanged()
     // preview, which is built again on the new state. A rebuild of the same state finishing changes nothing here.
     if (d->state() == previewBase_)
         return;
-    if (previewBusy_ && !previewSide_)
+    if (previewBusy_)
         previewBusy_ = false;
     emit optionsChanged();
     schedulePreview();
@@ -387,7 +462,14 @@ QString FeatureToolModel::commandReason(const QString& id) const
     if (id == QLatin1String("model.parameters"))
         return {};
     if (id == QLatin1String("model.rollback.end"))
-        return tree_ && tree_->rollbackIndex() >= 0 ? QString() : trf("The model is not rolled back");
+        return od->document->state()->rollback ? QString() : trf("The model is not rolled back");
+    if (id == QLatin1String("model.rollback.here")) {
+        if (!tree_ || !tree_->currentFeatureId())
+            return trf("Select a feature in the model tree first");
+        return tree_->currentIndex() >= tree_->count() - 1 && !od->document->state()->rollback
+                   ? trf("It is the last feature: the whole history is built")
+                   : QString();
+    }
     if (id.startsWith(QLatin1String("model.feature."))) {
         if (!tree_ || !tree_->currentFeatureId())
             return trf("Select a feature in the model tree first");
@@ -424,11 +506,10 @@ bool FeatureToolModel::runCommand(const QString& id)
             emit tree_->parametersRequested();
         return true;
     }
-    if (id == QLatin1String("model.rollback.end")) {
-        if (tree_)
-            tree_->setRollback(-1);
-        return true;
-    }
+    if (id == QLatin1String("model.rollback.end"))
+        return tree_ && tree_->rollTo(-1);
+    if (id == QLatin1String("model.rollback.here"))
+        return tree_ && tree_->rollTo(tree_->currentIndex());
     if (id.startsWith(QLatin1String("model.feature.")) && tree_) {
         const int row = tree_->currentIndex();
         if (id == QLatin1String("model.feature.edit"))
@@ -503,6 +584,7 @@ void FeatureToolModel::open(const QString& type, std::optional<FeatureId> editId
     regionPicks_.clear();
     pointPicks_.clear();
     edges_ = QJsonArray();
+    storedEdges_ = QJsonArray();
     edgePoints_.clear();
     faceRef_ = QJsonObject();
     plane_.reset();
@@ -515,7 +597,6 @@ void FeatureToolModel::open(const QString& type, std::optional<FeatureId> editId
     previewStatus_.clear();
     committing_ = false;
     rejected_ = false;
-    picking_ = false;
     previewBusy_ = previewPending_ = false;
     previewBuilds_ = 0;
     offer_.clear();
@@ -534,22 +615,17 @@ void FeatureToolModel::open(const QString& type, std::optional<FeatureId> editId
             filterSaved_ = true;
             selection_->setFilterMask(static_cast<std::uint8_t>(render::PickFilter::Edges));
         }
-        // Edges selected before the tool opened are its edges; without any, the view's clicks pick them.
-        bool selectedEdges = false;
-        if (selection_) {
-            for (const SelectionEntry& e : selection_->entries())
-                selectedEdges = selectedEdges || (e.sub && e.sub->kind == kernel::SubKind::Edge);
-        }
-        picking_ = edges_.isEmpty() && !selectedEdges;
-        if (!editId_ && selectedEdges)
-            applyEdges();
+        // Edges selected before the tool opened are its edges (added to the stored ones when editing); the view's
+        // clicks add and remove edges from then on, with the preview shown.
+        storedEdges_ = edges_;
+        if (editId_ && selection_)
+            selection_->clear(); // the edit starts from the feature's own edges
+        applyEdges();
     } else if (type_ == QLatin1String("datum_plane") && selection_) {
         savedFilter_ = selection_->filterMask();
         filterSaved_ = true;
         selection_->setFilterMask(static_cast<std::uint8_t>(render::PickFilter::Faces));
     }
-    if (tree_ && !editId_ && tree_->rollbackIndex() >= 0)
-        tree_->setRollbackOverlaySuspended(true);
     emit activeChanged();
     emit valuesChanged();
     emit optionsChanged();
@@ -563,12 +639,11 @@ void FeatureToolModel::close()
 {
     const bool was = active();
     previewTimer_.stop();
-    sideJob_.cancel();
-    sideJob_ = {};
     ++previewSerial_;
-    if (doc::Document* d = liveDoc(); d != nullptr && was && !previewSide_)
+    if (doc::Document* d = liveDoc(); d != nullptr && was)
         d->cancelPreview();
-    overlay_->clear();
+    if (scene_)
+        scene_->preview().clear(this);
     lines_->clear();
     if (filterSaved_ && selection_)
         selection_->setFilterMask(savedFilter_);
@@ -581,13 +656,11 @@ void FeatureToolModel::close()
     messageField_.clear();
     previewStatus_.clear();
     committing_ = false;
-    picking_ = false;
-    previewBusy_ = previewPending_ = previewSide_ = false;
+    previewBusy_ = previewPending_ = false;
+    storedEdges_ = QJsonArray();
     dragKey_.clear();
-    if (tree_) {
+    if (tree_)
         tree_->setToolSketch(std::nullopt);
-        tree_->setRollbackOverlaySuspended(false);
-    }
     if (was) {
         emit activeChanged();
         emit valuesChanged();
@@ -635,6 +708,7 @@ void FeatureToolModel::defaults()
     values_[QStringLiteral("target")] = firstBody;
     values_[QStringLiteral("flip")] = false;
     if (type_ == QLatin1String("extrude")) {
+        values_[QStringLiteral("extent")] = QStringLiteral("distance");
         values_[QStringLiteral("distance")] = len;
         values_[QStringLiteral("symmetric")] = false;
         values_[QStringLiteral("draft")] = QString();
@@ -725,7 +799,10 @@ void FeatureToolModel::loadFeature(const doc::Feature& f)
             newBody_ = BodyId{Uuid::fromString(str("target").toStdString())};
     }
     if (type_ == QLatin1String("extrude")) {
-        values_[QStringLiteral("distance")] = storedText(p.value(QStringLiteral("distance")), false);
+        values_[QStringLiteral("extent")] =
+            str("extent") == QLatin1String("through_all") ? QStringLiteral("through_all") : QStringLiteral("distance");
+        if (p.contains(QStringLiteral("distance")))
+            values_[QStringLiteral("distance")] = storedText(p.value(QStringLiteral("distance")), false);
         values_[QStringLiteral("symmetric")] = p.value(QStringLiteral("symmetric")).toBool();
         values_[QStringLiteral("draft")] =
             p.contains(QStringLiteral("draft")) ? storedText(p.value(QStringLiteral("draft")), true) : QString();
@@ -927,7 +1004,7 @@ void FeatureToolModel::applyEdges()
     const std::uint64_t serial = ++edgeSerial_;
     if (wanted.empty()) {
         if (!face) {
-            edges_ = QJsonArray();
+            edges_ = storedEdges_;
             edgePoints_.clear();
             emit picksChanged();
             updateHandles();
@@ -958,10 +1035,10 @@ void FeatureToolModel::applyEdges()
             if (face) {
                 self->faceRef_ = (*refs)[0];
             } else {
-                QJsonArray edges;
+                QJsonArray edges = self->storedEdges_; // editing: the feature's own edges, then the picked ones
                 std::vector<Vec3> at;
                 for (std::size_t k = 0; k < refs->size(); ++k) {
-                    if (!(*refs)[k].isEmpty()) {
+                    if (!(*refs)[k].isEmpty() && !edges.contains((*refs)[k])) {
                         edges.append((*refs)[k]);
                         at.push_back(points[k]);
                     }
@@ -986,12 +1063,6 @@ void FeatureToolModel::setValue(const QString& key, const QVariant& value)
     values_[key] = value;
     if (key == QLatin1String("flip"))
         flipTouched_ = true;
-    // Giving the size ends the picking of edges (the preview shows again).
-    if (blendType(type_) && picking_ && pickCount() > 0 &&
-        (key == QLatin1String("radius") || key == QLatin1String("distance"))) {
-        picking_ = false;
-        emit picksChanged();
-    }
     if (key == QLatin1String("operation")) {
         // A cut from a sketch on a face goes into the body: against the face's outward normal.
         if (value.toString() == QLatin1String("cut") && !flipTouched_ && type_ == QLatin1String("extrude")) {
@@ -1040,30 +1111,15 @@ void FeatureToolModel::clearPicks()
     pointPicks_.clear();
     if (blendType(type_)) {
         edges_ = QJsonArray();
+        storedEdges_ = QJsonArray();
         edgePoints_.clear();
         if (selection_)
             selection_->clear();
-        setPicking(true);
     }
     emit picksChanged();
     updateHighlights();
     updateHandles();
     schedulePreview();
-}
-
-void FeatureToolModel::setPicking(bool on)
-{
-    if (picking_ == on || !blendType(type_))
-        return;
-    picking_ = on;
-    if (picking_) {
-        overlay_->clear(); // the original edges must be clickable
-        previewStatus_.clear();
-        emit statusChanged();
-    } else {
-        schedulePreview();
-    }
-    emit picksChanged();
 }
 
 QString FeatureToolModel::exprOf(const QString& key, bool angle) const
@@ -1138,7 +1194,10 @@ Result<std::string> FeatureToolModel::propsJson() const
         p.insert(QStringLiteral("direction"),
                  values_.value(QStringLiteral("flip")).toBool() ? QStringLiteral("reverse") : QStringLiteral("normal"));
         if (type_ == QLatin1String("extrude")) {
-            if (!setExpr(p, "distance", QStringLiteral("distance"), false))
+            // Through all stores the extent (the length comes from the body at every rebuild), never a distance.
+            if (values_.value(QStringLiteral("extent")).toString() == QLatin1String("through_all"))
+                p.insert(QStringLiteral("extent"), QStringLiteral("through_all"));
+            else if (!setExpr(p, "distance", QStringLiteral("distance"), false))
                 return fail(trf("'distance' is empty: give a length"));
             p.insert(QStringLiteral("symmetric"), values_.value(QStringLiteral("symmetric")).toBool());
             setExpr(p, "draft", QStringLiteral("draft"), true);
@@ -1255,11 +1314,17 @@ Result<std::string> FeatureToolModel::propsJson() const
     return jsonText(p);
 }
 
+// Where a new feature goes: right after the document's rollback bar (the add command puts it there), else the end.
 std::optional<std::size_t> FeatureToolModel::insertIndex() const
 {
-    if (editId_ || !tree_ || tree_->rollbackIndex() < 0)
+    doc::Document* d = liveDoc();
+    if (editId_ || d == nullptr)
         return std::nullopt;
-    return static_cast<std::size_t>(tree_->rollbackIndex() + 1);
+    const doc::DocStatePtr state = d->state();
+    if (!state->rollback)
+        return std::nullopt;
+    const std::ptrdiff_t at = featureIndex(*state, *state->rollback);
+    return at < 0 ? std::nullopt : std::optional<std::size_t>(static_cast<std::size_t>(at) + 1);
 }
 
 Result<doc::Command> FeatureToolModel::command() const
@@ -1282,9 +1347,8 @@ Result<doc::Command> FeatureToolModel::command() const
         c.name = "feature." + type + ".edit";
         c.label = title().toStdString();
     } else {
+        // No index: the document puts it at the end, or right after the rollback bar (moving the bar past it).
         args.insert(QStringLiteral("props"), propsObject);
-        if (const auto at = insertIndex())
-            args.insert(QStringLiteral("index"), static_cast<int>(*at));
         c.name = "feature." + type + ".add";
         c.label = title().toStdString();
     }
@@ -1316,7 +1380,7 @@ QString FeatureToolModel::fieldOfMessage(const QString& message) const
         {"'offset'", "offset"},           {"'tipAngle'", "tipAngle"}, {"counterbore", "cboreDiameter"},
         {"countersink", "csinkDiameter"}, {"'thread", "size"},        {"/props/distance", "distance"},
         {"/props/radius", "radius"},      {"/props/angle", "angle"},  {"/props/depth", "depth"},
-        {"/props/diameter", "diameter"},
+        {"/props/diameter", "diameter"},  {"'extent'", "extent"},
     };
     for (const auto& [needle, key] : fields) {
         if (message.contains(QLatin1String(needle)))
@@ -1331,7 +1395,7 @@ QString FeatureToolModel::fieldOfMessage(const QString& message) const
 
 void FeatureToolModel::startPreview()
 {
-    if (!active() || committing_ || (blendType(type_) && picking_))
+    if (!active() || committing_)
         return;
     doc::Document* d = liveDoc();
     api::IApp* a = app();
@@ -1346,61 +1410,22 @@ void FeatureToolModel::startPreview()
     if (!cmd) {
         rejected_ = true;
         setStatus(QString(), qs(cmd.error().message));
+        // A fillet or chamfer without edges previews nothing: the model as it is shows (its edges to pick).
+        if (blendType(type_) && edges_.isEmpty() && scene_)
+            scene_->preview().clear(this);
         return;
     }
     rejected_ = false;
     ++previewSerial_;
     previewBase_ = d->state();
-    const auto at = insertIndex();
-    if (!at) {
-        previewSide_ = false;
-        previewBusy_ = true;
-        setStatus(QStringLiteral("building"), QString());
-        d->beginPreview(*cmd);
-        if (const auto error = d->previewError()) {
-            previewBusy_ = false;
-            rejected_ = true;
-            setStatus(QStringLiteral("failed"), qs(error->message));
-        }
-        return;
-    }
-    // Rolled back: the history up to the new feature, rebuilt by a rebuilder of our own.
-    const doc::ICommandHandler* handler = a->commandTypes().find(cmd->name);
-    if (handler == nullptr)
-        return;
-    auto next = handler->apply(d->state(), cmd->argsJson);
-    if (!next) {
-        rejected_ = true;
-        setStatus(QStringLiteral("failed"), qs(next.error().message));
-        return;
-    }
-    auto truncated = std::make_shared<doc::DocState>(**next);
-    if (truncated->features.size() > *at + 1)
-        truncated->features.resize(*at + 1);
-    api::OpenDocument* od = document();
-    if (!sideRebuilder_ || sideRebuilderDoc_ != docId_) {
-        sideRebuilder_ = od ? api::feature_edit::makeSideRebuilder(*a, *od) : nullptr;
-        sideRebuilderDoc_ = docId_;
-    }
-    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
-    if (!sideRebuilder_ || jobs == nullptr)
-        return;
-    previewSide_ = true;
     previewBusy_ = true;
     setStatus(QStringLiteral("building"), QString());
-    const std::uint64_t serial = previewSerial_;
-    const doc::DocStatePtr state = truncated;
-    auto rebuilder = sideRebuilder_;
-    sideJob_ = jobs->submit<doc::BuildResultPtr>(
-        JobInfo{"Feature preview", JobPriority::Interactive, false},
-        [rebuilder, state](JobContext& ctx) -> Result<doc::BuildResultPtr> { return rebuilder->rebuild(state, ctx); });
-    QPointer<FeatureToolModel> self(this);
-    sideJob_.then([self, serial, state](Result<doc::BuildResultPtr> build) {
-        if (!self || serial != self->previewSerial_)
-            return;
-        self->sideJob_ = {};
-        self->onPreviewBuilt(state, build ? *build : nullptr);
-    });
+    d->beginPreview(*cmd);
+    if (const auto error = d->previewError()) {
+        previewBusy_ = false;
+        rejected_ = true;
+        setStatus(QStringLiteral("failed"), qs(error->message));
+    }
 }
 
 void FeatureToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPtr build)
@@ -1411,7 +1436,7 @@ void FeatureToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPt
         return;
     if (!state || !build) {
         doc::Document* d = liveDoc();
-        const auto error = d && !previewSide_ ? d->previewError() : std::nullopt;
+        const auto error = d ? d->previewError() : std::nullopt;
         setStatus(QStringLiteral("failed"), error ? qs(error->message) : trf("The preview could not be built"));
     } else {
         const auto report = std::find_if(build->reports.begin(), build->reports.end(),
@@ -1437,12 +1462,11 @@ void FeatureToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPt
 void FeatureToolModel::showPreview(const doc::DocState& state, const doc::BuildResult& build)
 {
     doc::Document* d = liveDoc();
-    if (d == nullptr || (blendType(type_) && picking_))
+    if (d == nullptr || !scene_)
         return;
     std::vector<api::viewer::Body> bodies = api::viewer::bodiesFromDocument(state, build);
     std::set<BodyId> hide;
-    const bool all = previewSide_;
-    if (!all) {
+    {
         const doc::BuildResultPtr current = d->build();
         std::vector<api::viewer::Body> changed;
         for (api::viewer::Body& b : bodies) {
@@ -1465,7 +1489,7 @@ void FeatureToolModel::showPreview(const doc::DocState& state, const doc::BuildR
         bodies = std::move(changed);
     }
     render::MeshStyle style{render::Token::ModelFace, render::Token::Accent, 1.0f, true, false};
-    overlay_->show(std::move(bodies), std::move(hide), all, style);
+    scene_->preview().show(this, std::move(bodies), std::move(hide), false, style);
     if (type_ == QLatin1String("datum_plane"))
         showDatumPlane(state, build);
 }
@@ -1527,7 +1551,6 @@ bool FeatureToolModel::commit()
     committing_ = true;
     emit statusChanged();
     previewTimer_.stop();
-    sideJob_.cancel();
     JobHandle<api::ActionResult> job = a->actions().invoke(cmd->name, cmd->argsJson, api::Caller::User);
     if (!job.valid()) {
         committing_ = false;
@@ -1545,9 +1568,6 @@ bool FeatureToolModel::commit()
             self->schedulePreview();
             return;
         }
-        // The new feature lands after the rollback bar, which moves past it.
-        if (self->tree_ && !self->editId_ && self->tree_->rollbackIndex() >= 0)
-            self->tree_->setRollback(self->tree_->rollbackIndex() + 1);
         self->close();
         emit self->committed(idText(id.value));
     });
@@ -1712,7 +1732,8 @@ QString FeatureToolModel::pickHint() const
     if (type_ == QLatin1String("hole"))
         return trf("Click points of the sketch in the view to pick them");
     if (blendType(type_))
-        return picking_ ? trf("Click edges in the view (Shift adds, Ctrl toggles)") : trf("Pick edges to change them");
+        return editing() ? trf("Click edges in the view to add them (Shift adds more, Ctrl toggles)")
+                         : trf("Click edges in the view (Shift adds, Ctrl toggles)");
     if (type_ == QLatin1String("datum_plane"))
         return trf("Select a planar face in the view");
     return {};
@@ -1914,8 +1935,9 @@ std::optional<Vec3> FeatureToolModel::handleBase(const QString& key, Vec3* dir) 
     if (!active())
         return std::nullopt;
     if (type_ == QLatin1String("extrude") && key == QLatin1String("distance")) {
-        if (!plane_ || regions_.empty())
-            return std::nullopt;
+        if (!plane_ || regions_.empty() ||
+            values_.value(QStringLiteral("extent")).toString() == QLatin1String("through_all"))
+            return std::nullopt; // through all has no length to drag
         // The centre of the picked regions' outlines (all regions when none is picked).
         Vec2 c{0, 0};
         int n = 0;
@@ -1956,7 +1978,7 @@ std::optional<Vec3> FeatureToolModel::handleBase(const QString& key, Vec3* dir) 
         return worldOf(*plane_, c);
     }
     if (blendType(type_) && (key == QLatin1String("radius") || key == QLatin1String("distance"))) {
-        if (edgePoints_.empty() || !scene_ || picking_)
+        if (edgePoints_.empty() || !scene_)
             return std::nullopt;
         const Vec3 at = edgePoints_.front();
         // Towards the middle of the body: the side the blend takes material from.

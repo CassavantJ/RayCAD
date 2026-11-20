@@ -1,9 +1,12 @@
 // The `Commands` QML singleton (task T-021): every command the keyboard, the command palette and the context menus
 // can run, and the one place that runs them.
 //
-// A command is either an action of the session's api::IActionRegistry (file.save, edit.undo, ...), or a view
-// command of the UI itself (view.fitAll, selection.clear, ui.commandPalette, ...: kUiCommands in the .cpp) for which
-// no action exists. When the registry has an action with a view command's id, the action wins.
+// A command is either an action of the session's api::IActionRegistry (file.save, edit.undo, ...), or a command of
+// the UI itself (view.fitAll, model.tool.extrude, sketch.tool.line, ...: ui_commands.h, each table declared in the
+// file that runs it, with its default key and context) for which no action exists. When the registry has an action
+// with a UI command's id, the action wins. A registry action that a UI command stands for (UiCommand::fronts, e.g.
+// feature.extrude.add behind model.tool.extrude) is left out of commands() and search(), so the palette shows each
+// command once; find() still finds it.
 //
 // Running (run / trigger): file actions go to Files first (AppContext::handleAction, T-019: native dialogs for a
 // path, the unsaved-changes prompt); other registry actions go through IActionRegistry::invoke as Caller::User, with
@@ -20,6 +23,7 @@
 #pragma once
 
 #include "app_context.h"
+#include "ui_commands.h"
 
 #include <ray/api.h>
 
@@ -53,6 +57,7 @@ struct Command {
     bool fromRegistry = false;
     bool longRunning = false;
     bool changesDocument = false;
+    CommandContext context = CommandContext::Global; // where its shortcut works (registry actions: everywhere)
 };
 
 class CommandCatalog : public QObject {
@@ -84,7 +89,7 @@ public:
     AppContext* context() const { return context_; }
 
     // ---- the commands ----
-    std::vector<Command> commands() const; // registry actions and view commands, by id
+    std::vector<Command> commands() const; // registry actions (not the fronted ones) and UI commands, by id
     std::optional<Command> find(const QString& id) const;
     // Best match first: the registry's ranking (IActionRegistry::search) with view commands merged in by how well
     // their title matches. Deterministic.
@@ -96,6 +101,10 @@ public:
     bool needsForm(const Command& command) const;
     // The user data folder of the session ("" without one: nothing is persisted).
     QString userDataDir() const;
+    // The context keyboard shortcuts work in now (ui_commands.h): what the probe says (the sketch mode installs one:
+    // Sketch while a sketch is being edited, else Model); Model without a probe.
+    CommandContext activeContext() const { return contextProbe_ ? contextProbe_() : CommandContext::Model; }
+    void setContextProbe(std::function<CommandContext()> probe) { contextProbe_ = std::move(probe); }
 
     // ---- QML ----
     // { id, title, category, description, shortcut (native text), enabled, reason, needsForm }; empty if unknown.
@@ -175,6 +184,7 @@ private:
     mutable bool usageLoaded_ = false;
     mutable std::map<QString, Usage> usage_;
     std::map<QString, UiHandler> handlers_; // by id prefix
+    std::function<CommandContext()> contextProbe_;
 };
 
 } // namespace ray::ui

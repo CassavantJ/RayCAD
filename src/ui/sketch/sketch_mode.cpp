@@ -6,6 +6,7 @@
 #include "../selection_model.h"
 #include "../session.h"
 #include "../theme_object.h"
+#include "../ui_commands.h"
 #include "../units.h"
 #include "../viewport_item.h"
 #include "../viewport_navigation.h"
@@ -24,6 +25,72 @@
 namespace ray::ui {
 
 namespace su = sketchui;
+
+namespace {
+// T-092: the sketch mode (SketchModel runs these; feature.sketch.add from the palette goes there too). The tool keys
+// work while a sketch is edited; Shift+S starts one from the model.
+// clang-format off
+constexpr UiCommand kSketchCommands[] = {
+    {"sketch.mode.new", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Starts a new sketch on a plane or a planar face"), "Shift+S", CommandContext::Model, "feature.sketch.add"},
+    {"sketch.mode.finish", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Finish Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Leaves the sketch being edited (every step is saved already)"), "Ctrl+Return", CommandContext::Sketch, ""},
+    {"sketch.tool.select", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Select in Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Selects and drags sketch points and curves"), "", CommandContext::Sketch, ""},
+    {"sketch.tool.point", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Point"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Places sketch points, such as hole positions; snaps to curves, midpoints and alignments"), "P", CommandContext::Sketch, ""},
+    {"sketch.tool.line", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Line"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws connected lines; type a length and angle"), "L", CommandContext::Sketch, ""},
+    {"sketch.tool.rectangle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rectangle"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a rectangle from two corners"), "R", CommandContext::Sketch, ""},
+    {"sketch.tool.circle", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Circle"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a circle from its centre and a point or a diameter"), "C", CommandContext::Sketch, ""},
+    {"sketch.tool.arc3", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Three-Point Arc"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws an arc through its start, its end and a point on it"), "A", CommandContext::Sketch, ""},
+    {"sketch.tool.arcCenter", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Centre Arc"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws an arc from its centre, start and end"), "Shift+A", CommandContext::Sketch, ""},
+    {"sketch.tool.arcTangent", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Tangent Arc"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws an arc that continues a line or arc smoothly"), "Shift+T", CommandContext::Sketch, ""},
+    {"sketch.tool.slot", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Slot"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a straight slot from its two centres and width"), "S", CommandContext::Sketch, ""},
+    {"sketch.tool.spline", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Spline"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Draws a smooth curve through control points"), "B", CommandContext::Sketch, ""},
+    {"sketch.tool.construction", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Construction Geometry"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Toggles construction for the selection, or for what is drawn next"), "X", CommandContext::Sketch, "sketch.construction"},
+    {"sketch.tool.trim", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Trim"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Removes the piece of a curve between crossings"), "T", CommandContext::Sketch, "sketch.trim"},
+    {"sketch.tool.extend", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Extend"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Grows a line or arc to the next curve"), "Shift+E", CommandContext::Sketch, "sketch.extend"},
+    {"sketch.tool.offset", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Offset"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Copies a chain of curves at a distance"), "O", CommandContext::Sketch, "sketch.offset"},
+    {"sketch.tool.fillet", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch Fillet"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rounds the corner of two lines"), "Shift+C", CommandContext::Sketch, "sketch.fillet"},
+};
+// clang-format on
+
+} // namespace
+
+std::span<const UiCommand> sketchUiCommands()
+{
+    return kSketchCommands;
+}
 
 namespace {
 
@@ -134,6 +201,7 @@ SketchModel::~SketchModel()
     if (commands_) {
         for (const char* prefix : {"sketch.tool.", "sketch.mode.", "feature.sketch.add"})
             commands_->setUiHandler(QString::fromLatin1(prefix), {});
+        commands_->setContextProbe({});
     }
     drag_.reset();
     unsubscribe();
@@ -188,6 +256,9 @@ void SketchModel::setCommands(CommandCatalog* commands)
                                             [self](const QString& id) { return self && self->runCommand(id); }};
     for (const char* prefix : {"sketch.tool.", "sketch.mode.", "feature.sketch.add"})
         commands_->setUiHandler(QString::fromLatin1(prefix), handler);
+    // Which shortcuts work: the sketch tools' while a sketch is edited, the model tools' otherwise (ui_commands.h).
+    commands_->setContextProbe(
+        [self] { return self && self->active() ? CommandContext::Sketch : CommandContext::Model; });
 }
 
 // ---------- document access ----------
@@ -1055,6 +1126,9 @@ QString SketchModel::hint() const
     switch (engine_.kind()) {
     case su::ToolKind::Select:
         return trs("Click to select, drag a point or curve to move it; Delete removes the selection");
+    case su::ToolKind::Point:
+        return trs("Click to place a point (on a curve, a midpoint or in line with another point it stays there), "
+                   "or type X and Y");
     case su::ToolKind::Line:
         return started ? trs("Click the next point, or type a length (Tab: angle, Enter: place). Esc ends the line")
                        : trs("Click where the line starts");

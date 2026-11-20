@@ -249,6 +249,82 @@ TEST_CASE("tangent arc from a line end, and the editing tools' commands", "[sket
     CHECK(offset.argsJson.find("\"distance\":2") != std::string::npos);
 }
 
+TEST_CASE("the point tool places free points with the constraints its snap infers", "[sketch][tools][point]")
+{
+    Rect r;
+    const SketchView view(r.s);
+    ToolEngine t;
+    t.setKind(ToolKind::Point);
+    CHECK(toolFromName("point") == ToolKind::Point);
+    CHECK(toolName(ToolKind::Point) == "point");
+    CHECK(!t.busy());
+
+    // Free, inside the rectangle (nothing to line up with): one point, no constraint.
+    t.hover(view, {13, 7}, 1.0, true);
+    CHECK(t.draft().points.size() == 1);
+    const Action free = t.click(view);
+    REQUIRE(free.kind == Action::Kind::Add);
+    REQUIRE(free.batch.entities.size() == 1);
+    const auto* p = std::get_if<sketch::Point>(&free.batch.entities[0].geom);
+    REQUIRE(p != nullptr);
+    CHECK(p->p.x == Approx(13));
+    CHECK(p->p.y == Approx(7));
+    CHECK(!free.batch.entities[0].construction);
+    CHECK(free.batch.constraints.empty());
+    CHECK(!t.busy()); // one click, one point
+
+    // On the bottom line: PointOnCurve with that line.
+    t.hover(view, {30, 0.4}, 1.0, true);
+    const Action onLine = t.click(view);
+    REQUIRE(onLine.kind == Action::Kind::Add);
+    REQUIRE(onLine.batch.constraints.size() == 1);
+    CHECK(onLine.batch.constraints[0].type == sketch::ConstraintType::PointOnCurve);
+    CHECK(onLine.batch.constraints[0].refs[1] == r.l[0]);
+
+    // At the middle of the top line: Midpoint.
+    t.hover(view, {20.3, 19.7}, 1.0, true);
+    const Action mid = t.click(view);
+    REQUIRE(mid.kind == Action::Kind::Add);
+    CHECK(count(mid.batch, sketch::ConstraintType::Midpoint) == 1);
+
+    // Lined up with a corner (outside the rectangle): Horizontal with it.
+    t.hover(view, {60, 19.6}, 1.0, true);
+    const Action aligned = t.click(view);
+    REQUIRE(aligned.kind == Action::Kind::Add);
+    CHECK(count(aligned.batch, sketch::ConstraintType::Horizontal) == 1);
+    const auto* q = std::get_if<sketch::Point>(&aligned.batch.entities[0].geom);
+    REQUIRE(q != nullptr);
+    CHECK(q->p.y == Approx(20));
+
+    // On an existing point: nothing (it is there already).
+    t.hover(view, {40.2, 0.2}, 1.0, true);
+    CHECK(t.click(view).kind == Action::Kind::None);
+
+    // Typed X and Y place it exactly; Enter commits.
+    const auto fields = t.fields();
+    REQUIRE(fields.size() == 2);
+    CHECK(fields[0].key == "x");
+    CHECK(fields[1].key == "y");
+    t.hover(view, {100, 100}, 1.0, true);
+    t.setTyped("x", 12.5);
+    t.setTyped("y", -3.0);
+    const Action typed = t.enter(view);
+    REQUIRE(typed.kind == Action::Kind::Add);
+    const auto* tp = std::get_if<sketch::Point>(&typed.batch.entities[0].geom);
+    REQUIRE(tp != nullptr);
+    CHECK(tp->p.x == Approx(12.5));
+    CHECK(tp->p.y == Approx(-3.0));
+    CHECK(typed.batch.constraints.empty());
+    CHECK(t.typed().empty());
+
+    // Construction on: a construction point.
+    t.setConstruction(true);
+    t.hover(view, {13, 9}, 1.0, true);
+    const Action c = t.click(view);
+    REQUIRE(c.kind == Action::Kind::Add);
+    CHECK(c.batch.entities[0].construction);
+}
+
 TEST_CASE("geometry helpers", "[sketch][tools]")
 {
     const auto c = circleThrough({1, 0}, {0, 1}, {-1, 0});

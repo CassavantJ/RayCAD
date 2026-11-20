@@ -36,6 +36,19 @@ QString native(const QString& portable)
     return QKeySequence::fromString(portable, QKeySequence::PortableText).toString(QKeySequence::NativeText);
 }
 
+QString contextName(CommandContext c)
+{
+    switch (c) {
+    case CommandContext::Model:
+        return QCoreApplication::translate("ray::ui::ShortcutManager", "Model");
+    case CommandContext::Sketch:
+        return QCoreApplication::translate("ray::ui::ShortcutManager", "Sketch");
+    case CommandContext::Global:
+        break;
+    }
+    return {};
+}
+
 } // namespace
 
 ShortcutManager::ShortcutManager(CommandCatalog* commands, QObject* parent) : QObject(parent), commands_(commands)
@@ -140,7 +153,7 @@ void ShortcutManager::rebuild() const
     conflicts_.clear();
     const std::vector<Command> commands = commands_ ? commands_->commands() : std::vector<Command>();
     for (const Command& c : commands) {
-        Binding b{c.title, c.category, normalize(c.defaultShortcut)};
+        Binding b{c.title, c.category, normalize(c.defaultShortcut), c.context};
         auto o = overrides_.find(c.id);
         const QString seq = o != overrides_.end() ? o->second : b.defaultSequence;
         commandsById_[c.id] = std::move(b);
@@ -149,13 +162,14 @@ void ShortcutManager::rebuild() const
         }
     }
     for (const auto& [id, seq] : effective_) {
-        auto taken = byKey_.find(seq);
-        if (taken == byKey_.end()) {
-            byKey_[seq] = id;
-        } else {
-            conflicts_ << tr("%1 is the shortcut of both %2 and %3")
-                              .arg(native(seq), commandsById_[taken->second].title, commandsById_[id].title);
+        std::vector<QString>& owners = byKey_[seq];
+        for (const QString& other : owners) {
+            if (contextsOverlap(commandsById_[other].context, commandsById_[id].context)) {
+                conflicts_ << tr("%1 is the shortcut of both %2 and %3")
+                                  .arg(native(seq), commandsById_[other].title, commandsById_[id].title);
+            }
         }
+        owners.push_back(id);
     }
     knownCommands_ = commands.size();
     dirty_ = false;
@@ -208,7 +222,17 @@ QString ShortcutManager::commandFor(const QString& seq) const
 {
     ensure();
     auto it = byKey_.find(normalize(seq));
-    return it == byKey_.end() ? QString() : it->second;
+    if (it == byKey_.end()) {
+        return {};
+    }
+    const CommandContext now = commands_ ? commands_->activeContext() : CommandContext::Model;
+    for (const QString& id : it->second) {
+        const CommandContext c = commandsById_.at(id).context;
+        if (c == CommandContext::Global || c == now) {
+            return id;
+        }
+    }
+    return {};
 }
 
 QStringList ShortcutManager::conflicts() const
@@ -247,6 +271,7 @@ QVariantList ShortcutManager::rows(const QString& filter) const
         out << QVariantMap{{QStringLiteral("id"), r.id},
                            {QStringLiteral("title"), r.b->title},
                            {QStringLiteral("category"), r.b->category},
+                           {QStringLiteral("context"), contextName(r.b->context)},
                            {QStringLiteral("shortcut"), native(r.seq)},
                            {QStringLiteral("sequence"), r.seq},
                            {QStringLiteral("isDefault"), r.seq == r.b->defaultSequence},
@@ -280,7 +305,7 @@ QVariantMap ShortcutManager::assign(const QString& id, const QString& seq, bool 
     if (!norm.isEmpty()) {
         std::vector<QString> owners;
         for (const auto& [other, s] : effective_) {
-            if (s == norm && other != id) {
+            if (s == norm && other != id && contextsOverlap(commandsById_.at(other).context, command->second.context)) {
                 owners.push_back(other);
             }
         }
@@ -379,8 +404,9 @@ bool ShortcutManager::handleKey(QKeyEvent* event)
         return false;
     }
     ensure();
-    auto bound = byKey_.find(seq);
-    if (bound == byKey_.end()) {
+    // The command of this key in the context that applies now (a sketch tool's key does nothing in the model).
+    const QString id = commandFor(seq);
+    if (id.isEmpty()) {
         return false;
     }
     // Typing in a text field is never a shortcut.
@@ -401,7 +427,6 @@ bool ShortcutManager::handleKey(QKeyEvent* event)
     if (event->isAutoRepeat()) {
         return true; // a held key runs the command once
     }
-    const QString id = bound->second;
     emit triggered(id, seq);
     if (commands_) {
         commands_->trigger(id);

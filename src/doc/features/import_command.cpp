@@ -8,6 +8,7 @@
 #include "import_props.h"
 
 #include "../commands/args.h"
+#include "../document_impl.h"
 
 #include <algorithm>
 #include <exception>
@@ -70,8 +71,8 @@ Result<DocStatePtr> applyImport(const DocState& before, std::string_view argsJso
     feature.type = std::string(kImportType);
     feature.name = std::move(*name);
     feature.propsJson = std::move(**propsJson);
-    const std::size_t at = index->value_or(next->features.size());
-    next->features.insert(next->features.begin() + static_cast<std::ptrdiff_t>(at), std::move(feature));
+    const std::size_t at = index->value_or(doc::detail::defaultInsertIndex(*next));
+    doc::detail::insertFeature(*next, at, std::move(feature));
     if (props->bodies) {
         for (const ImportBody& imported : *props->bodies) {
             Body body;

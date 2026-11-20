@@ -4,6 +4,7 @@
 #include "../palette_commands.h"
 #include "../scene_controller.h"
 #include "../theme_object.h"
+#include "../ui_commands.h"
 #include "../units.h"
 #include "sketch_mode.h"
 
@@ -25,6 +26,65 @@ namespace ray::ui {
 
 namespace su = sketchui;
 using sketch::ConstraintType;
+
+namespace {
+// T-093: constraints and dimensions (SketchConstraintsModel runs these); the keys work while a sketch is edited.
+// clang-format off
+constexpr UiCommand kConstraintCommands[] = {
+    {"sketch.constrain.dimension", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Smart Dimension"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Dimensions what is picked: length, distance, angle, radius or diameter"), "D", CommandContext::Sketch, ""},
+    {"sketch.constrain.coincident", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Coincident"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Joins two points, or puts a point on a curve"), "I", CommandContext::Sketch, ""},
+    {"sketch.constrain.horizontal", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Horizontal"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes lines, or two points, horizontal"), "H", CommandContext::Sketch, ""},
+    {"sketch.constrain.vertical", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Vertical"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes lines, or two points, vertical"), "V", CommandContext::Sketch, ""},
+    {"sketch.constrain.parallel", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Parallel"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes lines parallel"), "Shift+P", CommandContext::Sketch, ""},
+    {"sketch.constrain.perpendicular", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Perpendicular"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes two lines perpendicular"), "Shift+L", CommandContext::Sketch, ""},
+    {"sketch.constrain.tangent", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Tangent"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes an arc or circle tangent to a line, arc or circle"), "G", CommandContext::Sketch, ""},
+    {"sketch.constrain.equal", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Equal"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes lines the same length, or arcs and circles the same radius"), "Q", CommandContext::Sketch, ""},
+    {"sketch.constrain.midpoint", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Midpoint"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Puts a point at the middle of a line"), "Shift+M", CommandContext::Sketch, ""},
+    {"sketch.constrain.concentric", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Concentric"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Gives two arcs or circles the same centre"), "Shift+O", CommandContext::Sketch, ""},
+    {"sketch.constrain.collinear", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Collinear"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Puts two lines on one line"), "Shift+N", CommandContext::Sketch, ""},
+    {"sketch.constrain.symmetric", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Symmetric"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes two points symmetric about a line or a point"), "Shift+Y", CommandContext::Sketch, ""},
+    {"sketch.constrain.fix", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Fix"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Holds points or curves where they are"), "Shift+K", CommandContext::Sketch, ""},
+    {"sketch.constrain.driven", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Driven Dimension"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Makes the selected dimension driven (a reference) or driving again"), "", CommandContext::Sketch, ""},
+    {"sketch.constrain.delete", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Delete Constraint"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Sketch"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Deletes the selected constraint or dimension"), "", CommandContext::Sketch, "sketch.constraint.remove"},
+};
+// clang-format on
+
+} // namespace
+
+std::span<const UiCommand> constraintUiCommands()
+{
+    return kConstraintCommands;
+}
 
 namespace {
 
