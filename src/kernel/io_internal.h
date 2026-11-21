@@ -181,4 +181,22 @@ Status checkReadable(const std::filesystem::path& path, std::string_view where);
 // TODO(T-006): tessellate and triangulateExact must take this same lock; move it into the mesh code then.
 std::mutex& processMeshMutex();
 
+// The thread team for one BRepMesh call at `chordTol` (mesh.cpp MEMORY CAP) on OCCT's default pool, set for the life
+// of the object and put back to the previous value when it is destroyed. Construct it OUTSIDE guarded(), after taking
+// the mesh lock: a structured exception skips the destructors of objects inside guarded(), and the setting is
+// process-wide (only mesh calls use the pool, PLAN.md section 7 rule 4). Never throws; if the pool cannot be read,
+// nothing is set and team() is 1.
+class MeshTeamScope {
+public:
+    explicit MeshTeamScope(double chordTol) noexcept;
+    ~MeshTeamScope();
+    MeshTeamScope(const MeshTeamScope&) = delete;
+    MeshTeamScope& operator=(const MeshTeamScope&) = delete;
+    int team() const noexcept { return team_; }
+
+private:
+    int team_ = 1;
+    int previous_ = -1; // -1: nothing was set
+};
+
 } // namespace ray::kernel::detail
