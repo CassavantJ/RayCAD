@@ -28,8 +28,10 @@ add_test(NAME ray_render_frame_stats COMMAND ray_render_tests "[stats]")
 add_test(NAME ray_render_pick_latency COMMAND ray_render_tests "[latency]")
 add_test(NAME ray_render_cost COMMAND ray_render_tests "[cost]")
 foreach(_t ray_render_tests ray_render_frame_stats ray_render_pick_latency ray_render_cost)
-    # About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s.
-    set_tests_properties(${_t} PROPERTIES TIMEOUT 900)
+    # About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s. Where no graphics API
+    # can be created every viewport test skips, and Catch2 exits with 4 when all of a run's test cases did (the
+    # three measurement tests on their own): CTest reports that as skipped, as for the Qt Quick tests.
+    set_tests_properties(${_t} PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
     # ray_render links Qt (Core and Gui), so the test needs the Qt DLL folder on Windows, and the vcpkg folder for the
     # delay-loaded OCCT toolkits of ray_kernel.
     ray_test_runtime_path(${_t} QT)
