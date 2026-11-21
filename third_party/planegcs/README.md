@@ -54,5 +54,7 @@ does. On Linux it links `Threads::Threads` (`GCS::System::diagnose` uses `std::a
 
 `src/sketch/solver_iterate.cpp` and `.h` (LGPL-2.1-or-later, upstream attribution in the file header) contain code
 adapted from `GCS.cpp` and `qp_eq.cpp`: the partition of `System::initSolution`, the DogLeg loop of `System::solve_DL`
-(with a cancellation check) and the drag iteration of `System::solve(SubSystem*, SubSystem*)` with sparse linear
-algebra (spike S11). Listed in `THIRD_PARTY.md`.
+(with a cancellation check, and a sparse Jacobian and Gauss step for large components) and the drag iteration of
+`System::solve(SubSystem*, SubSystem*)` with sparse linear algebra (spike S11). `src/sketch/solver_diagnose.cpp` and `.h`
+(same licence and attribution) adapt `System::diagnose`, its QR decompositions and its redundancy heuristic, run per
+decoupled component. Listed in `THIRD_PARTY.md`.

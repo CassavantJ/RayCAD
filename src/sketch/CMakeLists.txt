@@ -5,6 +5,7 @@ add_library(ray_sketch STATIC
     solver_internal.h solver_system.h solver.cpp
     solver_translate.h solver_translate.cpp
     solver_iterate.h solver_iterate.cpp
+    solver_diagnose.h solver_diagnose.cpp
     solver_drag.h solver_drag.cpp
     loops.h loops.cpp loops_curves.h loops_curves.cpp
     infer.cpp

@@ -53,6 +53,9 @@ TEST_CASE("100 runs give the same bits", "[sketch][determinism]")
 
 TEST_CASE("The cancellable iteration gives the same bits as PlaneGCS's System::solve", "[sketch][determinism]")
 {
+    // The dense path (every component below the size switch, here forced for the 2-row grids, whose one component
+    // has about 300 unknowns): per-component diagnosis and DogLeg give PlaneGCS's bits. The sparse path is compared
+    // with PlaneGCS in solver_scale_test.cpp.
     const std::vector<std::pair<int, GridVariant>> cases = {{1, GridVariant::Nearly}, {1, GridVariant::Loose},
                                                             {2, GridVariant::Nearly}, {2, GridVariant::Redundant},
                                                             {2, GridVariant::Fully},  {1, GridVariant::Decoupled}};
@@ -60,7 +63,9 @@ TEST_CASE("The cancellable iteration gives the same bits as PlaneGCS's System::s
         INFO("rows " << rows << ", variant " << static_cast<int>(variant));
         const Grid g = makeGrid(rows, variant, 0.3);
         JobContext ctx;
-        const SolveResult ours = take(sketch::detail::solveSketch(g.sketch, ctx));
+        sketch::detail::SolveOptions dense;
+        dense.denseLimit = 1 << 30;
+        const SolveResult ours = take(sketch::detail::solveSketch(g.sketch, ctx, dense));
         sketch::detail::SolveOptions pg;
         pg.planeGcsSolve = true;
         const SolveResult theirs = take(sketch::detail::solveSketch(g.sketch, ctx, pg));

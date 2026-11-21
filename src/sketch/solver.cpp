@@ -1,6 +1,7 @@
 // The PlaneGCS sketch solver (task T-090): ISketchSolver, full solve with diagnosis. See solver_internal.h.
 #include "solver_internal.h"
 
+#include "solver_diagnose.h"
 #include "solver_iterate.h"
 #include "solver_system.h"
 #include "solver_translate.h"
@@ -84,55 +85,72 @@ Result<SolveResult> solveSketch(const Sketch& sketch, JobContext& ctx, const Sol
         !st) {
         return tl::unexpected(st.error());
     }
-    sys->declareUnknowns(m.unknowns);
+    if (options.planeGcsSolve) {
+        sys->declareUnknowns(m.unknowns);
+    }
     ctx.progress.set(0.05, "Analysing constraints");
     if (ctx.cancel.cancelled()) {
         return tl::unexpected(cancelledError());
     }
 
-    // Diagnosis: PlaneGCS's own; it cannot be interrupted. Through initSolution, as FreeCAD does: it stores the
-    // reference configuration first, so the solve diagnose() runs when constraints are redundant is undone afterwards
-    // (diagnose() on its own would leave the parameters at that solve's result).
-    sys->initSolution();
-    const int dofs = sys->dofsNumber();
-    if (ctx.cancel.cancelled()) {
-        return tl::unexpected(cancelledError());
-    }
-    ctx.progress.set(0.5, "Solving");
-
-    GCS::VEC_I conflicting, redundant, partial;
-    sys->getConflicting(conflicting);
-    sys->getRedundant(redundant);
-    sys->getPartiallyRedundant(partial);
     SolveResult r;
-    r.freeDof = std::max(dofs, 0);
-    r.conflicting = tagIds(m, conflicting);
-    r.redundant = tagIds(m, redundant);
-    r.partiallyRedundant = tagIds(m, partial);
-    if (!r.conflicting.empty()) {
-        r.status = SolveStatus::Conflicting;
-        r.solved = m.sketch;
-        ctx.progress.set(1.0);
-        return r;
-    }
-
+    int dofs = 0;
     int res = GCS::Failed;
-    std::unique_ptr<Prepared> prep;
-    if (options.planeGcsSolve || !partial.empty()) {
+    if (options.planeGcsSolve) {
+        // PlaneGCS's own diagnosis and solve (the reference in tests). Through initSolution, as FreeCAD does: it
+        // stores the reference configuration first, so the solve diagnose() runs when constraints are redundant is
+        // undone afterwards. Neither can be interrupted.
+        sys->initSolution();
+        dofs = sys->dofsNumber();
+        GCS::VEC_I conflicting, redundant, partial;
+        sys->getConflicting(conflicting);
+        sys->getRedundant(redundant);
+        sys->getPartiallyRedundant(partial);
+        r.freeDof = std::max(dofs, 0);
+        r.conflicting = tagIds(m, conflicting);
+        r.redundant = tagIds(m, redundant);
+        r.partiallyRedundant = tagIds(m, partial);
+        if (!r.conflicting.empty()) {
+            r.status = SolveStatus::Conflicting;
+            r.solved = m.sketch;
+            ctx.progress.set(1.0);
+            return r;
+        }
+        ctx.progress.set(0.5, "Solving");
         res = sys->solve(); // starts from the reference initSolution stored: the input
         if (res == GCS::Success || res == GCS::Converged) {
             sys->applySolution();
         }
     } else {
-        // The objects GCS::System::initSolution leaves out: those of fully redundant tags (with no partially
-        // redundant tag, these are exactly the objects diagnose() set aside).
-        const std::set<int> redundantTags(redundant.begin(), redundant.end());
-        std::vector<GCS::Constraint*> kept, setAside;
-        for (GCS::Constraint* c : objects) {
-            (redundantTags.count(c->getTag()) ? setAside : kept).push_back(c);
+        // GCS::System::diagnose per decoupled component (solver_diagnose.h); it leaves the input values in place.
+        auto diagnosis = diagnose(m.unknowns, objects, *sys, &ctx.cancel, options.denseLimit);
+
+        if (!diagnosis) {
+            return tl::unexpected(diagnosis.error());
         }
-        prep = prepare(m.unknowns, kept);
-        res = solvePrepared(*prep, *sys, &ctx.cancel);
+        dofs = diagnosis->dofs;
+
+        r.freeDof = std::max(dofs, 0);
+        r.conflicting = tagIds(m, diagnosis->conflictingTags);
+        r.redundant = tagIds(m, diagnosis->redundantTags);
+        r.partiallyRedundant = tagIds(m, diagnosis->partiallyRedundantTags);
+        if (!r.conflicting.empty()) {
+            r.status = SolveStatus::Conflicting;
+            r.solved = m.sketch;
+            ctx.progress.set(1.0);
+            return r;
+        }
+        if (ctx.cancel.cancelled()) {
+            return tl::unexpected(cancelledError());
+        }
+        ctx.progress.set(0.5, "Solving");
+        // GCS::System::initSolution's partition and System::solve over every object the diagnosis did not set aside.
+        std::vector<GCS::Constraint*> kept, setAside;
+        for (std::size_t k = 0; k < objects.size(); ++k) {
+            (diagnosis->setAside[k] ? setAside : kept).push_back(objects[k]);
+        }
+        const std::unique_ptr<Prepared> prep = prepare(m.unknowns, kept);
+        res = solvePrepared(*prep, *sys, &ctx.cancel, options.denseLimit);
         if (res == kSolveCancelled) {
             return tl::unexpected(cancelledError());
         }
