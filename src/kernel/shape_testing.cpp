@@ -33,6 +33,7 @@
 
 #include <cmath>
 #include <ios>
+#include <limits>
 #include <locale>
 #include <sstream>
 #include <string>
@@ -289,6 +290,16 @@ SliverMergeOff::SliverMergeOff()
 SliverMergeOff::~SliverMergeOff()
 {
     detail::sliverMergeOffCount().fetch_sub(1, std::memory_order_relaxed);
+}
+
+std::uint64_t validationDisagreements() noexcept
+{
+    return detail::validationDisagreementCount().load(std::memory_order_relaxed);
+}
+
+void markValidated(const Shape& shape) noexcept
+{
+    detail::markValidated(shape, std::numeric_limits<double>::quiet_NaN());
 }
 
 std::uint64_t structuredExceptions() noexcept

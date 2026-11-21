@@ -521,30 +521,37 @@ TEST_CASE("an invalid body from OCCT is refused, never returned", "[kernel][blen
         const char* file;
         bool isFillet;
     };
-    for (const Case& c :
-         {Case{"fixture_plate_1.stp", true}, Case{"fixture_plate_1.stp", false}, Case{"thin_wall_box_3.stp", false}}) {
-        INFO(c.file << (c.isFillet ? " fillet" : " chamfer"));
-        JobContext ctx;
-        const std::string path = std::string(RAY_CORPUS_DIR) + "/raycad-synthetic/" + c.file;
-        const ImportResult imported = take(importStep(path, ImportOptions{}, ctx));
-        REQUIRE(imported.bodies.size() == 1);
-        const Shape& part = imported.bodies[0].shape;
-        const SubId edge{SubKind::Edge, 0};
-        auto result = c.isFillet ? fillet(part, {&edge, 1}, 2.5, ctx) : chamfer(part, {&edge, 1}, 2.5, ctx);
-        REQUIRE_FALSE(result.has_value());
-        INFO(result.error().message);
-        CHECK(result.error().code == ErrorCode::KernelFailure);
-        bool rejectedByCheck = false;
-        for (const std::string& line : result.error().context)
-            rejectedByCheck = rejectedByCheck || line.find("invalid solid (BRepCheck)") != std::string::npos;
-        CHECK(rejectedByCheck);
-        const double works = quotedSize(result.error().message);
-        REQUIRE(works > 0.0);
-        auto retry = c.isFillet ? fillet(part, {&edge, 1}, works, ctx) : chamfer(part, {&edge, 1}, works, ctx);
-        REQUIRE(retry.has_value());
-        checkValid(*retry);
-        checkBlendHistory(*retry, part, {edge});
-    }
+    // Imported bodies are not marked validated, so the blend checks its whole result; on a validated input it checks
+    // only the faces it changed (boolean_internal.h INCREMENTAL CHECK). Both must refuse the same way and agree on the
+    // size that works.
+    for (const bool incremental : {false, true})
+        for (const Case& c : {Case{"fixture_plate_1.stp", true}, Case{"fixture_plate_1.stp", false},
+                              Case{"thin_wall_box_3.stp", false}}) {
+            INFO(c.file << (c.isFillet ? " fillet" : " chamfer")
+                        << (incremental ? ", input marked validated" : ", input not validated"));
+            JobContext ctx;
+            const std::string path = std::string(RAY_CORPUS_DIR) + "/raycad-synthetic/" + c.file;
+            const ImportResult imported = take(importStep(path, ImportOptions{}, ctx));
+            REQUIRE(imported.bodies.size() == 1);
+            const Shape& part = imported.bodies[0].shape;
+            if (incremental)
+                testing::markValidated(part);
+            const SubId edge{SubKind::Edge, 0};
+            auto result = c.isFillet ? fillet(part, {&edge, 1}, 2.5, ctx) : chamfer(part, {&edge, 1}, 2.5, ctx);
+            REQUIRE_FALSE(result.has_value());
+            INFO(result.error().message);
+            CHECK(result.error().code == ErrorCode::KernelFailure);
+            bool rejectedByCheck = false;
+            for (const std::string& line : result.error().context)
+                rejectedByCheck = rejectedByCheck || line.find("invalid solid (BRepCheck)") != std::string::npos;
+            CHECK(rejectedByCheck);
+            const double works = quotedSize(result.error().message);
+            REQUIRE(works > 0.0);
+            auto retry = c.isFillet ? fillet(part, {&edge, 1}, works, ctx) : chamfer(part, {&edge, 1}, works, ctx);
+            REQUIRE(retry.has_value());
+            checkValid(*retry);
+            checkBlendHistory(*retry, part, {edge});
+        }
 }
 
 namespace {

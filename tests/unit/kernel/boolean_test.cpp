@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -592,6 +594,46 @@ std::vector<unsigned char> pipeline()
 }
 
 } // namespace
+
+TEST_CASE("the result check of a chain of operations agrees with a full BRepCheck", "[kernel][boolean][blend]")
+{
+    // Every result of the kernel is marked validated, so the next operation on it checks only the faces it changed
+    // (boolean_internal.h INCREMENTAL CHECK). RAYCAD_KERNEL_VALIDATE_BOTH makes the kernel run the full check too and
+    // count disagreements.
+#if defined(_WIN32)
+    _putenv_s("RAYCAD_KERNEL_VALIDATE_BOTH", "1");
+#else
+    setenv("RAYCAD_KERNEL_VALIDATE_BOTH", "1", 1);
+#endif
+    const std::uint64_t before = testing::validationDisagreements();
+    Shape body = box({0, 0, 0}, {100, 60, 20});
+    JobContext ctx;
+    for (int i = 0; i < 6; ++i) {
+        const double x = 10.0 + 14.0 * i;
+        body = take(boolean(BoolOp::Cut, body, cylinder({x, 20, -5}, {0, 0, 1}, 4.0, 30.0), ctx)).shape;
+        body = take(boolean(BoolOp::Cut, body, box({x - 5, 35, 12}, {x + 5, 70, 25}), ctx)).shape;
+        body = take(boolean(BoolOp::Union, body, box({x - 2, -10, 0}, {x + 2, 0, 8}), ctx)).shape;
+        CHECK(take(testing::isValidShape(body)));
+    }
+    // Blends on the result, including sizes OCCT cannot build (the size search makes invalid trial results).
+    for (std::uint32_t e = 0; e < body.count(SubKind::Edge); e += 37) {
+        const SubId edge{SubKind::Edge, e};
+        for (const double size : {0.5, 3.0, 12.0}) {
+            auto filleted = fillet(body, {&edge, 1}, size, ctx);
+            auto chamfered = chamfer(body, {&edge, 1}, size, ctx);
+            if (filleted)
+                CHECK(take(testing::isValidShape(filleted->shape)));
+            if (chamfered)
+                CHECK(take(testing::isValidShape(chamfered->shape)));
+        }
+    }
+#if defined(_WIN32)
+    _putenv_s("RAYCAD_KERNEL_VALIDATE_BOTH", "");
+#else
+    unsetenv("RAYCAD_KERNEL_VALIDATE_BOTH");
+#endif
+    CHECK(testing::validationDisagreements() == before);
+}
 
 TEST_CASE("sweeps and booleans are deterministic over repeated runs and 8 threads", "[kernel][boolean][threads]")
 {

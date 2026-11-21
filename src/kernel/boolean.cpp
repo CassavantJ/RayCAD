@@ -5,7 +5,9 @@
 // immutable shapes), then SimplifyResult() so coplanar and co-cylindrical pieces are unified and the history of
 // that unification is folded into the maker's history (spike S4). OCCT's own status is not trusted (section 7
 // rule 6), so the result is checked:
-//   1. not empty; every face inside a solid; BRepCheck finds no fault; every shell closed; every volume positive;
+//   1. not empty; every face inside a solid; BRepCheck finds no fault; every shell closed; every volume positive
+//      (when both inputs passed these checks, the faces of theirs the result keeps untouched are not given to
+//      BRepCheck again: boolean_internal.h INCREMENTAL CHECK; an input's volume is measured once per Shape);
 //   2. not a no-op: the volume changed (beyond 1e-12 relative), and some face of the result comes from the tool
 //      (removing or adding material always leaves tool faces on the boundary);
 //   3. the volume moved the expected way: a cut shrinks the target, a union grows it by at most the tool, an
@@ -215,7 +217,13 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     const TopoDS_Shape solids = detail::normaliseSolids(maker.Shape());
     if (solids.IsNull())
         return {tl::unexpected(kernelFailure(emptyMessage(op), where))};
-    auto checked = detail::validateSolids(solids, words.subject, where);
+    // Faces of the inputs the result keeps untouched are not checked again when both inputs passed validation
+    // (boolean_internal.h INCREMENTAL CHECK).
+    const std::array<const Shape*, 2> originals{&target, &tool};
+    const std::array<TopoDS_Shape, 2> copies{detail::occt(targetCopy->shape), detail::occt(toolCopy->shape)};
+    const std::span<const TopoDS_Shape> unchangedFrom =
+        detail::allValidated(originals) ? std::span<const TopoDS_Shape>(copies) : std::span<const TopoDS_Shape>();
+    auto checked = detail::validateSolids(solids, words.subject, where, unchangedFrom);
     if (!checked) {
         Error error = kernelFailure(invalidMessage(op), where);
         error.context.insert(error.context.begin(), checked.error().message);
@@ -225,6 +233,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
 
     OpResult out;
     out.shape = detail::wrap(solids);
+    detail::markValidated(out.shape, volume);
     const std::array<const Shape*, 2> inputs{&targetCopy->shape, &toolCopy->shape};
     out.history = detail::buildHistory(maker, inputs, out.shape);
     for (int input = 0; input < 2; ++input)
@@ -320,8 +329,8 @@ Result<OpResult> boolean(BoolOp op, const Shape& target, const Shape& tool, JobC
     if (auto ok = ctx.cancel.check(); !ok)
         return tl::unexpected(detail::cancelledError(where));
     return detail::guarded(where, [&]() -> Result<OpResult> {
-        const double targetVolume = detail::solidVolume(detail::occt(target));
-        const double toolVolume = detail::solidVolume(detail::occt(tool));
+        const double targetVolume = detail::volumeOf(target);
+        const double toolVolume = detail::volumeOf(tool);
         if (!(targetVolume > 0.0) || !(toolVolume > 0.0))
             return tl::unexpected(kernelFailure("A body without volume cannot take part in a boolean.", where));
         Attempt exact = attemptBoth(op, target, tool, 0.0, targetVolume, toolVolume, ctx, where);

@@ -16,7 +16,9 @@
 #include <gp_XYZ.hxx>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -77,6 +79,14 @@ struct Shape::Impl {
 
     // BLAKE3 of serialize(); computed once. Never throws.
     Hash256 contentHash() const;
+
+    // Facts the kernel established about the stored shape; they describe it and never change it, so setting them on
+    // a shared Shape is safe (atomics). `validated`: the shape passed validateSolids or checkedValid (the structural
+    // pre-check and BRepCheck), so an operation whose result keeps some of its faces unchanged need not check those
+    // faces again (boolean_internal.h validateSolids). `volume`: the summed volume of its solids, once measured
+    // (NaN until then), so the next operation on it does not integrate it again (detail::volumeOf).
+    mutable std::atomic<bool> validated{false};
+    mutable std::atomic<double> volume{std::numeric_limits<double>::quiet_NaN()};
 
 private:
     mutable std::array<std::once_flag, detail::kSubKindCount * detail::kSubKindCount> ancestorOnce_;

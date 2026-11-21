@@ -167,7 +167,9 @@ Result<Shape> checkedSolid(const TopoDS_Shape& built, std::string_view where)
     if (built.IsNull() || built.ShapeType() != TopAbs_SOLID || !BRepCheck_Analyzer(built).IsValid())
         return tl::unexpected(
             detail::makeError(ErrorCode::KernelFailure, "The geometry kernel built an invalid solid.", where));
-    return detail::wrap(built);
+    Shape out = detail::wrap(built);
+    out.impl->validated.store(true, std::memory_order_relaxed); // BRepCheck passed (Shape::Impl::validated)
+    return out;
 }
 
 } // namespace

@@ -6,22 +6,30 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepCheck_Shell.hxx>
+#include <BRepCheck_Solid.hxx>
+#include <BRepCheck_Status.hxx>
 #include <BRepGProp.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAbs_SurfaceType.hxx>
+#include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <utility>
 
@@ -266,7 +274,91 @@ std::vector<SubId> sliverFaces(const Shape& shape, const std::vector<bool>& invo
     return out;
 }
 
-Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, std::string_view where)
+namespace {
+
+// BRepCheck restricted to what can have changed (boolean_internal.h INCREMENTAL CHECK): the faces of `shape` that are
+// not faces of `unchangedFrom`, with their sub-shapes, and every shell and solid. False on a fault; an OCCT exception
+// counts as one, as BRepCheck_Analyzer records it as a failed status.
+bool changedPartsValid(const TopoDS_Shape& shape, const std::vector<TopoDS_Shape>& solids,
+                       std::span<const TopoDS_Shape> unchangedFrom)
+{
+    ShapeIndex before;
+    for (const TopoDS_Shape& input : unchangedFrom)
+        TopExp::MapShapes(input, TopAbs_FACE, before);
+    BRep_Builder builder;
+    TopoDS_Compound changed;
+    builder.MakeCompound(changed);
+    bool anyChanged = false;
+    ShapeIndex seen;
+    for (TopExp_Explorer face(shape, TopAbs_FACE); face.More(); face.Next()) {
+        if (before.Contains(face.Current()) || seen.Contains(face.Current()))
+            continue;
+        seen.Add(face.Current());
+        builder.Add(changed, face.Current());
+        anyChanged = true;
+    }
+    if (anyChanged && !BRepCheck_Analyzer(changed).IsValid())
+        return false;
+    try {
+        for (const TopoDS_Shape& solid : solids) {
+            const occ::handle<BRepCheck_Solid> solidCheck = new BRepCheck_Solid(TopoDS::Solid(solid));
+            if (solidCheck->Status().First() != BRepCheck_NoError)
+                return false;
+            for (TopExp_Explorer shell(solid, TopAbs_SHELL); shell.More(); shell.Next()) {
+                const occ::handle<BRepCheck_Shell> shellCheck = new BRepCheck_Shell(TopoDS::Shell(shell.Current()));
+                if (shellCheck->Status().First() != BRepCheck_NoError)
+                    return false;
+                shellCheck->InContext(solid);
+                for (NCollection_List<BRepCheck_Status>::Iterator status(shellCheck->StatusOnShape(solid));
+                     status.More(); status.Next())
+                    if (status.Value() != BRepCheck_NoError)
+                        return false;
+            }
+        }
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+std::atomic<std::uint64_t>& validationDisagreementCount() noexcept
+{
+    static std::atomic<std::uint64_t> count{0};
+    return count;
+}
+
+double volumeOf(const Shape& shape)
+{
+    if (shape.isNull())
+        return 0.0;
+    const double known = shape.impl->volume.load(std::memory_order_relaxed);
+    if (!std::isnan(known))
+        return known;
+    const double measured = solidVolume(shape.impl->shape);
+    shape.impl->volume.store(measured, std::memory_order_relaxed);
+    return measured;
+}
+
+void markValidated(const Shape& shape, double volume) noexcept
+{
+    if (shape.isNull())
+        return;
+    shape.impl->validated.store(true, std::memory_order_relaxed);
+    if (!std::isnan(volume))
+        shape.impl->volume.store(volume, std::memory_order_relaxed);
+}
+
+bool allValidated(std::span<const Shape* const> shapes) noexcept
+{
+    return std::all_of(shapes.begin(), shapes.end(), [](const Shape* s) {
+        return s != nullptr && !s->isNull() && s->impl->validated.load(std::memory_order_relaxed);
+    });
+}
+
+Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, std::string_view where,
+                              std::span<const TopoDS_Shape> unchangedFrom)
 {
     const std::string subject(what);
     if (shape.IsNull())
@@ -286,7 +378,15 @@ Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, 
     // Before BRepCheck, which crashes on some shapes it should only reject (shape_check.cpp).
     if (const auto fault = structuralFault(shape))
         return tl::unexpected(kernelFailure(subject + " produced an invalid solid (" + *fault + ").", where));
-    if (!BRepCheck_Analyzer(shape).IsValid())
+    const bool valid =
+        unchangedFrom.empty() ? BRepCheck_Analyzer(shape).IsValid() : changedPartsValid(shape, solids, unchangedFrom);
+    if (!unchangedFrom.empty() && std::getenv("RAYCAD_KERNEL_VALIDATE_BOTH") != nullptr &&
+        BRepCheck_Analyzer(shape).IsValid() != valid) {
+        validationDisagreementCount().fetch_add(1, std::memory_order_relaxed);
+        std::fprintf(stderr, "[kernel] %s: the incremental BRepCheck says %s, the full one the opposite\n",
+                     subject.c_str(), valid ? "valid" : "invalid");
+    }
+    if (!valid)
         return tl::unexpected(kernelFailure(subject + " produced an invalid solid (BRepCheck).", where));
 
     double total = 0.0;

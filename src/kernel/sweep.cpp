@@ -223,6 +223,7 @@ Result<SweepResult> finish(const TopoDS_Shape& built, const std::vector<PendingO
         return tl::unexpected(kernelFailure(std::string(what) + " produced more than one solid.", where));
     SweepResult sweep;
     sweep.op.shape = detail::wrap(solid);
+    detail::markValidated(sweep.op.shape, *checked);
     finishOrigins(sweep, pending);
     ctx.progress.set(1.0, "Done");
     return sweep;
