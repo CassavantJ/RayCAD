@@ -34,10 +34,11 @@ target_include_directories(ray_store_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/stor
 target_compile_definitions(ray_store_tests PRIVATE RAY_STORE_HELPER="$<TARGET_FILE:ray_store_helper>")
 add_dependencies(ray_store_tests ray_store_helper)
 set_property(TARGET ray_store_tests PROPERTY FOLDER "tests")
-# Three processes: the kill tests (helpers killed at random points; most of the suite's time, spent waiting on child
-# processes) beside the rest, and the two [bench] budgets (journal append, loadHead of a 20 MB file), which are timed
-# against the wall clock and run alone (tests/tiers.cmake).
-add_test(NAME ray_store_tests COMMAND ray_store_tests "~[kill]~[bench]")
+# Separate processes: the kill tests (helpers killed at random points; most of the suite's time, spent waiting on
+# child processes) beside the rest, and the two [bench] budgets (journal append, loadHead of a 20 MB file), which are
+# timed against the wall clock and run alone. The [wallclock] snapshot test (copies made in a writer's 40 ms pauses)
+# runs alone as ray_store_tests_wallclock (tests/tiers.cmake).
+add_test(NAME ray_store_tests COMMAND ray_store_tests "~[kill]~[bench]~[wallclock]")
 add_test(NAME ray_store_kill COMMAND ray_store_tests "[kill]")
 add_test(NAME ray_store_bench COMMAND ray_store_tests "[bench]")
 foreach(_t ray_store_tests ray_store_kill ray_store_bench)

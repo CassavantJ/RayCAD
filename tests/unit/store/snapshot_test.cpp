@@ -78,7 +78,8 @@ void openOnce(const std::string& doc, const std::string& acks, Tally& tally)
 
 } // namespace
 
-TEST_CASE("read-only openers copy while another process saves and never open a bad copy", "[store][snapshot]")
+TEST_CASE("read-only openers copy while another process saves and never open a bad copy",
+          "[store][snapshot][wallclock]")
 {
     useTestLockTiming();
     TempDir dir;
