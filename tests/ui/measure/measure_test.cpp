@@ -12,6 +12,7 @@
 //
 // Screenshots: with RAY_T022_SHOTS set to a folder, the window is saved there (both themes).
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -613,7 +614,7 @@ TEST_CASE("no UI-thread stall over 50 ms while measuring a mid-size corpus part"
     UNSCOPED_INFO("per step: " << steps);
     INFO("worst UI-thread gap " << worst << " ms");
     WARN("UI-thread watchdog while measuring a mid-size corpus part: worst gap " << worst << " ms");
-    CHECK(worst < 50);
+    CHECK(worst < ray::test::uiBudgetMs(50));
 }
 
 int main(int argc, char** argv)

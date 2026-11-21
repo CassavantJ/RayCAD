@@ -16,6 +16,7 @@
 //
 // Screenshots: with RAY_T019_SHOTS set to a folder, some steps save the window there.
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -393,7 +394,7 @@ TEST_CASE("opening a STEP file shows staged progress; Esc cancels it at once", "
     QElapsedTimer t;
     t.start();
     QTest::keyClick(w.window(), Qt::Key_Escape);
-    CHECK(t.elapsed() < 100);
+    CHECK(t.elapsed() < ray::test::uiBudgetMs(100));
     CHECK_FALSE(session.jobActive());
     CHECK_FALSE(w.files()->busy());
     CHECK(w.context()->statusText() == QStringLiteral("Opening cancelled"));
@@ -849,7 +850,7 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[
     tick.stop();
     INFO("worst UI-thread gap " << worst << " ms");
     WARN("UI-thread watchdog during the open of a mid-size corpus file: worst gap " << worst << " ms");
-    CHECK(worst < 50);
+    CHECK(worst < ray::test::uiBudgetMs(50));
     CHECK(w.scene()->bodyCount() >= 1);
 }
 
@@ -888,7 +889,7 @@ TEST_CASE("warm start to the first frame, against PLAN.md section 9", "[bench]")
                                                   << " runs (PLAN.md 9: Low 2500, Medium 1500, High 1000 ms); "
                                                   << "session start after it: median " << session << " ms");
     // Absolute budgets are checked on the reference machine (PLAN.md 9); here only the loosest one.
-    CHECK(frame < 2500);
+    CHECK(frame < ray::test::uiBudgetMs(2500));
 }
 
 int main(int argc, char** argv)

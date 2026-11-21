@@ -14,6 +14,7 @@
 //   - Esc abandons an import at once; errors show as a message; dropping a file opens it
 //   - SceneController::syncFromDocument (the T-017/T-019 seam) lists features and bodies
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -976,7 +977,7 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; i
     QTest::qWait(300);
     tick.stop();
     INFO("worst UI-thread gap " << worst << " ms");
-    CHECK(worst < 50);
+    CHECK(worst < ray::test::uiBudgetMs(50));
     CHECK(w.scene()->bodyCount() >= 1);
 
     // Idle: no frame for a second.
@@ -1029,7 +1030,7 @@ TEST_CASE("Esc abandons an import at once; a failed open shows a message; a drop
     t.start();
     w.view()->forceActiveFocus();
     QTest::keyClick(w.window(), Qt::Key_Escape);
-    CHECK(t.elapsed() < 100);
+    CHECK(t.elapsed() < ray::test::uiBudgetMs(100));
     CHECK_FALSE(w.host->session()->jobActive());
     CHECK_FALSE(w.host->files()->busy());
     QTest::qWait(3000);

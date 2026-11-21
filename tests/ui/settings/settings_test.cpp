@@ -16,6 +16,7 @@
 //
 // Screenshots: set RAY_T024_SHOTS to a folder and run with "[screenshots]".
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -872,7 +873,7 @@ TEST_CASE("warm start to the first frame with saved settings, against PLAN.md se
     WARN("warm start to the first frame with saved settings: median " << frame << " ms over " << frames.size()
                                                                       << " runs (PLAN.md 9: Low 2500, Medium 1500, "
                                                                          "High 1000 ms)");
-    CHECK(frame < 2500);
+    CHECK(frame < ray::test::uiBudgetMs(2500));
     // --bench-start does not save the window (it would replace the user's own).
     CHECK(readFile(QDir(data.path()).filePath(QStringLiteral("settings.json"))).contains(QStringLiteral("\"x\":80")));
 }

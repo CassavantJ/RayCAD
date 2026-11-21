@@ -16,6 +16,7 @@
 //
 // Screenshots: with RAY_T098_SHOTS set to a folder, the window is saved there (every tool's panel, the finished part).
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -192,16 +193,20 @@ struct Window {
         grab();
     }
     // The document's rebuild, the scene's meshes and the tree's jobs are done.
+    // The rebuild's notification is posted when it ends: it can give the scene a new body set (meshing again) during
+    // the pause after the first wait, so the state is checked once more after it.
     void settle() const
     {
-        REQUIRE(QTest::qWaitFor(
-            [&] {
-                doc::Document* d = document();
-                return d != nullptr && !d->rebuildPending() && !host->scene()->meshing() && !tree()->busy() &&
-                       sketch()->inFlight() == 0 && !sketch()->solving();
-            },
-            kTimeoutMs));
-        QTest::qWait(50);
+        const auto idle = [&] {
+            doc::Document* d = document();
+            return d != nullptr && !d->rebuildPending() && !host->scene()->meshing() && !tree()->busy() &&
+                   sketch()->inFlight() == 0 && !sketch()->solving();
+        };
+        for (int pass = 0; pass < 2; ++pass) {
+            REQUIRE(QTest::qWaitFor(idle, kTimeoutMs));
+            QTest::qWait(50);
+        }
+        REQUIRE(QTest::qWaitFor(idle, kTimeoutMs));
     }
     // The open tool's preview is built and shown.
     void previewed(const char* status = "ok") const
@@ -614,7 +619,7 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
         tick.stop();
         WARN("UI-thread watchdog while the extrude preview rebuilt the part: worst gap "
              << worst << " ms, " << w.tool()->previewBuilds() << " preview builds");
-        CHECK(worst < 50);
+        CHECK(worst < ray::test::uiBudgetMs(50));
         CHECK(w.document()->undoCount() == undoBefore);
         CHECK(w.stateHash() == finished);
     }
