@@ -53,6 +53,16 @@ add_subdirectory(ui/sketch)
 add_subdirectory(ui/model) # T-098
 # (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
+# ---------- Graphics driver threads ----------
+# Every test that draws with Direct3D 11 raises the idle-priority worker threads of the graphics driver to normal
+# priority while it runs, so that they are not starved when every processor is busy (support/
+# driver_threads_listener.cpp says why). Compiles to nothing off Windows.
+foreach(_target IN ITEMS ray_render_tests ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests
+                         ray_ui_palette_tests ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests
+                         ray_ui_section_tests ray_ui_sketch_tests ray_ui_model_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support/driver_threads_listener.cpp")
+endforeach()
+
 # ---------- Sanitizer run options for every test ----------
 # Adds `options` to the environment variable `var` (ASAN_OPTIONS, ...) of every test under `dir`. A test that sets
 # the variable itself (a suppression file) keeps its options; these are added to them.
