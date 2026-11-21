@@ -12,7 +12,8 @@
 // `warnings` names them (kernel.h).
 //
 // VALIDATION (section 7 rule 6). OCCT's status is not trusted. The result must be valid closed solids
-// (validateSolids), as many as the input had, with the volume changed the expected way: a blend on a convex edge
+// (validateSolids, which on an input that passed it checks only the faces the blend changed: INCREMENTAL CHECK in
+// boolean_internal.h), as many as the input had, with the volume changed the expected way: a blend on a convex edge
 // takes material away, one on a concave edge adds it; when the blended edges are of both kinds only a change is
 // required. A result without any blend face is a no-op and fails. This is not idle: on the synthetic corpus (blend
 // stress test, 1052 blends) OCCT reported success for 21 results that BRepCheck rejects. A self-interference check
@@ -220,7 +221,7 @@ Result<Prepared> prepare(const Shape& shape, std::vector<SubId> picked, std::str
 {
     Prepared base;
     base.picked = std::move(picked);
-    base.volume = detail::solidVolume(detail::occt(shape));
+    base.volume = detail::volumeOf(shape);
     base.solids = shape.count(SubKind::Solid);
     return freshCopy(shape, base, where);
 }
@@ -345,7 +346,13 @@ Attempt attempt(const Shape& shape, const Prepared& base, double value, Expect e
             out.failure = failed(std::string(words.subject) + " produced no solid.", where);
             return tl::unexpected(out.failure->error);
         }
-        auto checked = detail::validateSolids(solids, words.subject, where);
+        // Faces of the input the blend leaves untouched are not checked again when the input passed validation
+        // (boolean_internal.h INCREMENTAL CHECK).
+        const std::array<const Shape*, 1> original{&shape};
+        const TopoDS_Shape copy = detail::occt(p.copy());
+        const std::span<const TopoDS_Shape> unchangedFrom =
+            detail::allValidated(original) ? std::span<const TopoDS_Shape>(&copy, 1) : std::span<const TopoDS_Shape>();
+        auto checked = detail::validateSolids(solids, words.subject, where, unchangedFrom);
         if (!checked) {
             out.failure = Failure{checked.error(), {}};
             return tl::unexpected(checked.error());
@@ -353,6 +360,7 @@ Attempt attempt(const Shape& shape, const Prepared& base, double value, Expect e
         const double volume = *checked;
         OpResult op;
         op.shape = detail::wrap(solids);
+        detail::markValidated(op.shape, volume);
         if (op.shape.count(SubKind::Solid) != p.solids) {
             out.failure =
                 failed(std::string(words.subject) + " changed the number of solids from " + std::to_string(p.solids) +

@@ -15,6 +15,13 @@ bool meshInParallel() noexcept;
 // thread team inside the mesh lock): at least 1, at most OCCT's pool size. See mesh.cpp.
 int meshConcurrency(double chordTol);
 
+// The number of threads (the caller included) the last mesh call could run on: the size it gave OCCT's default
+// pool. 0 before the first mesh call.
+int lastMeshTeam() noexcept;
+
+// The current size of OCCT's default thread pool (the caller included).
+int meshPoolThreads() noexcept;
+
 // True if any face of the shape holds a triangulation or any edge a polygon: shows that meshing did not
 // write into the caller's shape.
 bool hasMeshData(const Shape& shape);

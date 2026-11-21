@@ -43,6 +43,7 @@
 #include <BRep_Tool.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 #include <IMeshTools_Parameters.hxx>
+#include <OSD_Parallel.hxx>
 #include <OSD_ThreadPool.hxx>
 #include <Poly_Polygon3D.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
@@ -82,8 +83,13 @@ constexpr double kExactAngle = 0.5; // radians, OCCT's default
 // per face, which lies above all three points. The thread team is sized so that the model stays inside
 // kMeshBudgetMb: the smallest import row of PLAN.md section 9 (3 GB, Low tier) less 0.5 GB for the rest of
 // the import. The kernel does not know the tier, and CAM tolerances are not tied to one, so the smallest row
-// applies everywhere. That is no cap at 0.2 mm on any current machine, 13 faces at 0.05 mm and 4 at
-// 0.01 mm. UNVERIFIED: there is no corpus file yet to measure it on.
+// applies everywhere. That is 30 faces at 0.2 mm (no cap below 30 logical processors), 13 at 0.05 mm
+// and 4 at 0.01 mm. UNVERIFIED: there is no corpus file yet to measure the memory model on.
+// HOW THE CAP IS APPLIED. BRepMesh parallelises through OSD_Parallel::For/ForEach, whose launcher starts
+// min(items, pool size) threads of OSD_ThreadPool::DefaultPool() and ignores SetNbDefaultThreadsToLaunch (OCCT
+// 8.0.1), so the cap is the size of that pool: detail::MeshTeamScope re-initialises it to the team (OSD_ThreadPool::
+// Init) when the size differs, under the mesh lock. Nothing else in the process uses the pool (section 7 rule 4:
+// every other OCCT parallel switch is off), so it is idle there; it keeps the size until a call needs another.
 constexpr double kMeshBudgetMb = 2560.0;
 constexpr double kFaceMbAtCoarse = 85.0;
 constexpr double kCoarseTol = 0.2;
@@ -97,10 +103,14 @@ std::mutex& meshMutex()
     return detail::processMeshMutex();
 }
 
-int poolThreads()
+// The size OCCT gives its default pool (the logical processors), whatever size the last mesh call left it at.
+int fullPoolThreads()
 {
-    return std::max(1, OSD_ThreadPool::DefaultPool()->NbThreads());
+    return std::max(1, OSD_Parallel::NbLogicalProcessors());
 }
+
+// The pool size the last mesh call ran with (tests: testing::lastMeshTeam).
+std::atomic<int> gLastTeam{0};
 
 int concurrencyFor(double chordTol, int pool)
 {
@@ -466,25 +476,21 @@ Result<TriSoup> buildExactMesh(const Shape& shape, const BRepBuilderAPI_Copy& co
 detail::MeshTeamScope::MeshTeamScope(double chordTol) noexcept
 {
     try {
+        // See "MEMORY CAP": OSD_Parallel::For starts min(items, pool size) threads, so the pool itself is sized to
+        // the team. Only mesh calls use the pool, one at a time (the caller holds the mesh lock), so it is idle here.
         const occ::handle<OSD_ThreadPool>& pool = OSD_ThreadPool::DefaultPool();
-        team_ = concurrencyFor(chordTol, std::max(1, pool->NbThreads()));
-        previous_ = pool->NbDefaultThreadsToLaunch();
-        pool->SetNbDefaultThreadsToLaunch(team_);
+        team_ = concurrencyFor(chordTol, fullPoolThreads());
+        if (pool->NbThreads() != team_)
+            pool->Init(team_);
+        team_ = std::max(1, pool->NbThreads());
     } catch (...) {
+        // Init refuses a pool that is in use ("active ThreadPool is reinitialized"): mesh single-threaded.
         team_ = 1;
-        previous_ = -1;
     }
+    gLastTeam.store(team_, std::memory_order_relaxed);
 }
 
-detail::MeshTeamScope::~MeshTeamScope()
-{
-    if (previous_ < 0)
-        return;
-    try {
-        OSD_ThreadPool::DefaultPool()->SetNbDefaultThreadsToLaunch(previous_);
-    } catch (...) {
-    }
-}
+detail::MeshTeamScope::~MeshTeamScope() = default;
 
 Result<Mesh> tessellate(const Shape& shape, const MeshOptions& options, JobContext& ctx)
 {
@@ -540,9 +546,24 @@ bool meshInParallel() noexcept
 
 int meshConcurrency(double chordTol)
 {
-    const Result<int> team = detail::guarded("kernel::testing::meshConcurrency",
-                                             [&]() -> Result<int> { return concurrencyFor(chordTol, poolThreads()); });
+    const Result<int> team = detail::guarded("kernel::testing::meshConcurrency", [&]() -> Result<int> {
+        return concurrencyFor(chordTol, fullPoolThreads());
+    });
     return team.value_or(1);
+}
+
+int lastMeshTeam() noexcept
+{
+    return gLastTeam.load(std::memory_order_relaxed);
+}
+
+int meshPoolThreads() noexcept
+{
+    try {
+        return OSD_ThreadPool::DefaultPool()->NbThreads();
+    } catch (...) {
+        return 0;
+    }
 }
 
 bool hasMeshData(const Shape& shape)

@@ -82,6 +82,14 @@ public:
     SliverMergeOff& operator=(const SliverMergeOff&) = delete;
 };
 
+// How often, with RAYCAD_KERNEL_VALIDATE_BOTH=1 set, the incremental result check (boolean_internal.h INCREMENTAL
+// CHECK) and the full BRepCheck disagreed in this process.
+std::uint64_t validationDisagreements() noexcept;
+
+// Marks `shape` as having passed validation, as the kernel does for its own results, so that operations on it check
+// only the faces they change. For tests that need that path on a body the kernel did not make (an import).
+void markValidated(const Shape& shape) noexcept;
+
 // How many structured exceptions (access violations and the like inside OCCT) the kernel's guard has caught in
 // this process. Always 0 off Windows: there nothing catches them and the process dies.
 std::uint64_t structuredExceptions() noexcept;

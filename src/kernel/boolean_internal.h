@@ -104,7 +104,31 @@ std::vector<TopoDS_Shape> solidsOf(const TopoDS_Shape& shape);
 // Checks that `shape` is made of valid closed solids: BRepCheck finds no fault, every shell of every solid is
 // closed, every solid has a positive volume, and no face lies outside a solid. On success returns the summed
 // volume. `what` names the operation in the message ("The extrusion", "The cut"). May throw.
-Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, std::string_view where);
+//
+// INCREMENTAL CHECK. `unchangedFrom` lists the shapes the operation was given (the private copies it ran on) when
+// every one of them is known valid (Shape::Impl::validated). A face of `shape` that is one of their faces (the same
+// TShape and location, which OCCT keeps only for a face it did not touch) is then not given to BRepCheck again: it
+// passed already, with all its wires, edges and vertices in its context. Every other face is checked by
+// BRepCheck_Analyzer exactly as the whole shape would be (with its sub-shapes, the unchanged edges and vertices on it
+// included), and every shell and solid gets BRepCheck's shell and solid checks (BRepCheck_Shell in the context of its
+// solid: closed and oriented; BRepCheck_Solid), which are what BRepCheck_Analyzer adds above the faces. The verdict is
+// the full one restricted to what can have changed. RAYCAD_KERNEL_VALIDATE_BOTH=1 (tests) also runs the full check and
+// counts any disagreement (testing::validationDisagreements()).
+Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, std::string_view where,
+                              std::span<const TopoDS_Shape> unchangedFrom = {});
+
+// The summed volume of the solids of `shape` (0 if it has none), measured once per Shape and then remembered
+// (Shape::Impl::volume). May throw.
+double volumeOf(const Shape& shape);
+
+// Records on `shape` that it passed validation, with its volume (NaN: not measured). Never throws.
+void markValidated(const Shape& shape, double volume) noexcept;
+
+// Whether every one of `shapes` passed validation. Never throws.
+bool allValidated(std::span<const Shape* const> shapes) noexcept;
+
+// How often RAYCAD_KERNEL_VALIDATE_BOTH found the incremental and the full check disagreeing (tests).
+std::atomic<std::uint64_t>& validationDisagreementCount() noexcept;
 
 // Volume of the solids of `shape` (0 if it has none). May throw.
 double solidVolume(const TopoDS_Shape& shape);
