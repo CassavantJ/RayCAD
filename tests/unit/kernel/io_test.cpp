@@ -749,7 +749,7 @@ TEST_CASE("an import cancelled before it starts returns Cancelled at once", "[ke
     CHECK_FALSE(fs::exists(fromUtf8(dir.file("x.step"))));
 }
 
-TEST_CASE("cancel returns to the caller within 100 ms in every stage", "[kernel][io]")
+TEST_CASE("cancel returns to the caller within 100 ms in every stage", "[kernel][io][wallclock]")
 {
     // A file big enough that each stage lasts a while: 60 different parts, many with B-spline faces.
     TempDir dir;

@@ -33,7 +33,7 @@ target_compile_definitions(ray_sketch_tests PRIVATE RAY_SKETCH_DET_PROBE="$<TARG
 add_dependencies(ray_sketch_tests ray_sketch_det_probe)
 
 # Fast tests, then the long ones each in a process and CTest entry of its own with a long timeout.
-add_test(NAME ray_sketch_tests COMMAND ray_sketch_tests "~[property]~[agreement]~[bench]")
+add_test(NAME ray_sketch_tests COMMAND ray_sketch_tests "~[property]~[agreement]~[bench]~[wallclock]")
 add_test(NAME ray_sketch_property COMMAND ray_sketch_tests "[property]")
 add_test(NAME ray_sketch_drag_agreement COMMAND ray_sketch_tests "[agreement]")
 add_test(NAME ray_sketch_drag_bench COMMAND ray_sketch_tests "[bench]")

@@ -143,3 +143,5 @@ function(ray_debug_timeouts dir)
     endforeach()
 endfunction()
 ray_debug_timeouts("${CMAKE_CURRENT_SOURCE_DIR}")
+
+include(tiers.cmake)

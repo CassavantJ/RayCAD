@@ -6,23 +6,33 @@ add_library(ray_naming_oracle STATIC oracle.h oracle.cpp)
 target_link_libraries(ray_naming_oracle PUBLIC ray_kernel ray_core)
 set_property(TARGET ray_naming_oracle PROPERTY FOLDER "tests")
 
+# The harness and the S4 part, compiled once for the tests here and the document-level S4 tests (tests/unit/doc).
+add_library(ray_naming_harness STATIC harness.h harness.cpp s4_part.h s4_part.cpp)
+target_link_libraries(ray_naming_harness PUBLIC ray_naming_oracle ray_naming ray_kernel ray_core)
+target_include_directories(ray_naming_harness PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(ray_naming_harness PRIVATE RAY_ORACLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+set_property(TARGET ray_naming_harness PROPERTY FOLDER "tests")
+
 add_executable(ray_naming_oracle_tests
-    harness.h harness.cpp
-    s4_part.h s4_part.cpp
     s4_test.cpp
     random_test.cpp
     acceptance_test.cpp)
-target_link_libraries(ray_naming_oracle_tests PRIVATE ray_naming_oracle ray_naming ray_kernel ray_core
-    Catch2::Catch2WithMain)
+target_link_libraries(ray_naming_oracle_tests PRIVATE ray_naming_harness ray_naming_oracle ray_naming ray_kernel
+    ray_core Catch2::Catch2WithMain)
 target_compile_definitions(ray_naming_oracle_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
     RAY_ORACLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 # shape_testing.h (private to src/kernel, no OCCT header): the count of OCCT faults the kernel guard caught.
 target_include_directories(ray_naming_oracle_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
 set_property(TARGET ray_naming_oracle_tests PROPERTY FOLDER "tests")
 
-# The scripted acceptance scenarios (seconds).
-add_test(NAME ray_naming_oracle_tests COMMAND ray_naming_oracle_tests "[acceptance]")
+# The scripted acceptance scenarios, and the replays that pin the T-081a gate fixes and the oracle's rules, in three
+# processes so a parallel ctest runs them side by side (together they take about a minute and a half on one thread).
+add_test(NAME ray_naming_oracle_tests COMMAND ray_naming_oracle_tests "[acceptance]~[t081a-gate]~[oracle-gate]")
+add_test(NAME ray_naming_t081a_gate COMMAND ray_naming_oracle_tests "[acceptance][t081a-gate]")
+add_test(NAME ray_naming_oracle_gate COMMAND ray_naming_oracle_tests "[acceptance][oracle-gate]")
 ray_test_runtime_path(ray_naming_oracle_tests)
+ray_test_runtime_path(ray_naming_t081a_gate)
+ray_test_runtime_path(ray_naming_oracle_gate)
 # The 47 S4 scenarios take about half a minute; their own CTest entry with its own timeout.
 add_test(NAME ray_naming_s4 COMMAND ray_naming_oracle_tests "[s4]")
 ray_test_runtime_path(ray_naming_s4)
@@ -31,6 +41,10 @@ set_tests_properties(ray_naming_s4 PROPERTIES TIMEOUT 3600)
 add_test(NAME ray_naming_random COMMAND ray_naming_oracle_tests "[random]")
 ray_test_runtime_path(ray_naming_random)
 set_tests_properties(ray_naming_random PROPERTIES TIMEOUT 7200)
+# The first 3 sequences of every part of that block, for the quick tier (tests/tiers.cmake).
+add_test(NAME ray_naming_random_smoke COMMAND ray_naming_oracle_tests "[random-smoke]")
+ray_test_runtime_path(ray_naming_random_smoke)
+set_tests_properties(ray_naming_random_smoke PROPERTIES TIMEOUT 1800)
 # References replayed on the part read back in another session.
 add_test(NAME ray_naming_session COMMAND ray_naming_oracle_tests "[random-session]")
 ray_test_runtime_path(ray_naming_session)

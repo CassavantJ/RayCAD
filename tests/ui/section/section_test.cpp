@@ -298,7 +298,9 @@ TEST_CASE("the section panel drives the viewport's plane; dragging redraws witho
                          Qt::NoModifier);
         QGuiApplication::sendEvent(w.window(), &move);
         const std::uint64_t frames = w.info().framesRendered;
-        static_cast<void>(QTest::qWaitFor([&] { return w.info().framesRendered > frames; }, 1000));
+        // Returns at the move's frame; the long limit only matters on a loaded machine, where a frame can take over
+        // a second and the next move would otherwise be drawn in the same frame (fewer frames than moves).
+        static_cast<void>(QTest::qWaitFor([&] { return w.info().framesRendered > frames; }, 10000));
         offsets.push_back(s->offset());
         ++moves;
     }
@@ -333,7 +335,11 @@ TEST_CASE("the section panel drives the viewport's plane; dragging redraws witho
     CHECK_FALSE(w.view()->viewport()->section().has_value());
     CHECK(w.host->warnings().isEmpty());
     QStringList warnings = takeWarnings();
-    warnings.removeIf([](const QString& m) { return m.contains(QLatin1String("pipeline cache")); }); // first run
+    // Not this window's doing: the pipeline cache is missing on a first run, and Qt's Windows clipboard retries when
+    // another process (a test copying a measurement next to this one, or the user) has the system clipboard open.
+    warnings.removeIf([](const QString& m) {
+        return m.contains(QLatin1String("pipeline cache")) || m.contains(QLatin1String("Retrying to obtain clipboard"));
+    });
     INFO(warnings.join(QLatin1Char('\n')).toStdString());
     CHECK(warnings.isEmpty());
 }

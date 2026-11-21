@@ -561,7 +561,7 @@ TEST_CASE("every measure command is in the palette and the context menu; corner 
     w.checkNoWarnings();
 }
 
-TEST_CASE("no UI-thread stall over 50 ms while measuring a mid-size corpus part", "[measure][stall]")
+TEST_CASE("no UI-thread stall over 50 ms while measuring a mid-size corpus part", "[measure][stall][wallclock]")
 {
     RAY_REQUIRE_RHI();
     Window w("dark");

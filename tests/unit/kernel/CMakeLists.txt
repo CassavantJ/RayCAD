@@ -22,14 +22,18 @@ set_property(TARGET ray_kernel_tests PROPERTY FOLDER "tests")
 # The smoke test needs a process in which no OCCT DLL has been loaded yet, and Catch2 runs test cases in
 # random order, so it runs in a process of its own ([occt] tag) and everything else in another.
 add_test(NAME ray_kernel_occt_smoke COMMAND ray_kernel_tests "[occt]")
-add_test(NAME ray_kernel_tests COMMAND ray_kernel_tests "~[occt]~[stress]")
+add_test(NAME ray_kernel_tests COMMAND ray_kernel_tests "~[occt]~[stress]~[wallclock]~[blend]")
+# The blend tests (with the blend determinism test) are about two thirds of the suite's time: a process of their own,
+# so a parallel ctest runs them beside the rest.
+add_test(NAME ray_kernel_blend COMMAND ray_kernel_tests "[blend]~[stress]")
 # The 8-thread blend stress over the corpus (task T-095) in a process of its own, with its own timeout.
 add_test(NAME ray_kernel_blend_stress COMMAND ray_kernel_tests "[stress]")
 ray_test_runtime_path(ray_kernel_occt_smoke)
 ray_test_runtime_path(ray_kernel_tests)
+ray_test_runtime_path(ray_kernel_blend)
 ray_test_runtime_path(ray_kernel_blend_stress)
 # Import, meshing and concurrency tests are slow under ThreadSanitizer and on a loaded machine.
-set_tests_properties(ray_kernel_tests ray_kernel_blend_stress PROPERTIES TIMEOUT 900)
+set_tests_properties(ray_kernel_tests ray_kernel_blend ray_kernel_blend_stress PROPERTIES TIMEOUT 900)
 
 # Imports one STEP or IGES file and prints what came out; tools/import_corpus.py runs it on every file of a
 # corpus folder, one child process per file, to count passes, failures, crashes and hangs.

@@ -19,14 +19,23 @@ target_compile_definitions(ray_render_tests PRIVATE
     RAY_THEMES_DIR="${CMAKE_SOURCE_DIR}/resources/themes"
     RAY_THEME_SCHEMA="${CMAKE_SOURCE_DIR}/schemas/theme.schema.json"
     RAY_RENDER_REFERENCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/reference")
-ray_add_test(ray_render_tests)
-# About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s.
-set_tests_properties(ray_render_tests PROPERTIES TIMEOUT 900)
-# ray_render links Qt (Core and Gui), so the test needs the Qt DLL folder on Windows, and the vcpkg folder for the
-# delay-loaded OCCT toolkits of ray_kernel.
-ray_test_runtime_path(ray_render_tests QT)
-# Under ThreadSanitizer, races inside Mesa's uninstrumented llvmpipe are suppressed (see tsan.supp).
-if(RAY_SANITIZE MATCHES "thread")
-    set_property(TEST ray_render_tests APPEND PROPERTY ENVIRONMENT
-        "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
-endif()
+set_property(TARGET ray_render_tests PROPERTY FOLDER "tests")
+# The three measurements on a 500k-triangle mesh and the blur at 1920x1080 (frame statistics, pick latency, the cost
+# of section caps and of the blur; about three quarters of the suite's time, mostly in the software rasteriser) run
+# as tests of their own, so they run beside the rest in a parallel ctest.
+add_test(NAME ray_render_tests COMMAND ray_render_tests "~[stats]~[latency]~[cost]")
+add_test(NAME ray_render_frame_stats COMMAND ray_render_tests "[stats]")
+add_test(NAME ray_render_pick_latency COMMAND ray_render_tests "[latency]")
+add_test(NAME ray_render_cost COMMAND ray_render_tests "[cost]")
+foreach(_t ray_render_tests ray_render_frame_stats ray_render_pick_latency ray_render_cost)
+    # About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s.
+    set_tests_properties(${_t} PROPERTIES TIMEOUT 900)
+    # ray_render links Qt (Core and Gui), so the test needs the Qt DLL folder on Windows, and the vcpkg folder for the
+    # delay-loaded OCCT toolkits of ray_kernel.
+    ray_test_runtime_path(${_t} QT)
+    # Under ThreadSanitizer, races inside Mesa's uninstrumented llvmpipe are suppressed (see tsan.supp).
+    if(RAY_SANITIZE MATCHES "thread")
+        set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT
+            "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tsan.supp")
+    endif()
+endforeach()

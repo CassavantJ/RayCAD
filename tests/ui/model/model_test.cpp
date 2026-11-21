@@ -386,7 +386,7 @@ void firstExtrude(Window& w, const char* distance)
 
 } // namespace
 
-TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[model][e2e]")
+TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[model][e2e][wallclock]")
 {
     RAY_REQUIRE_RHI();
     Window w;

@@ -37,7 +37,7 @@ TEST_CASE("Progress is reported", "[sketch][cancel]")
     CHECK(seen.back() == 1.0);
 }
 
-TEST_CASE("Cancelling a running 200-curve solve returns within the documented time", "[sketch][cancel]")
+TEST_CASE("Cancelling a running 200-curve solve returns within the documented time", "[sketch][cancel][wallclock]")
 {
     // 100 curves in a debug or sanitizer build, where the 200-curve diagnosis takes tens of seconds.
     const Grid g = makeGrid(optimisedBuild() ? 4 : 2, GridVariant::Nearly, 0.3);

@@ -10,7 +10,7 @@ target_link_libraries(ray_ui_model_tests PRIVATE ray_ui ray_render ray_api Qt6::
 target_include_directories(ray_ui_model_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 set_property(TARGET ray_ui_model_tests PROPERTY FOLDER "tests")
 
-add_test(NAME ray_ui_model_tests COMMAND ray_ui_model_tests)
+add_test(NAME ray_ui_model_tests COMMAND ray_ui_model_tests "~[wallclock]")
 set_tests_properties(ray_ui_model_tests PROPERTIES TIMEOUT 900)
 # Catch2 exits with 4 when every test case skipped (no QRhi scene graph): CTest then reports the test as skipped.
 set_tests_properties(ray_ui_model_tests PROPERTIES SKIP_RETURN_CODE 4)

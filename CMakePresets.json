@@ -71,7 +71,8 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CXX_COMPILER": "clang++",
         "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
-        "RAY_SANITIZE": "address,undefined"
+        "RAY_SANITIZE": "address,undefined",
+        "RAY_PCH": "OFF"
       }
     },
     {
@@ -107,20 +108,35 @@
     { "name": "linux-clang-tsan", "configurePreset": "linux-clang-tsan" }
   ],
   "testPresets": [
-    { "name": "test-base", "hidden": true, "output": { "outputOnFailure": true }, "execution": { "timeout": 300 } },
+    { "name": "test-base", "hidden": true, "output": { "outputOnFailure": true }, "execution": { "timeout": 300, "jobs": 8 } },
+    { "name": "test-quick", "hidden": true, "inherits": "test-base", "filter": { "include": { "label": "^quick$" } } },
     { "name": "windows-msvc-debug", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "Debug" },
+    { "name": "windows-msvc-debug-quick", "inherits": "test-quick", "configurePreset": "windows-msvc", "configuration": "Debug" },
     { "name": "windows-msvc-relwithdebinfo", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "RelWithDebInfo" },
+    { "name": "windows-msvc-relwithdebinfo-quick", "inherits": "test-quick", "configurePreset": "windows-msvc", "configuration": "RelWithDebInfo" },
     { "name": "windows-msvc-release", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "Release" },
+    { "name": "windows-msvc-release-quick", "inherits": "test-quick", "configurePreset": "windows-msvc", "configuration": "Release" },
     { "name": "linux-clang-debug", "inherits": "test-base", "configurePreset": "linux-clang", "configuration": "Debug" },
+    { "name": "linux-clang-debug-quick", "inherits": "test-quick", "configurePreset": "linux-clang", "configuration": "Debug" },
     { "name": "linux-clang-relwithdebinfo", "inherits": "test-base", "configurePreset": "linux-clang", "configuration": "RelWithDebInfo" },
+    { "name": "linux-clang-relwithdebinfo-quick", "inherits": "test-quick", "configurePreset": "linux-clang", "configuration": "RelWithDebInfo" },
     { "name": "linux-clang-release", "inherits": "test-base", "configurePreset": "linux-clang", "configuration": "Release" },
+    { "name": "linux-clang-release-quick", "inherits": "test-quick", "configurePreset": "linux-clang", "configuration": "Release" },
     { "name": "linux-gcc-debug", "inherits": "test-base", "configurePreset": "linux-gcc", "configuration": "Debug" },
+    { "name": "linux-gcc-debug-quick", "inherits": "test-quick", "configurePreset": "linux-gcc", "configuration": "Debug" },
     { "name": "linux-gcc-relwithdebinfo", "inherits": "test-base", "configurePreset": "linux-gcc", "configuration": "RelWithDebInfo" },
+    { "name": "linux-gcc-relwithdebinfo-quick", "inherits": "test-quick", "configurePreset": "linux-gcc", "configuration": "RelWithDebInfo" },
     { "name": "linux-gcc-release", "inherits": "test-base", "configurePreset": "linux-gcc", "configuration": "Release" },
+    { "name": "linux-gcc-release-quick", "inherits": "test-quick", "configurePreset": "linux-gcc", "configuration": "Release" },
     { "name": "macos-arm64-debug", "inherits": "test-base", "configurePreset": "macos-arm64", "configuration": "Debug" },
+    { "name": "macos-arm64-debug-quick", "inherits": "test-quick", "configurePreset": "macos-arm64", "configuration": "Debug" },
     { "name": "macos-arm64-relwithdebinfo", "inherits": "test-base", "configurePreset": "macos-arm64", "configuration": "RelWithDebInfo" },
+    { "name": "macos-arm64-relwithdebinfo-quick", "inherits": "test-quick", "configurePreset": "macos-arm64", "configuration": "RelWithDebInfo" },
     { "name": "macos-arm64-release", "inherits": "test-base", "configurePreset": "macos-arm64", "configuration": "Release" },
+    { "name": "macos-arm64-release-quick", "inherits": "test-quick", "configurePreset": "macos-arm64", "configuration": "Release" },
     { "name": "linux-clang-asan", "inherits": "test-base", "configurePreset": "linux-clang-asan" },
-    { "name": "linux-clang-tsan", "inherits": "test-base", "configurePreset": "linux-clang-tsan" }
+    { "name": "linux-clang-asan-quick", "inherits": "test-quick", "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan", "inherits": "test-base", "configurePreset": "linux-clang-tsan" },
+    { "name": "linux-clang-tsan-quick", "inherits": "test-quick", "configurePreset": "linux-clang-tsan" }
   ]
 }
