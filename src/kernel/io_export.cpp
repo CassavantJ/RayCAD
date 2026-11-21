@@ -41,6 +41,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -207,19 +208,9 @@ void putF32(std::vector<char>& out, double value)
     putU32(out, bits);
 }
 
-// The process-wide mesh lock, polling the task's stop request while another mesh call holds it.
-bool lockMesh(std::unique_lock<std::mutex>& lock, IoTask& task)
-{
-    while (!lock.try_lock()) {
-        if (task.stopRequested())
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    return true;
-}
-
+// Called with the process-wide mesh lock held and the pool's team set (exportStl takes both outside guarded()).
 Status writeStl(IoTask& task, const std::filesystem::path& path, const std::vector<Shape>& shapes, double chordTol,
-                std::string_view where)
+                int team, std::string_view where)
 {
     constexpr double kMeshEnd = 0.85;
     constexpr double kAngle = 0.349065850398865915; // 20 degrees, the Low-tier angle (PLAN.md 6.2)
@@ -227,18 +218,18 @@ Status writeStl(IoTask& task, const std::filesystem::path& path, const std::vect
     std::uint64_t count = 0;
     int facesWithoutTriangles = 0;
     {
-        std::unique_lock<std::mutex> lock(detail::processMeshMutex(), std::defer_lock);
-        if (!lockMesh(lock, task))
-            return tl::unexpected(cancelled(where));
         for (std::size_t i = 0; i < shapes.size(); ++i) {
             // A private copy: meshing writes triangulations into the faces, and Shapes are immutable.
             BRepBuilderAPI_Copy copier(detail::occt(shapes[i]), true, false);
             const TopoDS_Shape copy = copier.Shape();
             IMeshTools_Parameters params;
+            // As tessellate(): Watson named explicitly (CSF_MeshAlgo must not switch to Delabella), InParallel within
+            // the team that keeps the faces in flight inside the memory budget (mesh.cpp MEMORY CAP).
+            params.MeshAlgo = IMeshTools_MeshAlgoType_Watson;
             params.Deflection = chordTol;
             params.Angle = kAngle;
             params.Relative = false;
-            params.InParallel = true; // bit-identical to single-threaded in spike S3
+            params.InParallel = team >= 2; // bit-identical to single-threaded in spike S3
             const double from = kMeshEnd * static_cast<double>(i) / shapes.size();
             const double to = kMeshEnd * static_cast<double>(i + 1) / shapes.size();
             occ::handle<TaskIndicator> indicator = new TaskIndicator(task, from, to, kStageMesh);
@@ -313,9 +304,11 @@ Status writeStl(IoTask& task, const std::filesystem::path& path, const std::vect
     return std::monostate{};
 }
 
+// `meshChordTol` > 0: the writer meshes, so the process-wide mesh lock and the pool's team (detail::MeshTeamScope) are
+// taken first, OUTSIDE guarded(), where a structured exception cannot skip their release; the writer gets the team.
 template <class Writer>
 Status exportWith(const std::string& path, std::span<const Shape> shapes, JobContext& ctx, std::string_view where,
-                  Writer writer)
+                  Writer writer, double meshChordTol = 0.0)
 {
     Result<std::vector<Shape>> copies = checkShapes(shapes, where);
     if (!copies)
@@ -325,11 +318,20 @@ Status exportWith(const std::string& path, std::span<const Shape> shapes, JobCon
         return tl::unexpected(std::move(fsPath.error()));
     return detail::runAbandonable<std::monostate>(
         ctx, where,
-        [file = std::move(*fsPath), owned = std::move(*copies), at = std::string(where), writer](IoTask& task) {
+        [file = std::move(*fsPath), owned = std::move(*copies), at = std::string(where), writer,
+         meshChordTol](IoTask& task) -> Status {
+            // STL meshes: the mesh lock and the pool's team. STEP and IGES: the data exchange lock (io_internal.h).
+            std::unique_lock<std::mutex> lock(
+                meshChordTol > 0.0 ? detail::processMeshMutex() : detail::dataExchangeMutex(), std::defer_lock);
+            if (!detail::lockPolling(lock, task))
+                return tl::unexpected(cancelled(at));
+            std::optional<detail::MeshTeamScope> team;
+            if (meshChordTol > 0.0)
+                team.emplace(meshChordTol);
             return detail::guarded(at, [&]() -> Status {
                 task.report(0.0, kStageTransfer);
                 detail::initializeDataExchange();
-                return writer(task, file, owned, at);
+                return writer(task, file, owned, team ? team->team() : 1, at);
             });
         });
 }
@@ -338,12 +340,16 @@ Status exportWith(const std::string& path, std::span<const Shape> shapes, JobCon
 
 Status exportStep(const std::string& path, std::span<const Shape> shapes, JobContext& ctx)
 {
-    return exportWith(path, shapes, ctx, "kernel::exportStep", &writeStep);
+    return exportWith(path, shapes, ctx, "kernel::exportStep",
+                      [](IoTask& task, const std::filesystem::path& file, const std::vector<Shape>& owned, int,
+                         std::string_view at) { return writeStep(task, file, owned, at); });
 }
 
 Status exportIges(const std::string& path, std::span<const Shape> shapes, JobContext& ctx)
 {
-    return exportWith(path, shapes, ctx, "kernel::exportIges", &writeIges);
+    return exportWith(path, shapes, ctx, "kernel::exportIges",
+                      [](IoTask& task, const std::filesystem::path& file, const std::vector<Shape>& owned, int,
+                         std::string_view at) { return writeIges(task, file, owned, at); });
 }
 
 Status exportStl(const std::string& path, std::span<const Shape> shapes, double chordTol, JobContext& ctx)
@@ -352,9 +358,11 @@ Status exportStl(const std::string& path, std::span<const Shape> shapes, double 
     if (!(std::isfinite(chordTol) && chordTol > 0.0))
         return tl::unexpected(
             failure(ErrorCode::InvalidArgument, "The chord tolerance must be a positive number.", where));
-    return exportWith(path, shapes, ctx, where,
-                      [chordTol](IoTask& task, const std::filesystem::path& file, const std::vector<Shape>& owned,
-                                 std::string_view at) { return writeStl(task, file, owned, chordTol, at); });
+    return exportWith(
+        path, shapes, ctx, where,
+        [chordTol](IoTask& task, const std::filesystem::path& file, const std::vector<Shape>& owned, int team,
+                   std::string_view at) { return writeStl(task, file, owned, chordTol, team, at); },
+        chordTol);
 }
 
 } // namespace ray::kernel

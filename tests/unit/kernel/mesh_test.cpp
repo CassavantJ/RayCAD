@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -440,6 +441,56 @@ TEST_CASE("mesh with InParallel equals the single-threaded mesh", "[kernel][mesh
         const ParallelSwitch on(true);
         CHECK(displayBytes(item.shape, MeshOptions{0.05, 0.2}) == serialDisplay);
         CHECK(exactBytes(item.shape, 0.02) == serialExact);
+    }
+}
+
+TEST_CASE("meshing the naming tests' corpus parts with InParallel gives the serial mesh every time", "[.meshcorpus]")
+{
+    // The 20 corpus parts of the naming random blocks at their sample tolerance (tests/naming/oracle), each meshed
+    // RAYCAD_MESH_REPEATS times (default 3) with InParallel on and compared with the serial mesh. For runs against an
+    // OCCT built with ThreadSanitizer or AddressSanitizer: BRepMesh's parallel healing is what they look at.
+    const char* const parts[] = {
+        "raycad-synthetic/block_blind_holes_1.stp",
+        "raycad-synthetic/chamfer_block_2.stp",
+        "raycad-synthetic/circular_pocket_1.stp",
+        "raycad-synthetic/closed_pocket_3.stp",
+        "raycad-synthetic/fillet_block_1.stp",
+        "raycad-synthetic/fixture_plate_1.stp",
+        "raycad-synthetic/flange_bolt_circle_1.stp",
+        "raycad-synthetic/keyway_tslot_1.stp",
+        "raycad-synthetic/l_bracket_1.stp",
+        "raycad-synthetic/manifold_block_1.stp",
+        "raycad-synthetic/open_pocket_step_1.stp",
+        "raycad-synthetic/plate_counterbore_1.stp",
+        "raycad-synthetic/plate_countersink_1.stp",
+        "raycad-synthetic/plate_thru_holes_1.stp",
+        "raycad-synthetic/rib_plate_1.stp",
+        "raycad-synthetic/slot_through_1.stp",
+        "raycad-synthetic/thin_wall_box_1.stp",
+        "nist-pmi/nist_ftc_11_asme1_rb_geometry.stp",
+        "nist-d2mi/827-9999-905.stp",
+        "nist-pmi/nist_ctc_01_asme1_rd_geometry.stp",
+    };
+    int repeats = 3;
+    if (const char* text = std::getenv("RAYCAD_MESH_REPEATS"))
+        repeats = std::max(1, std::atoi(text));
+    const MeshOptions options{0.02, 0.2};
+    for (const char* part : parts) {
+        INFO(part);
+        JobContext ctx;
+        auto imported = importStep(std::string(RAY_CORPUS_DIR) + "/" + part, ImportOptions{}, ctx);
+        REQUIRE(imported.has_value());
+        for (const ImportedBody& body : imported->bodies) {
+            std::vector<unsigned char> serial;
+            {
+                const ParallelSwitch off(false);
+                serial = displayBytes(body.shape, options);
+            }
+            REQUIRE_FALSE(serial.empty());
+            const ParallelSwitch on(true);
+            for (int r = 0; r < repeats; ++r)
+                CHECK(displayBytes(body.shape, options) == serial);
+        }
     }
 }
 

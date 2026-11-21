@@ -1,0 +1,44 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: BRepMesh_ModelHealer heals the faces of the model one after another, also when IMeshTools_Parameters::InParallel
+is set: its face loop in performInternal() and the second face loop in amplifyEdges() run single-threaded. Edge
+discretisation, the edge amplification step and face meshing stay parallel.
+
+Why: with InParallel, ThreadSanitizer (OCCT built with -fsanitize=thread) reports a data race inside one
+BRepMesh_IncrementalMesh call made from a single thread: BRepMesh_ModelHealer::fixFaceBoundaries ->
+connectClosestPoints -> adjustSamePoints writes pcurve end points (BRepMesh_ModelHealer.hxx adjustSamePoints,
+*theMajorSamePnt1 = *theMinorSamePnt1) on one pool thread while BRepMesh_FaceChecker::perform ->
+BndBox2dTreeSelector::Accept -> BRepMesh_GeomTool::IntSegSeg reads the same 2D points on another thread, both inside
+the parallel face loop of BRepMesh_ModelHealer::performInternal. Seen on RayCAD's corpus part
+raycad-synthetic/circular_pocket_1.stp at 0.02 mm / 0.2 rad (tests/unit/kernel/mesh_test.cpp "[.meshcorpus]"), and 15
+distinct such reports over the naming tests' 20 corpus parts. Unsynchronised writes and reads of the same doubles are
+undefined behaviour, and the healer's result decides which faces are re-meshed, so the mesh can depend on timing.
+Healing is a small part of a mesh call (wires are checked once per face); running it serially removes the race and
+leaves the meshes unchanged (they are bit-identical to single-threaded meshing in RayCAD's tests either way).
+
+Upstream: not reported. The face loop of BRepMesh_ModelHealer::performInternal is parallel in OCCT master as of
+2026-11-20.
+
+diff --git a/src/ModelingAlgorithms/TKMesh/BRepMesh/BRepMesh_ModelHealer.cxx b/src/ModelingAlgorithms/TKMesh/BRepMesh/BRepMesh_ModelHealer.cxx
+--- a/src/ModelingAlgorithms/TKMesh/BRepMesh/BRepMesh_ModelHealer.cxx
++++ b/src/ModelingAlgorithms/TKMesh/BRepMesh/BRepMesh_ModelHealer.cxx
+@@ -149,7 +149,9 @@
+   }
+
+   // TODO: Here we can process edges in order to remove close discrete points.
+-  OSD_Parallel::For(0, myModel->FacesNb(), *this, !isParallel());
++  // RayCAD: faces are healed one at a time; in parallel, fixFaceBoundaries on one face raced with the
++  // FaceChecker of another on the same pcurve points (ThreadSanitizer).
++  OSD_Parallel::For(0, myModel->FacesNb(), *this, true);
+   amplifyEdges();
+
+   IMeshData::DMapOfIFacePtrsMapOfIEdgePtrs::Iterator aFaceIt(*myFaceIntersectingEdges);
+@@ -203,7 +205,7 @@
+     OSD_Parallel::ForEach(aFacesToCheck.cbegin(),
+                           aFacesToCheck.cend(),
+                           *this,
+-                          !myParameters.InParallel || aFacesToCheck.Length() <= 1,
++                          true, // RayCAD: see performInternal
+                           aFacesToCheck.Length());
+
+     aEdgesToUpdate.Clear();

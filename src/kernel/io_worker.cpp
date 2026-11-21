@@ -142,6 +142,10 @@ private:
 
 IoThreads& ioThreads()
 {
+    // The locks an I/O thread may hold are constructed first, so they are destroyed after the destructor that joins
+    // the I/O threads still running at process exit.
+    (void)processMeshMutex();
+    (void)dataExchangeMutex();
     static IoThreads threads;
     return threads;
 }
@@ -301,6 +305,22 @@ std::mutex& processMeshMutex()
 {
     static std::mutex mutex;
     return mutex;
+}
+
+std::mutex& dataExchangeMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+bool lockPolling(std::unique_lock<std::mutex>& lock, IoTask& task)
+{
+    while (!lock.try_lock()) {
+        if (task.stopRequested())
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return true;
 }
 
 } // namespace ray::kernel::detail

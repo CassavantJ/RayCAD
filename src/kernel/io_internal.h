@@ -24,11 +24,11 @@
 //     ...
 //     job.cancel();   // the job's result is Error{Cancelled} within 100 ms; its worker is free again
 //
-// An abandoned read still holds one core and 7 to 8 MB per MiB of file until OCCT returns, and a new STEP
-// import started meanwhile waits for it inside OCCT (global read mutex) - on the I/O thread, so the new
-// import's caller can still be cancelled at once. IGES reads are serialised the same way by the kernel
-// (io_import.cpp: OCCT's IGES parser is not reentrant). I/O threads that are still running at process exit are
-// joined by a static destructor before OCCT is unloaded; waitForIoThreads() joins them earlier (tests).
+// An abandoned read still holds one core and 7 to 8 MB per MiB of file until OCCT returns, and a new STEP or IGES
+// import or export started meanwhile waits for it (the data exchange lock below; OCCT's data exchange is not
+// reentrant) - on the I/O thread, polling its stop request, so the new call's caller can still be cancelled at once.
+// I/O threads that are still running at process exit are joined by a static destructor before OCCT is unloaded;
+// waitForIoThreads() joins them earlier (tests).
 #pragma once
 #include <ray/kernel.h>
 
@@ -180,5 +180,38 @@ Status checkReadable(const std::filesystem::path& path, std::string_view where);
 // One BRepMesh call at a time in the process (PLAN.md section 7 rule 3, spike S3). exportStl takes it.
 // TODO(T-006): tessellate and triangulateExact must take this same lock; move it into the mesh code then.
 std::mutex& processMeshMutex();
+
+// ---------- Data exchange ----------
+// One STEP or IGES reader or writer session at a time in the process: an import holds it while its reader is built,
+// reads and transfers (not while healing); a STEP or IGES export while its writer transfers and writes. OCCT 8.0.1's
+// data exchange keeps state in plain globals that every session writes (ThreadSanitizer, with OCCT itself built with
+// -fsanitize=thread, on concurrent STEP imports): IFSelect_WorkSession's `errhand` (whether a selection is evaluated
+// under try/catch), Interface_CheckTool's `errh`, STEPControl_ActorRead's non-manifold flag NM_DETECTED (set and read
+// back within one transfer, so another import running at the same time could change how this file's compounds are
+// built), and the static buffer of localtime() behind OSD_Process::SystemDate. Take it OUTSIDE guarded(), where a
+// structured exception cannot skip its release. It also covers IGES, whose parser keeps its state in C globals.
+std::mutex& dataExchangeMutex();
+
+// Locks the deferred `lock`, polling the task's stop request every 5 ms while another holder has it. False if the
+// task was stopped first (the lock is then not held).
+bool lockPolling(std::unique_lock<std::mutex>& lock, IoTask& task);
+
+// The thread team for one BRepMesh call at `chordTol` (mesh.cpp MEMORY CAP) on OCCT's default pool, set for the life
+// of the object and put back to the previous value when it is destroyed. Construct it OUTSIDE guarded(), after taking
+// the mesh lock: a structured exception skips the destructors of objects inside guarded(), and the setting is
+// process-wide (only mesh calls use the pool, PLAN.md section 7 rule 4). Never throws; if the pool cannot be read,
+// nothing is set and team() is 1.
+class MeshTeamScope {
+public:
+    explicit MeshTeamScope(double chordTol) noexcept;
+    ~MeshTeamScope();
+    MeshTeamScope(const MeshTeamScope&) = delete;
+    MeshTeamScope& operator=(const MeshTeamScope&) = delete;
+    int team() const noexcept { return team_; }
+
+private:
+    int team_ = 1;
+    int previous_ = -1; // -1: nothing was set
+};
 
 } // namespace ray::kernel::detail

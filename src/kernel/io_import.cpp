@@ -762,12 +762,6 @@ Result<Transferred> transferStep(IoTask& task, const std::filesystem::path& path
     return out;
 }
 
-std::mutex& igesReadMutex()
-{
-    static std::mutex mutex;
-    return mutex;
-}
-
 Result<Transferred> transferIges(IoTask& task, const std::filesystem::path& path, const ImportOptions& options,
                                  std::string_view where)
 {
@@ -796,15 +790,8 @@ Result<Transferred> transferIges(IoTask& task, const std::filesystem::path& path
         const std::string utf8 = detail::utf8Of(path);
         // OCCT's IGES parser (igesread.c) keeps its state in C globals and has no lock of its own, unlike the
         // STEP parser: two concurrent reads crashed with an access violation (about 1 run in 20 of the
-        // concurrency test). One IGES read at a time in the process; waiting here keeps polling cancel.
-        std::unique_lock<std::mutex> igesLock(igesReadMutex(), std::defer_lock);
-        while (!igesLock.try_lock()) {
-            if (task.stopRequested())
-                return tl::unexpected(failure(ErrorCode::Cancelled, "Cancelled.", where));
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
+        // concurrency test). The caller holds the data exchange lock (io_internal.h), so one read runs at a time.
         const IFSelect_ReturnStatus status = reader.ReadFile(utf8.c_str());
-        igesLock.unlock();
         if (task.stopRequested())
             return tl::unexpected(failure(ErrorCode::Cancelled, "Cancelled.", where));
         if (status != IFSelect_RetDone)
@@ -843,20 +830,26 @@ TopoDS_Shape place(const TopoDS_Shape& shape, const TopLoc_Location& location, b
     return transform.Shape();
 }
 
-Result<ImportResult> runImport(Format format, IoTask& task, const std::filesystem::path& path,
-                               const ImportOptions& options, std::string_view where)
+// Steps 1 and 2: read and transfer, with the data exchange lock held by the caller (io_internal.h).
+Result<Transferred> transferFile(Format format, IoTask& task, const std::filesystem::path& path,
+                                 const ImportOptions& options, std::vector<std::string>& warnings,
+                                 std::string_view where)
 {
-    task.report(0.0, kStageRead);
     detail::initializeDataExchange();
     if (task.stopRequested())
         return tl::unexpected(failure(ErrorCode::Cancelled, "Cancelled.", where));
+    return format == Format::Step ? transferStep(task, path, options, warnings, where)
+                                  : transferIges(task, path, options, where);
+}
+
+// Steps 3 on, without the data exchange lock: the transferred document is this import's own.
+Result<ImportResult> runImport(Transferred transferred, std::vector<std::string> warnings, IoTask& task,
+                               const ImportOptions& options, std::string_view where)
+{
     ImportResult result;
-    Result<Transferred> transferred = format == Format::Step ? transferStep(task, path, options, result.warnings, where)
-                                                             : transferIges(task, path, options, where);
-    if (!transferred)
-        return tl::unexpected(std::move(transferred.error()));
-    result.sourceUnits = transferred->units;
-    const occ::handle<TDocStd_Document>& doc = transferred->doc;
+    result.warnings = std::move(warnings);
+    result.sourceUnits = transferred.units;
+    const occ::handle<TDocStd_Document>& doc = transferred.doc;
     const occ::handle<XCAFDoc_ShapeTool> shapeTool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
 
     // 3. Flatten the assembly tree.
@@ -1013,8 +1006,20 @@ Result<ImportResult> importFile(Format format, const std::string& path, const Im
         return tl::unexpected(std::move(readable.error()));
     return detail::runAbandonable<ImportResult>(
         ctx, where, [format, file = std::move(*fsPath), options, at = std::string(where)](IoTask& task) {
-            return detail::guarded(
-                at, [&]() -> Result<ImportResult> { return runImport(format, task, file, options, at); });
+            task.report(0.0, kStageRead);
+            std::vector<std::string> warnings;
+            // The data exchange lock is held for the read and the transfer only, outside guarded() (io_internal.h).
+            std::unique_lock<std::mutex> exchange(detail::dataExchangeMutex(), std::defer_lock);
+            if (!detail::lockPolling(exchange, task))
+                return Result<ImportResult>(tl::unexpected(failure(ErrorCode::Cancelled, "Cancelled.", at)));
+            Result<Transferred> transferred = detail::guarded(
+                at, [&]() -> Result<Transferred> { return transferFile(format, task, file, options, warnings, at); });
+            exchange.unlock();
+            if (!transferred)
+                return Result<ImportResult>(tl::unexpected(std::move(transferred.error())));
+            return detail::guarded(at, [&]() -> Result<ImportResult> {
+                return runImport(std::move(*transferred), std::move(warnings), task, options, at);
+            });
         });
 }
 

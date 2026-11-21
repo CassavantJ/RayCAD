@@ -5,6 +5,7 @@
 #include "naming_test_util.h"
 
 #include <propagate.h>
+#include <shape_testing.h>
 #include <territory.h>
 
 #include <algorithm>
@@ -693,7 +694,9 @@ TEST_CASE("A piece of zero area is never part of an answer", "[naming][evidence]
     // face only where it is narrow, and the face stays whole. The cut made larger takes all of the right face from y
     // 22.9 to the back, except the slab's end, a face of zero area (zeroMeasure: 7.6e-7 mm wide): the right face's
     // name comes apart into the big piece and that one. The answer is the big piece alone: Split (the name is gone),
-    // which its own evidence does not object to.
+    // which its own evidence does not object to. kernel::boolean now merges a face that close (boolean.cpp SLIVERS):
+    // the cuts are made with that off, so the slab is still there.
+    const kernel::testing::SliverMergeOff keepSlab;
     const Body picked = backCut(9.135638, 13.318216);
     const auto right = faceAt(picked.shape, Vec3{76.2, 5, 15}, Vec3{1, 0, 0});
     REQUIRE(right);

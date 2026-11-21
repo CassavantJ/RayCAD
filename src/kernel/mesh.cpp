@@ -145,24 +145,18 @@ Result<std::shared_ptr<BRepBuilderAPI_Copy>> meshedCopy(const TopoDS_Shape& orig
         return copier;
 
     const TopoDS_Shape& copy = (*copier)->Shape();
-    // The lock is held outside guarded(): a structured exception skips destructors inside it.
+    // The lock and the pool's team are held outside guarded(): a structured exception skips destructors inside it.
     const std::lock_guard<std::mutex> lock(meshMutex());
+    const detail::MeshTeamScope team(chordTol);
     Status meshed = detail::guarded(where, [&]() -> Status {
         IMeshTools_Parameters parameters;
         parameters.MeshAlgo = IMeshTools_MeshAlgoType_Watson;
         parameters.Deflection = chordTol;
         parameters.Angle = angleTol;
         parameters.Relative = false;
-        const occ::handle<OSD_ThreadPool>& pool = OSD_ThreadPool::DefaultPool();
-        const int team = concurrencyFor(chordTol, std::max(1, pool->NbThreads()));
-        parameters.InParallel = gInParallel.load(std::memory_order_relaxed) && team >= 2;
-        // Only meshing runs OCCT's pool (PLAN.md section 7 rule 4), and only one mesh call runs at a time, so
-        // this setting is ours while the lock is held.
-        const int previousTeam = pool->NbDefaultThreadsToLaunch();
-        pool->SetNbDefaultThreadsToLaunch(team);
+        parameters.InParallel = gInParallel.load(std::memory_order_relaxed) && team.team() >= 2;
         // TODO: pass a Message_ProgressRange whose indicator reads ctx.cancel and reports to ctx.progress.
         BRepMesh_IncrementalMesh mesher(copy, parameters);
-        pool->SetNbDefaultThreadsToLaunch(previousTeam);
         return std::monostate{};
     });
     if (!meshed)
@@ -468,6 +462,29 @@ Result<TriSoup> buildExactMesh(const Shape& shape, const BRepBuilderAPI_Copy& co
 }
 
 } // namespace
+
+detail::MeshTeamScope::MeshTeamScope(double chordTol) noexcept
+{
+    try {
+        const occ::handle<OSD_ThreadPool>& pool = OSD_ThreadPool::DefaultPool();
+        team_ = concurrencyFor(chordTol, std::max(1, pool->NbThreads()));
+        previous_ = pool->NbDefaultThreadsToLaunch();
+        pool->SetNbDefaultThreadsToLaunch(team_);
+    } catch (...) {
+        team_ = 1;
+        previous_ = -1;
+    }
+}
+
+detail::MeshTeamScope::~MeshTeamScope()
+{
+    if (previous_ < 0)
+        return;
+    try {
+        OSD_ThreadPool::DefaultPool()->SetNbDefaultThreadsToLaunch(previous_);
+    } catch (...) {
+    }
+}
 
 Result<Mesh> tessellate(const Shape& shape, const MeshOptions& options, JobContext& ctx)
 {
