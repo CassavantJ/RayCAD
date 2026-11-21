@@ -47,6 +47,43 @@ bool runCatching(GuardedThunk thunk, void* context, std::string& message) noexce
 std::atomic<std::uint64_t> gStructuredExceptions{0};
 
 #if defined(_MSC_VER)
+// Faults are counted where they are raised, not where they are caught: OCCT also swallows them itself. Its thread
+// pool runs every job under catch (...), and OCCT is built with /EHa, so an access violation in a parallel mesh job
+// becomes "Error: Unknown exception" and never reaches runSeh(). A first-chance vectored handler sees every one of
+// them, on any thread, before any handler runs; it only counts and lets the search continue.
+bool isFault(DWORD code) noexcept
+{
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_STACK_OVERFLOW:
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_PRIV_INSTRUCTION:
+    case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+    case EXCEPTION_IN_PAGE_ERROR:
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        return true;
+    default:
+        return false;
+    }
+}
+
+LONG CALLBACK countFault(EXCEPTION_POINTERS* info) noexcept
+{
+    if (info != nullptr && info->ExceptionRecord != nullptr && isFault(info->ExceptionRecord->ExceptionCode))
+        gStructuredExceptions.fetch_add(1, std::memory_order_relaxed);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void installFaultCounter() noexcept
+{
+    static const bool installed = AddVectoredExceptionHandler(1, countFault) != nullptr;
+    (void)installed;
+}
+
+// Installed when the kernel is loaded (and again, harmlessly, on first use).
+const bool gFaultCounterAtLoad = (installFaultCounter(), true);
+
 // A structured exception (an access violation inside OCCT, a stack overflow, a delay-loaded DLL that cannot be
 // loaded) is caught here. This frame holds no C++ object with a destructor, which __try requires.
 bool runSeh(GuardedThunk thunk, void* context, std::string& message, unsigned long& code) noexcept
@@ -65,10 +102,13 @@ bool runSeh(GuardedThunk thunk, void* context, std::string& message, unsigned lo
 bool runGuarded(GuardedThunk thunk, void* context, std::string& message) noexcept
 {
 #if defined(_MSC_VER)
+    installFaultCounter();
     unsigned long code = 0;
     const bool ok = runSeh(thunk, context, message, code);
     if (!ok && code != 0) {
-        gStructuredExceptions.fetch_add(1, std::memory_order_relaxed);
+        // A fault was counted by countFault() when it was raised; anything else (a DLL that cannot be loaded) here.
+        if (!isFault(code))
+            gStructuredExceptions.fetch_add(1, std::memory_order_relaxed);
         if (code == static_cast<unsigned long>(EXCEPTION_STACK_OVERFLOW))
             (void)_resetstkoflw();
         try {

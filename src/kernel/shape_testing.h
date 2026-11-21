@@ -90,8 +90,9 @@ std::uint64_t validationDisagreements() noexcept;
 // only the faces they change. For tests that need that path on a body the kernel did not make (an import).
 void markValidated(const Shape& shape) noexcept;
 
-// How many structured exceptions (access violations and the like inside OCCT) the kernel's guard has caught in
-// this process. Always 0 off Windows: there nothing catches them and the process dies.
+// How many faults (access violations and the like) were raised in this process on any thread, whether the kernel's
+// guard or OCCT itself (its thread pool's catch (...)) swallowed them (detail::structuredExceptionCount). Always 0
+// off Windows: there nothing catches them and the process dies.
 std::uint64_t structuredExceptions() noexcept;
 
 // ---------- Import / export tests (task T-005) ----------

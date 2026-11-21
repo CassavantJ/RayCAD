@@ -746,6 +746,17 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
     REQUIRE(t.wrong() == 0);
 }
 
+// No OCCT call may fault. On Windows the kernel counts every access violation (or other fault) raised in the process,
+// whoever swallowed it: its own guard, or OCCT's thread pool. A swallowed fault may leave OCCT state corrupt (it was
+// seen as a later heap corruption, 0xC0000374), so a block with one fails here, with the count, rather than pass or
+// crash later. Off Windows a fault ends the process.
+void checkNoFault(std::uint64_t before)
+{
+    const std::uint64_t faults = kernel::testing::structuredExceptions() - before;
+    INFO("access violations or other faults raised inside the geometry kernel and swallowed: " << faults);
+    CHECK(faults == 0);
+}
+
 } // namespace
 
 TEST_CASE("A randomised sequence gives the same result every time, serially and in parallel", "[naming][acceptance]")
@@ -777,6 +788,7 @@ TEST_CASE("References replayed on a part read back in another session resolve as
 {
     // One sequence per part, replayed once on the part as built and once on a fresh deserialised copy of it: the
     // imported part's names must come out the same, so every reference must get the same answer and verdict.
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     long refs = 0, wrong = 0;
     for (int p = 0; p < kPartCount; ++p) {
@@ -796,11 +808,13 @@ TEST_CASE("References replayed on a part read back in another session resolve as
             std::printf("  %s\n", w.c_str());
     }
     std::printf("Another session: %ld resolutions on fresh copies, WRONG %ld\n", refs, wrong);
+    checkNoFault(guardBefore);
     CHECK(wrong == 0);
 }
 
 TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference resolves to a wrong element", "[random]")
 {
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     if (std::getenv("RAYCAD_NAMING_PROGRESS") != nullptr)
         for (const Part& p : parts)
@@ -810,11 +824,8 @@ TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference reso
         INFO(p.path << ": " << p.error);
         REQUIRE(p.base != nullptr);
     }
-    // No OCCT call may fault: on Windows the kernel's guard counts the access violations it catches (a caught one
-    // may leave OCCT state corrupt; off Windows it ends the process).
-    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Randomised", parts, kSequencesPerPart, SequenceOptions{});
-    CHECK(kernel::testing::structuredExceptions() == guardBefore);
+    checkNoFault(guardBefore);
     checkGates(r, kSequencesPerPart);
 }
 
@@ -825,19 +836,20 @@ TEST_CASE("Smoke: the first 3 randomised edit sequences of every part of the mai
 {
     constexpr int kSmokePerPart = 3;
     static_assert(kSmokePerPart < kSequencesPerPart);
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
         REQUIRE(p.base != nullptr);
     }
-    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Randomised smoke", parts, kSmokePerPart, SequenceOptions{});
-    CHECK(kernel::testing::structuredExceptions() == guardBefore);
+    checkNoFault(guardBefore);
     checkGates(r, kSmokePerPart);
 }
 
 TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development", "[random-holdout]")
 {
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
@@ -846,10 +858,8 @@ TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development
     SequenceOptions holdout;
     holdout.seedBase = 0x401D0000ull;
     holdout.keyPrefix = "holdout ";
-    // No OCCT call may fault (see the first test case).
-    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const BlockResult r = runBlock("Holdout", parts, kHoldoutPerPart, holdout);
-    CHECK(kernel::testing::structuredExceptions() == guardBefore);
+    checkNoFault(guardBefore);
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
@@ -858,6 +868,7 @@ TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the
 {
     // The first holdout block's failures were looked at while the naming code and the oracle were fixed (T-081a
     // gate); this block's seeds were not run until those fixes were done, so it is the unseen check.
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
@@ -867,6 +878,7 @@ TEST_CASE("Second holdout: 200 randomised sequences on seeds first run after the
     holdout.seedBase = 0x5EC0D000ull;
     holdout.keyPrefix = "holdout2 ";
     const BlockResult r = runBlock("Second holdout", parts, kHoldoutPerPart, holdout);
+    checkNoFault(guardBefore);
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
@@ -875,6 +887,7 @@ TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the 
 {
     // The second holdout block's first run found two wrong answers; one was fixed (an edge named from a face that was
     // split since), so this block, with seeds not run before, is the unseen check of that fix.
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
@@ -884,6 +897,7 @@ TEST_CASE("Third holdout: 200 randomised sequences on seeds first run after the 
     holdout.seedBase = 0x7A11D000ull;
     holdout.keyPrefix = "holdout3 ";
     const BlockResult r = runBlock("Third holdout", parts, kHoldoutPerPart, holdout);
+    checkNoFault(guardBefore);
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
@@ -893,6 +907,7 @@ TEST_CASE("Fourth holdout: 200 randomised sequences on seeds first run after the
     // The second and third blocks' findings were fixed with the pick-time evidence in TopoRef (territories of the
     // picked element and its neighbours) and four oracle fixes; this block's seeds (disjoint from every other block's)
     // were run once, on the final code, unseen, on Windows and on Linux.
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
@@ -902,6 +917,7 @@ TEST_CASE("Fourth holdout: 200 randomised sequences on seeds first run after the
     holdout.seedBase = 0x2B4D4000ull;
     holdout.keyPrefix = "holdout4 ";
     const BlockResult r = runBlock("Fourth holdout", parts, kHoldoutPerPart, holdout);
+    checkNoFault(guardBefore);
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
@@ -912,6 +928,7 @@ TEST_CASE("Fifth holdout: 200 randomised sequences on seeds first run after the 
     // answer that runs on into another element), and the oracle learnt to judge sliding crossings; this block's seeds
     // (disjoint from every other block's) were added after those were committed and run once, unseen, on Windows and
     // on Linux, under the holdout pass criterion (checkGates): no review entries for it existed when it was first run.
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
@@ -921,6 +938,7 @@ TEST_CASE("Fifth holdout: 200 randomised sequences on seeds first run after the 
     holdout.seedBase = 0x6C3A9000ull;
     holdout.keyPrefix = "holdout5 ";
     const BlockResult r = runBlock("Fifth holdout", parts, kHoldoutPerPart, holdout);
+    checkNoFault(guardBefore);
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
@@ -931,6 +949,7 @@ TEST_CASE("Sixth holdout: 200 randomised sequences on seeds first run after the 
     // fourth block's two rules, and no piece of zero measure in an answer); this block's seeds (disjoint from every
     // other block's) were added after those were committed and run once, unseen, on Windows and on Linux, under the
     // holdout pass criterion (checkGates): no review entries for it existed when it was first run.
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
     for (const Part& p : parts) {
         INFO(p.path << ": " << p.error);
@@ -940,6 +959,7 @@ TEST_CASE("Sixth holdout: 200 randomised sequences on seeds first run after the 
     holdout.seedBase = 0x1F6A6000ull;
     holdout.keyPrefix = "holdout6 ";
     const BlockResult r = runBlock("Sixth holdout", parts, kHoldoutPerPart, holdout);
+    checkNoFault(guardBefore);
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 

@@ -106,9 +106,11 @@ Error makeError(ErrorCode code, std::string message, std::string_view where);
 using GuardedThunk = void (*)(void*);
 bool runGuarded(GuardedThunk thunk, void* context, std::string& message) noexcept;
 
-// How many structured exceptions runGuarded() has caught in this process (always 0 off Windows, where nothing
-// catches them). A caught access violation inside OCCT may leave OCCT state corrupt, so the kernel's own checks
-// must keep OCCT from faulting in the first place; the tests use this count to prove that they do.
+// How many faults (access violations, stack overflows and the like) were raised in this process since the kernel
+// was loaded, on any thread, whoever caught them: runGuarded() here, or OCCT itself (its thread pool runs jobs under
+// catch (...)). Always 0 off Windows, where nothing catches them and the process dies. A caught fault inside OCCT
+// may leave OCCT state corrupt, so the kernel's own checks must keep OCCT from faulting in the first place; the
+// tests use this count to prove that they do.
 std::uint64_t structuredExceptionCount() noexcept;
 
 // Runs `body` (returning a Result<T>) and turns anything it throws into ErrorCode::KernelFailure with
