@@ -24,6 +24,7 @@
 #include <TopoDS_Shape.hxx>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -107,6 +108,26 @@ Result<double> validateSolids(const TopoDS_Shape& shape, std::string_view what, 
 
 // Volume of the solids of `shape` (0 if it has none). May throw.
 double solidVolume(const TopoDS_Shape& shape);
+
+// SLIVERS. Material or a gap thinner than kSliverWidth (mm) is never meant: it comes from two faces that were meant
+// to lie on one plane but are a rounding error apart, such as a sketch placed through a single-precision point
+// picked on a face (7.6e-7 mm off at y = 50.8). 1e-4 mm is 1000 times OCCT's Precision::Confusion, about the
+// single-precision rounding of a coordinate of 2 m, and ten times below the finest tolerance a machine shop works
+// to, so nothing anyone meant is that thin. A shape has a sliver where
+//   - a face is narrower than kSliverWidth: twice its area over its perimeter, which is the width of a long thin
+//     strip and no more than the width of any convex face (a step a rounding error high), or
+//   - two planar faces face opposite ways on parallel planes less than kSliverWidth apart and their boxes overlap
+//     (a skin of material, or a crack, a rounding error thick).
+inline constexpr double kSliverWidth = 1e-4;
+
+// How many testing::SliverMergeOff guards are alive; while it is above 0, kernel::boolean does not retry with the fuzzy
+// option (tests only, shape_testing.h).
+std::atomic<int>& sliverMergeOffCount() noexcept;
+
+// The faces of `shape` that make a sliver, in SubId order. With `involved` (one flag per face of `shape`), only
+// slivers with at least one involved face count (a boolean asks about the faces that came from its tool, so a sliver
+// the body already had is not blamed on the tool). May throw (call inside guarded()).
+std::vector<SubId> sliverFaces(const Shape& shape, const std::vector<bool>& involved = {});
 
 // The one solid of `shape` if it has exactly one, else a compound of its solids in explorer order (null if none).
 TopoDS_Shape normaliseSolids(const TopoDS_Shape& shape);

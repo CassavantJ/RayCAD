@@ -1062,6 +1062,9 @@ TEST_CASE("Regression (holdout4 5:9): an edge that moved and runs on into anothe
     // of R5's start face. Names say Exact on the first stretch; the oracle expects both. Not Exact
     // (exactAgainstEvidence: the moved answer runs on into an element on the same line and planes). Negative: Exact on
     // the first stretch alone is incomplete.
+    // The sliver face comes from a sketch plane 7.6e-7 mm off a face; kernel::boolean now merges that, so the sequence
+    // is replayed with the merge off to keep the geometry this regression is about.
+    const kernel::testing::SliverMergeOff keepSliver;
     const std::string id = "holdout4 raycad-synthetic/fixture_plate_1.stp #9|edge 156";
     const std::vector<Looked> looked = replayAndLook(
         5, 9, 0x2B4D4000ull, "holdout4 ", {id}, [](const Expectation& x, const std::vector<std::uint32_t>&) {
@@ -1184,6 +1187,9 @@ TEST_CASE(
     // expects {16}; the resolver said Split {16 17}. A piece of zero measure is never part of an answer (zeroMeasure);
     // the one piece left keeps what its own evidence says (exactAgainstEvidence: nothing objects) and stays Split (the
     // picked name is gone). Negative: Split with the zero-area face as well is wrong.
+    // kernel::boolean now merges a face 7.6e-7 mm off another (boolean.cpp SLIVERS); the sequence is replayed with that
+    // off so the slab this regression is about is still made.
+    const kernel::testing::SliverMergeOff keepSlab;
     const std::string id = "holdout5 raycad-synthetic/chamfer_block_2.stp #7|face 16";
     const std::vector<Looked> looked = replayAndLook(1, 7, 0x6C3A9000ull, "holdout5 ", {id},
                                                      [](const Expectation& x, const std::vector<std::uint32_t>&) {

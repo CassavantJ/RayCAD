@@ -163,6 +163,92 @@ TEST_CASE("coplanar faces: a flush pocket and a fuse that unifies faces", "[kern
     }
 }
 
+TEST_CASE("a tool face a rounding error away from a body face leaves no sliver", "[kernel][boolean]")
+{
+    // The naming harness put a sketch plane through a single-precision mesh sample of the face y = 50.8, at
+    // y = 50.7999992 (the float nearest 50.8), and a cut from there kept a slab 7.6e-7 mm thick; a user who sketches
+    // on a picked point can do the same. The kernel treats faces closer than kernel.h's sliver width as one.
+    const double faceY = 50.8;
+    const double sketchY = static_cast<double>(static_cast<float>(faceY));
+    REQUIRE(faceY - sketchY > 1e-7);
+    REQUIRE(faceY - sketchY < 1e-6);
+    const Shape block = box({0, 0, 0}, {30, faceY, 20});
+    SECTION("a pocket cut down from just below the top face")
+    {
+        const Shape tool = box({10, sketchY - 8, 5}, {40, sketchY, 15}); // open on the x = 30 side
+        const OpResult op = run(BoolOp::Cut, block, tool);
+        checkValid(op);
+        checkHistory(op, {&block, &tool});
+        CHECK(take(testing::sliverFaces(op.shape)).empty());
+        CHECK(close(volumeOf(op.shape), 30.0 * faceY * 20.0 - 20.0 * 8.0 * 10.0, 1e-6));
+        CHECK(op.shape.count(SubKind::Solid) == 1);
+        CHECK(op.shape.count(SubKind::Face) == 10);
+        REQUIRE(op.warnings.size() == 1);
+        CHECK(op.warnings[0].find("0.0001 mm") != std::string::npos);
+    }
+    SECTION("a cut stopping just short of the far face")
+    {
+        const Shape tool = box({10, 1e-6, 5}, {20, 60, 15}); // through the top, 1e-6 mm short of y = 0
+        const OpResult op = run(BoolOp::Cut, block, tool);
+        checkValid(op);
+        checkHistory(op, {&block, &tool});
+        CHECK(take(testing::sliverFaces(op.shape)).empty());
+        CHECK(close(volumeOf(op.shape), 30.0 * faceY * 20.0 - 10.0 * faceY * 10.0, 1e-6));
+        CHECK(op.warnings.size() == 1);
+    }
+    SECTION("a boss a rounding error short of the face it stands on")
+    {
+        const Shape tool = box({10, sketchY + 2e-6, 5}, {20, 60, 15}); // a gap of about 2.8e-6 mm
+        JobContext ctx;
+        auto result = boolean(BoolOp::Union, block, tool, ctx);
+        // Separate solids are refused before any sliver check; the message must say so, not crash or join wrongly.
+        if (result) {
+            checkValid(*result);
+            CHECK(result->shape.count(SubKind::Solid) == 1);
+        } else {
+            CHECK(result.error().code == ErrorCode::KernelFailure);
+        }
+    }
+    SECTION("an exact cut is unchanged")
+    {
+        const Shape tool = box({10, faceY - 8, 5}, {40, faceY, 15});
+        const OpResult op = run(BoolOp::Cut, block, tool);
+        checkValid(op);
+        CHECK(op.warnings.empty());
+        CHECK(take(testing::sliverFaces(op.shape)).empty());
+        CHECK(op.shape.count(SubKind::Face) == 10);
+    }
+    SECTION("a skin the body already had is found, and not blamed on a tool elsewhere")
+    {
+        const Shape skinned = take(testing::makeSkinnedPocket(faceY - sketchY));
+        const std::vector<SubId> slivers = take(testing::sliverFaces(skinned));
+        CHECK(slivers.size() == 2); // the top face and the pocket's ceiling
+        const Shape hole = cylinder({5, 25, -5}, {0, 0, 1}, 2.0, 30.0);
+        const OpResult op = run(BoolOp::Cut, skinned, hole);
+        checkValid(op);
+        CHECK(op.warnings.empty());
+        CHECK(take(testing::sliverFaces(op.shape)).size() == 2);
+    }
+    SECTION("the testing switch keeps the skin, as before the rule")
+    {
+        const Shape tool = box({10, sketchY - 8, 5}, {40, sketchY, 15});
+        const testing::SliverMergeOff off;
+        const OpResult op = run(BoolOp::Cut, block, tool);
+        checkValid(op);
+        CHECK(op.warnings.empty());
+        CHECK(op.shape.count(SubKind::Face) == 11);
+        CHECK(take(testing::sliverFaces(op.shape)).size() == 2);
+    }
+    SECTION("a skin thicker than the sliver width is left alone")
+    {
+        const Shape tool = box({10, faceY - 8 - 2e-4, 5}, {40, faceY - 2e-4, 15});
+        const OpResult op = run(BoolOp::Cut, block, tool);
+        checkValid(op);
+        CHECK(op.warnings.empty());
+        CHECK(op.shape.count(SubKind::Face) == 11);
+    }
+}
+
 TEST_CASE("tangent contacts give a valid result or a clear failure", "[kernel][boolean]")
 {
     const Shape block = box({0, 0, 0}, {100, 60, 20});
