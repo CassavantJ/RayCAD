@@ -66,13 +66,14 @@ The OpenCASCADE DLLs are delay-loaded and are not copied next to the executables
 kernel also needs `build\vcpkg_installed\x64-windows\bin` (Release) or `...\x64-windows\debug\bin` (Debug)
 on `PATH`; CTest sets this for the tests.
 
-To check a change as CI does on Windows, run `tools\verify.cmd` with `VCPKG_ROOT` and `QT_ROOT_DIR` set (and
-`VCPKG_DEFAULT_BINARY_CACHE` if you use one). It installs the vcpkg dependencies, configures `windows-msvc`,
-then builds and runs `ctest` for Debug and then Release, and stops at the first step that fails (the exit
-code says which). `RAY_VCPKG_INSTALL_OPTIONS` passes extra options to vcpkg, such as
-`--x-buildtrees-root=C:\vb` when the checkout's path is too long for OpenCASCADE's build tree. The Debug
-tests take several times as long as Release ones (unoptimised OpenCASCADE); their CTest timeouts are four
-times longer (`tests/CMakeLists.txt`).
+To check a change, run `tools\verify.cmd [quick|full|ci]` with `VCPKG_ROOT` and `QT_ROOT_DIR` set (and
+`VCPKG_DEFAULT_BINARY_CACHE` if you use one); "Which tests to run" below says which mode when. `quick` (the
+default) configures `windows-msvc`, builds Release and runs the quick test tier; `full` runs every test after
+the Release build; `ci` does what CI does on Windows: vcpkg install, then Debug with the quick tier, then
+Release with every test. It stops at the first step that fails (the exit code says which).
+`RAY_VCPKG_INSTALL_OPTIONS` passes extra options to vcpkg, such as `--x-buildtrees-root=C:\vb` when the
+checkout's path is too long for OpenCASCADE's build tree. The Debug tests take several times as long as
+Release ones (unoptimised OpenCASCADE); their CTest timeouts are four times longer (`tests/CMakeLists.txt`).
 
 ### Linux and macOS
 
@@ -87,12 +88,21 @@ ctest --preset linux-gcc-debug
 On Linux, vcpkg needs the usual build tools and the OpenGL and X11 development packages to build
 OpenCASCADE; `.github/workflows/build-test.yml` lists the Ubuntu packages CI installs.
 
+`tools/verify.sh [quick|full|ci] [preset]` is the POSIX counterpart of `tools\verify.cmd`, with the same modes
+(preset `linux-gcc` or `macos-arm64` by default). `tools/linux-local.sh` builds a Windows checkout on Linux
+through WSL.
+
 ### Presets
 
 Configure presets: `windows-msvc`, `linux-gcc`, `linux-clang`, `macos-arm64` (each with `-debug`,
 `-relwithdebinfo` and `-release` build and test presets), plus `linux-clang-asan` (AddressSanitizer and
 UndefinedBehaviorSanitizer) and `linux-clang-tsan` (ThreadSanitizer). Build output goes to
-`build/<preset>/`.
+`build/<preset>/`. Every test preset has a `-quick` twin that runs only the quick tier (for example
+`windows-msvc-release-quick`); all of them run `ctest` in parallel.
+
+Precompiled headers (`RAY_PCH`, on by default; `cmake/RayPch.cmake`) cover the standard library, Qt and
+Catch2 in the Qt targets, `ray_api` and the tests. `linux-clang-asan` builds without them, so CI also compiles
+every source the way it is written; configure with `-DRAY_PCH=OFF` to do the same locally.
 
 `linux-clang-tsan` uses the overlay triplet `triplets/x64-linux-dynamic-tsan.cmake`, which builds oneTBB
 with Clang and ThreadSanitizer so that TSan sees the synchronisation inside the job system's thread pool.
@@ -106,6 +116,25 @@ reports a deliberate race in a `parallelChunks` body.
 `ctest` runs everything: a standalone-compile test for every public header, the module link-graph test,
 the OpenCASCADE smoke test (it calls into every toolkit the kernel links, and on Windows also proves
 they are delay-loaded), the two application smoke tests, and the lint tools with their self-tests.
+
+### Which tests to run
+
+Every test has one of two CTest labels (`tests/tiers.cmake`):
+
+- `quick`: everything that guards ordinary changes, including the S4 naming scenarios, the naming
+  acceptance and regression replays and a smoke block of the randomised naming sequences. A few minutes in
+  Release. Run it on **every merge**: `tools\verify.cmd` (or `tools/verify.sh`), or
+  `ctest --preset <config>-quick`.
+- `slow`: the full randomised naming block, its six holdout blocks, the other-session replay and the sketch
+  drag agreement sweep. Run every test (`tools\verify.cmd full`, `ctest --preset <config>`) **before a push**,
+  and **after any change in `src/naming`, `src/kernel`, `ports/` or the naming oracle** (`tests/naming`).
+
+CI runs the quick tier in Debug and every test in Release and under AddressSanitizer. In an MSVC Debug build
+the randomised naming blocks are disabled (they would take hours there); ctest lists them as "Not Run
+(Disabled)". Tests timed against the wall clock (cancel latencies, UI-thread stalls, start-up and drag
+benchmarks) run alone. Tests that show a window take turns (the `desktop` resource lock: windows on one
+desktop share the keyboard focus, the pointer and the screen), and a test that sets the system clipboard
+holds the `clipboard` lock.
 
 The lints can also be run on their own, without building:
 
