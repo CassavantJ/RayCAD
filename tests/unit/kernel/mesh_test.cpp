@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -20,6 +21,12 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+
+#include <tlhelp32.h>
+#endif
 
 using namespace ray;
 using namespace ray::kernel;
@@ -561,6 +568,60 @@ TEST_CASE("the number of faces meshed at once shrinks with the tolerance", "[ker
     CHECK(fine >= 1);
     CHECK(fine <= 4);
     CHECK(testing::meshConcurrency(1e-6) == 1);
+}
+
+namespace {
+// Threads of this process, from the operating system; 0 where it cannot tell.
+int processThreads()
+{
+#if defined(_WIN32)
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return 0;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof entry;
+    int n = 0;
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
+        n += entry.th32OwnerProcessID == GetCurrentProcessId() ? 1 : 0;
+    CloseHandle(snapshot);
+    return n;
+#elif defined(__linux__)
+    std::error_code ec;
+    int n = 0;
+    for (std::filesystem::directory_iterator it("/proc/self/task", ec), end; !ec && it != end; it.increment(ec))
+        ++n;
+    return n;
+#else
+    return 0;
+#endif
+}
+} // namespace
+
+TEST_CASE("a mesh call runs on no more threads than its memory cap allows", "[kernel][mesh][threads]")
+{
+    // OSD_Parallel ignores SetNbDefaultThreadsToLaunch, so the cap is the size of OCCT's pool (mesh.cpp MEMORY CAP).
+    const Shape plate = take(testing::makeHolePlate(8, 8)); // 70 faces: more than the pool has threads
+    const int coarseTeam = testing::meshConcurrency(0.2);
+    const int fineTeam = testing::meshConcurrency(0.01);
+    REQUIRE_FALSE(displayBytes(plate, MeshOptions{0.2, 0.35}).empty());
+    CHECK(testing::lastMeshTeam() == coarseTeam);
+    CHECK(testing::meshPoolThreads() == coarseTeam);
+    const int afterCoarse = processThreads();
+    REQUIRE_FALSE(displayBytes(plate, MeshOptions{0.01, 0.35}).empty());
+    CHECK(testing::lastMeshTeam() == fineTeam);
+    CHECK(testing::meshPoolThreads() == fineTeam);
+    const int afterFine = processThreads();
+    // The pool started up to coarseTeam - 1 threads of its own for the coarse call and kept them; resizing it to the
+    // fine team ended them and started at most fineTeam - 1 (allow one thread of slack for the rest of the process).
+    if (afterCoarse > 0 && afterFine > 0) {
+        INFO("threads after the coarse call " << afterCoarse << ", after the fine call " << afterFine);
+        CHECK(afterFine <= afterCoarse - (coarseTeam - fineTeam) + 1);
+    }
+    // Back to the coarse size for the next call, and the mesh is the same whatever the team.
+    const std::vector<unsigned char> again = displayBytes(plate, MeshOptions{0.2, 0.35});
+    CHECK(testing::meshPoolThreads() == coarseTeam);
+    const ParallelSwitch off(false);
+    CHECK(displayBytes(plate, MeshOptions{0.2, 0.35}) == again);
 }
 
 // Not part of the normal run: prints how long meshing takes. Run with "[.timing]".
