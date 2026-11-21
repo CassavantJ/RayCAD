@@ -308,7 +308,7 @@ void SceneController::setBodies(std::vector<api::viewer::Body> bodies, const QSt
     sourceName_ = sourceName;
     fineWanted_ = false;
     framePending_ = true;
-    if (snapshot_->bodies.empty())
+    if (snapshot_->bodies.empty() && !framingHeld_)
         framedBodies_.clear(); // nothing shown: whatever comes next is framed
     emit bodiesChanged();
     tree_->rebuild();
@@ -590,6 +590,8 @@ void SceneController::frameIfNew()
     if (!framePending_)
         return;
     framePending_ = false;
+    if (framingHeld_)
+        return;
     // T-092: a document edit feeds the same bodies again (every sketch step does); the view then stays where the user
     // put it. Only a different body set is framed anew.
     std::vector<BodyId> ids;

@@ -421,6 +421,84 @@ TEST_CASE("wait inside a job on a job that has not started runs it inline", "[jo
     CHECK(outer.wait().value() == 21);
 }
 
+TEST_CASE("a deferred job runs only through runDeferred, on the caller's thread", "[jobs][defer]")
+{
+    TestDispatcher dispatcher;
+    auto jobs = ray::makeJobSystem(dispatcher, 2);
+    std::atomic<int> ran{0};
+    std::thread::id ranOn;
+    auto handle = jobs->defer<int>({"deferred"}, [&](ray::JobContext&) -> ray::Result<int> {
+        ranOn = std::this_thread::get_id();
+        ++ran;
+        return 5;
+    });
+    bool continued = false;
+    handle.then([&](ray::Result<int> r) { continued = r.has_value() && *r == 5; });
+    // Nothing runs it: no worker picks it up.
+    std::this_thread::sleep_for(50ms);
+    dispatcher.runPending();
+    CHECK(ran.load() == 0);
+    CHECK_FALSE(handle.done());
+    CHECK_FALSE(continued);
+
+    // wait() from another thread does not run it; it ends when runDeferred() has run it here.
+    std::atomic<bool> waited{false};
+    std::atomic<int> waitedValue{0};
+    std::thread waiter([&] {
+        const ray::Result<int> r = handle.wait();
+        waitedValue = r ? *r : -1;
+        waited = true;
+    });
+    std::this_thread::sleep_for(50ms);
+    CHECK(ran.load() == 0);
+    CHECK_FALSE(waited.load());
+    handle.runDeferred();
+    waiter.join();
+    CHECK(ran.load() == 1);
+    CHECK(ranOn == std::this_thread::get_id());
+    CHECK(handle.done());
+    CHECK(waited.load());
+    CHECK(waitedValue.load() == 5);
+    handle.runDeferred(); // done: does nothing
+    CHECK(ran.load() == 1);
+    REQUIRE(dispatcher.runUntil([&] { return continued; }));
+}
+
+TEST_CASE("a deferred job cancelled before it runs ends at once and never runs", "[jobs][defer]")
+{
+    TestDispatcher dispatcher;
+    auto jobs = ray::makeJobSystem(dispatcher, 1);
+    std::atomic<int> ran{0};
+    auto handle = jobs->defer<int>({"deferred"}, [&](ray::JobContext&) -> ray::Result<int> {
+        ++ran;
+        return 1;
+    });
+    bool cancelled = false;
+    handle.then([&](ray::Result<int> r) { cancelled = !r && r.error().code == ray::ErrorCode::Cancelled; });
+    handle.cancel();
+    CHECK(handle.done()); // at once, without a worker or a runDeferred()
+    handle.runDeferred();
+    CHECK(ran.load() == 0);
+    CHECK(handle.wait().error().code == ray::ErrorCode::Cancelled);
+    REQUIRE(dispatcher.runUntil([&] { return cancelled; }));
+}
+
+TEST_CASE("a deferred job run after its job system is gone completes as cancelled", "[jobs][defer]")
+{
+    TestDispatcher dispatcher;
+    auto jobs = ray::makeJobSystem(dispatcher, 1);
+    std::atomic<int> ran{0};
+    auto handle = jobs->defer<int>({"deferred"}, [&](ray::JobContext&) -> ray::Result<int> {
+        ++ran;
+        return 1;
+    });
+    jobs.reset();
+    handle.runDeferred();
+    CHECK(handle.done());
+    CHECK(ran.load() == 0);
+    CHECK(handle.wait().error().code == ray::ErrorCode::Cancelled);
+}
+
 TEST_CASE("results that cannot be copied are moved out", "[jobs]")
 {
     TestDispatcher dispatcher;

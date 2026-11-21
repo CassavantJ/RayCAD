@@ -180,4 +180,65 @@ std::shared_ptr<doc::IRebuilder> makeSideRebuilder(IApp& app, const OpenDocument
     }
 }
 
+doc::DocStatePtr stateBefore(const doc::DocState& state, const FeatureId& feature)
+{
+    try {
+        const auto it = std::find_if(state.features.begin(), state.features.end(),
+                                     [&](const doc::Feature& f) { return f.id == feature; });
+        if (it == state.features.end()) {
+            return nullptr;
+        }
+        auto before = std::make_shared<doc::DocState>(state);
+        if (it == state.features.begin()) {
+            before->features.clear(); // the rollback bar cannot sit before the first feature
+            before->rollback.reset();
+        } else {
+            before->rollback = std::prev(it)->id; // never the last feature: `feature` comes after it
+        }
+        return before;
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+Result<doc::BuildResultPtr> buildSnapshot(IApp& app, const std::string& documentId, doc::DocStatePtr snapshot,
+                                          JobContext& ctx)
+{
+    auto* impl = dynamic_cast<detail::AppImpl*>(&app);
+    if (impl == nullptr || !snapshot) {
+        return tl::unexpected(Error{ErrorCode::InvalidArgument, "Nothing to build", {}});
+    }
+    // Shared: the rebuilder stays alive for this build even if the document closes meanwhile.
+    const std::shared_ptr<doc::IRebuilder> rebuilder = impl->rebuilderOf(documentId);
+    if (!rebuilder) {
+        return tl::unexpected(Error{ErrorCode::NotFound, "No open document has the id " + documentId, {}});
+    }
+    return rebuilder->rebuild(std::move(snapshot), ctx);
+}
+
+std::optional<Located> locate(const doc::BuildResult& build, std::string_view refJson)
+{
+    try {
+        auto ref = naming::topoRefFromJson(refJson);
+        if (!ref) {
+            return std::nullopt;
+        }
+        const auto body = build.bodies.find(ref->body);
+        if (body == build.bodies.end() || body->second.shape.isNull()) {
+            return std::nullopt;
+        }
+        auto resolver = naming::makeResolver({naming::ResolverBody{ref->body, body->second.map, body->second.shape}});
+        if (!resolver) {
+            return std::nullopt;
+        }
+        naming::Resolved resolved = resolver->resolve(*ref);
+        if (!resolved.usable()) {
+            return std::nullopt;
+        }
+        return Located{ref->body, std::move(resolved.elements)};
+    } catch (const std::bad_alloc&) {
+        return std::nullopt;
+    }
+}
+
 } // namespace ray::api::feature_edit

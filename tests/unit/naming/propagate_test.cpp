@@ -138,14 +138,16 @@ std::vector<SubId> facesOnPlane(const kernel::Shape& shape, Vec3 p, Vec3 n)
 // The vertical edge at (x, y).
 SubId verticalEdgeAt(const kernel::Shape& shape, double x, double y)
 {
-    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge); ++i) {
+    std::optional<SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge) && !found; ++i) {
         const auto c = take(kernel::curveInfo(shape, SubId{SubKind::Edge, i}));
         if (c.type == kernel::CurveType::Line && std::abs(c.start.x - x) < 1e-6 && std::abs(c.end.x - x) < 1e-6 &&
             std::abs(c.start.y - y) < 1e-6 && std::abs(c.end.y - y) < 1e-6)
-            return SubId{SubKind::Edge, i};
+            found = SubId{SubKind::Edge, i};
     }
-    FAIL("no vertical edge there");
-    return {};
+    if (!found)
+        FAIL("no vertical edge there");
+    return *found;
 }
 
 bool everyElementNamed(const Body& b)

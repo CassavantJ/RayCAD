@@ -9,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -159,6 +160,27 @@ TEST_CASE("a part made through actions (sketch, extrude, fillet by model.referen
         }
         volume = volumeOf(*od, body);
         CHECK(std::abs(volume - (8000.0 - 3.14159265358979 * 16 * 10 - (1 - 3.14159265358979 / 4) * 4 * 10)) < 1e-6);
+
+        // The model before the fillet (what its edit mode picks in): the edge has the index it had, and the reference
+        // made there is the fillet's own. A feature that is not there is NotFound.
+        {
+            const auto before = json::parse(invoke(*app, "model.reference",
+                                                   R"({"body":")" + body + R"(","kind":"edge","index":)" +
+                                                       std::to_string(edge) + R"(,"before":")" + id('f', 3) + R"("})"));
+            REQUIRE(before);
+            const json::Value* again = before->find("ref");
+            REQUIRE(again != nullptr);
+            CHECK(json::write(*again) == json::write(*ref));
+            auto missing = app->wait(app->actions().invoke("model.reference",
+                                                           R"({"body":")" + body +
+                                                               R"(","kind":"edge","index":0,)"
+                                                               R"("before":")" +
+                                                               id('f', 9) + R"("})",
+                                                           Caller::User),
+                                     kWait);
+            REQUIRE_FALSE(missing);
+            CHECK(missing.error().code == ErrorCode::NotFound);
+        }
 
         // A dimension change by action, then undo.
         invoke(*app, "feature.extrude.edit", R"({"id":")" + id('f', 2) + R"(","props":{"distance":"12 mm"}})");
@@ -385,5 +407,117 @@ TEST_CASE("a sketch command's solve runs on a worker; commands keep their order;
             CHECK(od->document->state()->stateHash().hex() == before);
             CHECK(od->document->undoCount() == undos);
         }
+    }
+}
+
+namespace {
+
+// Puts the meander sketch (feature f1) into the active document, grown until one width edit takes `minMs` or more on
+// this build and machine; returns how long that edit took.
+double slowSketch(ray::api::HeadlessApp& app, double minMs)
+{
+    for (int periods = 4;; periods *= 2) {
+        invoke(app, "feature.sketch.add",
+               R"({"id":")" + id('f', 1) + R"(","props":{"plane":{"principal":"xy"},"sketch":)" +
+                   meanderSketch(periods) + "}}");
+        const auto t0 = std::chrono::steady_clock::now();
+        invoke(app, "sketch.constraint.set", widthArgs(28));
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (ms >= minMs || periods >= 64) {
+            return ms;
+        }
+        invoke(app, "feature.remove", R"({"id":")" + id('f', 1) + R"("})");
+    }
+}
+
+} // namespace
+
+TEST_CASE("document commands queue per document: order, cancel of a queued one, one worker per queue",
+          "[api][features][command-queue]")
+{
+    auto app = makeTestApp("", 2); // two workers: a queue that held more than one would starve everything else
+    invoke(*app, "file.new", "{}");
+    OpenDocument* od = app->active();
+    REQUIRE(od != nullptr);
+    const double editMs = slowSketch(*app, 300);
+    INFO("one width edit takes " << editMs << " ms");
+    REQUIRE(app->waitForBuild(*od, kWait));
+    const std::size_t undos = od->document->undoCount();
+
+    SECTION("commands run in invoke order; a queued one cancelled ends at once and never runs")
+    {
+        auto a = app->actions().invoke("sketch.constraint.set", widthArgs(29), Caller::User);
+        auto b = app->actions().invoke("sketch.constraint.set", widthArgs(30), Caller::User);
+        auto c = app->actions().invoke("sketch.constraint.set", widthArgs(31), Caller::User);
+        auto d =
+            app->actions().invoke("feature.edit", R"({"id":")" + id('f', 1) + R"(","name":"Meander"})", Caller::User);
+        // b waits behind a (still solving): its cancel completes it now, without a worker or a UI turn.
+        b.cancel();
+        CHECK(b.done());
+        auto rb = b.wait();
+        REQUIRE_FALSE(rb);
+        CHECK(rb.error().code == ErrorCode::Cancelled);
+        auto ra = app->wait(a, kWait);
+        auto rc = app->wait(c, kWait);
+        auto rd = app->wait(d, kWait);
+        REQUIRE(ra);
+        REQUIRE(rc);
+        REQUIRE(rd);
+        // Three undo steps (b never ran), the last one d's, applied on c's result.
+        CHECK(od->document->undoCount() == undos + 3);
+        REQUIRE(od->document->undoCommand());
+        CHECK(od->document->undoCommand()->name == "feature.edit");
+        invoke(*app, "edit.undo", "{}");
+        REQUIRE(od->document->undoCommand());
+        CHECK(od->document->undoCommand()->name == "sketch.constraint.set");
+        CHECK_THAT(od->document->undoCommand()->argsJson, ContainsSubstring("31"));
+    }
+    SECTION("a long queue holds one worker: other jobs run while it drains")
+    {
+        constexpr int kQueued = 6;
+        std::vector<ray::JobHandle<ray::api::ActionResult>> queued;
+        for (int i = 0; i < kQueued; ++i) {
+            queued.push_back(app->actions().invoke("sketch.constraint.set", widthArgs(29 + i), Caller::User));
+        }
+        // A job submitted after the whole queue: one worker is the queue's, the other is free for it.
+        std::atomic<int> doneWhenItRan{-1};
+        auto other = app->jobs().submit<int>(ray::JobInfo{"other", ray::JobPriority::Interactive, false},
+                                             [&](ray::JobContext&) -> ray::Result<int> {
+                                                 int done = 0;
+                                                 for (auto& q : queued) {
+                                                     done += q.done() ? 1 : 0;
+                                                 }
+                                                 doneWhenItRan = done;
+                                                 return done;
+                                             });
+        REQUIRE(app->wait(other, kWait));
+        for (auto& q : queued) {
+            REQUIRE(app->wait(q, kWait));
+        }
+        INFO("queued commands done when the other job ran: " << doneWhenItRan.load() << " of " << kQueued);
+        // Before, every queued command took a worker to wait for the one before it, so the other job ran only once
+        // all but one had started.
+        CHECK(doneWhenItRan.load() <= 1);
+        CHECK(od->document->undoCount() == undos + kQueued);
+    }
+    SECTION("the queues of two documents run side by side")
+    {
+        invoke(*app, "file.new", "{}");
+        OpenDocument* second = app->active();
+        REQUIRE(second != nullptr);
+        REQUIRE(second != od);
+        // The slow edit on the first document, by id; a quick one on the active (second) one, which is not queued
+        // behind it.
+        auto slow = app->actions().invoke(
+            "sketch.constraint.set", R"({"document":")" + od->id + R"(",)" + widthArgs(33).substr(1), Caller::User);
+        auto quick = app->actions().invoke(
+            "param.set", R"({"id":")" + id('a', 1) + R"(","name":"w","expression":"5 mm","kind":"length"})",
+            Caller::User);
+        auto rq = app->wait(quick, kWait);
+        REQUIRE(rq);
+        CHECK_FALSE(slow.done());
+        CHECK(second->document->undoCount() == 1);
+        REQUIRE(app->wait(slow, kWait));
+        CHECK(od->document->undoCount() == undos + 1);
     }
 }

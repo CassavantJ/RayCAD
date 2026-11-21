@@ -263,7 +263,8 @@ struct DispatchLink {
 };
 
 struct JobStateBase::Impl {
-    enum : int { kUnpublished = 0, kPublished = 1, kClaimed = 2 };
+    // kDeferred: ready like kPublished, but only runDeferred() and cancel() may claim it (IJobSystem::defer).
+    enum : int { kUnpublished = 0, kPublished = 1, kClaimed = 2, kDeferred = 3 };
 
     // Set by the job system before the job is published; then read only by the thread that claims it.
     std::function<void(JobContext&)> work;
@@ -283,9 +284,15 @@ struct JobStateBase::Impl {
     std::atomic<bool> doneFlag{false};                // done, readable without the lock
 
     void publish() noexcept { claim.store(kPublished, std::memory_order_release); }
+    void publishDeferred() noexcept { claim.store(kDeferred, std::memory_order_release); }
     bool tryClaim() noexcept
     {
         int expected = kPublished;
+        return claim.compare_exchange_strong(expected, kClaimed, std::memory_order_acq_rel);
+    }
+    bool tryClaimDeferred() noexcept
+    {
+        int expected = kDeferred;
         return claim.compare_exchange_strong(expected, kClaimed, std::memory_order_acq_rel);
     }
     void post(std::function<void()> fn) const
@@ -370,8 +377,8 @@ JobStateBase::~JobStateBase() = default;
 void JobStateBase::cancel()
 {
     impl_->cancel.cancel();
-    if (impl_->tryClaim()) {
-        completeCancelled(*this); // not started: done now, instead of when a worker gets to it
+    if (impl_->tryClaim() || impl_->tryClaimDeferred()) {
+        completeCancelled(*this); // not started: done now, instead of when a worker (or its queue) gets to it
     }
 }
 
@@ -388,6 +395,15 @@ void JobStateBase::wait()
     }
     std::unique_lock<std::mutex> lock(impl_->mutex);
     impl_->doneChanged.wait(lock, [this] { return impl_->done; });
+}
+
+void JobStateBase::runDeferred()
+{
+    if (impl_->tryClaimDeferred()) {
+        execute(*this);
+        return;
+    }
+    wait();
 }
 
 void JobStateBase::then(std::function<void()> onUiThread)
@@ -653,6 +669,19 @@ protected:
             }
         }
         state->cancel(); // submitted after the job system finished shutting down: never runs
+    }
+
+    void deferErased(JobInfo info, std::shared_ptr<detail::JobStateBase> state,
+                     std::function<void(JobContext&)> run) override
+    {
+        // Ready to run, but on no queue: runDeferred() runs it on its caller's thread. Its token derives from the
+        // shutdown token like every job's, so one run after the job system is gone completes as Cancelled.
+        detail::JobStateBase::Impl& impl = state->impl();
+        impl.work = std::move(run);
+        impl.title = std::move(info.title);
+        impl.cancel = CancelSource(shutdown_.token());
+        impl.link = link_;
+        impl.publishDeferred();
     }
 
 private:

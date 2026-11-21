@@ -122,6 +122,8 @@ Item {
                             required property bool rolledBack
                             required property bool isSketch
                             required property bool sketchShown
+                            required property bool isDatum
+                            required property bool datumShown
                             width: featureColumn.width
 
                             function startRename() {
@@ -151,6 +153,8 @@ Item {
                                 rolledBack: slot.rolledBack
                                 isSketch: slot.isSketch
                                 sketchShown: slot.sketchShown
+                                isDatum: slot.isDatum
+                                datumShown: slot.datumShown
                                 onDragMoved: (i, y) => {
                                     root.dragFrom = i
                                     root.dropRow = root.rowAt(mapToItem(featureColumn, 0, y).y)

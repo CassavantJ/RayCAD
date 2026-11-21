@@ -66,6 +66,14 @@ The OpenCASCADE DLLs are delay-loaded and are not copied next to the executables
 kernel also needs `build\vcpkg_installed\x64-windows\bin` (Release) or `...\x64-windows\debug\bin` (Debug)
 on `PATH`; CTest sets this for the tests.
 
+To check a change as CI does on Windows, run `tools\verify.cmd` with `VCPKG_ROOT` and `QT_ROOT_DIR` set (and
+`VCPKG_DEFAULT_BINARY_CACHE` if you use one). It installs the vcpkg dependencies, configures `windows-msvc`,
+then builds and runs `ctest` for Debug and then Release, and stops at the first step that fails (the exit
+code says which). `RAY_VCPKG_INSTALL_OPTIONS` passes extra options to vcpkg, such as
+`--x-buildtrees-root=C:\vb` when the checkout's path is too long for OpenCASCADE's build tree. The Debug
+tests take several times as long as Release ones (unoptimised OpenCASCADE); their CTest timeouts are four
+times longer (`tests/CMakeLists.txt`).
+
 ### Linux and macOS
 
 ```sh

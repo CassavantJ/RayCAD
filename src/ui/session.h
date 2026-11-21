@@ -196,6 +196,16 @@ public:
     QVariantList recoveries() const;
     bool recoveryPromptVisible() const { return recoveryPrompt_ && !pending_.empty(); }
 
+    // What the scene shows instead of the active document's latest build, while a tool needs it (a feature tool edits
+    // a feature: the model as it was just before it, built from feature_edit::stateBefore). `state` gives the bodies'
+    // names, colours and visibility and the tree's features; `build` the shapes. One owner at a time: another
+    // owner's call replaces it. Cleared (the document's build shown again) by clearShownModel(owner) or when the
+    // active document changes. The document's notifications refresh the document's properties meanwhile, not the
+    // scene.
+    void showModel(const QObject* owner, doc::DocStatePtr state, doc::BuildResultPtr build);
+    void clearShownModel(const QObject* owner);
+    bool showingModel() const { return modelOwner_ != nullptr; }
+
     // The title of a registered action ("" if unknown), for menus (shortcut texts: the Shortcuts singleton).
     Q_INVOKABLE QString actionTitle(const QString& id) const;
     // Cancels a job of the list (its jobId) or the foreground job (Esc). No-op if nothing runs.
@@ -245,6 +255,10 @@ private:
     std::uint64_t docGeneration_ = 0;
     doc::BuildResultPtr shownBuild_;
     QTimer rebuildPoll_;
+    // showModel(): the model shown instead of the document's build, and who asked for it.
+    const QObject* modelOwner_ = nullptr;
+    doc::DocStatePtr modelState_;
+    doc::BuildResultPtr modelBuild_;
 
     QString title_, path_, lockHolder_, lockSince_, undoText_, redoText_;
     bool dirty_ = false, readOnly_ = false, lockStale_ = false, canUndo_ = false, canRedo_ = false;

@@ -184,8 +184,12 @@ public:
     JobStateBase& operator=(const JobStateBase&) = delete;
     void cancel();
     bool done() const noexcept;
-    // Blocks until the job is done. A job that has not started yet is run on the calling thread.
+    // Blocks until the job is done. A job that has not started yet is run on the calling thread (not a deferred job:
+    // IJobSystem::defer).
     void wait();
+    // A deferred job (IJobSystem::defer) that nobody has run or cancelled runs on the calling thread; any other job
+    // is waited for as wait() does.
+    void runDeferred();
     // Posts `onUiThread` through the dispatcher once the job is done, at once if it is done already.
     // Dropped if the job system was destroyed before the job finished.
     void then(std::function<void()> onUiThread);
@@ -240,6 +244,9 @@ public:
         state_->wait();
         return state_->take();
     }
+    // Runs a job made by IJobSystem::defer on the calling thread now (unless it was cancelled or has run), and returns
+    // when it is done. For any other job it is wait() without the result. Workers only.
+    void runDeferred() { if (state_) state_->runDeferred(); }
 private:
     std::shared_ptr<detail::JobState<T>> state_;
 };
@@ -252,6 +259,13 @@ public:
     // Runs `work` on a worker. An exception thrown by `work` becomes Error{Internal}; it never escapes.
     template <class T>
     JobHandle<T> submit(JobInfo, std::function<Result<T>(JobContext&)> work);
+    // A job made now that runs only when JobHandle::runDeferred() is called on it, on that thread: a serial queue
+    // runs its jobs one after another on the one worker it occupies this way, and its waiting jobs hold no worker.
+    // Until then the handle works as any other: cancel() completes the job as Cancelled at once (it never runs),
+    // then() and onProgress() attach, and wait() blocks until it has run (it never runs the job itself, so a queued
+    // job cannot run out of turn). JobInfo::priority does not apply. A deferred job nobody runs or cancels never ends.
+    template <class T>
+    JobHandle<T> defer(JobInfo, std::function<Result<T>(JobContext&)> work);
     // Deterministic parallel loop: the range is split into fixed chunks of `grain` items regardless of
     // thread count; body(chunkIndex, begin, end) writes only to its own chunk's output slot; the caller
     // merges slots in chunk order. Thread count never changes the result.
@@ -267,6 +281,9 @@ protected:
     // The type-erased hook behind submit(): runs `run` once with the job's context, then completes `state`.
     virtual void submitErased(JobInfo info, std::shared_ptr<detail::JobStateBase> state,
                               std::function<void(JobContext&)> run) = 0;
+    // The type-erased hook behind defer(): prepares `state` to run `run` once when runDeferred() is called.
+    virtual void deferErased(JobInfo info, std::shared_ptr<detail::JobStateBase> state,
+                             std::function<void(JobContext&)> run) = 0;
 };
 
 template <class T>
@@ -274,6 +291,16 @@ JobHandle<T> IJobSystem::submit(JobInfo info, std::function<Result<T>(JobContext
     auto state = std::make_shared<detail::JobState<T>>();
     detail::JobState<T>* slot = state.get();   // the job system keeps `state` alive while `run` can be called
     submitErased(std::move(info), state, [slot, work = std::move(work)](JobContext& ctx) {
+        slot->result.emplace(work(ctx));
+    });
+    return JobHandle<T>(std::move(state));
+}
+
+template <class T>
+JobHandle<T> IJobSystem::defer(JobInfo info, std::function<Result<T>(JobContext&)> work) {
+    auto state = std::make_shared<detail::JobState<T>>();
+    detail::JobState<T>* slot = state.get();   // `run` is called only by a holder of the handle
+    deferErased(std::move(info), state, [slot, work = std::move(work)](JobContext& ctx) {
         slot->result.emplace(work(ctx));
     });
     return JobHandle<T>(std::move(state));

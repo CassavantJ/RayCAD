@@ -7,6 +7,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 
@@ -64,13 +65,12 @@ const sketch::Entity* find(const sketch::Sketch& s, const std::string& id)
 
 Vec2 pointOf(const sketch::Sketch& s, const SketchEntId& id)
 {
-    for (const sketch::Entity& e : s.entities) {
-        if (e.id == id) {
-            return std::get<sketch::Point>(e.geom).p;
-        }
+    const auto it =
+        std::find_if(s.entities.begin(), s.entities.end(), [&](const sketch::Entity& e) { return e.id == id; });
+    if (it == s.entities.end()) {
+        FAIL("no point " << id.value.toString());
     }
-    FAIL("no point " << id.value.toString());
-    return {};
+    return std::get<sketch::Point>(it->geom).p;
 }
 
 int count(const sketch::Sketch& s, sketch::ConstraintType type)

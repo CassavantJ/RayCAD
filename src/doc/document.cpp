@@ -14,6 +14,28 @@
 #include <utility>
 
 namespace ray::doc {
+
+namespace detail {
+namespace {
+thread_local bool tApplyingPreview = false;
+} // namespace
+
+PreviewApplyScope::PreviewApplyScope() : outer_(tApplyingPreview)
+{
+    tApplyingPreview = true;
+}
+
+PreviewApplyScope::~PreviewApplyScope()
+{
+    tApplyingPreview = outer_;
+}
+
+bool applyingPreview()
+{
+    return tApplyingPreview;
+}
+} // namespace detail
+
 namespace {
 
 tl::unexpected<Error> failure(ErrorCode code, std::string message)
@@ -361,6 +383,8 @@ public:
             dropPreviewLocked();
             Preview preview{command, nullptr, std::nullopt, nullptr, {}, ++s_->previewGeneration};
             std::string args;
+            // On the UI thread: a preview's command never solves a sketch (detail::PreviewApplyScope).
+            const detail::PreviewApplyScope applying;
             auto result = applyCommand(*registry_, command, s_->current, args);
             preview.command.argsJson = std::move(args);
             if (result) {

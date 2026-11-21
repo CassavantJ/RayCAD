@@ -16,6 +16,7 @@
 //
 // Screenshots: with RAY_T098_SHOTS set to a folder, the window is saved there (every tool's panel, the finished part).
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -40,6 +41,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QTemporaryDir>
@@ -191,16 +193,20 @@ struct Window {
         grab();
     }
     // The document's rebuild, the scene's meshes and the tree's jobs are done.
+    // The rebuild's notification is posted when it ends: it can give the scene a new body set (meshing again) during
+    // the pause after the first wait, so the state is checked once more after it.
     void settle() const
     {
-        REQUIRE(QTest::qWaitFor(
-            [&] {
-                doc::Document* d = document();
-                return d != nullptr && !d->rebuildPending() && !host->scene()->meshing() && !tree()->busy() &&
-                       sketch()->inFlight() == 0 && !sketch()->solving();
-            },
-            kTimeoutMs));
-        QTest::qWait(50);
+        const auto idle = [&] {
+            doc::Document* d = document();
+            return d != nullptr && !d->rebuildPending() && !host->scene()->meshing() && !tree()->busy() &&
+                   sketch()->inFlight() == 0 && !sketch()->solving();
+        };
+        for (int pass = 0; pass < 2; ++pass) {
+            REQUIRE(QTest::qWaitFor(idle, kTimeoutMs));
+            QTest::qWait(50);
+        }
+        REQUIRE(QTest::qWaitFor(idle, kTimeoutMs));
     }
     // The open tool's preview is built and shown.
     void previewed(const char* status = "ok") const
@@ -321,15 +327,17 @@ std::uint32_t faceAtZ(const Window& w, double z)
     const api::viewer::Body* body = w.host->scene()->body(0);
     REQUIRE(body != nullptr);
     JobContext ctx;
-    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face); ++i) {
+    std::optional<std::uint32_t> found;
+    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face) && !found; ++i) {
         auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Face, i}, ctx);
         REQUIRE(info);
         if (info->surface && info->surface->type == kernel::SurfaceType::Plane &&
             std::abs(info->surface->centroid.z - z) < 1e-6 && info->surface->axis.z > 0.5)
-            return i;
+            found = i;
     }
-    FAIL("no planar face at that height");
-    return 0;
+    if (!found)
+        FAIL("no planar face at that height");
+    return *found;
 }
 
 // The straight edge of body 0 along X at (y, z); its index and midpoint.
@@ -338,7 +346,8 @@ std::pair<std::uint32_t, Vec3> edgeAlongX(const Window& w, double y, double z)
     const api::viewer::Body* body = w.host->scene()->body(0);
     REQUIRE(body != nullptr);
     JobContext ctx;
-    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Edge); ++i) {
+    std::optional<std::pair<std::uint32_t, Vec3>> found;
+    for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Edge) && !found; ++i) {
         auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Edge, i}, ctx);
         REQUIRE(info);
         if (!info->curve || info->curve->type != kernel::CurveType::Line)
@@ -346,10 +355,11 @@ std::pair<std::uint32_t, Vec3> edgeAlongX(const Window& w, double y, double z)
         const kernel::CurveInfo& c = *info->curve;
         if (std::abs(c.start.y - y) < 1e-6 && std::abs(c.end.y - y) < 1e-6 && std::abs(c.start.z - z) < 1e-6 &&
             std::abs(c.end.z - z) < 1e-6 && std::abs(c.start.x - c.end.x) > 1)
-            return {i, Vec3{(c.start.x + c.end.x) / 2, y, z}};
+            found = std::pair<std::uint32_t, Vec3>{i, Vec3{(c.start.x + c.end.x) / 2, y, z}};
     }
-    FAIL("no edge there");
-    return {};
+    if (!found)
+        FAIL("no edge there");
+    return *found;
 }
 
 // Opens the tool and waits for its panel.
@@ -612,7 +622,7 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
         tick.stop();
         WARN("UI-thread watchdog while the extrude preview rebuilt the part: worst gap "
              << worst << " ms, " << w.tool()->previewBuilds() << " preview builds");
-        CHECK(worst < 50);
+        CHECK(worst < ray::test::uiBudgetMs(50));
         CHECK(w.document()->undoCount() == undoBefore);
         CHECK(w.stateHash() == finished);
     }
@@ -983,6 +993,241 @@ TEST_CASE("fillet edges are picked and unpicked in the view while the preview is
     // The preview slot is free and the body answers picks as it is drawn again.
     CHECK(w.tool()->overlay().owner() == nullptr);
     CHECK(viewport->pickMode(w.host->scene()->itemForBody(0)) == render::PickMode::WhenVisible);
+    w.checkNoWarnings();
+}
+
+TEST_CASE("editing a fillet picks in the model before it: its edges are selected, Ctrl takes one off, Shift adds",
+          "[model][pick][edit]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.view()->fitAll();
+    w.settle();
+    // Edges of the block (the model before the fillet keeps these indices: it is the same build).
+    const auto e1 = edgeAlongX(w, 0, 10);
+    const auto e2 = edgeAlongX(w, 25, 10);
+    const auto e3 = edgeAlongX(w, 0, 0);
+    const auto selectedEdges = [&] {
+        std::set<std::uint32_t> out;
+        const render::ItemId item = w.host->scene()->itemForBody(0);
+        for (const ui::SelectionEntry& e : w.host->selection()->entries()) {
+            if (e.hit.kind == kernel::SubKind::Edge && e.hit.item == item)
+                out.insert(e.hit.subIndex);
+        }
+        return out;
+    };
+    const auto clickEdge = [&](const std::pair<std::uint32_t, Vec3>& e, Qt::KeyboardModifiers mods) {
+        w.host->selection()->applyClick(
+            render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Edge, e.first, e.second, 0}, mods);
+    };
+
+    // A fillet on e1 and e2.
+    openTool(w, "model.tool.fillet", "fillet");
+    clickEdge(e1, Qt::NoModifier);
+    clickEdge(e2, Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
+    w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
+    w.previewed();
+    w.commit();
+    const double fillet = (1 - kPi / 4) * 2 * 2 * 40;
+    CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4));
+    REQUIRE(w.host->scene()->meshOf(0) != nullptr);
+    CHECK(w.host->scene()->meshOf(0)->faces.size() > 6); // the filleted block
+    const doc::Feature filletFeature = w.document()->state()->features.back();
+    REQUIRE(filletFeature.type == "fillet");
+    const QJsonArray storedEdges = QJsonDocument::fromJson(QByteArray::fromStdString(filletFeature.propsJson))
+                                       .object()
+                                       .value(QStringLiteral("edges"))
+                                       .toArray();
+    REQUIRE(storedEdges.size() == 2);
+
+    // Edit it: the view shows the block as it was before the fillet (6 faces) under the preview, and the fillet's
+    // own edges are selected in it.
+    w.tree()->setCurrentIndex(w.tree()->count() - 1);
+    REQUIRE(w.run("model.feature.edit"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
+    w.previewed(); // busy until the model before it is shown and its edges are selected
+    CHECK(w.tool()->editBaseReady());
+    CHECK(w.host->session()->showingModel());
+    REQUIRE(w.host->scene()->bodyCount() == 1);
+    REQUIRE(w.host->scene()->meshOf(0) != nullptr);
+    CHECK(w.host->scene()->meshOf(0)->faces.size() == 6);
+    CHECK(w.tool()->pickCount() == 2);
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e1.first, e2.first});
+    CHECK(w.tool()->overlay().owner() == w.tool());
+    CHECK(w.tool()->overlay().itemCount() == 1); // the preview stands in for the block
+    render::IRenderViewport* viewport = w.host->scene()->viewport();
+    REQUIRE(viewport != nullptr);
+    CHECK(viewport->pickMode(w.host->scene()->itemForBody(0)) == render::PickMode::Always);
+    w.shot("fillet_edit_stored_edges");
+    // Unchanged, the props are the stored ones exactly.
+    {
+        auto props = w.tool()->propsJson();
+        REQUIRE(props);
+        const QJsonObject p = QJsonDocument::fromJson(QByteArray::fromStdString(*props)).object();
+        CHECK(p.value(QStringLiteral("edges")).toArray() == storedEdges);
+    }
+
+    // Ctrl-click takes e1 off; Shift-click adds e3 (with the preview shown, on the model before the fillet).
+    clickEdge(e1, Qt::ControlModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 1; }, kTimeoutMs));
+    w.previewed();
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e2.first});
+    clickEdge(e3, Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->pickCount() == 2; }, kTimeoutMs));
+    w.previewed();
+    CHECK(selectedEdges() == std::set<std::uint32_t>{e2.first, e3.first});
+    w.shot("fillet_edit_changed_edges");
+    w.commit();
+
+    // e2 keeps its stored reference as it was; e3's is new. The view shows the document's build again.
+    const doc::Feature& edited = w.document()->state()->features.back();
+    const QJsonArray edges = QJsonDocument::fromJson(QByteArray::fromStdString(edited.propsJson))
+                                 .object()
+                                 .value(QStringLiteral("edges"))
+                                 .toArray();
+    REQUIRE(edges.size() == 2);
+    CHECK(edges.at(0) == storedEdges.at(1));
+    CHECK(edges.at(1) != storedEdges.at(0));
+    CHECK(edges.at(1) != storedEdges.at(1));
+    CHECK(!w.host->session()->showingModel());
+    for (int i = 0; i < w.tree()->count(); ++i)
+        CHECK(w.status(i) == QStringLiteral("ok"));
+    CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4)); // two 40 mm edges again
+    CHECK(w.host->scene()->meshOf(0)->faces.size() > 6);
+
+    // Undo restores the first fillet; the edit is one step.
+    w.undo();
+    w.settle();
+    CHECK(w.volume() == Approx(10000 - 2 * fillet).epsilon(1e-4));
+    {
+        const QJsonArray back =
+            QJsonDocument::fromJson(QByteArray::fromStdString(w.document()->state()->features.back().propsJson))
+                .object()
+                .value(QStringLiteral("edges"))
+                .toArray();
+        CHECK(back == storedEdges);
+    }
+    w.checkNoWarnings();
+}
+
+TEST_CASE("datum planes are drawn in the view, hidden by their eye, and picked where a plane is asked for",
+          "[model][datum]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    // A datum plane 20 mm above XY.
+    openTool(w, "model.tool.datumPlane", "datum_plane");
+    w.typeInto(QStringLiteral("offset"), QStringLiteral("20 mm"));
+    w.previewed();
+    w.commit();
+    const FeatureId datum = w.document()->state()->features.back().id;
+    REQUIRE(w.document()->state()->features.back().type == "datum_plane");
+    const QString base = QStringLiteral("datum:") + QString::fromStdString(datum.value.toString());
+    const QString frame = base + QStringLiteral(":frame");
+    const auto drawn = [&] {
+        return !w.tree()->busy() && w.tree()->datumLines().has(frame);
+    };
+    const auto gone = [&] {
+        return !w.tree()->busy() && !w.tree()->datumLines().has(frame);
+    };
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+    CHECK(w.tree()->datumLines().has(base + QStringLiteral(":inner")));
+    CHECK(w.tree()->datumLines().has(base + QStringLiteral(":normal")));
+    // A guide: it never takes a viewport pick.
+    render::IRenderViewport* viewport = w.host->scene()->viewport();
+    REQUIRE(viewport != nullptr);
+    CHECK(viewport->pickMode(w.tree()->datumLines().itemOf(frame)) == render::PickMode::Never);
+    const int row = w.tree()->rowOf(QString::fromStdString(datum.value.toString()));
+    REQUIRE(row >= 0);
+    CHECK(w.tree()->get(row).value(QStringLiteral("isDatum")).toBool());
+    CHECK(w.tree()->get(row).value(QStringLiteral("datumShown")).toBool());
+    CHECK(!w.tree()->get(1).value(QStringLiteral("isDatum")).toBool());
+    w.view()->setStandardView(QStringLiteral("iso"));
+    w.view()->fitAll();
+    w.settle();
+    w.shot("datum_plane_in_view");
+
+    // Its eye in the tree hides it and shows it again.
+    QQuickItem* eye = nullptr;
+    REQUIRE(QTest::qWaitFor(
+        [&] { return (eye = w.find(QStringLiteral("datumVisibility.%1").arg(row))) && eye->isVisible(); }, 5000));
+    w.click(eye);
+    REQUIRE(QTest::qWaitFor(gone, kTimeoutMs));
+    CHECK(!w.tree()->get(row).value(QStringLiteral("datumShown")).toBool());
+    w.tree()->setDatumShown(row, true);
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+
+    // Rolled back to before it: not built, not drawn.
+    REQUIRE(w.tree()->rollTo(1));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackIndex() == 1; }, kTimeoutMs));
+    w.settle();
+    REQUIRE(QTest::qWaitFor(gone, kTimeoutMs));
+    REQUIRE(w.tree()->rollTo(-1));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->rollbackIndex() == -1; }, kTimeoutMs));
+    w.settle();
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+
+    // A point on the plane inside its frame, beside the block: the frame is centred over the model.
+    const Vec3 onDatum{35, 30, 20};
+    const QPointF at = w.view()->mapFromScene(w.sceneOf(onDatum));
+    // Nothing asks for a plane: a click there picks nothing.
+    CHECK(!w.tree()->planeWanted());
+    CHECK(!w.tree()->pickDatumAt(at.x(), at.y()));
+
+    // The datum plane tool asks for a base: a click on the datum takes it.
+    openTool(w, "model.tool.datumPlane", "datum_plane");
+    REQUIRE(QTest::qWaitFor(drawn, kTimeoutMs));
+    CHECK(w.tree()->planeWanted());
+    w.clickScene(w.sceneOf(onDatum));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->values().value(QStringLiteral("base")).toString() == base; }, 5000));
+    w.tool()->cancel();
+
+    // The sketch mode's plane picker: a click on the datum puts the new sketch on it.
+    w.sketch()->newSketch();
+    REQUIRE(w.sketch()->placing());
+    CHECK(w.tree()->planeWanted());
+    w.clickScene(w.sceneOf(onDatum));
+    REQUIRE(QTest::qWaitFor([&] { return w.sketch()->active(); }, kTimeoutMs));
+    CHECK(w.sketch()->plane().origin.z == Approx(20));
+    CHECK(std::abs(w.sketch()->plane().normal.z) == Approx(1));
+    w.shot("sketch_on_datum_plane");
+    w.sketch()->finish();
+    REQUIRE(QTest::qWaitFor([&] { return !w.sketch()->active(); }, kTimeoutMs));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("editing an extrude shows the model before it under the preview; cancel shows the part again",
+          "[model][edit]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.newDocument();
+    firstExtrude(w, "10 mm");
+    w.commit();
+    const std::string hash = w.stateHash();
+    w.tree()->setCurrentIndex(1);
+    REQUIRE(w.run("model.feature.edit"));
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
+    w.previewed();
+    // Nothing was built before the first extrude: the scene shows no body, the preview shows the edited block.
+    CHECK(w.tool()->editBaseReady());
+    CHECK(w.host->session()->showingModel());
+    CHECK(w.host->scene()->bodyCount() == 0);
+    CHECK(w.tool()->overlay().itemCount() == 1);
+    w.tool()->cancel();
+    w.settle();
+    CHECK(!w.host->session()->showingModel());
+    REQUIRE(w.host->scene()->bodyCount() == 1);
+    CHECK(w.volume() == Approx(10000).epsilon(1e-6));
+    CHECK(w.stateHash() == hash);
     w.checkNoWarnings();
 }
 

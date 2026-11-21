@@ -22,6 +22,8 @@ Item {
     required property bool rolledBack
     required property bool isSketch
     required property bool sketchShown
+    required property bool isDatum
+    required property bool datumShown
 
     readonly property bool current: FeatureTree.currentIndex === index
     readonly property bool failed: status === "failed" || status === "notBuilt"
@@ -215,21 +217,22 @@ Item {
                 toolTipText: row.suppressed ? qsTr("Unsuppress") : qsTr("Suppress (switch off)")
                 onClicked: FeatureTree.setSuppressed(row.index, !row.suppressed)
             }
-            // A sketch's eye: shown in the view or not (drawn for RayCAD, as the bodies' eye).
+            // A sketch's or a datum plane's eye: shown in the view or not (drawn for RayCAD, as the bodies' eye).
             Item {
                 id: eye
-                objectName: "sketchVisibility." + row.index
-                visible: row.isSketch
+                readonly property bool shown: row.isSketch ? row.sketchShown : row.datumShown
+                objectName: (row.isSketch ? "sketchVisibility." : "datumVisibility.") + row.index
+                visible: row.isSketch || row.isDatum
                 width: Theme.iconSize
                 height: Theme.iconSize
                 anchors.verticalCenter: parent.verticalCenter
                 Accessible.role: Accessible.CheckBox
                 Accessible.checkable: true
-                Accessible.checked: row.sketchShown
-                Accessible.name: row.sketchShown ? qsTr("Hide %1").arg(row.featureName) : qsTr("Show %1").arg(row.featureName)
+                Accessible.checked: eye.shown
+                Accessible.name: eye.shown ? qsTr("Hide %1").arg(row.featureName) : qsTr("Show %1").arg(row.featureName)
                 Icon {
                     anchors.fill: parent
-                    name: row.sketchShown ? "eye" : "eye-off"
+                    name: eye.shown ? "eye" : "eye-off"
                     color: eyeHover.hovered ? Theme.textPrimary : Theme.textSecondary
                 }
                 HoverHandler {
@@ -237,7 +240,12 @@ Item {
                 }
                 TapHandler {
                     gesturePolicy: TapHandler.WithinBounds
-                    onTapped: FeatureTree.setSketchShown(row.index, !row.sketchShown)
+                    onTapped: {
+                        if (row.isSketch)
+                            FeatureTree.setSketchShown(row.index, !row.sketchShown)
+                        else
+                            FeatureTree.setDatumShown(row.index, !row.datumShown)
+                    }
                 }
             }
         }

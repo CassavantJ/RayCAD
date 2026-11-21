@@ -773,17 +773,20 @@ TEST_CASE("cancel returns to the caller within 100 ms in every stage", "[kernel]
             REQUIRE(full.has_value());
             REQUIRE(full->bodies.size() == parts.size());
         }
-        const double totalMs =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        // Cancel at 15 points spread over the whole import, so every stage is hit.
+        double totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        // Cancel at 15 points spread over the whole import, so every stage is hit. The first run can be slower than
+        // the later ones (a cold file cache, a loaded machine, a debug build): a run that finishes before its cancel
+        // point shortens the import's length and that point is tried again (twice at most), so the late points still
+        // land inside the import.
         std::vector<std::string> stagesHit;
-        for (int k = 0; k < 15; ++k) {
+        for (int k = 0, retries = 0; k < 15; ++k) {
             const double atMs = totalMs * (k + 0.5) / 15.0;
             CancelSource source;
             ProgressLog log;
             JobContext cancellable{source.token(), log.progress()};
             std::atomic<std::int64_t> cancelledAtNs{0};
             std::string stageAtCancel;
+            const auto runStart = std::chrono::steady_clock::now();
             std::thread canceller([&] {
                 std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(atMs));
                 stageAtCancel = log.lastStage();
@@ -792,10 +795,22 @@ TEST_CASE("cancel returns to the caller within 100 ms in every stage", "[kernel]
             });
             const Result<ImportResult> result = isIges ? importIges(path, ImportOptions{}, cancellable)
                                                        : importStep(path, ImportOptions{}, cancellable);
-            const std::int64_t returnedNs = std::chrono::steady_clock::now().time_since_epoch().count();
+            const auto returned = std::chrono::steady_clock::now();
+            const std::int64_t returnedNs = returned.time_since_epoch().count();
             canceller.join();
-            if (result.has_value())
-                continue; // finished before the cancel request
+            if (result.has_value()) {
+                // Finished before the cancel request: the import is shorter now than it was measured.
+                const double runMs = std::chrono::duration<double, std::milli>(returned - runStart).count();
+                if (runMs < totalMs && retries < 2) {
+                    totalMs = runMs;
+                    ++retries;
+                    --k;
+                } else {
+                    retries = 0;
+                }
+                continue;
+            }
+            retries = 0;
             REQUIRE(result.error().code == ErrorCode::Cancelled);
             const double latencyMs = static_cast<double>(returnedNs - cancelledAtNs.load()) / 1e6;
             INFO(path << ": cancel at " << atMs << " ms of " << totalMs << " ms, stage '" << stageAtCancel

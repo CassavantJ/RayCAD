@@ -12,8 +12,14 @@
 //                regions); hole: clicking a sketch point toggles it (none: every free point); fillet and chamfer: the
 //                edges selected in the view (persistent references through model.reference), picked and unpicked
 //                while the preview is shown (the preview never answers picks; the model under it does, preview.h);
-//                when editing, the stored edges stay and the selected ones are added; datum plane on a face: the
-//                selected planar face.
+//                datum plane on a face: the selected planar face.
+//   Editing      edit(featureId) shows, under the preview, the model as it was just before the feature (its state with
+//                the rollback bar on the feature before it, feature_edit::stateBefore, built by the document's own
+//                rebuilder: Session::showModel), and every pick goes to that model, for every tool. The feature's
+//                stored edges (a datum plane's face) are found in it and selected, so Ctrl-click takes one off and a
+//                click or Shift-click adds others (model.reference with "before"); a stored edge the earlier model
+//                does not have stays until Clear. Unchanged picks keep their stored references as they are. The
+//                document's build is shown again when the tool closes.
 //   Preview      every change rebuilds the feature off to the side through Document::beginPreview on the job
 //                system, never on the UI thread. While the history is rolled back, the add command puts the new
 //                feature right after the rollback bar, so the preview is the rolled-back model with it. One preview
@@ -166,6 +172,10 @@ public:
     // The scene's preview slot (shared; this tool's preview while it holds it).
     const BodyOverlay& overlay() const;
     int previewBuilds() const { return previewBuilds_; }
+    // Edit mode: the model before the feature is built, shown, and the stored references found in it are selected.
+    bool editBaseReady() const { return editId_.has_value() && baseBuild_ != nullptr && !selectStored_; }
+    // Edit mode: that model (null until built).
+    const doc::BuildResultPtr& editBase() const { return baseBuild_; }
     std::optional<kernel::Plane> sketchPlane() const { return plane_; }
     const std::vector<api::feature_edit::Region>& regions() const { return regions_; }
     // The props the panel would commit now (canonical-free JSON object text), or the reason it cannot.
@@ -209,7 +219,11 @@ private:
     void loadFeature(const doc::Feature& feature);
     void loadSketch(); // plane, regions, points, lines of values["sketch"] (on a worker)
     void loadThreads();
+    void loadBase();     // edit mode: builds and shows the model before the feature, finds the stored references
+    void selectStored(); // edit mode: selects the stored references found in it, once its meshes are shown
     void applyEdges();
+    void finishEdges(std::uint64_t serial, bool face, const std::vector<QJsonObject>& refs,
+                     const std::vector<Vec3>& points, const std::vector<bool>& keep, const QString& failed);
     void schedulePreview();
     void startPreview();
     void onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPtr build);
@@ -264,12 +278,30 @@ private:
     // Picks.
     std::vector<std::vector<SketchEntId>> regionPicks_;
     std::vector<SketchEntId> pointPicks_;
-    QJsonArray edges_;             // TopoRef JSON objects: storedEdges_, then the selected ones
-    QJsonArray storedEdges_;       // editing: the edges the feature has (they may not exist in the model shown)
+    QJsonArray edges_;             // TopoRef JSON objects: the stored ones kept (editing), then the selected ones
     std::vector<Vec3> edgePoints_; // where each selected edge was picked (for the radius handle)
     QJsonObject faceRef_;          // datum plane on a face
     std::uint64_t edgeSerial_ = 0;
     bool edgesPending_ = false; // model.reference answers for the picked edges still to come
+
+    // Edit mode: the model as it was just before the edited feature, shown under the preview and picked in.
+    struct StoredPick {
+        BodyId body;
+        kernel::SubKind kind = kernel::SubKind::Edge;
+        std::uint32_t index = 0;
+        int stored = 0; // index into storedRefs_
+    };
+    doc::DocStatePtr baseState_;    // feature_edit::stateBefore of baseFrom_
+    doc::DocStatePtr baseFrom_;     // the document state it was made from
+    doc::BuildResultPtr baseBuild_; // its build; null until built
+    std::uint64_t baseSerial_ = 0;
+    bool baseBusy_ = false;
+    QJsonArray storedRefs_;             // the feature's own references (fillet / chamfer edges, a datum plane's face)
+    std::vector<StoredPick> located_;   // where they are in the base (every piece of a split one)
+    std::vector<bool> storedFound_;     // per stored reference: found in the base
+    bool selectStored_ = false;         // the found ones are still to be selected (the base's meshes are on the way)
+    doc::DocStatePtr lastPreviewState_; // shown again against the base when it arrives
+    doc::BuildResultPtr lastPreviewBuild_;
 
     // The chosen sketch.
     std::optional<kernel::Plane> plane_;

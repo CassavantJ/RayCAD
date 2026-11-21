@@ -16,6 +16,7 @@
 //
 // Screenshots: set RAY_T024_SHOTS to a folder and run with "[screenshots]".
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -59,6 +60,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -239,15 +241,17 @@ struct Window {
         const api::viewer::Body* body = host->scene()->body(0);
         REQUIRE(body != nullptr);
         JobContext ctx;
-        for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face); ++i) {
+        std::optional<std::uint32_t> found;
+        for (std::uint32_t i = 0; i < body->shape.count(kernel::SubKind::Face) && !found; ++i) {
             auto info = api::viewer::describeElement(body->shape, kernel::SubId{kernel::SubKind::Face, i}, ctx);
             REQUIRE(info);
             if (info->surface && info->surface->type == kernel::SurfaceType::Cylinder &&
                 std::hypot(info->surface->centroid.x - x, info->surface->centroid.y - y) < 1e-6)
-                return i;
+                found = i;
         }
-        FAIL("no hole at " << x << ", " << y);
-        return 0;
+        if (!found)
+            FAIL("no hole at " << x << ", " << y);
+        return *found;
     }
     void selectFaces(std::uint32_t a, std::uint32_t b) const
     {
@@ -869,7 +873,7 @@ TEST_CASE("warm start to the first frame with saved settings, against PLAN.md se
     WARN("warm start to the first frame with saved settings: median " << frame << " ms over " << frames.size()
                                                                       << " runs (PLAN.md 9: Low 2500, Medium 1500, "
                                                                          "High 1000 ms)");
-    CHECK(frame < 2500);
+    CHECK(frame < ray::test::uiBudgetMs(2500));
     // --bench-start does not save the window (it would replace the user's own).
     CHECK(readFile(QDir(data.path()).filePath(QStringLiteral("settings.json"))).contains(QStringLiteral("\"x\":80")));
 }

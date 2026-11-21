@@ -15,6 +15,7 @@
 //
 // Screenshots: with RAY_T092_SHOTS set to a folder, the window is saved there.
 #include "../scene_graph_probe.h"
+#include "../ui_budget.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -530,7 +531,7 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
          << worst << " ms, " << w.sketch()->dragSteps() << " steps, slowest step " << w.sketch()->slowestDragStepMs()
          << " ms");
     WARN("the commit after the drag: worst UI-thread gap " << worstCommit << " ms");
-    CHECK(worst < 50);
+    CHECK(worst < ray::test::uiBudgetMs(50));
     CHECK(w.sketch()->dragSteps() > 0);
 
     // The document has the dragged geometry (one undo step).

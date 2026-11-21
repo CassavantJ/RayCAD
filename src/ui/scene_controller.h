@@ -172,6 +172,9 @@ public:
 
     // Cancels the running mesh jobs (the job slot's Cancel and Esc). `quiet`: no status message.
     void cancelJobs(bool quiet = false);
+    // While held, a new body set is not framed (firstMeshesShown) and does not count as the framed set: a tool shows a
+    // passing set (Session::showModel) and the view stays where it is, also when the old set comes back.
+    void setFramingHeld(bool held) { framingHeld_ = held; }
     // The selection tells the tree which bodies hold selected elements.
     void setSelectedBodies(std::vector<int> bodies);
     bool bodySelected(int index) const;
@@ -228,6 +231,7 @@ private:
     bool fineWanted_ = false;
     bool framePending_ = false; // set by setBodies, cleared once its bodies are shown
     std::shared_ptr<std::atomic<std::uint64_t>> meshed_ = std::make_shared<std::atomic<std::uint64_t>>(0);
+    bool framingHeld_ = false;
     SceneTreeModel* tree_ = nullptr;
     std::unique_ptr<BodyOverlay> preview_;
 };
