@@ -39,17 +39,16 @@ function(ray_precompile_all)
     ray_precompile(ray_render ${RAY_PCH_STD} ${RAY_PCH_QT_CORE} <rhi/qrhi.h>)
     ray_precompile(ray_ui ${RAY_PCH_STD} ${RAY_PCH_QT_CORE} ${RAY_PCH_QT_QUICK})
 
-    # Tests that include no Qt header (the render tests do not either: ray_render's interface has none).
+    # Tests with several translation units that include no Qt header (the render tests do not either: ray_render's
+    # interface has none). A test of one translation unit, or of a few small ones, gains nothing: the precompiled
+    # header costs about what it saves and its compile comes first (measured: the one-file Qt Quick tests, the core,
+    # job and module tests).
     foreach(_test IN ITEMS
-            ray_api_tests ray_core_tests ray_core_jobs_tests ray_doc_tests ray_doc_s4_tests ray_kernel_tests
-            ray_module_tests ray_naming_tests ray_naming_oracle_tests ray_render_tests ray_sketch_tests ray_store_tests)
+            ray_api_tests ray_doc_tests ray_doc_s4_tests ray_kernel_tests ray_naming_tests ray_naming_oracle_tests
+            ray_render_tests ray_sketch_tests ray_store_tests)
         ray_precompile(${_test} ${RAY_PCH_STD} ${RAY_PCH_CATCH2})
     endforeach()
-    # The Qt Quick tests.
-    foreach(_test IN ITEMS
-            ray_ui_controls_tests ray_ui_dispatch_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_model_tests
-            ray_ui_palette_tests ray_ui_section_tests ray_ui_settings_tests ray_ui_sketch_tests ray_ui_start_tests
-            ray_ui_viewport_tests)
-        ray_precompile(${_test} ${RAY_PCH_STD} ${RAY_PCH_QT_CORE} ${RAY_PCH_QT_QUICK} <QtTest/QTest> ${RAY_PCH_CATCH2})
-    endforeach()
+    # The one Qt Quick test with several translation units.
+    ray_precompile(ray_ui_sketch_tests ${RAY_PCH_STD} ${RAY_PCH_QT_CORE} ${RAY_PCH_QT_QUICK} <QtTest/QTest>
+                   ${RAY_PCH_CATCH2})
 endfunction()
