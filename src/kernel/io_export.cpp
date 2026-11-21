@@ -208,17 +208,6 @@ void putF32(std::vector<char>& out, double value)
     putU32(out, bits);
 }
 
-// The process-wide mesh lock, polling the task's stop request while another mesh call holds it.
-bool lockMesh(std::unique_lock<std::mutex>& lock, IoTask& task)
-{
-    while (!lock.try_lock()) {
-        if (task.stopRequested())
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    return true;
-}
-
 // Called with the process-wide mesh lock held and the pool's team set (exportStl takes both outside guarded()).
 Status writeStl(IoTask& task, const std::filesystem::path& path, const std::vector<Shape>& shapes, double chordTol,
                 int team, std::string_view where)
@@ -331,13 +320,14 @@ Status exportWith(const std::string& path, std::span<const Shape> shapes, JobCon
         ctx, where,
         [file = std::move(*fsPath), owned = std::move(*copies), at = std::string(where), writer,
          meshChordTol](IoTask& task) -> Status {
-            std::unique_lock<std::mutex> lock(detail::processMeshMutex(), std::defer_lock);
+            // STL meshes: the mesh lock and the pool's team. STEP and IGES: the data exchange lock (io_internal.h).
+            std::unique_lock<std::mutex> lock(
+                meshChordTol > 0.0 ? detail::processMeshMutex() : detail::dataExchangeMutex(), std::defer_lock);
+            if (!detail::lockPolling(lock, task))
+                return tl::unexpected(cancelled(at));
             std::optional<detail::MeshTeamScope> team;
-            if (meshChordTol > 0.0) {
-                if (!lockMesh(lock, task))
-                    return tl::unexpected(cancelled(at));
+            if (meshChordTol > 0.0)
                 team.emplace(meshChordTol);
-            }
             return detail::guarded(at, [&]() -> Status {
                 task.report(0.0, kStageTransfer);
                 detail::initializeDataExchange();
