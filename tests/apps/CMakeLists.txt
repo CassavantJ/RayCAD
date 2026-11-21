@@ -2,8 +2,11 @@
 add_test(NAME raycad_cli_version COMMAND raycad-cli --version)
 set_tests_properties(raycad_cli_version PROPERTIES PASS_REGULAR_EXPRESSION "^raycad-cli ${PROJECT_VERSION}")
 
-# Opens the Qt Quick window, waits for the first frame, exits by itself.
-add_test(NAME raycad_smoke COMMAND raycad --smoke)
+# Opens the Qt Quick window, waits for the first frame, exits by itself. Run through run_with_driver_priority.py,
+# which keeps the graphics driver's idle-priority threads in it from starving on a busy machine (tests/support/
+# driver_threads_listener.cpp says why; it timed out at 60 s beside a build without it).
+add_test(NAME raycad_smoke COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_SOURCE_DIR}/tests/support/run_with_driver_priority.py"
+                                   "$<TARGET_FILE:raycad>" --smoke)
 set_tests_properties(raycad_smoke PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "raycad: smoke ok")
 ray_test_runtime_path(raycad_smoke QT)
 # Its settings come from a folder of its own, not the real user profile (which tests running next to it may change).
