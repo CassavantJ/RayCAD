@@ -142,16 +142,18 @@ jobs:
       # Debug runs the quick test tier, Release runs every test (tests/tiers.cmake). The slow tier is the long
       # randomised naming blocks: in Debug they re-run the code paths the quick tier's naming tests (S4, acceptance,
       # the smoke block) already run there, at many times the cost (an MSVC Debug build cannot finish them in this
-      # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. ctest runs one job
-      # per processor of the runner; tests with threads of their own take several (PROCESSORS) and timed tests run
-      # alone (tests/tiers.cmake).
+      # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. Windows Debug also
+      # leaves out the four S4 suites (label debug-heavy, preset windows-msvc-debug-ci): about 25 minutes each in an
+      # MSVC Debug build, they would take this job past its limit; Linux and macOS Debug run them, as every Release
+      # does. ctest runs one job per processor of the runner; tests with threads of their own take several
+      # (PROCESSORS) and timed tests run alone.
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
           cmake --build --preset ${{ matrix.preset }}-debug || exit /b 1
-          ctest --preset ${{ matrix.preset }}-debug-quick --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
+          ctest --preset ${{ matrix.preset }}-debug-ci --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
           cmake --build --preset ${{ matrix.preset }}-release || exit /b 1
           ctest --preset ${{ matrix.preset }}-release --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 

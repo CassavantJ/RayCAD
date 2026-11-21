@@ -112,6 +112,7 @@
     { "name": "test-quick", "hidden": true, "inherits": "test-base", "filter": { "include": { "label": "^quick$" } } },
     { "name": "windows-msvc-debug", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "Debug" },
     { "name": "windows-msvc-debug-quick", "inherits": "test-quick", "configurePreset": "windows-msvc", "configuration": "Debug" },
+    { "name": "windows-msvc-debug-ci", "inherits": "test-quick", "configurePreset": "windows-msvc", "configuration": "Debug", "filter": { "include": { "label": "^quick$" }, "exclude": { "label": "^debug-heavy$" } } },
     { "name": "windows-msvc-relwithdebinfo", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "RelWithDebInfo" },
     { "name": "windows-msvc-relwithdebinfo-quick", "inherits": "test-quick", "configurePreset": "windows-msvc", "configuration": "RelWithDebInfo" },
     { "name": "windows-msvc-release", "inherits": "test-base", "configurePreset": "windows-msvc", "configuration": "Release" },

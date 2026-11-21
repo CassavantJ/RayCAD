@@ -4,7 +4,8 @@ rem   quick  (default) Release build, then the quick test tier (ctest --preset w
 rem   full   Release build, then every test (windows-msvc-release). Before a push, and after any change in src/naming,
 rem          src/kernel, ports/ or the naming oracle.
 rem   ci     exactly what .github/workflows/build-test.yml does on Windows: vcpkg install (triplet x64-windows, into
-rem          build\vcpkg_installed), configure, Debug build and the quick tier, Release build and every test.
+rem          build\vcpkg_installed), configure, Debug build and the quick tier without the tests labelled debug-heavy,
+rem          Release build and every test.
 rem It stops at the first step that fails. ctest runs one job per logical processor, as CI does (tests/tiers.cmake).
 rem
 rem Usage, from a plain cmd prompt in any folder:   tools\verify.cmd [quick, full or ci]
@@ -60,8 +61,8 @@ if defined RAY_VCPKG_INSTALL_OPTIONS (
 if /i "%RAY_VERIFY_MODE%"=="ci" (
     echo === verify ci: Debug build
     cmake --build --preset windows-msvc-debug || exit /b 4
-    echo === verify ci: Debug tests, quick tier
-    ctest --preset windows-msvc-debug-quick --parallel %NUMBER_OF_PROCESSORS% || exit /b 5
+    echo === verify ci: Debug tests, quick tier without debug-heavy
+    ctest --preset windows-msvc-debug-ci --parallel %NUMBER_OF_PROCESSORS% || exit /b 5
 )
 
 echo === verify %RAY_VERIFY_MODE%: Release build

@@ -47,6 +47,17 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6)
 
+# Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
+# against about a minute in Release): the S4 scenarios, at the naming level and as document features. They also get
+# the label debug-heavy, which the Windows Debug CI job leaves out (test preset windows-msvc-debug-ci) to fit its time
+# limit; Release on Windows, GCC and Clang Debug, and AddressSanitizer run them. The tests run there as anywhere else
+# when asked for.
+set(RAY_DEBUG_HEAVY_TESTS
+    ray_naming_s4
+    ray_doc_s4
+    ray_doc_s4_revolve
+    ray_doc_s4_hole)
+
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
 # (RAYCAD_NAMING_WORKERS); the document S4 suites rebuild on the job system. Every other test measured at about one
@@ -182,6 +193,12 @@ foreach(_test IN LISTS RAY_MSVC_DEBUG_DISABLED_TESTS)
     if(MSVC)
         ray_tier_set(${_test} SET DISABLED "$<CONFIG:Debug>")
     endif()
+endforeach()
+foreach(_test IN LISTS RAY_DEBUG_HEAVY_TESTS)
+    if(_test IN_LIST RAY_SLOW_TESTS)
+        message(FATAL_ERROR "tests/tiers.cmake: '${_test}' is slow; debug-heavy is for quick tests")
+    endif()
+    ray_tier_set(${_test} APPEND LABELS debug-heavy)
 endforeach()
 foreach(_entry IN LISTS RAY_TEST_PROCESSORS)
     string(REPLACE "=" ";" _pair "${_entry}")
