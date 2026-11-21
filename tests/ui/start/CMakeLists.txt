@@ -16,7 +16,7 @@ target_compile_definitions(ray_ui_start_tests PRIVATE
 add_dependencies(ray_ui_start_tests raycad)
 set_property(TARGET ray_ui_start_tests PROPERTY FOLDER "tests")
 
-add_test(NAME ray_ui_start_tests COMMAND ray_ui_start_tests)
+add_test(NAME ray_ui_start_tests COMMAND ray_ui_start_tests "~[wallclock]")
 set_tests_properties(ray_ui_start_tests PROPERTIES TIMEOUT 900)
 ray_test_runtime_path(ray_ui_start_tests QT)
 # As for the viewport tests: frames must not wait for a display's vertical blank (a sleeping or locked display would

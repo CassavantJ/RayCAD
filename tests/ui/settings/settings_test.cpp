@@ -838,7 +838,7 @@ TEST_CASE("screenshots of every settings section in both themes", "[.screenshots
     }
 }
 
-TEST_CASE("warm start to the first frame with saved settings, against PLAN.md section 9", "[bench]")
+TEST_CASE("warm start to the first frame with saved settings, against PLAN.md section 9", "[bench][wallclock]")
 {
     // A populated settings file (theme, glass, tier, overrides, window and panels): reading and applying it is
     // part of the start; hardware detection is not (it runs after the first frame).

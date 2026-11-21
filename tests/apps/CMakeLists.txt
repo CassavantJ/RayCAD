@@ -6,6 +6,9 @@ set_tests_properties(raycad_cli_version PROPERTIES PASS_REGULAR_EXPRESSION "^ray
 add_test(NAME raycad_smoke COMMAND raycad --smoke)
 set_tests_properties(raycad_smoke PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "raycad: smoke ok")
 ray_test_runtime_path(raycad_smoke QT)
+# Its settings come from a folder of its own, not the real user profile (which tests running next to it may change).
+set_property(TEST raycad_smoke APPEND PROPERTY ENVIRONMENT
+             "RAYCAD_USER_DATA_DIR=${CMAKE_CURRENT_BINARY_DIR}/raycad_smoke-$<CONFIG>/user")
 ray_test_runtime_path(raycad_cli_version)
 
 # raycad-cli end to end (T-017): import, save, reopen without the STEP file, export, actions, invoke, errors.

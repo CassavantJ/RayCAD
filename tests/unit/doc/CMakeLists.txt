@@ -31,15 +31,13 @@ target_compile_definitions(ray_doc_tests PRIVATE RAY_DOC_GOLDEN_DIR="${CMAKE_CUR
 ray_add_test(ray_doc_tests)
 
 # The S4 part as document features judged by the T-081a naming oracle (task T-096). The oracle library and the
-# harness and scenario sources of tests/naming/oracle are linked and compiled here unchanged (not copied).
+# harness and scenario library of tests/naming/oracle (ray_naming_harness) are linked here unchanged (not copied).
 set(RAY_ORACLE_SOURCE_DIR "${CMAKE_SOURCE_DIR}/tests/naming/oracle")
 add_executable(ray_doc_s4_tests
     s4_document_test.cpp
-    rebuild_bench_test.cpp
-    "${RAY_ORACLE_SOURCE_DIR}/harness.cpp"
-    "${RAY_ORACLE_SOURCE_DIR}/s4_part.cpp")
-target_link_libraries(ray_doc_s4_tests PRIVATE ray_naming_oracle ray_doc ray_naming ray_kernel ray_sketch ray_core
-    Catch2::Catch2WithMain)
+    rebuild_bench_test.cpp)
+target_link_libraries(ray_doc_s4_tests PRIVATE ray_naming_harness ray_naming_oracle ray_doc ray_naming ray_kernel
+    ray_sketch ray_core Catch2::Catch2WithMain)
 target_include_directories(ray_doc_s4_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/doc" "${RAY_ORACLE_SOURCE_DIR}"
     "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
 target_compile_definitions(ray_doc_s4_tests PRIVATE RAY_ORACLE_DIR="${RAY_ORACLE_SOURCE_DIR}"

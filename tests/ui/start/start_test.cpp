@@ -378,7 +378,7 @@ TEST_CASE("the start screen and its recent files in the light theme", "[start][l
     w.checkNoWarnings();
 }
 
-TEST_CASE("opening a STEP file shows staged progress; Esc cancels it at once", "[open][progress]")
+TEST_CASE("opening a STEP file shows staged progress; Esc cancels it at once", "[open][progress][wallclock]")
 {
     Window w("dark");
     Session& session = *w.session();
@@ -821,7 +821,7 @@ TEST_CASE("crash recovery end to end: a session that ended without saving is rec
     CHECK(w.app()->pendingRecoveries().empty());
     w.checkNoWarnings();
 }
-TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[stall]")
+TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[stall][wallclock]")
 {
     // The software backend rasterises every frame on the UI thread, so there this would measure Qt's software
     // renderer, not RayCAD. Every other test here needs no rendering viewport and runs on any scene graph.
@@ -854,7 +854,7 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[
     CHECK(w.scene()->bodyCount() >= 1);
 }
 
-TEST_CASE("warm start to the first frame, against PLAN.md section 9", "[bench]")
+TEST_CASE("warm start to the first frame, against PLAN.md section 9", "[bench][wallclock]")
 {
     // --bench-start prints the time from process creation to the first frame swapped and the session's start.
     QTemporaryDir data;

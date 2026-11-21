@@ -437,7 +437,8 @@ TEST_CASE("an open sketch renders nothing while idle; entering and leaving chang
     w.checkNoWarnings();
 }
 
-TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thread never stalls", "[sketch][drag]")
+TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thread never stalls",
+          "[sketch][drag][wallclock]")
 {
     RAY_REQUIRE_RHI();
     Window w;

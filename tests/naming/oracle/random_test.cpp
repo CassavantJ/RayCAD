@@ -818,6 +818,24 @@ TEST_CASE("1,000 randomised edit sequences on 20 corpus parts: no reference reso
     checkGates(r, kSequencesPerPart);
 }
 
+// The quick tier's share of the block above (tests/tiers.cmake): its first kSmokePerPart judged sequences of every
+// part, on the same seeds, so a subset of what that block judges. The gates are the block's own; every answer not
+// judged here is one of the block's, so it is on the reviewed list.
+TEST_CASE("Smoke: the first 3 randomised edit sequences of every part of the main block", "[random-smoke]")
+{
+    constexpr int kSmokePerPart = 3;
+    static_assert(kSmokePerPart < kSequencesPerPart);
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
+    const BlockResult r = runBlock("Randomised smoke", parts, kSmokePerPart, SequenceOptions{});
+    CHECK(kernel::testing::structuredExceptions() == guardBefore);
+    checkGates(r, kSmokePerPart);
+}
+
 TEST_CASE("Holdout: 200 randomised sequences on seeds not run during development", "[random-holdout]")
 {
     const std::vector<Part> parts = loadParts();

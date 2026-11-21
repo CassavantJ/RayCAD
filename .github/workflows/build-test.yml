@@ -1,4 +1,5 @@
-# Configure, build and test on Windows, Linux and macOS (Apple Silicon), Debug and Release.
+# Configure, build and test on Windows, Linux and macOS (Apple Silicon): Debug with the quick test tier, Release
+# with every test.
 #
 # vcpkg binaries are cached with actions/cache on vcpkg's file-based binary cache folder (the old x-gha
 # backend is gone). No secret is needed. Qt comes from prebuilt binaries (tools/fetch_qt.py, cached).
@@ -138,15 +139,23 @@ jobs:
         if: runner.os != 'Windows'
         run: cmake --preset ${{ matrix.preset }}
 
+      # Debug runs the quick test tier, Release runs every test (tests/tiers.cmake). The slow tier is the long
+      # randomised naming blocks: in Debug they re-run the code paths the quick tier's naming tests (S4, acceptance,
+      # the smoke block) already run there, at many times the cost (an MSVC Debug build cannot finish them in this
+      # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. Windows Debug also
+      # leaves out the four S4 suites (label debug-heavy, preset windows-msvc-debug-ci): about 25 minutes each in an
+      # MSVC Debug build, they would take this job past its limit; Linux and macOS Debug run them, as every Release
+      # does. ctest runs one job per processor of the runner; tests with threads of their own take several
+      # (PROCESSORS) and timed tests run alone.
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
           cmake --build --preset ${{ matrix.preset }}-debug || exit /b 1
-          ctest --preset ${{ matrix.preset }}-debug || exit /b 1
+          ctest --preset ${{ matrix.preset }}-debug-ci --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
           cmake --build --preset ${{ matrix.preset }}-release || exit /b 1
-          ctest --preset ${{ matrix.preset }}-release || exit /b 1
+          ctest --preset ${{ matrix.preset }}-release --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
       # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
       # the offscreen platform.
@@ -157,6 +166,6 @@ jobs:
           QT_QUICK_BACKEND: software
         run: |
           cmake --build --preset ${{ matrix.preset }}-debug
-          ctest --preset ${{ matrix.preset }}-debug
+          ctest --preset ${{ matrix.preset }}-debug-quick --parallel "$(getconf _NPROCESSORS_ONLN)"
           cmake --build --preset ${{ matrix.preset }}-release
-          ctest --preset ${{ matrix.preset }}-release
+          ctest --preset ${{ matrix.preset }}-release --parallel "$(getconf _NPROCESSORS_ONLN)"

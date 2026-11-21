@@ -133,3 +133,7 @@ if(RAY_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Precompiled headers, once every target exists (cmake/RayPch.cmake says which targets and why).
+include(cmake/RayPch.cmake)
+ray_precompile_all()

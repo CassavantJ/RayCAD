@@ -12,7 +12,7 @@ target_include_directories(ray_ui_sketch_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/
 target_compile_definitions(ray_ui_sketch_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
 set_property(TARGET ray_ui_sketch_tests PROPERTY FOLDER "tests")
 
-add_test(NAME ray_ui_sketch_tests COMMAND ray_ui_sketch_tests)
+add_test(NAME ray_ui_sketch_tests COMMAND ray_ui_sketch_tests "~[wallclock]")
 set_tests_properties(ray_ui_sketch_tests PROPERTIES TIMEOUT 600)
 # Catch2 exits with 4 when every test case skipped (no QRhi scene graph): CTest then reports the test as skipped.
 set_tests_properties(ray_ui_sketch_tests PROPERTIES SKIP_RETURN_CODE 4)

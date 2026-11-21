@@ -60,7 +60,7 @@ for c in "${configs[@]}"; do
     continue
   fi
   echo "== test $b"
-  if ctest --preset "$b"; then
+  if ctest --preset "$b" --parallel "$(nproc)"; then
     summary+=("$b: tests passed")
   else
     summary+=("$b: tests FAILED")

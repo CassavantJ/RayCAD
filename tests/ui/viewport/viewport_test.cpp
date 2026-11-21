@@ -951,7 +951,8 @@ TEST_CASE("a frame that only answers a pick leaves the image as it was", "[pick]
     w.checkNoWarnings();
 }
 
-TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; idle draws nothing", "[stall][idle]")
+TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; idle draws nothing",
+          "[stall][idle][wallclock]")
 {
     RAY_REQUIRE_RHI();
     Window w("dark");
@@ -1017,7 +1018,7 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; i
                           3000));
 }
 
-TEST_CASE("Esc abandons an import at once; a failed open shows a message; a dropped file opens", "[open]")
+TEST_CASE("Esc abandons an import at once; a failed open shows a message; a dropped file opens", "[open][wallclock]")
 {
     RAY_REQUIRE_RHI();
     Window w("dark");
