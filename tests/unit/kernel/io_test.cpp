@@ -835,9 +835,10 @@ TEST_CASE("a cancelled export leaves no file behind", "[kernel][io]")
         INFO(name);
         CancelSource source;
         JobContext ctx{source.token(), Progress()};
+        std::atomic<bool> tookEffect{false};
         std::thread canceller([&] {
             std::this_thread::sleep_for(std::chrono::milliseconds(30));
-            source.cancel();
+            tookEffect = source.cancel();
         });
         const std::string path = dir.file(name);
         const std::string_view ext = std::string_view(name).substr(4);
@@ -846,9 +847,15 @@ TEST_CASE("a cancelled export leaves no file behind", "[kernel][io]")
                                              : exportStl(path, parts, 0.01, ctx);
         canceller.join();
         kernel::detail::waitForIoThreads();
+        // The export closes the token just before it renames the file into place: a cancel either won before (no
+        // file, Cancelled) or was too late (the file, success), never both.
         if (!status.has_value()) {
             CHECK(status.error().code == ErrorCode::Cancelled);
+            CHECK(tookEffect.load());
             CHECK_FALSE(fs::exists(fromUtf8(path)));
+        } else {
+            CHECK_FALSE(tookEffect.load());
+            CHECK(fs::exists(fromUtf8(path)));
         }
         CHECK_FALSE(fs::exists(fromUtf8(path + ".partial")));
     }

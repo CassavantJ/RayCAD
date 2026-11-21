@@ -64,7 +64,9 @@ public:
     virtual Result<doc::DocStatePtr> loadHead(std::string_view branch = "main") = 0;
     virtual Result<doc::DocStatePtr> loadCommit(const Hash256&) = 0;
 
-    // Save = one SQLite transaction: put new objects, insert commit, move ref. Either all or nothing.
+    // Save = one SQLite transaction: put new objects, insert commit, move ref. Either all or nothing. Just before the
+    // transaction commits, save closes ctx.cancel (CancelToken::close, the point of no return): Cancelled means
+    // nothing was saved, and a cancel after the close is too late (it returns false; the commit is returned).
     // `derived` are cache objects (shapes, maps, toolpaths, meshes) stored so the next open needs no rebuild.
     struct SaveRequest {
         doc::DocStatePtr state; std::string message; std::string author;

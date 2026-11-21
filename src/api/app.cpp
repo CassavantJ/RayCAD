@@ -123,7 +123,7 @@ AppImpl::~AppImpl()
             bridge_->shutdown();
         }
         alive_->ok.store(false);
-        std::vector<std::function<void()>> cancels;
+        std::vector<std::function<bool()>> cancels;
         std::vector<std::function<void()>> waits;
         {
             std::lock_guard<std::mutex> lock(jobsMutex_);
@@ -137,7 +137,7 @@ AppImpl::~AppImpl()
             }
         }
         for (auto& c : cancels) {
-            c();
+            (void)c(); // a job past its point of no return finishes (its UI hops give up: bridge shutdown)
         }
         for (auto& w : waits) {
             w();
@@ -573,7 +573,7 @@ Result<OpenDocument*> AppImpl::openWork(const std::string& path, JobContext& ctx
     // A document this app has open already is only made active.
     const std::string key = pathKey(path);
     auto existing = bridge_->call<OpenDocument*>(
-        [this, key]() -> Result<OpenDocument*> {
+        [this, key, &ctx]() -> Result<OpenDocument*> {
             DocEntry* found = nullptr;
             {
                 std::lock_guard<std::mutex> lock(docsMutex_);
@@ -584,6 +584,9 @@ Result<OpenDocument*> AppImpl::openWork(const std::string& path, JobContext& ctx
                 }
             }
             if (found) {
+                if (!pointOfNoReturn(ctx.cancel)) {
+                    return fail(ErrorCode::Cancelled, "Cancelled");
+                }
                 setActive(&found->od);
                 recent_->add(found->od.path);
                 emit(AppEvent::Kind::RecentFilesChanged, {});
@@ -645,7 +648,10 @@ Result<OpenDocument*> AppImpl::openWork(const std::string& path, JobContext& ctx
     // std::function needs a copyable closure: the file travels in a shared holder (closed if the hop is abandoned).
     auto holder = std::make_shared<std::unique_ptr<store::IDocumentFile>>(std::move(*file));
     return bridge_->call<OpenDocument*>(
-        [this, holder, slot, head, path, readOnly, lock]() -> Result<OpenDocument*> {
+        [this, holder, slot, head, path, readOnly, lock, &ctx]() -> Result<OpenDocument*> {
+            if (!pointOfNoReturn(ctx.cancel)) {
+                return fail(ErrorCode::Cancelled, "Cancelled"); // the file and the journal close with the holders
+            }
             NewEntry e;
             e.file = std::move(*holder);
             e.initial = head;
@@ -743,7 +749,10 @@ Result<std::string> AppImpl::importWork(std::optional<std::string> documentId, c
         }
     }
     return bridge_->call<std::string>(
-        [this, guard, shared, path, slot, journalError, initial]() -> Result<std::string> {
+        [this, guard, shared, path, slot, journalError, initial, &ctx]() -> Result<std::string> {
+            if (!pointOfNoReturn(ctx.cancel)) {
+                return fail(ErrorCode::Cancelled, "Cancelled");
+            }
             DocEntry* entry = guard->get();
             if (entry == nullptr) {
                 NewEntry e;
@@ -844,6 +853,11 @@ Result<store::Commit> AppImpl::saveWork(DocEntry& entry, std::optional<std::stri
                                 " and cannot be replaced",
                             path);
             }
+            // Replacing the file cannot be undone, so it is the save's point of no return: a cancel before it leaves
+            // the file alone, one after it is too late and the save completes (the store would close here anyway).
+            if (!ctx.cancel.close()) {
+                return fail(ErrorCode::Cancelled, "Cancelled");
+            }
             std::error_code ec;
             std::filesystem::remove(toFsPath(path), ec);
             if (ec) {
@@ -858,32 +872,45 @@ Result<store::Commit> AppImpl::saveWork(DocEntry& entry, std::optional<std::stri
         target = created.get();
     }
 
-    // Every imported BREP object the state names, from the pool or the file the document came from.
-    const std::vector<Hash256> needed = doc::referencedObjects(*state);
-    Progress objectsProgress = ctx.progress.sub(0.6);
-    for (std::size_t i = 0; i < needed.size(); ++i) {
-        if (auto st = ctx.cancel.check(); !st) {
-            return tl::unexpected<Error>(st.error());
-        }
-        if (!target->has(needed[i])) {
-            auto bytes = entry.objects->object(needed[i]);
-            if (!bytes) {
-                return withContext(bytes.error(), "reading imported geometry " + needed[i].hex());
+    const auto write = [&]() -> Result<store::Commit> {
+        // Every imported BREP object the state names, from the pool or the file the document came from.
+        const std::vector<Hash256> needed = doc::referencedObjects(*state);
+        Progress objectsProgress = ctx.progress.sub(0.6);
+        for (std::size_t i = 0; i < needed.size(); ++i) {
+            if (auto st = ctx.cancel.check(); !st) {
+                return tl::unexpected<Error>(st.error());
             }
-            auto put = target->put(store::ObjectKind::Brep, *bytes);
-            if (!put) {
-                return withContext(put.error(), "writing imported geometry");
+            if (!target->has(needed[i])) {
+                auto bytes = entry.objects->object(needed[i]);
+                if (!bytes) {
+                    return withContext(bytes.error(), "reading imported geometry " + needed[i].hex());
+                }
+                auto put = target->put(store::ObjectKind::Brep, *bytes);
+                if (!put) {
+                    return withContext(put.error(), "writing imported geometry");
+                }
             }
+            objectsProgress.set(static_cast<double>(i + 1) / static_cast<double>(needed.size()), "Saving geometry");
         }
-        objectsProgress.set(static_cast<double>(i + 1) / static_cast<double>(needed.size()), "Saving geometry");
-    }
-    store::IDocumentFile::SaveRequest request;
-    request.state = state;
-    request.message = "Save";
-    JobContext saveCtx{ctx.cancel, ctx.progress.sub(0.4)};
-    auto commit = target->save(request, saveCtx);
+        store::IDocumentFile::SaveRequest request;
+        request.state = state;
+        request.message = "Save";
+        // The store closes ctx.cancel just before its transaction commits: Cancelled from it means nothing was saved.
+        JobContext saveCtx{ctx.cancel, ctx.progress.sub(0.4)};
+        auto saved = target->save(request, saveCtx);
+        if (!saved) {
+            return withContext(saved.error(), "saving " + path);
+        }
+        return saved;
+    };
+    auto commit = write();
     if (!commit) {
-        return withContext(commit.error(), "saving " + path);
+        if (created) {
+            // A file this save created and could not finish is not left behind (a replaced one is gone already).
+            created.reset();
+            removeDocumentFiles(path);
+        }
+        return tl::unexpected<Error>(commit.error());
     }
 
     // A new file gets a new journal, from the saved state (changes made while a save-as ran are in neither).
@@ -945,7 +972,9 @@ Result<store::Commit> AppImpl::saveWork(DocEntry& entry, std::optional<std::stri
             return std::monostate{};
         },
         ctx.cancel);
-    if (!applied) {
+    // ctx.cancel is closed (the store's commit), so the hop gives up only when the app shuts down: the save happened
+    // all the same, and is reported.
+    if (!applied && applied.error().code != ErrorCode::Cancelled) {
         return tl::unexpected<Error>(applied.error());
     }
     return done;
@@ -1055,18 +1084,39 @@ std::vector<JobStatus> AppImpl::activeJobs() const
     return out;
 }
 
-void AppImpl::cancelJob(std::uint64_t id)
+bool AppImpl::cancelJob(std::uint64_t id)
 {
-    std::function<void()> cancel;
+    std::function<bool()> cancel;
     {
         std::lock_guard<std::mutex> lock(jobsMutex_);
         if (auto it = tracked_.find(id); it != tracked_.end()) {
             cancel = it->second.cancel;
         }
     }
-    if (cancel) {
-        cancel();
+    return cancel ? cancel() : false;
+}
+
+bool AppImpl::pointOfNoReturn(CancelToken& cancel)
+{
+    std::function<void(bool)> hook;
+    {
+        std::lock_guard<std::mutex> lock(hookMutex_);
+        hook = noReturnHook_;
     }
+    if (hook) {
+        hook(false);
+    }
+    const bool closed = cancel.close();
+    if (hook && closed) {
+        hook(true);
+    }
+    return closed;
+}
+
+void AppImpl::setNoReturnHookForTest(std::function<void(bool after)> hook)
+{
+    std::lock_guard<std::mutex> lock(hookMutex_);
+    noReturnHook_ = std::move(hook);
 }
 
 void AppImpl::jobProgress(std::uint64_t id, double fraction, std::string_view stage)

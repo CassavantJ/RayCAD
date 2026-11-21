@@ -256,6 +256,56 @@ TEST_CASE("save is one transaction and a failed save leaves nothing behind", "[s
     CHECK(raw.text("SELECT count(*) FROM derived") == "1");
 }
 
+TEST_CASE("a save closes its token just before it commits: a cancel rolls it back or is too late", "[store][cancel]")
+{
+    TempDir dir;
+    const std::string path = dir.path("point_of_no_return.raycad");
+    std::mt19937_64 rng(5);
+    const ray::doc::DocState first = makeState(rng, 5, 50);
+    ray::doc::DocState second = first;
+    second.features[2].propsJson = "{\"distance\":\"7 mm\"}";
+    auto file = createFile(path);
+    const auto headHash = [&file] {
+        auto head = file->loadHead();
+        REQUIRE(head);
+        return (*head)->stateHash();
+    };
+
+    // A save that committed has closed its token: a cancel afterwards is too late and says so.
+    ray::CancelSource late;
+    ray::JobContext lateCtx{late.token(), {}};
+    REQUIRE(file->save(request(first, "first"), lateCtx));
+    CHECK_FALSE(late.cancel());
+    CHECK_FALSE(late.cancelled());
+    CHECK(headHash() == first.stateHash());
+
+    // A token the caller closed already: the save goes ahead (closing again is fine).
+    ray::CancelSource closed;
+    ray::CancelToken closedToken = closed.token();
+    REQUIRE(closedToken.close());
+    ray::JobContext closedCtx{closedToken, {}};
+    REQUIRE(file->save(request(second, "second"), closedCtx));
+    CHECK(headHash() == second.stateHash());
+
+    // Cancelled while it runs (from its progress listener, on the saving thread): rolled back, and the cancel won.
+    ray::doc::DocState third = second;
+    third.features[3].propsJson = "{\"distance\":\"8 mm\"}";
+    ray::CancelSource during;
+    bool took = false;
+    ray::JobContext duringCtx{during.token(), ray::Progress([&](double, std::string_view) {
+                                  if (!took) {
+                                      took = during.cancel();
+                                  }
+                              })};
+    const auto commitsBefore = ray::store::detail::committedTransactions(*file);
+    auto stopped = file->save(request(third, "third"), duringCtx);
+    REQUIRE_FALSE(stopped);
+    CHECK(stopped.error().code == ErrorCode::Cancelled);
+    CHECK(took);
+    CHECK(ray::store::detail::committedTransactions(*file) == commitsBefore);
+    CHECK(headHash() == second.stateHash());
+}
+
 TEST_CASE("objects are content-addressed, compressed and verified on read", "[store][objects]")
 {
     TempDir dir;

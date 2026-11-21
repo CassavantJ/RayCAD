@@ -249,8 +249,134 @@ TEST_CASE("cancelling a finished job keeps its result", "[jobs][cancel]")
     auto jobs = ray::makeJobSystem(dispatcher, 2);
     auto handle = jobs->submit<int>({"quick"}, [](ray::JobContext&) -> ray::Result<int> { return 5; });
     REQUIRE(handle.wait().value() == 5);
-    handle.cancel();
+    CHECK_FALSE(handle.cancel()); // too late, and it says so
     CHECK(handle.wait().value() == 5);
+}
+
+TEST_CASE("a job past its point of no return keeps its value; a cancel before it wins", "[jobs][cancel][close]")
+{
+    TestDispatcher dispatcher;
+    auto jobs = ray::makeJobSystem(dispatcher, 2);
+    std::atomic<bool> atGate{false}; // the work waits before its point of no return
+    std::atomic<bool> openGate{false};
+    std::atomic<bool> committed{false};    // the work closed its token and "committed"
+    std::atomic<bool> finish{false};       // lets the work return after its commit
+    std::atomic<bool> sawCancel{false};    // the work read its token as cancelled after the close
+    std::atomic<bool> gateOnCancel{false}; // the gate also opens once the work sees its token cancelled
+    const auto work = [&](ray::JobContext& ctx) -> ray::Result<int> {
+        atGate = true;
+        while (!openGate.load() && !(gateOnCancel.load() && ctx.cancel.cancelled())) {
+            std::this_thread::sleep_for(100us);
+        }
+        if (!ctx.cancel.close()) {
+            return tl::unexpected<ray::Error>(ray::Error{ray::ErrorCode::Cancelled, "Cancelled", {}});
+        }
+        committed = true;
+        while (!finish.load()) {
+            std::this_thread::sleep_for(100us);
+        }
+        sawCancel = ctx.cancel.cancelled();
+        return 11;
+    };
+
+    SECTION("cancelled before the close: Cancelled, nothing committed")
+    {
+        auto handle = jobs->submit<int>({"commit"}, work);
+        REQUIRE(waitFor(atGate));
+        CHECK(handle.cancel());
+        openGate = true;
+        finish = true;
+        CHECK(handle.wait().error().code == ray::ErrorCode::Cancelled);
+        CHECK_FALSE(committed.load());
+        CHECK(handle.cancel()); // it is, and stays, cancelled
+    }
+    SECTION("cancelled after the close, from this thread or another: too late, the value and the commit")
+    {
+        auto handle = jobs->submit<int>({"commit"}, work);
+        REQUIRE(waitFor(atGate));
+        openGate = true;
+        REQUIRE(waitFor(committed));
+        CHECK_FALSE(handle.cancel()); // while the work still runs after its close
+        std::atomic<bool> otherTook{true};
+        std::thread other([&] { otherTook = handle.cancel(); });
+        other.join();
+        CHECK_FALSE(otherTook.load());
+        finish = true;
+        CHECK(handle.wait().value() == 11);
+        CHECK_FALSE(sawCancel.load());
+        CHECK_FALSE(handle.cancel());
+    }
+    SECTION("the job system shutting down after the close does not cancel the job")
+    {
+        auto handle = jobs->submit<int>({"commit"}, work);
+        REQUIRE(waitFor(atGate));
+        openGate = true;
+        REQUIRE(waitFor(committed));
+        std::thread destroyer([&] { jobs.reset(); }); // cancels the parent of every job's token, then waits
+        std::this_thread::sleep_for(20ms);
+        finish = true;
+        destroyer.join();
+        CHECK(handle.wait().value() == 11);
+        CHECK_FALSE(sawCancel.load());
+    }
+    SECTION("the job system shutting down before the close cancels the job")
+    {
+        gateOnCancel = true; // the work goes on to its close exactly when the shutdown reached its token
+        finish = true;
+        auto handle = jobs->submit<int>({"commit"}, work);
+        REQUIRE(waitFor(atGate));
+        jobs.reset(); // cancels the parent of the job's token, then waits for the job
+        CHECK(handle.wait().error().code == ray::ErrorCode::Cancelled);
+        CHECK_FALSE(committed.load());
+    }
+}
+
+TEST_CASE("cancel racing a job's commit from another thread: Cancelled if and only if nothing was committed",
+          "[jobs][cancel][close]")
+{
+    TestDispatcher dispatcher;
+    auto jobs = ray::makeJobSystem(dispatcher, 4);
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    int cancelledRuns = 0;
+    int committedRuns = 0;
+    for (int round = 0; round < 5000 && std::chrono::steady_clock::now() < deadline; ++round) {
+        std::atomic<int> commits{0};
+        std::atomic<bool> started{false};
+        auto handle = jobs->submit<int>({"race"}, [&](ray::JobContext& ctx) -> ray::Result<int> {
+            started = true;
+            for (int spin = 0; spin < round % 64; ++spin) {
+                std::this_thread::yield();
+            }
+            if (!ctx.cancel.close()) {
+                return tl::unexpected<ray::Error>(ray::Error{ray::ErrorCode::Cancelled, "Cancelled", {}});
+            }
+            ++commits;
+            return round;
+        });
+        // Cancel at a varying moment around the commit: before the job starts, while it spins, after it ended.
+        if (round % 3 != 0) {
+            while (!started.load()) {
+                std::this_thread::yield();
+            }
+        }
+        for (int spin = 0; spin < (round * 7) % 48; ++spin) {
+            std::this_thread::yield();
+        }
+        const bool took = handle.cancel();
+        const ray::Result<int> result = handle.wait();
+        INFO("round " << round);
+        REQUIRE(result.has_value() == (commits.load() == 1));
+        REQUIRE(took == !result.has_value());
+        if (!result) {
+            REQUIRE(result.error().code == ray::ErrorCode::Cancelled);
+            ++cancelledRuns;
+        } else {
+            REQUIRE(*result == round);
+            ++committedRuns;
+        }
+    }
+    INFO("cancelled " << cancelledRuns << ", committed " << committedRuns);
+    CHECK(cancelledRuns + committedRuns > 0);
 }
 
 TEST_CASE("exceptions inside a job become Internal and never escape", "[jobs]")
@@ -475,8 +601,9 @@ TEST_CASE("a deferred job cancelled before it runs ends at once and never runs",
     });
     bool cancelled = false;
     handle.then([&](ray::Result<int> r) { cancelled = !r && r.error().code == ray::ErrorCode::Cancelled; });
-    handle.cancel();
-    CHECK(handle.done()); // at once, without a worker or a runDeferred()
+    CHECK(handle.cancel());
+    CHECK(handle.done());   // at once, without a worker or a runDeferred()
+    CHECK(handle.cancel()); // still cancelled
     handle.runDeferred();
     CHECK(ran.load() == 0);
     CHECK(handle.wait().error().code == ray::ErrorCode::Cancelled);
@@ -516,7 +643,7 @@ TEST_CASE("an empty JobHandle is harmless", "[jobs]")
     ray::JobHandle<int> handle;
     CHECK_FALSE(handle.valid());
     CHECK(handle.done());
-    handle.cancel();
+    CHECK_FALSE(handle.cancel());
     handle.then([](ray::Result<int>) { FAIL("an empty handle has no result"); });
     CHECK(handle.wait().error().code == ray::ErrorCode::InvalidArgument);
 }

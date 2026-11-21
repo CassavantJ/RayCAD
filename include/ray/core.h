@@ -126,12 +126,22 @@ struct CancelState;    // defined in src/core/jobs.cpp
 struct ProgressNode;   // defined in src/core/jobs.cpp
 }
 
+// A cancellation state is open, then either cancelled or closed, never both and never back. close() is the point of
+// no return of the work that holds the token: called just before the work makes its result visible (commits a
+// document change, renames a file into place), it either finds the token cancelled (false: the work must then change
+// nothing and report Cancelled) or makes every later cancel() a no-op that returns false (too late). So a cancel and
+// a close never both win, whichever threads call them.
 class CancelToken {
 public:
-    CancelToken() = default;   // never cancelled
+    CancelToken() = default;   // never cancelled; close() returns true
+    // True once cancel() won (or the parent's did, unless this token was closed first). False forever after close().
     bool cancelled() const noexcept;
     // Returns Error{Cancelled} when cancelled. Long loops call this at least every 50 ms of work.
     Status check() const;
+    // The point of no return: true if the token is closed now (or was already), false if it is cancelled (also
+    // through its parent; a parent cancelled after the close no longer reaches it). Copies of
+    // the token and of its source share the state, so this closes them all; a job's ctx.cancel is the job's own.
+    bool close() noexcept;
 private:
     friend class CancelSource;
     explicit CancelToken(std::shared_ptr<const detail::CancelState> state) noexcept;
@@ -142,7 +152,8 @@ public:
     CancelSource();                                    // a new source, not cancelled
     explicit CancelSource(const CancelToken& parent);  // also reads as cancelled once `parent` is cancelled
     CancelToken token() const;
-    void cancel() noexcept;
+    // True if the state is cancelled now (or was already); false if it was closed first (too late, nothing changes).
+    bool cancel() noexcept;
     bool cancelled() const noexcept;
 private:
     std::shared_ptr<detail::CancelState> state_;   // copies share one state
@@ -182,7 +193,7 @@ public:
     virtual ~JobStateBase();
     JobStateBase(const JobStateBase&) = delete;
     JobStateBase& operator=(const JobStateBase&) = delete;
-    void cancel();
+    bool cancel();   // as JobHandle::cancel
     bool done() const noexcept;
     // Blocks until the job is done. A job that has not started yet is run on the calling thread (not a deferred job:
     // IJobSystem::defer).
@@ -227,8 +238,12 @@ public:
     explicit JobHandle(std::shared_ptr<detail::JobState<T>> state) noexcept : state_(std::move(state)) {}
     bool valid() const noexcept { return state_ != nullptr; }
     // Requests cancellation. A job that has not started never runs; a running one sees its token cancelled.
-    // Either way the result is Error{Cancelled}, also if the work returns a value after the request.
-    void cancel() { if (state_) state_->cancel(); }
+    // Either way the result is Error{Cancelled}, also if the work returns a value after the request, and cancel()
+    // returns true. It returns false, and changes nothing, when it is too late: the job has ended, or its work
+    // closed ctx.cancel (CancelToken::close, its point of no return) and will report what it did. Every job's token
+    // is closed when its work returns, before its result is stored, so a cancel() that returned true always ends the
+    // job as Cancelled and one that returned false never changes its result. False for an empty handle.
+    bool cancel() { return state_ ? state_->cancel() : false; }
     bool done() const { return !state_ || state_->done(); }
     // Continuation runs on the UI thread (posted through IUiDispatcher).
     void then(std::function<void(Result<T>)> onUiThread) {

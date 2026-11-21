@@ -984,6 +984,11 @@ private:
             RAY_TRY(units.prepare(db_, "INSERT OR REPLACE INTO meta (key, value) VALUES ('units', ?1)"));
             units.bindText(1, request.state->settings.units == UnitSystem::Metric ? "metric" : "inch");
             RAY_TRY(units.run());
+            // The point of no return (CancelToken::close), just before COMMIT: a cancel before it rolls the save back,
+            // one after it is too late, so the caller never reports Cancelled for a commit that landed.
+            if (!ctx.cancel.close()) {
+                return fail(ErrorCode::Cancelled, "Cancelled");
+            }
             return {};
         });
         if (!status) {

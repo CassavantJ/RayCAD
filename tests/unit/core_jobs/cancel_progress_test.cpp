@@ -84,6 +84,127 @@ TEST_CASE("CancelSource cancels its tokens, and linked sources follow their pare
     }
 }
 
+TEST_CASE("close is the point of no return: of cancel and close exactly one wins", "[jobs][cancel][close]")
+{
+    SECTION("a default token closes and stays uncancelled")
+    {
+        ray::CancelToken token;
+        CHECK(token.close());
+        CHECK(token.close());
+        CHECK_FALSE(token.cancelled());
+    }
+    SECTION("closed first: cancel is a no-op that reports it came too late")
+    {
+        ray::CancelSource source;
+        ray::CancelToken token = source.token();
+        CHECK(token.close());
+        CHECK(token.close()); // closing again is fine
+        CHECK_FALSE(source.cancel());
+        CHECK_FALSE(source.cancel());
+        CHECK_FALSE(token.cancelled());
+        CHECK_FALSE(source.cancelled());
+        CHECK(token.check().has_value());
+    }
+    SECTION("cancelled first: close fails, cancel keeps reporting true")
+    {
+        ray::CancelSource source;
+        ray::CancelToken token = source.token();
+        CHECK(source.cancel());
+        CHECK_FALSE(token.close());
+        CHECK(source.cancel());
+        CHECK(token.cancelled());
+        CHECK(token.check().error().code == ray::ErrorCode::Cancelled);
+    }
+    SECTION("copies of the token share the state")
+    {
+        ray::CancelSource source;
+        ray::CancelToken a = source.token();
+        const ray::CancelToken b = a;
+        CHECK(a.close());
+        CHECK_FALSE(source.cancel());
+        CHECK_FALSE(b.cancelled());
+    }
+    SECTION("a token whose parent is cancelled cannot be closed")
+    {
+        ray::CancelSource parent;
+        ray::CancelSource child(parent.token());
+        ray::CancelToken token = child.token();
+        CHECK(parent.cancel());
+        CHECK_FALSE(token.close());
+        CHECK(token.cancelled());
+    }
+    SECTION("a closed token ignores a later cancel of its parent, and so do the sources linked to it")
+    {
+        ray::CancelSource parent;
+        ray::CancelSource child(parent.token());
+        ray::CancelToken token = child.token();
+        ray::CancelSource grandchild(token);
+        CHECK(token.close());
+        CHECK(parent.cancel());
+        CHECK(parent.token().cancelled());
+        CHECK_FALSE(token.cancelled());
+        CHECK_FALSE(grandchild.cancelled());
+        CHECK(grandchild.cancel()); // its own state is still open
+        CHECK(grandchild.cancelled());
+        CHECK_FALSE(token.cancelled());
+    }
+    SECTION("closing a child leaves its parent cancellable")
+    {
+        ray::CancelSource parent;
+        ray::CancelSource child(parent.token());
+        ray::CancelToken token = child.token();
+        CHECK(token.close());
+        CHECK(parent.cancel());
+        CHECK(parent.cancelled());
+    }
+}
+
+TEST_CASE("cancel and close racing on two threads: exactly one wins, and what it says holds", "[jobs][cancel][close]")
+{
+    // Bounded by rounds and by time, so a slow (sanitizer) build stays within a few seconds.
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    int cancelWon = 0;
+    int closeWon = 0;
+    for (int round = 0; round < 20000 && std::chrono::steady_clock::now() < deadline; ++round) {
+        // 0: the token's own source cancels; 1: its source, then its parent (a racing shutdown); 2: only the parent.
+        const int mode = round % 3;
+        ray::CancelSource parent;
+        ray::CancelSource source(parent.token());
+        ray::CancelToken token = source.token();
+        std::atomic<int> go{0};
+        bool cancelled = false;
+        bool parentCancelled = false;
+        bool closed = false;
+        std::thread canceller([&] {
+            go.fetch_add(1);
+            while (go.load() < 2) {
+                std::this_thread::yield();
+            }
+            if (mode != 2) {
+                cancelled = source.cancel();
+            }
+            parentCancelled = mode == 0 || parent.cancel(); // nothing closes the parent
+        });
+        go.fetch_add(1);
+        while (go.load() < 2) {
+            std::this_thread::yield();
+        }
+        closed = token.close();
+        canceller.join();
+        INFO("round " << round << ", mode " << mode);
+        const bool reads = token.cancelled();
+        REQUIRE(closed != reads); // never both, never neither, also once the parent is cancelled
+        if (mode != 2) {
+            CHECK(cancelled == reads); // cancel() said whether it won
+        }
+        CHECK(token.close() == closed); // stable
+        CHECK(parentCancelled);
+        (closed ? closeWon : cancelWon) += 1;
+    }
+    INFO("cancel won " << cancelWon << " times, close " << closeWon);
+    CHECK(cancelWon + closeWon > 0);
+}
+
 TEST_CASE("cancel is seen by another thread", "[jobs][cancel]")
 {
     ray::CancelSource source;

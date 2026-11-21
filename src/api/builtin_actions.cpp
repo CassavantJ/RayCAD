@@ -234,7 +234,9 @@ std::string commandSchema(std::string_view commandSchemaJson)
 //      cancelled).
 //   3. UI thread: it is committed with its journal record (AppImpl::commit). If the state changed in between (a change
 //      made outside the ordered actions), it is prepared again on the new state; after three such misses it is
-//      executed on the UI thread, so it always ends.
+//      executed on the UI thread, so it always ends. The commit (or that execute) is the job's point of no return
+//      (AppImpl::pointOfNoReturn): a job that reports Cancelled changed nothing, and one that changed the document
+//      reports its result, whenever and from whichever thread it is cancelled.
 Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const doc::Command& command, JobContext& ctx)
 {
     auto guard = claimOnUi(app, docId, ctx);
@@ -251,11 +253,17 @@ Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const do
         }
         const bool last = attempt >= kPrepares;
         auto done = app.bridge().call<std::optional<Value>>(
-            [&app, &entry, &prepared, &command, last]() -> Result<std::optional<Value>> {
-                if (entry.od.document->state() != prepared->before) {
-                    if (!last) {
-                        return std::optional<Value>(); // changed meanwhile: prepare again
-                    }
+            [&app, &entry, &prepared, &command, &ctx, last]() -> Result<std::optional<Value>> {
+                const bool stale = entry.od.document->state() != prepared->before;
+                if (stale && !last) {
+                    return std::optional<Value>(); // changed meanwhile: prepare again (still cancellable)
+                }
+                // The point of no return: cancelled before it, nothing changes and the job reports Cancelled; after it
+                // a cancel is too late and the job reports the commit.
+                if (!app.pointOfNoReturn(ctx.cancel)) {
+                    return fail(ErrorCode::Cancelled, "Cancelled");
+                }
+                if (stale) {
                     auto executed = app.execute(entry, command);
                     if (!executed) {
                         return tl::unexpected<Error>(executed.error());

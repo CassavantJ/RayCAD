@@ -7,6 +7,7 @@ set_property(TARGET ray_api_helper PROPERTY FOLDER "tests")
 
 add_executable(ray_api_tests
     actions_test.cpp
+    cancel_commit_test.cpp
     external_app_test.cpp
     features_test.cpp
     hole_actions_test.cpp

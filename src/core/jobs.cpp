@@ -66,18 +66,52 @@ void atomicMax(std::atomic<double>& target, double value) noexcept
 
 // ---------- Cancellation ----------
 namespace detail {
+// Open -> Cancelled or Open -> Closed, by compare-exchange, so of a cancel() and a close() racing exactly one wins.
+// cancelled() walks up the parents until a state that is not open decides. Once a parent reads as cancelled it always
+// does (a state whose parent is cancelled cannot be closed), so close() checks the parent before it closes; a parent
+// cancelled between that check and the exchange is ordered after the close, and the closed state ignores it. (A
+// reader in that instant may see cancelled() true just before close() returns true; once close() has returned,
+// cancelled() is false for good.)
 struct CancelState {
-    std::atomic<bool> flag{false};
+    enum : int { kOpen = 0, kCancelled = 1, kClosed = 2 };
+    // mutable: tokens hold the state as const, and close() through a token is the one write they may make.
+    mutable std::atomic<int> phase{kOpen};
     std::shared_ptr<const CancelState> parent;
 
     bool cancelled() const noexcept
     {
         for (const CancelState* state = this; state != nullptr; state = state->parent.get()) {
-            if (state->flag.load(std::memory_order_acquire)) {
-                return true;
+            const int now = state->phase.load(std::memory_order_acquire);
+            if (now != kOpen) {
+                return now == kCancelled;
             }
         }
         return false;
+    }
+
+    bool cancel() const noexcept
+    {
+        int expected = kOpen;
+        if (phase.compare_exchange_strong(expected, kCancelled, std::memory_order_acq_rel)) {
+            return true;
+        }
+        return expected == kCancelled;
+    }
+
+    bool close() const noexcept
+    {
+        const int now = phase.load(std::memory_order_acquire);
+        if (now != kOpen) {
+            return now == kClosed;
+        }
+        if (parent != nullptr && parent->cancelled()) {
+            return false;
+        }
+        int expected = kOpen;
+        if (phase.compare_exchange_strong(expected, kClosed, std::memory_order_acq_rel)) {
+            return true;
+        }
+        return expected == kClosed;
     }
 };
 } // namespace detail
@@ -97,6 +131,11 @@ Status CancelToken::check() const
     return Status{};
 }
 
+bool CancelToken::close() noexcept
+{
+    return state_ == nullptr || state_->close();
+}
+
 CancelSource::CancelSource() : state_(std::make_shared<detail::CancelState>()) {}
 
 CancelSource::CancelSource(const CancelToken& parent) : CancelSource()
@@ -109,11 +148,9 @@ CancelToken CancelSource::token() const
     return CancelToken(state_);
 }
 
-void CancelSource::cancel() noexcept
+bool CancelSource::cancel() noexcept
 {
-    if (state_ != nullptr) {
-        state_->flag.store(true, std::memory_order_release);
-    }
+    return state_ != nullptr && state_->cancel();
 }
 
 bool CancelSource::cancelled() const noexcept
@@ -340,7 +377,9 @@ void execute(JobStateBase& state) noexcept
             }
         }
         work = nullptr; // releases what the work captured, before anyone is told the job is done
-        if (ctx.cancel.cancelled()) {
+        // The job's own point of no return, if its work did not close the token itself: a cancel that won before it
+        // (also through the job system's shutdown) makes the result Cancelled, one after it is too late.
+        if (!ctx.cancel.close()) {
             state.setError(cancelledError()); // a cancelled job never reports a value
         } else if (state.succeeded()) {
             ctx.progress.set(1.0);
@@ -374,12 +413,16 @@ JobStateBase::JobStateBase() : impl_(std::make_unique<Impl>()) {}
 
 JobStateBase::~JobStateBase() = default;
 
-void JobStateBase::cancel()
+bool JobStateBase::cancel()
 {
-    impl_->cancel.cancel();
+    // A job is closed only by its running work or by execute() once the work returned, so a job nobody has claimed
+    // is always still cancellable here.
+    const bool cancelled = impl_->cancel.cancel();
     if (impl_->tryClaim() || impl_->tryClaimDeferred()) {
         completeCancelled(*this); // not started: done now, instead of when a worker (or its queue) gets to it
+        return true;
     }
+    return cancelled;
 }
 
 bool JobStateBase::done() const noexcept

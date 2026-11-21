@@ -375,7 +375,8 @@ TEST_CASE("long-running actions run as jobs with progress and cancel, never bloc
     REQUIRE(jobs.size() == 1);
     CHECK(jobs[0].title == "Test action");
     CHECK(jobs[0].stage == "Working");
-    app->cancelJob(jobs[0].id);
+    CHECK(app->cancelJob(jobs[0].id));
+    CHECK_FALSE(app->cancelJob(jobs[0].id + 1000)); // an unknown id
     auto result = app->wait(job, kWait);
     REQUIRE_FALSE(result);
     CHECK(result.error().code == ErrorCode::Cancelled);

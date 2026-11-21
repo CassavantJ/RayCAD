@@ -612,7 +612,14 @@ void Session::cancelJob(qint64 id)
     }
     if (app_ == nullptr || id <= 0)
         return;
-    app_->cancelJob(static_cast<std::uint64_t>(id));
+    if (!app_->cancelJob(static_cast<std::uint64_t>(id))) {
+        // Too late: the job is past its point of no return (or has ended) and reports what it did, so it is not
+        // abandoned and its result is shown as usual.
+        if (context_)
+            context_->setStatusText(tr("Too late to cancel: finishing"));
+        refreshJobs();
+        return;
+    }
     // The UI returns at once (PLAN.md 7): the job leaves the list now, its late result is dropped.
     abandoned_.insert(id);
     refreshJobs();

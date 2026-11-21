@@ -68,12 +68,17 @@ public:
     // and the caller waits for the task instead). False if it was cancelled or abandoned: the export must then
     // leave nothing behind and report Cancelled. Without this a cancel arriving after the last stopRequested() poll
     // made the caller report Cancelled while the abandoned thread still wrote the file.
+    // It also closes the caller's token (CancelToken::close), so a cancel after this point is too late for the job
+    // too: the job reports the export's result instead of turning a written file into Cancelled. If the token was
+    // cancelled first, the task is committing already (the caller waits) and reports Cancelled without writing.
     bool beginCommit() noexcept
     {
         if (cancel_.cancelled())
             return false;
         int expected = kRunning;
-        return phase_.compare_exchange_strong(expected, kCommitting, std::memory_order_acq_rel);
+        if (!phase_.compare_exchange_strong(expected, kCommitting, std::memory_order_acq_rel))
+            return false;
+        return cancel_.close();
     }
     // Progress of the whole task in [0, 1] and the stage name (a string literal). Thread-safe; cheap.
     void report(double fraction01, std::string_view stage) noexcept;

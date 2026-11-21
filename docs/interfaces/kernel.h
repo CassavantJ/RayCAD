@@ -100,6 +100,8 @@ Result<ImportResult> importIges(const std::string& path, const ImportOptions&, J
 Status exportStep(const std::string& path, std::span<const Shape>, JobContext&);   // AP214
 Status exportIges(const std::string& path, std::span<const Shape>, JobContext&);
 Status exportStl (const std::string& path, std::span<const Shape>, double chordTol, JobContext&);
+// The exports write `<path>.partial` and rename it over `path` when complete. Just before the rename they close
+// ctx.cancel (CancelToken::close): Cancelled means no file was written, and a cancel after the close is too late.
 
 std::vector<std::byte> serialize(const Shape&);                 // canonical binary BREP, deterministic
 Result<Shape>          deserialize(std::span<const std::byte>);

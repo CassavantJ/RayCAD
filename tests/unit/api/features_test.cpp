@@ -398,11 +398,16 @@ TEST_CASE("a sketch command's solve runs on a worker; commands keep their order;
                 return std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(static_cast<int>(solveMs / 4));
             },
             kWait);
-        job.cancel();
+        const bool took = job.cancel();
         auto r = app->wait(job, kWait);
+        // Whichever way the race went, the job's answer and the document agree (cancel_commit_test.cpp places the
+        // cancel exactly): Cancelled with nothing changed, or the edit committed and reported, the cancel too late.
         if (r) {
-            SUCCEED("the edit finished before the cancel");
+            CHECK_FALSE(took);
+            CHECK(od->document->state()->stateHash().hex() != before);
+            CHECK(od->document->undoCount() == undos + 1);
         } else {
+            CHECK(took);
             CHECK(r.error().code == ErrorCode::Cancelled);
             CHECK(od->document->state()->stateHash().hex() == before);
             CHECK(od->document->undoCount() == undos);
@@ -452,7 +457,7 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
         auto d =
             app->actions().invoke("feature.edit", R"({"id":")" + id('f', 1) + R"(","name":"Meander"})", Caller::User);
         // b waits behind a (still solving): its cancel completes it now, without a worker or a UI turn.
-        b.cancel();
+        CHECK(b.cancel());
         CHECK(b.done());
         auto rb = b.wait();
         REQUIRE_FALSE(rb);

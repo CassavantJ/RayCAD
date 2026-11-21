@@ -71,6 +71,11 @@ public:
     // document occupies at most one worker, whatever its length. Their "document" ("" or absent: the document active
     // when invoke() is called) is fixed at the call. Cancelling one that is still queued ends it at once (Cancelled)
     // and it never runs; the ones after it run as if it had not been invoked. Other actions are not ordered.
+    // Cancel: the built-in actions close the job's token (CancelToken::close) just before they change a document, a
+    // file or the session (commit a command, start an action on the UI thread, add a document, commit a save, rename
+    // an export into place). A JobHandle::cancel before that returns true, and the job ends Cancelled having changed
+    // none of them (objects written ahead that nothing refers to aside); one after it returns false and the job
+    // reports what it did.
     virtual JobHandle<ActionResult> invoke(std::string_view id, std::string_view argsJson, Caller) = 0;
 };
 
@@ -201,7 +206,9 @@ public:
 
     // ---- Jobs and events ----
     virtual std::vector<JobStatus> activeJobs() const = 0;            // sorted by id (start order)
-    virtual void cancelJob(std::uint64_t id) = 0;                     // Esc; unknown ids are ignored
+    // Esc. JobHandle::cancel of the job: false (and nothing changes) for an unknown id or when it is too late, the job
+    // being past its point of no return; it then reports what it did, so the caller must not treat it as cancelled.
+    virtual bool cancelJob(std::uint64_t id) = 0;
     virtual int subscribe(AppListener) = 0;                           // 0 if the listener is empty
     virtual void unsubscribe(int) = 0;
 };

@@ -105,7 +105,7 @@ private:
 enum class ExportFormat { Step, Iges, Stl };
 
 // Deletes a .raycad file with its SQLite journal and lock file (PLAN.md 4.1, 4.3), ignoring errors. Only for backing
-// files of never-saved documents, which no user ever sees.
+// files of never-saved documents, which no user ever sees, and for a file a save-as created but could not finish.
 void removeDocumentFiles(const std::string& path);
 
 class AppImpl;
@@ -148,7 +148,7 @@ public:
     JobHandle<OpenDocument*> recover(const RecoveryInfo&) override;
     Status discardRecovery(const RecoveryInfo&) override;
     std::vector<JobStatus> activeJobs() const override;
-    void cancelJob(std::uint64_t id) override;
+    bool cancelJob(std::uint64_t id) override;
     int subscribe(AppListener) override;
     void unsubscribe(int) override;
 
@@ -192,6 +192,15 @@ public:
                                    JobContext& ctx);
     Status exportWork(DocEntry& entry, const std::string& path, ExportFormat format, double chordTolerance,
                       const std::vector<BodyId>* bodies, JobContext& ctx);
+
+    // UI thread, inside the hop of a job that is about to change a document or the session (commit or execute a
+    // command, add a document, run an action that is not long-running): the job's point of no return
+    // (CancelToken::close on `cancel`, the job's ctx.cancel). False when the job was cancelled first: the hop must then
+    // change nothing and return Error{Cancelled}. After true a cancel is too late: the job reports what the hop did.
+    bool pointOfNoReturn(CancelToken& cancel);
+    // Tests only: called on the UI thread just before (After = false) and just after (After = true) every
+    // pointOfNoReturn() closes its token, so a test can cancel exactly there. Empty by default.
+    void setNoReturnHookForTest(std::function<void(bool after)> hook);
 
     // UI thread: executes a command on the document (recovery-journal seam), returning the new state.
     Result<doc::DocStatePtr> execute(DocEntry& entry, const doc::Command& command);
@@ -247,7 +256,7 @@ private:
         double progress = -1;
         std::string stage;
         bool visible = true;
-        std::function<void()> cancel;
+        std::function<bool()> cancel; // JobHandle::cancel
         std::function<void()> wait;
     };
     struct Alive {
@@ -300,6 +309,7 @@ private:
 
     mutable std::mutex hookMutex_;
     ConfirmHook hook_;
+    std::function<void(bool after)> noReturnHook_; // guarded by hookMutex_
 
     mutable std::mutex docsMutex_; // documents_ and active_ (written on the UI thread)
     std::vector<std::unique_ptr<DocEntry>> documents_;
@@ -365,7 +375,7 @@ JobHandle<T> AppImpl::trackJob(JobInfo info, std::function<Result<T>(JobContext&
         std::lock_guard<std::mutex> lock(jobsMutex_);
         if (auto it = tracked_.find(id); it != tracked_.end()) {
             it->second.cancel = [handle]() mutable {
-                handle.cancel();
+                return handle.cancel();
             };
             it->second.wait = [handle]() mutable {
                 (void)handle.wait();

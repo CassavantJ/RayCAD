@@ -298,9 +298,16 @@ private:
         if (info.longRunning || app.runsOnWorker(info.id)) {
             return entry.fn(canonical, caller, ctx);
         }
+        // An action on the UI thread runs to its end once started (undo, redo, close, new): its start is the job's
+        // point of no return, so a cancel either stops it before it changes anything or is too late.
         const ActionFn& fn = entry.fn;
         return app.bridge().call<ActionResult>(
-            [&fn, &canonical, caller, &ctx]() -> Result<ActionResult> { return fn(canonical, caller, ctx); },
+            [&app, &fn, &canonical, caller, &ctx]() -> Result<ActionResult> {
+                if (!app.pointOfNoReturn(ctx.cancel)) {
+                    return fail(ErrorCode::Cancelled, "Cancelled");
+                }
+                return fn(canonical, caller, ctx);
+            },
             ctx.cancel);
     }
 

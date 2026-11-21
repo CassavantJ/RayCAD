@@ -262,7 +262,10 @@ Result<OpenDocument*> AppImpl::recoverWork(const RecoveryInfo& info, JobContext&
     auto shared = std::make_shared<store::IRecoveryJournal::Recovered>(std::move(*recovered));
     auto holder = std::make_shared<std::unique_ptr<store::IDocumentFile>>(std::move(file));
     return bridge_->call<OpenDocument*>(
-        [this, shared, holder, made, path, unsaved, warnings]() -> Result<OpenDocument*> {
+        [this, shared, holder, made, path, unsaved, warnings, &ctx]() -> Result<OpenDocument*> {
+            if (!pointOfNoReturn(ctx.cancel)) {
+                return fail(ErrorCode::Cancelled, "Cancelled"); // the journal is kept: it can be recovered again
+            }
             NewEntry e;
             if (unsaved) {
                 e.title = untitledName() + " (recovered)";
