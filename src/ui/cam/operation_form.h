@@ -2,7 +2,8 @@
 // (IOperationType::paramsSchemaJson) turned into fields, with no knowledge of any type. qml/cam/SchemaForm.qml draws
 // it; docs/operation_types.md ("The schema subset the form edits") is the contract it implements:
 //
-//   Fields     number (with x-unit and limits), integer, boolean, choice (enum with x-enumTitles), text; in
+//   Fields     number (with x-unit and limits), integer, boolean, choice (enum with x-enumTitles, and
+//              x-enumDescriptions as a second line in the open list and the tooltip), text; in
 //              x-propertyOrder, then key order; descriptions as hints; a reset to the default per field. A property
 //              or top-level keyword the form cannot edit is a row saying so (FormField::Kind::Unsupported, or
 //              FormSchema::problems), never a crash or a missing field; such a property's stored value is kept.
@@ -44,6 +45,7 @@ struct FormField {
     Unit unit = Unit::None;
     std::optional<double> minimum, maximum, exclusiveMinimum, exclusiveMaximum;
     QStringList enumValues, enumTitles; // titles: x-enumTitles, else the values
+    QStringList enumDescriptions;       // x-enumDescriptions, empty when the schema has none
     std::optional<int> minLength, maxLength;
     QString pattern;
     QJsonValue defaultValue = QJsonValue(QJsonValue::Undefined);
@@ -109,7 +111,8 @@ public:
     bool valid() const;
     int revision() const { return revision_; }
 
-    // A choice's [{value, text}] (stable while the schema stays, so a list bound to it is not made again on each edit).
+    // A choice's [{value, text, description}] (stable while the schema stays, so a list bound to it is not made again
+    // on each edit); description "" without x-enumDescriptions.
     Q_INVOKABLE QVariantList choicesOf(const QString& key) const;
     Q_INVOKABLE void setValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void resetField(const QString& key);

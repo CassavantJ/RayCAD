@@ -15,6 +15,18 @@ Column {
     property var form: null
     property real labelWidth: Theme.controlHeight * 3.6
     property real fieldWidth: Theme.controlHeight * 5.5
+    // The most the host could make fieldWidth (ComboBox.widthLimit), and the width its lists need to show every choice
+    // in full: the host grows fieldWidth to comboNeed, up to its limit.
+    property real fieldWidthLimit: fieldWidth
+    property var combos: []
+    readonly property real comboNeed: {
+        let w = 0
+        for (const c of combos) {
+            if (c && c.visible)
+                w = Math.max(w, c.naturalWidth)
+        }
+        return w
+    }
     readonly property real resetWidth: Theme.controlHeightSmall
     signal accepted()
     signal cancelled()
@@ -132,10 +144,13 @@ Column {
                     id: combo
                     objectName: "schemaCombo." + row.key
                     width: root.fieldWidth
+                    widthLimit: root.fieldWidthLimit
                     // From choicesOf: the list is made once per schema, not again on every edit.
                     model: row.kind === "enum" && root.form ? root.form.choicesOf(row.key) : []
                     textRole: "text"
                     valueRole: "value"
+                    descriptionRole: "description" // x-enumDescriptions, under each choice in the list
+                    Component.onDestruction: root.combos = root.combos.filter(x => x !== combo)
                     Accessible.name: row.modelData.title
                     readonly property string current: row.kind === "enum" ? String(row.modelData.value) : ""
                     function sync() {
@@ -145,7 +160,10 @@ Column {
                     }
                     onCurrentChanged: sync()
                     onModelChanged: Qt.callLater(sync)
-                    Component.onCompleted: Qt.callLater(sync)
+                    Component.onCompleted: {
+                        Qt.callLater(sync)
+                        root.combos = root.combos.concat([combo])
+                    }
                     onActivated: root.form.setValue(row.key, currentValue)
                     // Esc closes the list when it is open (the popup takes it), else the panel, as from a field.
                     Keys.onEscapePressed: root.cancelled()
