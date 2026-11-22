@@ -550,6 +550,24 @@ TEST_CASE("a setup is posted from the CAM tree: post, properties, notice, folder
     scroll->setProperty("contentY", 0.0);
     w.shotsBothThemes(QStringLiteral("t047_post_dialog"));
 
+    // The keyboard: Tab walks the dialog's controls and stays inside it (the footer's buttons included).
+    w.shown(QStringLiteral("postCombo"))->forceActiveFocus();
+    bool reachedPost = false;
+    std::string walk;
+    for (int i = 0; i < 80; ++i) {
+        QTest::keyClick(w.window(), Qt::Key_Tab);
+        QQuickItem* f = w.window()->activeFocusItem();
+        REQUIRE(f != nullptr);
+        walk += " " + f->objectName().toStdString() + "(" + f->metaObject()->className() + ")";
+        INFO("Tab walk:" << walk);
+        REQUIRE(card->isAncestorOf(f));
+        reachedPost = reachedPost || f == postButton;
+    }
+    CHECK(reachedPost);
+    w.shown(QStringLiteral("postCombo"))->forceActiveFocus();
+    QTest::keyClick(w.window(), Qt::Key_Backtab, Qt::ShiftModifier);
+    CHECK(w.window()->activeFocusItem() == w.shown(QStringLiteral("postCancel")));
+
     // Post: on workers, with progress; the file is written; the state passes through the steps.
     QStringList states;
     QObject::connect(p, &PostToolModel::stateChanged, [&] {
@@ -1056,6 +1074,22 @@ TEST_CASE("settings are remembered per setup, overwrite rules, a second post wri
         WARN("SMB not exercised in the window test: " << unc.toStdString() << " cannot be reached");
     }
 #endif
+    // A warning of the post (FANUC: programs 8000-9999 are often edit-protected) is shown in full; the file is written.
+    p->setValue(QStringLiteral("directory"), QDir::toNativeSeparators(w.out.path()));
+    p->setValue(QStringLiteral("pattern"), QStringLiteral("warned {program}"));
+    p->setValue(QStringLiteral("programNumber"), QStringLiteral("8500"));
+    REQUIRE(QTest::qWaitFor([&] { return p->canPost(); }, 5000));
+    REQUIRE(p->post());
+    w.posted("done");
+    bool warned = false;
+    for (const QVariant& v : p->messages()) {
+        const QVariantMap m = v.toMap();
+        warned = warned || (m.value(QStringLiteral("kind")).toString() == QStringLiteral("warning") &&
+                            m.value(QStringLiteral("text")).toString().contains(QStringLiteral("edit-protected")));
+    }
+    CHECK(warned);
+    CHECK(QFileInfo::exists(QDir(w.out.path()).filePath(QStringLiteral("warned 8500.nc"))));
+    w.shown(QStringLiteral("postMessageText.0"));
     p->close();
     w.checkNoWarnings();
 }

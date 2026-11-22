@@ -254,7 +254,7 @@ QString PostToolModel::title() const
 
 bool PostToolModel::open(const QString& setupId)
 {
-    if (busy())
+    if (busy() || app() == nullptr)
         return false;
     if (active())
         close();

@@ -42,6 +42,11 @@ FocusScope {
     }
     Keys.onTabPressed: root.moveFocus(true)
     Keys.onBacktabPressed: root.moveFocus(false)
+
+    // Tab and Shift+Tab follow the controls' own focus chain, which would run on past the card's ends into the shell:
+    // the last button leads back to the first control, and the first control back to the last button
+    // (KeyNavigation, below).
+    readonly property Item lastButton: generateAllButton.visible ? generateAllButton : cancelButton
     Keys.onEscapePressed: CamPost.cancel()
     Shortcut {
         sequence: "Esc"
@@ -355,6 +360,7 @@ FocusScope {
                         model: CamPost.posts
                         currentIndex: CamPost.posts.indexOf(CamPost.postId)
                         Accessible.name: qsTr("Post processor")
+                        KeyNavigation.backtab: root.lastButton
                         onActivated: CamPost.setPost(currentText)
                     }
                 }
@@ -575,6 +581,7 @@ FocusScope {
                     : !CamPost.canPost ? CamPost.postBlockedReason : qsTr("Ready to post")
             }
             Row {
+                id: buttonRow
                 objectName: "postButtons"
                 anchors.right: parent.right
                 spacing: Theme.spacingS
@@ -617,13 +624,17 @@ FocusScope {
                     onClicked: CamPost.showGcode()
                 }
                 Button {
+                    id: cancelButton
                     objectName: "postCancel"
+                    KeyNavigation.tab: generateAllButton.visible ? generateAllButton : postCombo
                     text: CamPost.busy || root.state === "asking" ? qsTr("Cancel") : qsTr("Close")
                     toolTipText: CamPost.busy ? qsTr("Stop posting; nothing is written (Esc)") : qsTr("Close (Esc)")
                     onClicked: CamPost.cancel()
                 }
                 Button {
+                    id: generateAllButton
                     objectName: "postGenerateAll"
+                    KeyNavigation.tab: postCombo
                     visible: !CamPost.busy && root.state !== "asking" && root.state !== "done"
                              && CamPost.blockers.some(b => b.canGenerate)
                     text: qsTr("Generate all")
