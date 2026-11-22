@@ -60,20 +60,29 @@ Program goldenProgram(bool full)
         }
         m.push_back(rapid(m.back().x, m.back().y, mm(25)));
     }
+    // Cycle holes: top at 0, initial level (clearance) 5 mm; each run starts at 5 mm or above, so a hole before a new
+    // run (another kind, a left-hand tap, the cancel) returns there with G98.
+    constexpr auto g99 = cam::CycleReturn::RPlane;
+    constexpr auto g98 = cam::CycleReturn::Initial;
+    const auto hole = [](cam::Move m, cam::CycleReturn ret) {
+        return levels(m, 0, mm(5), ret);
+    };
     {
         cam::Toolpath& t =
             p.section("Drill holes", "drill", 2, makeTool("6.8 mm drill", lib::ToolType::Drill, 6.8, 2), 2500);
         auto& m = t.moves;
         m.push_back(rapid(mm(10), mm(10), mm(25)));
         m.push_back(rapid(mm(10), mm(10), mm(5)));
-        m.push_back(cycle(MoveKind::CycleDrill, mm(10), mm(10), -mm(12), mm(2), mmPerMin(150)));
-        m.push_back(cycle(MoveKind::CycleDrill, mm(20), mm(10), -mm(12), mm(2), mmPerMin(150)));
-        m.push_back(cycle(MoveKind::CycleDrill, mm(30), mm(10), -mm(12), mm(2), mmPerMin(150), 0, 300));
-        m.push_back(cycle(MoveKind::CyclePeck, mm(40), mm(10), -mm(20), mm(2), mmPerMin(120), mm(4)));
-        m.push_back(cycle(MoveKind::CycleChipBreak, mm(50), mm(10), -mm(15), mm(2), mmPerMin(120), mm(3)));
+        m.push_back(hole(cycle(MoveKind::CycleDrill, mm(10), mm(10), -mm(12), mm(2), mmPerMin(150)), g99));
+        m.push_back(hole(cycle(MoveKind::CycleDrill, mm(20), mm(10), -mm(12), mm(2), mmPerMin(150)), g99));
+        m.push_back(hole(cycle(MoveKind::CycleDrill, mm(30), mm(10), -mm(12), mm(2), mmPerMin(150), 0, 300), g98));
+        m.push_back(hole(cycle(MoveKind::CyclePeck, mm(40), mm(10), -mm(20), mm(2), mmPerMin(120), mm(4)), g98));
+        cam::Move chipBreak = cycle(MoveKind::CycleChipBreak, mm(50), mm(10), -mm(15), mm(2), mmPerMin(120), mm(3));
+        chipBreak.cyclePeckClearance = um(300); // the IR's own back-off: a warning from iso-test, used by the expansion
+        m.push_back(hole(chipBreak, g98));
         m.push_back(cycleCancel());
-        m.push_back(cycle(MoveKind::CycleBore, mm(60), mm(10), -mm(8), mm(2), mmPerMin(80), 0, 200));
-        m.push_back(cycle(MoveKind::CycleReam, mm(70), mm(10), -mm(10), mm(2), mmPerMin(100)));
+        m.push_back(hole(cycle(MoveKind::CycleBore, mm(60), mm(10), -mm(8), mm(2), mmPerMin(80), 0, 200), g98));
+        m.push_back(hole(cycle(MoveKind::CycleReam, mm(70), mm(10), -mm(10), mm(2), mmPerMin(100)), g99));
         m.push_back(rapid(mm(70), mm(10), mm(25)));
     }
     {
@@ -83,8 +92,8 @@ Program goldenProgram(bool full)
         t.startY = mm(10);
         auto& m = t.moves;
         m.push_back(rapid(mm(10), mm(30), mm(5)));
-        m.push_back(cycle(MoveKind::CyclePeck, mm(10), mm(30), -mm(6), mm(2), mmPerMin(120), mm(2)));
-        m.push_back(cycle(MoveKind::CyclePeck, mm(20), mm(30), -mm(6), mm(2), mmPerMin(120), mm(2)));
+        m.push_back(hole(cycle(MoveKind::CyclePeck, mm(10), mm(30), -mm(6), mm(2), mmPerMin(120), mm(2)), g99));
+        m.push_back(hole(cycle(MoveKind::CyclePeck, mm(20), mm(30), -mm(6), mm(2), mmPerMin(120), mm(2)), g99));
         m.push_back(rapid(mm(20), mm(30), mm(25)));
     }
     if (full) {
@@ -93,9 +102,12 @@ Program goldenProgram(bool full)
         tap.threadSpec = "M8x1.25";
         cam::Toolpath& t = p.section("Tap M8", "drill", 3, tap, 500, cam::CuttingData::Coolant::Off);
         auto& m = t.moves;
-        m.push_back(rapid(mm(10), mm(10), mm(5)));
-        m.push_back(cycle(MoveKind::CycleTap, mm(10), mm(10), -mm(12), mm(3), mmPerMin(625), 0, 0, 1'250'000));
-        m.push_back(cycle(MoveKind::CycleTap, mm(20), mm(10), -mm(12), mm(3), mmPerMin(625), 0, 0, 1'250'000));
+        m.push_back(rapid(mm(10), mm(10), mm(8))); // above the clearance: the host takes the tool down to it first
+        m.push_back(
+            hole(cycle(MoveKind::CycleTap, mm(10), mm(10), -mm(12), mm(3), mmPerMin(625), 0, 0, 1'250'000), g98));
+        cam::Move left = cycle(MoveKind::CycleTap, mm(20), mm(10), -mm(12), mm(3), mmPerMin(625), 0, 0, 1'250'000);
+        left.cycleLeftHand = 1; // a run of its own (G74)
+        m.push_back(hole(left, g99));
         m.push_back(rapid(mm(20), mm(10), mm(25)));
     }
     return p;
@@ -364,16 +376,20 @@ TEST_CASE("the host services show in the output", "[post][engine]")
     CHECK(t.find("G40 X50.") != std::string::npos);
     CHECK(t.find("X12.346 Y4.") != std::string::npos);
     CHECK(t.find("X12.344 Y4.002") != std::string::npos);
-    // Declared cycles: modal G81 with the later holes as XY only, G82 with dwell, G83 and G73 with Q, G84 with the
-    // pitch in a comment, G80 at the end of each run; bore and ream (not declared) expanded into plain moves.
+    // Declared cycles: modal G81 with the later holes as XY only, G82 with dwell and G98 (the hole before a new run),
+    // G83 and G73 with Q, G84 with the pitch in a comment, G74 for the left-hand tap, G80 at the end of each run; bore
+    // and ream (not declared) expanded into plain moves.
     CHECK(t.find("G99 G81 X10. Y10. Z-12. R2. F150.") != std::string::npos);
-    CHECK(t.find("X20.\r\n") != std::string::npos);
-    CHECK(t.find("G82 X30. Y10. Z-12. R2. P0.3 F150.") != std::string::npos);
-    CHECK(t.find("G83 X40. Y10. Z-20. R2. Q4. F120.") != std::string::npos);
-    CHECK(t.find("G73 X50. Y10. Z-15. R2. Q3. F120.") != std::string::npos);
+    CHECK(t.find(" X20.\r\n") != std::string::npos);
+    CHECK(t.find(" G98 G82 X30. Y10. Z-12. R2. P0.3 F150.") != std::string::npos);
+    CHECK(t.find(" G83 X40. Y10. Z-20. R2. Q4. F120.") != std::string::npos);
+    CHECK(t.find(" G73 X50. Y10. Z-15. R2. Q3. F120.") != std::string::npos);
     CHECK(t.find("(TAP PITCH 1.25 TOP 0.)") != std::string::npos);
-    CHECK(t.find("G99 G84 X10. Y10. Z-12. R3. F625.") != std::string::npos);
-    CHECK(t.find(" G0 X60. Z2.\r\n") != std::string::npos); // bore, expanded: G85-like, ends at R (G99)
+    // The tap run starts above its clearance: the host rapids down to 5 mm first, the control's initial level.
+    CHECK(t.find(" Z5.\r\n") != std::string::npos);
+    CHECK(t.find(" G98 G84 X10. Y10. Z-12. R3. F625.") != std::string::npos);
+    CHECK(t.find(" G99 G74 X20. Y10. Z-12. R3. F625.") != std::string::npos);
+    CHECK(t.find(" G0 X60. Z5.\r\n") != std::string::npos); // bore, expanded: over the hole at the clearance
     CHECK(t.find(" G1 Z-8. F80.\r\n") != std::string::npos);
     CHECK(t.find(" G4 P0.2\r\n") != std::string::npos);
     CHECK(t.find("G80") != std::string::npos);
@@ -386,9 +402,11 @@ TEST_CASE("the host services show in the output", "[post][engine]")
     // Comments sanitised (parentheses inside became spaces), tools listed in first-use order.
     CHECK(t.find("(T1 FLATENDMILL D10. 10 MM 3FL CARBIDE ROUGH)") != std::string::npos);
     CHECK(t.find("(T2 DRILL D6.8 6.8 MM DRILL)\r\n(T3 TAP D8. M8X1.25 TAP)") != std::string::npos);
-    // Section 2 keeps the tool: no tool change, a warning.
-    REQUIRE(iso->warnings.size() == 1);
-    CHECK(iso->warnings[0] == "section 2 keeps tool 2");
+    // The chip break's own peck clearance has no word in this dialect: a warning. Section 2 keeps the tool: no tool
+    // change, a warning.
+    REQUIRE(iso->warnings.size() == 2);
+    CHECK(iso->warnings[0] == "peck clearance 0.3 is the control's parameter in this dialect");
+    CHECK(iso->warnings[1] == "section 2 keeps tool 2");
 
     const auto plain = postGolden(kGoldens[2]);
     REQUIRE(plain.has_value());
@@ -438,7 +456,7 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
     REQUIRE(out.has_value());
     CHECK(out->text.find("N12 ") != std::string::npos); // 10, 12, 14...
     CHECK(out->text.find("(SETUP HEADER FOR TESTER)") != std::string::npos);
-    REQUIRE(out->warnings.size() == 2);
+    REQUIRE(out->warnings.size() == 3); // and the post's two (peck clearance, section 2 keeps its tool)
     CHECK(out->warnings[0] == "post property 'unknownKey' is not declared by the post and was ignored");
 
     program.properties["numberStep"] = "3"; // the setup wins over the machine
@@ -471,6 +489,36 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
     out = postWith("iso-test.post.js", number);
     REQUIRE(out.has_value());
     CHECK(out->text.find("G53 Z15.") != std::string::npos);
+}
+
+TEST_CASE("machine overrides are JSON text: strings are decoded for String and Enum properties", "[post][engine]")
+{
+    // As a machine definition holds them (libraries.h): "2", "true", "\"none\"" (the library codec writes them so).
+    Program program = goldenProgram(true);
+    program.machine.postPropertyOverrides["header"] = R"("machine header")"; // an escape, decoded
+    program.machine.postPropertyOverrides["coolantStyle"] = R"("none")";
+    program.machine.postPropertyOverrides["numberBlocks"] = "true";
+    program.machine.postPropertyOverrides["numberStep"] = "2";
+    auto out = postWith("iso-test.post.js", program);
+    REQUIRE(out.has_value());
+    CHECK(out->text.find("(MACHINE HEADER FOR TESTER)") != std::string::npos);
+    CHECK(out->text.find("\"machine") == std::string::npos); // no quotes of the JSON text reach the program
+    CHECK(out->text.find("N12 ") != std::string::npos);
+    // The setup's own overrides stay plain text.
+    program.properties["header"] = "setup header";
+    out = postWith("iso-test.post.js", program);
+    REQUIRE(out.has_value());
+    CHECK(out->text.find("(SETUP HEADER FOR TESTER)") != std::string::npos);
+    // A broken JSON string is refused, naming the property.
+    for (const char* text : {R"("none)", R"("bad \q escape")", R"("trailing" x)"}) {
+        INFO(text);
+        Program bad = goldenProgram(true);
+        bad.machine.postPropertyOverrides["coolantStyle"] = text;
+        const auto r = postWith("iso-test.post.js", bad);
+        REQUIRE_FALSE(r.has_value());
+        CHECK(r.error().code == ErrorCode::InvalidArgument);
+        CHECK(r.error().message.find("coolantStyle") != std::string::npos);
+    }
 }
 
 TEST_CASE("the date comes only from the job, and only with includeDate", "[post][engine]")

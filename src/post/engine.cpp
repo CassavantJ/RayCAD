@@ -8,10 +8,12 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <new>
+#include <optional>
 
 namespace ray::post {
 
@@ -148,6 +150,125 @@ Result<PropertyValue> parseOverride(Session& s, const DeclaredProperty& p, const
     return bad("has an unknown type");
 }
 
+void appendUtf8(std::string& out, std::uint32_t cp)
+{
+    if (cp < 0x80) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+// A machine override is the property's JSON text (libraries.h MachineDef::postPropertyOverrides: "true", "8",
+// "\"m8\""): a JSON string is decoded to its characters, so String and Enum properties see the value itself; numbers
+// and booleans are their own text already. nullopt for a malformed JSON string.
+std::optional<std::string> machineOverrideText(const std::string& json)
+{
+    if (json.empty() || json.front() != '"') {
+        return json;
+    }
+    std::string out;
+    std::size_t i = 1;
+    const auto hex4 = [&](std::size_t at) -> std::optional<std::uint32_t> {
+        if (at + 4 > json.size()) {
+            return std::nullopt;
+        }
+        std::uint32_t v = 0;
+        for (std::size_t k = at; k < at + 4; ++k) {
+            const char c = json[k];
+            const int d = c >= '0' && c <= '9'   ? c - '0'
+                          : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                          : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                                 : -1;
+            if (d < 0) {
+                return std::nullopt;
+            }
+            v = v * 16 + static_cast<std::uint32_t>(d);
+        }
+        return v;
+    };
+    while (i < json.size()) {
+        const char c = json[i];
+        if (c == '"') {
+            return i + 1 == json.size() ? std::optional<std::string>(out) : std::nullopt;
+        }
+        if (static_cast<unsigned char>(c) < 0x20) {
+            return std::nullopt;
+        }
+        if (c != '\\') {
+            out.push_back(c);
+            ++i;
+            continue;
+        }
+        if (i + 1 >= json.size()) {
+            return std::nullopt;
+        }
+        const char e = json[i + 1];
+        i += 2;
+        switch (e) {
+        case '"':
+            out.push_back('"');
+            break;
+        case '\\':
+            out.push_back('\\');
+            break;
+        case '/':
+            out.push_back('/');
+            break;
+        case 'b':
+            out.push_back('\b');
+            break;
+        case 'f':
+            out.push_back('\f');
+            break;
+        case 'n':
+            out.push_back('\n');
+            break;
+        case 'r':
+            out.push_back('\r');
+            break;
+        case 't':
+            out.push_back('\t');
+            break;
+        case 'u': {
+            auto cp = hex4(i);
+            if (!cp) {
+                return std::nullopt;
+            }
+            i += 4;
+            if (*cp >= 0xD800 && *cp <= 0xDBFF) { // a surrogate pair
+                if (i + 6 > json.size() || json[i] != '\\' || json[i + 1] != 'u') {
+                    return std::nullopt;
+                }
+                auto low = hex4(i + 2);
+                if (!low || *low < 0xDC00 || *low > 0xDFFF) {
+                    return std::nullopt;
+                }
+                i += 6;
+                *cp = 0x10000 + ((*cp - 0xD800) << 10) + (*low - 0xDC00);
+            } else if (*cp >= 0xDC00 && *cp <= 0xDFFF) {
+                return std::nullopt;
+            }
+            appendUtf8(out, *cp);
+            break;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+    return std::nullopt; // no closing quote
+}
+
 // Declared default < machine override (MachineDef::postPropertyOverrides) < job override (PostJob::properties).
 Status resolveProperties(Session& s, const Declaration& d, const PostJob& job, detail::ProgramPlan& plan)
 {
@@ -155,7 +276,13 @@ Status resolveProperties(Session& s, const Declaration& d, const PostJob& job, d
         PropertyValue value = p.defaultValue;
         if (const auto it = job.machine->postPropertyOverrides.find(p.info.key);
             it != job.machine->postPropertyOverrides.end()) {
-            auto v = parseOverride(s, p, it->second, "machine " + job.machine->name);
+            const auto text = machineOverrideText(it->second);
+            if (!text) {
+                return tl::unexpected(error(ErrorCode::InvalidArgument, "post property '" + p.info.key + "' (machine " +
+                                                                            job.machine->name + "): " + it->second +
+                                                                            " is not valid JSON text"));
+            }
+            auto v = parseOverride(s, p, *text, "machine " + job.machine->name);
             if (!v) {
                 return tl::unexpected(v.error());
             }

@@ -228,10 +228,13 @@ private:
             num(A::aBottom, u_.len(e.z));
             num(A::aRetract, u_.len(e.retract));
             num(A::aClearance, u_.len(e.clearance));
+            put(A::aReturnLevel, s_.returnLevelString(e.returnLevel));
             num(A::aFeed, u_.feed(e.feed));
             num(A::aPeck, u_.len(e.peck));
+            num(A::aPeckClearance, u_.len(e.peckClearance));
             num(A::aDwell, static_cast<double>(e.dwellMs) / 1000.0);
             num(A::aPitch, u_.len(e.pitchNm));
+            put(A::aLeftHand, JS_NewBool(c_, e.leftHand));
             put(A::aFirst, JS_NewBool(c_, e.first));
             return callWith(kOnCycle, object(), true);
         case EventKind::CycleEnd: {
@@ -373,7 +376,7 @@ Result<PostOutput> runProgram(Session& s, const Declaration& decl, const PostJob
             return failed();
         }
         ScriptSink sink(s, u, static_cast<std::uint32_t>(i), jobCtx, movesBefore, plan.totalMoves);
-        const Result<bool> moved = expandSection(*ps.toolpath, toNm(ps.op->heights.top), decl.motion, sink);
+        const Result<bool> moved = expandSection(*ps.toolpath, job.machine, decl.motion, sink);
         if (!moved) {
             Error e = moved.error();
             e.message = s.scriptName() + ": section " + std::to_string(i) + " (" + ps.op->name + "): " + e.message;

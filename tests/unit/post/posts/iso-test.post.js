@@ -1,7 +1,8 @@
 // Test post for the post host (T-039), written against include/ray/post_api.d.ts only. Not a shipped post: it emits
 // ISO-style words so that every host service shows up in its output: arcs split by the host to 180 degrees, helical
-// IJK arcs in all three planes, the drill, peck, chipBreak and tap cycles as canned cycles (bore and ream left to
-// the host), dwell, cutter compensation, sequence numbers, modal words, formats, comments, warnings and the
+// IJK arcs in all three planes, the drill, peck, chipBreak and tap cycles as canned cycles with G98 / G99 per hole
+// and G74 for left-hand taps (bore and ream left to the host), dwell, cutter compensation, sequence numbers, modal
+// words, formats, comments, warnings and the
 // program and section objects. Its goldens are tests/golden/gcode/host/iso-test_*.nc.
 definePost({
   title: "Host test, ISO words",
@@ -99,18 +100,31 @@ definePost({
   },
 
   onCycle(c, out) {
-    const codes = { drill: c.dwellSeconds > 0 ? "G82" : "G81", peck: "G83", chipBreak: "G73", tap: "G84" };
+    const codes = { drill: c.dwellSeconds > 0 ? "G82" : "G81", peck: "G83", chipBreak: "G73", tap: c.leftHand ? "G74" : "G84" };
     if (c.first) out.resetModal("cycle", "X", "Y", "Z", "feed");
+    // G98 returns to the initial level (c.clearance, where the host has put the tool), G99 to the R plane.
+    const ret = out.modal("return", c.returnLevel === "clearance" ? "G98" : "G99");
     const hole = [out.axis("X", c.x), out.axis("Y", c.y)];
     if (c.first) {
       const extra = [];
       if (c.kind === "peck" || c.kind === "chipBreak") extra.push(out.word("Q", c.peck));
-      if (c.dwellSeconds > 0) extra.push(out.word("P", c.dwellSeconds, { decimals: 3, trimZeros: true, forceDecimalPoint: false }));
+      // A dwell is P on G82 and G84 / G74; this dialect's G83 and G73 have none.
+      if (c.dwellSeconds > 0) {
+        if (c.kind === "drill" || c.kind === "tap") {
+          extra.push(out.word("P", c.dwellSeconds, { decimals: 3, trimZeros: true, forceDecimalPoint: false }));
+        } else {
+          out.warn("a " + c.kind + " cycle cannot dwell in this dialect; the dwell is not posted");
+        }
+      }
+      // The peck clearance is a control parameter in this dialect: no word for it.
+      if (c.peckClearance > 0) {
+        out.warn("peck clearance " + out.word("", c.peckClearance) + " is the control's parameter in this dialect");
+      }
       if (c.kind === "tap") out.comment("tap pitch " + out.word("", c.pitch, { decimals: 4 }) + " top " + out.word("", c.top));
-      out.block(out.modal("return", "G99"), out.modal("cycle", codes[c.kind]), ...hole, out.axis("Z", c.bottom),
+      out.block(ret, out.modal("cycle", codes[c.kind]), ...hole, out.axis("Z", c.bottom),
         out.word("R", c.retract), ...extra, out.feed(c.feed));
     } else {
-      out.block(...hole);
+      out.block(ret, ...hole);
     }
   },
 

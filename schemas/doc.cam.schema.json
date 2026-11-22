@@ -185,7 +185,7 @@
         },
         "spindle": { "type": "object", "properties": { "maxRpm": { "type": "number" }, "minRpm": { "type": "number" }, "powerKw": { "type": "number" }, "torqueNm": { "type": "number" } } },
         "toolChanger": { "type": "object", "properties": { "capacity": { "type": "integer" }, "changeSeconds": { "type": "number" } } },
-        "control": { "type": "object", "properties": { "dialect": { "type": "string" }, "defaultPost": { "type": "string" }, "rigidTapping": { "type": "boolean" }, "maxBlockNumber": { "type": "integer" }, "maxProgramNameLength": { "type": "integer" } } },
+        "control": { "type": "object", "properties": { "dialect": { "type": "string" }, "defaultPost": { "type": "string" }, "rigidTapping": { "type": "boolean" }, "maxBlockNumber": { "type": "integer" }, "maxProgramNameLength": { "type": "integer" }, "peckClearance": { "type": "number", "minimum": 0, "description": "Optional, mm; 0 or absent: not known." } } },
         "options": { "type": "object", "properties": { "throughSpindleCoolant": { "type": "boolean" }, "probe": { "type": "boolean" }, "toolSetter": { "type": "boolean" } } },
         "postProperties": { "type": "object", "description": "Machine-specific defaults of post properties." }
       }

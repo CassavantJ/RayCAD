@@ -36,6 +36,7 @@
 //  - LibraryStack: read-only roots, roots() (name, open, writable), library(i) to save into, rootOf (where an item
 //    comes from), merged lists of every kind, remerge, and one watch over every root with listeners (the tool
 //    library UI, T-046).
+// Changed by the canned-cycle settlement (cam.h): MachineDef::peckClearance, optional, the expansion fallback.
 #pragma once
 #include "core.h"
 #include <map>
@@ -98,6 +99,10 @@ struct MachineDef {
     std::string defaultPost;           // file stem in posts/
     bool rigidTapping = false, throughSpindleCoolant = false, hasProbe = false, hasToolSetter = false;
     int maxBlockNumber = 0; int maxProgramNameLength = 0;
+    // The G83 re-entry clearance and G73 chip-break back-off the control is set to (a control parameter), mm; 0 = not
+    // known. Optional (JSON control.peckClearance). Read only when a cycle is expanded into plain moves (cam.h,
+    // peckClearanceNm); a native cycle leaves it to the control.
+    double peckClearance = 0;
     // Machine-specific defaults for post properties. Each value is the property's JSON text ("true", "8", "\"x\"").
     std::map<std::string, std::string> postPropertyOverrides;
     bool verified = false;             // checked against the real machine; shipped definitions are false

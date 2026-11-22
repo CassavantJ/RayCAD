@@ -1,6 +1,7 @@
 // Determinism of the backplot (task T-037): a fixed toolpath of every move kind gives the same bytes on every run,
 // thread and platform. The golden hash below was made on Windows (MSVC) and checked on Linux (GCC); a change to it
-// is a change of the backplot's output and needs a reason.
+// is a change of the backplot's output and needs a reason. (Remade for the canned-cycle settlement of cam.h: the
+// cycles now carry their clearance, return level and peck clearance.)
 #include "backplot_test_util.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -32,12 +33,20 @@ cam::Toolpath goldenToolpath()
     m.push_back(arc(false, ArcPlane::XY, 4007.0, 1.1, 3.0, 2007.0, 1.1, 0.0, 600.0, MoveRole::Link)); // 2 m radius
     m.push_back(blankMove(MoveKind::Dwell, MoveRole::Cut));
     m.push_back(rapid(40.0, 40.0, 30.0));
-    m.push_back(cycle(MoveKind::CycleDrill, 40.0, 40.0, -6.1, 2.0, 0.0, 150.0, 250));
-    m.push_back(cycle(MoveKind::CyclePeck, 50.0, 40.0, -17.3, 2.0, 3.7, 140.0));
-    m.push_back(cycle(MoveKind::CycleChipBreak, 60.0, 40.0, -17.3, 2.0, 2.2, 140.0));
-    m.push_back(cycle(MoveKind::CycleTap, 70.0, 40.0, -12.0, 5.0, 0.0, 1270.0));
-    m.push_back(cycle(MoveKind::CycleBore, 80.0, 40.0, -12.0, 2.0, 0.0, 90.0, 400));
-    m.push_back(cycle(MoveKind::CycleReam, 90.0, 40.0, -12.0, 2.0, 0.0, 90.0));
+    // Cycles (cam.h): top 0, clearance 20 (below the tool, so the first comes down to it), G98 and G99 mixed, a peck
+    // clearance of the move's own on the chip break, a left-hand tap.
+    const auto g98 = cam::CycleReturn::Initial;
+    const auto g99 = cam::CycleReturn::RPlane;
+    m.push_back(levels(cycle(MoveKind::CycleDrill, 40.0, 40.0, -6.1, 2.0, 0.0, 150.0, 250), 0.0, 20.0, g99));
+    m.push_back(levels(cycle(MoveKind::CyclePeck, 50.0, 40.0, -17.3, 2.0, 3.7, 140.0), 0.0, 20.0, g98));
+    Move chipBreak = levels(cycle(MoveKind::CycleChipBreak, 60.0, 40.0, -17.3, 2.0, 2.2, 140.0), 0.0, 20.0, g99);
+    chipBreak.cyclePeckClearance = nm(0.35);
+    m.push_back(chipBreak);
+    Move tap = levels(cycle(MoveKind::CycleTap, 70.0, 40.0, -12.0, 5.0, 0.0, 1270.0), 0.0, 20.0, g98);
+    tap.cycleLeftHand = 1;
+    m.push_back(tap);
+    m.push_back(levels(cycle(MoveKind::CycleBore, 80.0, 40.0, -12.0, 2.0, 0.0, 90.0, 400), 0.0, 20.0, g99));
+    m.push_back(levels(cycle(MoveKind::CycleReam, 90.0, 40.0, -12.0, 2.0, 0.0, 90.0), 0.0, 20.0, g98));
     m.push_back(blankMove(MoveKind::CycleCancel, MoveRole::Retract));
     m.push_back(rapid(90.0, 40.0, 50.0, MoveRole::Retract));
     return toolpath(0.0, 0.0, 50.0, m);
@@ -90,8 +99,8 @@ TEST_CASE("the backplot of a fixed toolpath matches its golden hash", "[sim][bac
     const cam::Toolpath tp = goldenToolpath();
     const Backplot bp = buildBackplot(tp, kModelFromWcs, 0.002);
     checkLayout(tp, bp);
-    CHECK(bp.lineVertices.size() == 1447);
-    CHECK(hashOf(bp) == "a1448619a8d7c1fe3c3e2166fe40fdce539c1182dab6af3829deb93f704248b6");
+    CHECK(bp.lineVertices.size() == 1451);
+    CHECK(hashOf(bp) == "015710dbde3cea32e5cf7807cc003f88a53cae5477475ceffff401c888b92ee5");
     // A few values written out, so a mismatch says where.
     CHECK(std::bit_cast<std::uint32_t>(bp.lineVertices[0].x) == std::bit_cast<std::uint32_t>(101.25f));
 }

@@ -43,6 +43,26 @@ TEST_CASE("toJson and fromJson round-trip every kind", "[lib][codec]")
     CHECK(tmpl->toolQueryJson == R"({"threadSpec":"M6x1","type":"tap"})"); // canonical: sorted keys
 }
 
+TEST_CASE("a machine's peck clearance is optional", "[lib][codec]")
+{
+    // 0 (not known) is not written, so files without it read and write back unchanged.
+    const std::string plain = ray::lib::toJson(sampleMachine(4));
+    CHECK(plain.find("peckClearance") == std::string::npos);
+    auto m = sampleMachine(4);
+    m.peckClearance = 0.3;
+    const std::string text = ray::lib::toJson(m);
+    CHECK(text.find("\"peckClearance\":0.3") != std::string::npos);
+    auto back = ray::lib::machineFromJson(text);
+    REQUIRE(back);
+    CHECK(back->peckClearance == 0.3);
+    CHECK(ray::lib::toJson(*back) == text);
+    auto none = ray::lib::machineFromJson(plain);
+    REQUIRE(none);
+    CHECK(none->peckClearance == 0);
+    m.peckClearance = -1;
+    CHECK_FALSE(ray::lib::machineFromJson(ray::lib::toJson(m))); // the schema's minimum
+}
+
 TEST_CASE("toJson is canonical JSON", "[lib][codec]")
 {
     const std::string text = ray::lib::toJson(sampleMaterial(3));

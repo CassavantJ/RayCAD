@@ -23,80 +23,7 @@ namespace ray::cam {
 
 using ToolpathPtr = std::shared_ptr<const Toolpath>;
 
-// ---------- The stand-in setup resolution (until T-033) ----------
-
-Result<ResolvedGeometry> resolveGeometryBasic(const GeometryRequest& request, JobContext& ctx)
-{
-    try {
-        const CamSnapshot& snapshot = request.snapshot;
-        const Setup& setup = request.setup;
-        ResolvedGeometry geom;
-        geom.wcsFromModel = Xform::identity();
-        Box3 box{};
-        bool any = false;
-        const auto grow = [&](const kernel::Shape& shape) {
-            const Box3 b = kernel::bounds(shape);
-            if (!any) {
-                box = b;
-                any = true;
-                return;
-            }
-            box.min = Vec3{std::min(box.min.x, b.min.x), std::min(box.min.y, b.min.y), std::min(box.min.z, b.min.z)};
-            box.max = Vec3{std::max(box.max.x, b.max.x), std::max(box.max.y, b.max.y), std::max(box.max.z, b.max.z)};
-        };
-        for (const BodyId& id : setup.partBodies) {
-            const naming::ResolverBody* body = detail::bodyOf(snapshot, id);
-            if (body == nullptr) {
-                return tl::unexpected(
-                    Error{ErrorCode::ReferenceBroken,
-                          "Part body " + id.value.toString() + " of setup " + detail::label(setup) + " is not built",
-                          {}});
-            }
-            geom.partShapes.push_back(body->shape);
-            grow(body->shape);
-        }
-        for (const BodyId& id : setup.fixtureBodies) {
-            const naming::ResolverBody* body = detail::bodyOf(snapshot, id);
-            if (body == nullptr) {
-                return tl::unexpected(
-                    Error{ErrorCode::ReferenceBroken,
-                          "Fixture body " + id.value.toString() + " of setup " + detail::label(setup) + " is not built",
-                          {}});
-            }
-            geom.fixtureShapes.push_back(body->shape);
-        }
-        RAY_CAM_TRY(ctx.cancel.check());
-        for (std::size_t i = 0; i < request.op.geometry.size(); ++i) {
-            const naming::TopoRef& ref = request.op.geometry[i];
-            const auto part = std::find(setup.partBodies.begin(), setup.partBodies.end(), ref.body);
-            const std::string what = "Geometry " + std::to_string(i + 1) + " of " + detail::label(request.op);
-            if (part == setup.partBodies.end()) {
-                return tl::unexpected(Error{
-                    ErrorCode::ReferenceBroken, what + " is not on a part body of setup " + detail::label(setup), {}});
-            }
-            auto resolved = detail::resolveForCam(request.resolver, snapshot, ref, what);
-            if (!resolved) {
-                return tl::unexpected(resolved.error());
-            }
-            for (const kernel::SubId& e : resolved->elements) {
-                geom.selected.push_back(e);
-                geom.selectedShapeIndex.push_back(static_cast<int>(part - setup.partBodies.begin()));
-            }
-        }
-        if (const auto* stock = std::get_if<BoxStock>(&setup.stock)) {
-            box.min = Vec3{box.min.x - stock->xNeg, box.min.y - stock->yNeg, box.min.z - stock->zNeg};
-            box.max = Vec3{box.max.x + stock->xPos, box.max.y + stock->yPos, box.max.z + stock->zPos};
-        } else if (const auto* solid = std::get_if<SolidStock>(&setup.stock)) {
-            if (const naming::ResolverBody* body = detail::bodyOf(snapshot, solid->body)) {
-                box = kernel::bounds(body->shape);
-            }
-        }
-        geom.stockBounds = box;
-        return geom;
-    } catch (const std::bad_alloc&) {
-        return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while resolving a setup", {}});
-    }
-}
+// Setup resolution (resolveSetupGeometry, the default ResolveGeometryFn) is in setup.cpp (task T-033).
 
 namespace {
 
@@ -163,7 +90,7 @@ public:
         : jobs_(jobs), types_(std::move(types)), snapshot_(std::move(snapshot)), s_(std::make_shared<Shared>())
     {
         resolveGeometry_ =
-            options.resolveGeometry ? std::move(options.resolveGeometry) : ResolveGeometryFn(&resolveGeometryBasic);
+            options.resolveGeometry ? std::move(options.resolveGeometry) : ResolveGeometryFn(&resolveSetupGeometry);
         s_->capacity = std::max<std::size_t>(options.cacheEntries, 1);
         if (!types_) {
             types_ = std::make_shared<const OperationRegistry>();

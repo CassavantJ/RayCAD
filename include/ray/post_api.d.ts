@@ -4,6 +4,8 @@
 // Host notes (T-039): the script runs in strict mode; Math.sin, cos, tan, asin, acos, atan, atan2 and hypot are the
 // host's deterministic versions. `this` in every handler is the object given to definePost. Numbers reach the script
 // in output units and are snapped back to integer nanometres by `out`, so print them through `out`, not toFixed.
+// The canned-cycle settlement (cam.h) added CycleMove.returnLevel, peckClearance and leftHand, and gave top and
+// clearance their IR meaning (the hole top and the initial level).
 
 declare function definePost(post: PostDefinition): void;
 
@@ -55,9 +57,19 @@ interface ArcMove extends MoveXYZ {
 }
 interface CycleMove {
   kind: CycleKind; x: number; y: number; top: number; bottom: number; retract: number; clearance: number;
-  feed: number; peck: number; dwellSeconds: number; pitch: number; first: boolean;
-  // clearance: the tool's Z before the run; first: the run's first hole, or one whose cycle parameters changed.
-  // The host takes the tool to be back at the R plane (retract) after each hole, as with G99.
+  returnLevel: "retract" | "clearance";
+  feed: number; peck: number; peckClearance: number; dwellSeconds: number; pitch: number; leftHand: boolean;
+  first: boolean;
+  // One hole, with the toolpath IR's values (cam.h "Canned cycles"): top is the hole top, retract the R plane,
+  // clearance the initial level. returnLevel: where the tool goes after this hole, "retract" (G99) or "clearance"
+  // (G98); it may change from hole to hole. peck: Q, measured from the R plane, 0 = no pecking. peckClearance: the G83
+  // re-entry / G73 back-off, 0 = the control's own parameter (emit nothing). leftHand: tapping with G74 instead of G84.
+  // dwellSeconds: at the bottom; G82 and G89 take it, other cycles only where the control's cycle has a P word (warn or
+  // fail otherwise). Tap feed is pitch times rpm, per minute; rigid or floating tapping is the post's choice.
+  // first: the run's first hole, or one whose cycle parameters (all of the above but returnLevel) changed.
+  // At a run's first hole the tool's Z is `clearance` (when it was higher, the host has already emitted rapids over
+  // the hole and down to it), so the control's initial level is `clearance`. After each hole the tool is at
+  // (x, y, return level).
 }
 
 interface ToolInfo {
