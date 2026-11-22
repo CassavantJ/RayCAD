@@ -103,6 +103,7 @@ set(RAY_UI_QML_FILES
     qml/controls/TabButton.qml
     qml/controls/ToolTip.qml
     qml/controls/HoverToolTip.qml
+    qml/controls/ScrollEdges.qml
     qml/controls/Menu.qml
     qml/controls/MenuItem.qml
     qml/controls/MenuSeparator.qml

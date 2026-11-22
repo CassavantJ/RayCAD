@@ -52,6 +52,7 @@
 
 #include <cmath>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -394,12 +395,60 @@ TEST_CASE("a STEP file opens, shows, and a face picked by pixel has a SubId and 
             plane = m.value("value").toString() == QStringLiteral("Plane");
     }
     CHECK(plane);
+    // What a person reads off a face, in the document's units: its normal; no internal ids (they stay in the entry).
+    const auto infoRows = [&] {
+        REQUIRE(QTest::qWaitFor([&] { return !w.selection()->infoBusy() && !w.selection()->info().isEmpty(); }, 20000));
+        std::map<QString, QString> out;
+        for (const QVariant& r : w.selection()->info()) {
+            const QVariantMap m = r.toMap();
+            out[m.value("label").toString()] = m.value("value").toString();
+        }
+        return out;
+    };
+    {
+        const auto rows = infoRows();
+        CHECK(rows.count(QStringLiteral("Index")) == 0);
+        CHECK(rows.count(QStringLiteral("Reference")) == 0);
+        REQUIRE(rows.count(QStringLiteral("Normal")) == 1);
+        CHECK(rows.at(QStringLiteral("Normal")) == QStringLiteral("+Z"));
+        CHECK(rows.count(QStringLiteral("Area")) == 1);
+    }
     CHECK(w.find("selectionInfoDetails")->isVisible());
     CHECK(row->property("highlighted").toBool());
 
     // The face is highlighted in the view.
     const QImage selected = w.grab();
     CHECK_FALSE(near(pixel(selected, top), pixel(frame, top), 6));
+
+    // A cylindrical face (the hole's wall): its diameter and the direction of its axis.
+    {
+        std::optional<std::uint32_t> wall;
+        std::optional<kernel::SurfaceInfo> facts;
+        const kernel::Shape& shape = w.scene()->body(0)->shape;
+        for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face) && !wall; ++i) {
+            const auto f = api::viewer::describeElement(shape, kernel::SubId{kernel::SubKind::Face, i}, ctx);
+            if (f && f->surface && f->surface->type == kernel::SurfaceType::Cylinder) {
+                wall = i;
+                facts = f->surface;
+            }
+        }
+        REQUIRE(wall.has_value());
+        w.selection()->applyClick(render::PickHit{w.scene()->itemForBody(0), kernel::SubKind::Face, *wall, Vec3{}, 0},
+                                  Qt::NoModifier);
+        const auto rows = infoRows();
+        CHECK(rows.count(QStringLiteral("Index")) == 0);
+        CHECK(rows.count(QStringLiteral("Reference")) == 0);
+        REQUIRE(rows.count(QStringLiteral("Diameter")) == 1);
+        // (The row carries the length in mm; the read-out shows it in the display unit, Units.formatRow.)
+        CHECK(rows.at(QStringLiteral("Diameter")) ==
+              QStringLiteral("%1 mm").arg(QString::number(2 * facts->radius, 'f', 3)));
+        REQUIRE(rows.count(QStringLiteral("Axis")) == 1);
+        CHECK((rows.at(QStringLiteral("Axis")) == QStringLiteral("+Z") ||
+               rows.at(QStringLiteral("Axis")) == QStringLiteral("−Z")));
+        CHECK(rows.count(QStringLiteral("Radius")) == 0);
+        w.click(top); // the top face again
+        REQUIRE(w.waitSelection(1));
+    }
 
     // Esc clears.
     w.view()->forceActiveFocus();

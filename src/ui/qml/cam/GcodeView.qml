@@ -17,6 +17,8 @@ Item {
     readonly property real advance: fm.advanceWidth("0")
     readonly property real gutterWidth: (CamGcode.digits + 1) * advance
     readonly property real textX: gutterWidth + Theme.spacingS
+    // How much of the view the viewer covers from the right edge (0 while closed): Fit frames the model beside it.
+    readonly property real coverRight: panel.visible ? width - panel.x + Theme.panelGap : 0
 
     FontMetrics {
         id: fm

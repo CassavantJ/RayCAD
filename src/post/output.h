@@ -10,6 +10,9 @@
 //   {comment}     the setup's program comment           {post}       the post's id ("haas-ngc")
 //   {machine}     the machine's name                    {ext}        the post's file extension with its dot (".nc")
 //   {{ and }}     a literal brace
+// A field's value goes in without spaces, since many controls and DNC links refuse a program name with one
+// (fieldNameText): whitespace at its ends is dropped and each run of whitespace inside it becomes one '_' ("Setup 1"
+// gives "Setup_1"). Literal text of the pattern keeps its spaces: what the user typed stays as typed.
 // The post's extension is appended unless the pattern has {ext}. The expanded name is made safe on Windows, Linux
 // and macOS at once (sanitizeFileName): only ASCII letters, digits, space and - _ . ( ) + , = # ~ stay, every other
 // character becomes '_'; no leading space or dot, no trailing space or dot; a Windows device name (CON, PRN, AUX,
@@ -62,6 +65,8 @@ struct FileName {
 Result<FileName> fileNameFor(std::string_view pattern, const NameFields& fields, int maxStemLength = 0);
 // One stem made safe (see the top of this file); *changed says whether anything was changed.
 std::string sanitizeFileName(std::string_view stem, bool* changed = nullptr);
+// A field's value as a name takes it: no whitespace at its ends, each inner run of whitespace one '_'.
+std::string fieldNameText(std::string_view value);
 // True for the temporary names writeProgramFile uses.
 bool isTemporaryOutputName(std::string_view name);
 

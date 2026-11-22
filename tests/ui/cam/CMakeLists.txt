@@ -88,7 +88,7 @@ target_include_directories(ray_ui_cam_flow_tests PRIVATE "${CMAKE_SOURCE_DIR}/sr
 target_compile_definitions(ray_ui_cam_flow_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
                                                          RAY_SHOTS_DIR="${CMAKE_SOURCE_DIR}/build/shots")
 set_property(TARGET ray_ui_cam_flow_tests PROPERTY FOLDER "tests")
-add_test(NAME ray_ui_cam_flow_tests COMMAND ray_ui_cam_flow_tests)
+add_test(NAME ray_ui_cam_flow_tests COMMAND ray_ui_cam_flow_tests "~[scale]")
 set_tests_properties(ray_ui_cam_flow_tests PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
 ray_test_runtime_path(ray_ui_cam_flow_tests QT)
 get_test_property(ray_ui_cam_flow_tests ENVIRONMENT_MODIFICATION _mods)
@@ -97,6 +97,21 @@ if(NOT _mods)
 endif()
 list(APPEND _mods "QSG_NO_VSYNC=set:1")
 set_tests_properties(ray_ui_cam_flow_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+# Its [scale] case (no list or check box text cut where it has room, in the setup panel, the operation panel, the post
+# dialog and the tool library) at 100 %, 150 % and 200 %, as the operation panel's.
+foreach(_scale 1 1.5 2)
+    string(REPLACE "." "_" _name "${_scale}")
+    add_test(NAME ray_ui_cam_flow_scale_${_name} COMMAND ray_ui_cam_flow_tests "[scale]")
+    set_tests_properties(ray_ui_cam_flow_scale_${_name} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 4)
+    ray_test_runtime_path(ray_ui_cam_flow_scale_${_name} QT)
+    get_test_property(ray_ui_cam_flow_scale_${_name} ENVIRONMENT_MODIFICATION _mods)
+    if(NOT _mods)
+        set(_mods)
+    endif()
+    list(APPEND _mods "QSG_NO_VSYNC=set:1" "QT_ENABLE_HIGHDPI_SCALING=set:0" "QT_SCALE_FACTOR=set:${_scale}"
+         "RAY_TEST_SCALE=set:${_scale}")
+    set_tests_properties(ray_ui_cam_flow_scale_${_name} PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+endforeach()
 
 add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp
     operation_unit_test.cpp # T-045: the schema form over every registered type and synthetic schemas, the panel logic

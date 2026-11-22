@@ -186,6 +186,14 @@ public:
     Q_INVOKABLE void dismissStatus();
 
     // ---- the tool picker's API (qml/cam/ToolPicker.qml; the operation panel, T-045) ----
+    // The library shown for a picker (its Library button): while `choosing`, the panel offers "Use this tool" for the
+    // selected tool, which ends the choice with toolChosen(id, origin) and closes the panel. Closing it otherwise ends
+    // the choice without one (choiceEnded either way: the picker takes the focus back).
+    Q_PROPERTY(bool choosing READ choosing NOTIFY choosingChanged)
+    bool choosing() const { return choosing_; }
+    Q_INVOKABLE void showToChoose();
+    // "Use this tool": false (nothing happens) when no saved tool is selected or there are unsaved edits.
+    Q_INVOKABLE bool useSelected();
     // The "library" member a cam.operation.add / edit needs so the tool (and holder, "" for none) is embedded in the
     // same step: {tools: [item], holders: [item]} with only what the document does not have yet; empty when nothing.
     Q_INVOKABLE QVariantMap libraryArgsFor(const QString& toolId, const QString& holderId = QString()) const;
@@ -220,6 +228,9 @@ signals:
     void profileChanged();
     // After a save: the item now in the library (the list selects it).
     void saved(const QString& kind, const QString& id);
+    void choosingChanged();
+    void toolChosen(const QString& toolId, const QString& origin);
+    void choiceEnded();
 
 private:
     struct Draft {
@@ -265,6 +276,7 @@ private:
     QPointer<UnitsObject> units_;
 
     bool shown_ = false;
+    bool choosing_ = false; // shown for a picker (showToChoose)
     int revision_ = 0;
     bool catalogValid_ = false;
     bool catalogWanted_ = false;

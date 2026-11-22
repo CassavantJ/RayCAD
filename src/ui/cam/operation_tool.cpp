@@ -161,6 +161,10 @@ OperationToolModel::OperationToolModel(SceneController* scene, SelectionModel* s
                 cancel();
         });
     }
+    // The picks stay marked in the view as the list changes, and when the bodies are shown anew.
+    connect(this, &OperationToolModel::picksChanged, this, &OperationToolModel::updatePickHighlight);
+    if (scene_)
+        connect(scene_, &SceneController::bodiesChanged, this, &OperationToolModel::updatePickHighlight);
 }
 
 OperationToolModel::~OperationToolModel()
@@ -178,6 +182,8 @@ OperationToolModel::~OperationToolModel()
         d->cancelPreview();
     if (filterSaved_ && selection_)
         selection_->setFilterMask(savedFilter_);
+    if (selection_)
+        selection_->setToolHighlight({});
     unsubscribe();
 }
 
@@ -510,6 +516,7 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
     values_.clear();
     fieldErrors_.clear();
     picks_.clear();
+    hoveredPick_ = -1;
     holes_.clear();
     holesReady_ = false;
     queuedPick_.reset();
@@ -598,8 +605,11 @@ void OperationToolModel::close()
     setup_.reset();
     editing_ = false;
     picks_.clear();
+    hoveredPick_ = -1;
     holes_.clear();
     picking_ = false;
+    if (selection_)
+        selection_->setToolHighlight({});
     values_.clear();
     message_.clear();
     messageField_.clear();
@@ -915,6 +925,7 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
             p.ref = refs[i];
             p.body = refs[i].value(QStringLiteral("body")).toString();
             const int index = (*r)->second[i];
+            p.resolved = index >= 0;
             if (holes && index >= 0) {
                 const auto& h = self->holes_[static_cast<std::size_t>(index)];
                 p.element = h.boreFace;
@@ -1313,6 +1324,92 @@ QVariantList OperationToolModel::picks() const
     return out;
 }
 
+QString OperationToolModel::pickCountText() const
+{
+    if (!active() || geometry_.kind == QLatin1String("none") || geometry_.kind.isEmpty())
+        return {};
+    const int n = static_cast<int>(picks_.size());
+    if (geometry_.kind == QLatin1String("hole"))
+        return n == 0 ? trs("No holes picked") : n == 1 ? trs("1 hole") : trs("%1 holes").arg(n);
+    if (geometry_.kind == QLatin1String("edge"))
+        return n == 0 ? trs("No edges picked") : n == 1 ? trs("1 edge") : trs("%1 edges").arg(n);
+    return n == 0 ? trs("No faces picked") : n == 1 ? trs("1 face") : trs("%1 faces").arg(n);
+}
+
+void OperationToolModel::setHoveredPick(int index)
+{
+    if (index < 0 || index >= static_cast<int>(picks_.size()))
+        index = -1;
+    if (index == hoveredPick_)
+        return;
+    hoveredPick_ = index;
+    emit picksChanged();
+}
+
+std::vector<render::PickHit> OperationToolModel::pickHits(int index) const
+{
+    std::vector<render::PickHit> out;
+    if (!scene_ || index < 0 || index >= static_cast<int>(picks_.size()))
+        return out;
+    const Pick& p = picks_[static_cast<std::size_t>(index)];
+    if (!p.resolved)
+        return out;
+    render::ItemId item = 0;
+    BodyId bodyId;
+    for (int b = 0; b < scene_->bodyCount() && item == 0; ++b) {
+        const api::viewer::Body* body = scene_->body(b);
+        if (body != nullptr && idText(body->id.value) == p.body) {
+            item = scene_->itemForBody(b);
+            bodyId = body->id;
+        }
+    }
+    if (item == 0)
+        return out;
+    const auto hit = [&](kernel::SubKind kind, std::uint32_t sub) {
+        out.push_back(render::PickHit{item, kind, sub, Vec3{}, 0});
+    };
+    if (geometry_.kind == QLatin1String("hole")) {
+        // Every face of the hole (bore, countersink, floor), its bore first; the bore alone until the holes are found.
+        hit(kernel::SubKind::Face, p.element);
+        const auto h = std::find_if(holes_.begin(), holes_.end(), [&](const api::cam_operation::Hole& x) {
+            return x.body == bodyId && x.boreFace == p.element;
+        });
+        if (h != holes_.end()) {
+            for (const std::uint32_t f : h->faces) {
+                if (f != p.element)
+                    hit(kernel::SubKind::Face, f);
+            }
+        }
+        return out;
+    }
+    hit(geometry_.kind == QLatin1String("edge") ? kernel::SubKind::Edge : kernel::SubKind::Face, p.element);
+    return out;
+}
+
+void OperationToolModel::updatePickHighlight()
+{
+    if (!selection_)
+        return;
+    if (!active()) {
+        selection_->setToolHighlight({});
+        return;
+    }
+    if (hoveredPick_ >= static_cast<int>(picks_.size()))
+        hoveredPick_ = -1;
+    std::vector<render::PickHit> hits;
+    for (int i = 0; i < static_cast<int>(picks_.size()); ++i) {
+        const std::vector<render::PickHit> h = pickHits(i);
+        hits.insert(hits.end(), h.begin(), h.end());
+    }
+    std::optional<render::PickHit> emphasis;
+    if (hoveredPick_ >= 0) {
+        const std::vector<render::PickHit> h = pickHits(hoveredPick_);
+        if (!h.empty())
+            emphasis = h.front(); // a hole's bore, the face or edge itself
+    }
+    selection_->setToolHighlight(std::move(hits), emphasis);
+}
+
 QString OperationToolModel::holeText(const api::cam_operation::Hole& h) const
 {
     const bool in = inch();
@@ -1320,7 +1417,11 @@ QString OperationToolModel::holeText(const api::cam_operation::Hole& h) const
         return in ? QLocale::c().toString(mm / 25.4, 'f', 4) + QStringLiteral(" in")
                   : QLocale::c().toString(mm, 'g', 6) + QStringLiteral(" mm");
     };
-    const QString at = trs("X%1 Y%2").arg(QLocale::c().toString(h.x, 'g', 6), QLocale::c().toString(h.y, 'g', 6));
+    // The position in the display unit too (the WCS values are mm).
+    const auto coord = [&](double mm) {
+        return in ? QLocale::c().toString(mm / 25.4, 'f', 4) : QLocale::c().toString(mm, 'g', 6);
+    };
+    const QString at = trs("X%1 Y%2").arg(coord(h.x), coord(h.y));
     const QString what = !h.threadSpec.empty() ? qs(h.threadSpec) : trs("⌀%1").arg(len(h.diameter));
     return h.through ? trs("%1 through at %2").arg(what, at) : trs("%1, %2 deep, at %3").arg(what, len(h.depth), at);
 }

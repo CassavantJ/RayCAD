@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raycad.org/schemas/ops/drill.schema.json",
   "title": "Drilling",
-  "description": "Parameters of a 'drill' operation (cam.h Operation::paramsJson, task T-035): spot drilling, drilling, peck drilling, chip breaking, tapping, boring and reaming as canned cycles, one hole per cycle move. The operation's geometry is a face of each hole to machine. Its heights are measured from each hole's own top: 'retract' is the R plane (where the feed starts and where G99 returns), 'top' moves the hole top, 'clearance' is the initial level (G98) measured from the highest hole top; 'feedPlane' and 'bottom' are not used. The feed into the hole is the cutting feed (Operation cutting feedCut); a tap's feed is its pitch times the spindle speed. Lengths are millimetres, times seconds. Annotations for editors: 'x-unit' (length, time, count), 'x-enumTitles' (labels of an enum, in order), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here holes) and 'x-toolTypes' (the tools the picker offers for each cycle); docs/operation_types.md defines each.",
+  "description": "Parameters of a 'drill' operation (cam.h Operation::paramsJson, task T-035): spot drilling, drilling, peck drilling, chip breaking, tapping, boring and reaming as canned cycles, one hole per cycle move. The operation's geometry is a face of each hole to machine. Its heights are measured from each hole's own top: 'retract' is the R plane (where the feed starts and where G99 returns), 'top' moves the hole top, 'clearance' is the initial level (G98) measured from the highest hole top; 'feedPlane' and 'bottom' are not used. The feed into the hole is the cutting feed (Operation cutting feedCut); a tap's feed is its pitch times the spindle speed. Lengths are millimetres, times seconds. Annotations for editors: 'x-unit' (length, time, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value, such as its G codes),'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here holes) and 'x-toolTypes' (the tools the picker offers for each cycle); docs/operation_types.md defines each.",
   "type": "object",
   "additionalProperties": false,
   "x-heightsUsed": ["clearance", "retract", "top"],
@@ -19,9 +19,11 @@
       "title": "Cycle",
       "description": "What the tool does in each hole.",
       "enum": ["spot", "drill", "peck", "chipBreak", "tap", "bore", "ream"],
-      "x-enumTitles": ["Spot drill", "Drill (G81, G82 with a dwell)", "Peck, full retract (G83)",
-                       "Chip break (G73)", "Tap (G84, G74 left-hand)", "Bore, feed out (G85, G89 with a dwell)",
-                       "Ream, feed out (G85, G89 with a dwell)"],
+      "x-enumTitles": ["Spot drill", "Drill", "Peck drill", "Chip break", "Tap", "Bore", "Ream"],
+      "x-enumDescriptions": ["G81 to the spot diameter; G82 with a dwell", "G81; G82 with a dwell",
+                             "G83: full retract after each peck", "G73: a short back-off after each peck",
+                             "G84; G74 left-hand", "G85, feed in and out; G89 with a dwell",
+                             "G85, feed in and out; G89 with a dwell"],
       "default": "drill"
     },
     "depthFrom": {

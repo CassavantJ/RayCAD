@@ -8,6 +8,7 @@
 #include <QtGui/QGuiApplication>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace ray::ui {
@@ -65,6 +66,27 @@ QVariantMap measured(const QString& label, const QString& value, const char* qua
 QVariant pointValue(const Vec3& p)
 {
     return QVariantList{p.x, p.y, p.z};
+}
+
+// A unit direction as a person reads it: "+Z", "−X" along a model axis, else its components ("0.707, 0, 0.707").
+QString directionText(const Vec3& d)
+{
+    const double n = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (n < 1e-12)
+        return QObject::tr("none");
+    const Vec3 u{d.x / n, d.y / n, d.z / n};
+    const std::pair<double, const char*> axes[] = {{u.x, "X"}, {u.y, "Y"}, {u.z, "Z"}};
+    for (const auto& [c, name] : axes) {
+        if (std::abs(std::abs(c) - 1.0) < 1e-9)
+            return (c > 0 ? QStringLiteral("+") : QStringLiteral("−")) + QLatin1String(name);
+    }
+    const auto num = [](double v) {
+        QString s = QString::number(std::abs(v) < 5e-4 ? 0.0 : v, 'f', 3);
+        while (s.contains(QLatin1Char('.')) && (s.endsWith(QLatin1Char('0')) || s.endsWith(QLatin1Char('.'))))
+            s.chop(1);
+        return s == QLatin1String("-0") ? QStringLiteral("0") : s;
+    };
+    return QStringLiteral("%1, %2, %3").arg(num(u.x), num(u.y), num(u.z));
 }
 
 // What a sub/ref job finds out about one entry.
@@ -344,7 +366,22 @@ std::vector<render::PickHit> SelectionModel::hits() const
         out.push_back(e.hit);
     if (pathHighlight_)
         out.push_back(*pathHighlight_);
+    out.insert(out.end(), toolHighlight_.begin(), toolHighlight_.end());
     return out;
+}
+
+void SelectionModel::setToolHighlight(std::vector<render::PickHit> hits, std::optional<render::PickHit> emphasis)
+{
+    const auto same = [](const std::vector<render::PickHit>& a, const std::vector<render::PickHit>& b) {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), sameHit);
+    };
+    const bool sameEmphasis =
+        emphasis.has_value() == toolEmphasis_.has_value() && (!emphasis || sameHit(*emphasis, *toolEmphasis_));
+    if (same(hits, toolHighlight_) && sameEmphasis)
+        return;
+    toolHighlight_ = std::move(hits);
+    toolEmphasis_ = emphasis;
+    emit highlightChanged();
 }
 
 void SelectionModel::selectionChanged()
@@ -441,16 +478,23 @@ void SelectionModel::updateInfo()
         if (!r) {
             rows << row(tr("Error"), QString::fromStdString(r.error().message));
         } else {
+            // What a person reads off the element; internal ids (the element's index, its reference's names) are not
+            // shown: they stay in the selection's entries for tests and scripts.
             const api::viewer::ElementInfo& info = r->info;
-            if (kind != kernel::SubKind::Solid && r->sub)
-                rows << row(tr("Index"), QString::number(r->sub->index));
             if (info.surface) {
-                rows << row(tr("Surface"),
-                            QString::fromLatin1(api::viewer::surfaceTypeName(info.surface->type).data()));
-                rows << measured(tr("Area"), tr("%1 mm²").arg(QString::number(info.surface->area, 'f', 3)), "area",
-                                 info.surface->area);
-                if (info.surface->radius > 0)
-                    rows << measured(tr("Radius"), mm(info.surface->radius), "length", info.surface->radius);
+                const kernel::SurfaceInfo& s = *info.surface;
+                rows << row(tr("Surface"), QString::fromLatin1(api::viewer::surfaceTypeName(s.type).data()));
+                rows << measured(tr("Area"), tr("%1 mm²").arg(QString::number(s.area, 'f', 3)), "area", s.area);
+                if (s.type == kernel::SurfaceType::Cylinder) {
+                    rows << measured(tr("Diameter"), mm(2 * s.radius), "length", 2 * s.radius);
+                    rows << row(tr("Axis"), directionText(s.axis));
+                } else if (s.type == kernel::SurfaceType::Plane) {
+                    // Out of the material: the plane's normal, turned round where the face is reversed on it.
+                    const Vec3 n = s.reversed ? Vec3{-s.axis.x, -s.axis.y, -s.axis.z} : s.axis;
+                    rows << row(tr("Normal"), directionText(n));
+                } else if (s.radius > 0) {
+                    rows << measured(tr("Radius"), mm(s.radius), "length", s.radius);
+                }
             }
             if (info.curve) {
                 rows << row(tr("Curve"), QString::fromLatin1(api::viewer::curveTypeName(info.curve->type).data()));
@@ -474,9 +518,6 @@ void SelectionModel::updateInfo()
                 rows << measured(tr("Max"), point(b.max), "point", pointValue(b.max));
             }
         }
-        if (entry && entry->ref)
-            rows << row(tr("Reference"),
-                        entry->ref->names.size() == 1 ? tr("1 name") : tr("%1 names").arg(entry->ref->names.size()));
         self->info_ = rows;
         self->infoTitle_ = self->entries_.size() > 1 ? tr("%1 items selected").arg(self->count()) : kindName(kind);
         emit self->infoChanged();

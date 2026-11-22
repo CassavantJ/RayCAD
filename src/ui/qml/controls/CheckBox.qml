@@ -1,10 +1,16 @@
-// Check box with label. tristate is supported (PartiallyChecked draws a dash).
+// Check box with label. tristate is supported (PartiallyChecked draws a dash). The label wraps when the check box is
+// given a width narrower than it, never elided; the box stays beside its first line.
 import QtQuick
 import QtQuick.Templates as T
 import RayCad.Ui
 
 T.CheckBox {
     id: control
+
+    FontMetrics {
+        id: labelMetrics
+        font: control.font
+    }
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
@@ -23,7 +29,9 @@ T.CheckBox {
         implicitWidth: Theme.indicatorSize
         implicitHeight: Theme.indicatorSize
         x: control.leftPadding
-        y: control.topPadding + Math.round((control.availableHeight - height) / 2)
+        // Centred on the label's first line (on the whole label while it is one line).
+        y: control.topPadding
+           + Math.round((Math.min(control.availableHeight, Math.max(height, labelMetrics.height)) - height) / 2)
         radius: Math.min(Theme.radiusSmall, Theme.spacingXs)
         color: marked ? (control.enabled ? Theme.accentThinLine : Theme.controlBgPressed)
                : control.hovered && control.enabled ? Theme.controlBgHover
@@ -50,8 +58,11 @@ T.CheckBox {
         text: control.text
         font: control.font
         color: control.enabled ? Theme.textPrimary : Theme.textDisabled
-        elide: Text.ElideRight
+        wrapMode: Text.Wrap
+        elide: Text.ElideNone
         textFormat: Text.PlainText
-        verticalAlignment: Text.AlignVCenter
+        // From the top, the first line level with the box (centred on it when the box is the taller).
+        verticalAlignment: Text.AlignTop
+        topPadding: Math.max(0, Math.round((control.indicator.height - labelMetrics.height) / 2))
     }
 }

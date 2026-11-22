@@ -70,7 +70,12 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
   - `time`: seconds. A bare number is seconds; a trailing `s`, `ms` or `min` is read; the rest is a plain expression.
   - `count`: a plain number or expression without units (kind Unitless); also the meaning of no `x-unit`.
 - `x-enumTitles`: the labels of a choice's `enum` values, an array of strings of the same length and order. A list of
-  another length is a schema problem: the form shows the values themselves.
+  another length is a schema problem: the form shows the values themselves. Keep them short (a word or two): the
+  detail goes in `x-enumDescriptions`.
+- `x-enumDescriptions`: optional, a detail line for each of a choice's `enum` values (such as the G codes a cycle is
+  written as), an array of strings of the same length and order; `""` for a value without one. The form shows it
+  under the title in the open list and in the field's tooltip, never in the field itself. A list of another length is
+  ignored.
 - `x-relevantWhen`: `{ "<property>": [values...], ... }`. The property matters only when every named property is
   relevant itself (so relevance is transitive) and has one of the listed values. Each named property must be a choice
   (values are its enum strings) or a boolean (values are `true` / `false`) of the same schema; a name that is not, or a

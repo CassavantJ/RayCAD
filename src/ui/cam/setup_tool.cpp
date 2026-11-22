@@ -105,7 +105,7 @@ std::span<const UiCommand> camSetupUiCommands()
 SetupToolModel::SetupToolModel(SceneController* scene, SelectionModel* selection, Session* session, AppContext* context,
                                QObject* parent)
     : QObject(parent), scene_(scene), selection_(selection), session_(session), context_(context),
-      lines_(std::make_unique<LineOverlay>(scene))
+      lines_(std::make_unique<LineOverlay>(scene)), wcsLines_(std::make_unique<LineOverlay>(scene))
 {
     previewTimer_.setSingleShot(true);
     previewTimer_.setInterval(0);
@@ -146,8 +146,11 @@ SetupToolModel::SetupToolModel(SceneController* scene, SelectionModel* selection
         connect(context_, &AppContext::workspaceChanged, this, [this] {
             if (active() && context_ && context_->workspace() != kCamWorkspace)
                 cancel();
+            updateWcs();
         });
     }
+    // The shown WCS gives way to the panel's own triad while the panel is open.
+    connect(this, &SetupToolModel::activeChanged, this, [this] { updateWcs(); });
 }
 
 SetupToolModel::~SetupToolModel()
@@ -163,7 +166,9 @@ SetupToolModel::~SetupToolModel()
         scene_->preview().clear(this);
     if (filterSaved_ && selection_)
         selection_->setFilterMask(savedFilter_);
+    wcsJob_.cancel();
     lines_.reset();
+    wcsLines_.reset();
     unsubscribe();
 }
 
@@ -1135,9 +1140,32 @@ void SetupToolModel::showPreview(const api::cam_setup::Preview& p)
         scene_->preview().show(this, std::move(bodies), {}, false, style);
     }
     drawTriad(p);
+    keepInView(p);
     ++previewsShown_;
     setStatus(QStringLiteral("ok"), QString());
     emit markersChanged();
+}
+
+// The stock and the triad with its labels in the part of the view no panel or bar covers (ViewportItem::frameRect):
+// the camera is left alone while they are in it, else they are framed there.
+void SetupToolModel::keepInView(const api::cam_setup::Preview& p)
+{
+    if (!view_)
+        return;
+    std::vector<Vec3> points(p.markers.begin(), p.markers.end());
+    const double len = camui::triadLength(p.resolved.stockBounds) * 1.12; // the labels sit just past the tips
+    for (const Vec3& axis : {p.x, p.y, p.z})
+        points.push_back(add(p.origin, mul(axis, len)));
+    // A label's half height and a little more, so a label at a tip stays clear of the frame's edge.
+    constexpr double kLabelMargin = 14;
+    if (view_->inFrame(points, kLabelMargin))
+        return;
+    Box3 box{points.front(), points.front()};
+    for (const Vec3& q : points) {
+        box.min = Vec3{std::min(box.min.x, q.x), std::min(box.min.y, q.y), std::min(box.min.z, q.z)};
+        box.max = Vec3{std::max(box.max.x, q.x), std::max(box.max.y, q.y), std::max(box.max.z, q.z)};
+    }
+    view_->frameBox(box);
 }
 
 void SetupToolModel::clearPreview()
@@ -1231,7 +1259,7 @@ void SetupToolModel::setView(QObject* view)
     view_ = item;
     if (view_) {
         const auto moved = [this] {
-            if (preview_)
+            if (preview_ || wcsShown_)
                 emit markersChanged();
         };
         viewConnections_ << connect(view_, &ViewportItem::cameraChanged, this, moved);
@@ -1284,6 +1312,99 @@ QVariantList SetupToolModel::triadLabels() const
                                   {QStringLiteral("y"), v->y()}});
     }
     return out;
+}
+
+// ---------- the current setup's WCS, while the panel is closed ----------
+void SetupToolModel::showWcsOf(std::optional<SetupId> setup)
+{
+    wcsSetup_ = setup;
+    updateWcs();
+}
+
+void SetupToolModel::updateWcs()
+{
+    if (!wcsLines_)
+        return;
+    api::IApp* a = app();
+    api::OpenDocument* od = a != nullptr ? a->active() : nullptr;
+    doc::Document* d = od != nullptr ? od->document.get() : nullptr;
+    const doc::DocStatePtr state = d ? d->state() : nullptr;
+    const doc::BuildResultPtr build = d ? d->build() : nullptr;
+    const cam::Setup* setup = nullptr;
+    if (state && state->cam && wcsSetup_) {
+        for (const cam::Setup& s : state->cam->setups) {
+            if (s.id == *wcsSetup_)
+                setup = &s;
+        }
+    }
+    const bool show = !active() && setup != nullptr && build && context_ && context_->workspace() == kCamWorkspace;
+    if (!show) {
+        ++wcsSerial_;
+        wcsJob_.cancel();
+        wcsJob_ = {};
+        wcsState_.reset();
+        wcsBuild_.reset();
+        if (wcsShown_) {
+            wcsShown_.reset();
+            wcsLines_->clear();
+            emit markersChanged();
+        }
+        return;
+    }
+    if (state == wcsState_ && build == wcsBuild_)
+        return; // shown, or being resolved, for exactly this
+    wcsState_ = state;
+    wcsBuild_ = build;
+    wcsOffset_ = setup->wcs.workOffset;
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    if (jobs == nullptr)
+        return;
+    wcsJob_.cancel();
+    const std::uint64_t serial = ++wcsSerial_;
+    const SetupId id = setup->id;
+    wcsJob_ = jobs->submit<std::shared_ptr<const api::cam_setup::Preview>>(
+        JobInfo{"Setup WCS", JobPriority::Interactive, false},
+        [state, build, id](JobContext& ctx) -> Result<std::shared_ptr<const api::cam_setup::Preview>> {
+            auto p = api::cam_setup::previewSetup(state, build, id, ctx);
+            if (!p)
+                return tl::unexpected(p.error());
+            return std::make_shared<const api::cam_setup::Preview>(std::move(*p));
+        });
+    QPointer<SetupToolModel> self(this);
+    wcsJob_.then([self, serial](Result<std::shared_ptr<const api::cam_setup::Preview>> r) {
+        if (!self || serial != self->wcsSerial_ || !self->wcsLines_)
+            return;
+        self->wcsJob_ = {};
+        if (!r) {
+            // A setup that does not resolve shows no WCS (the tree says why).
+            self->wcsShown_.reset();
+            self->wcsLines_->clear();
+            emit self->markersChanged();
+            return;
+        }
+        const api::cam_setup::Preview& p = **r;
+        self->wcsShown_ = p;
+        // Half the panel's triad: a mark of where the program's zero is, not a tool to pick with.
+        const camui::Triad triad =
+            camui::triadGeometry(p.origin, p.x, p.y, p.z, camui::triadLength(p.resolved.stockBounds) * 0.5);
+        const render::Token tokens[] = {render::Token::AxisX, render::Token::AxisY, render::Token::AxisZ};
+        const char* keys[] = {"wcs.x", "wcs.y", "wcs.z"};
+        for (std::size_t i = 0; i < 3; ++i)
+            self->wcsLines_->set(QLatin1String(keys[i]), triad.segments[i], tokens[i], 2.0f);
+        emit self->markersChanged();
+    });
+}
+
+QVariantMap SetupToolModel::wcsLabel() const
+{
+    if (active() || !wcsShown_)
+        return {};
+    const auto v = toView(wcsShown_->origin);
+    if (!v)
+        return {};
+    const int n = wcsOffset_;
+    const QString text = n >= 1 && n <= 6 ? QStringLiteral("G%1").arg(53 + n) : QStringLiteral("G54.1 P%1").arg(n - 6);
+    return QVariantMap{{QStringLiteral("text"), text}, {QStringLiteral("x"), v->x()}, {QStringLiteral("y"), v->y()}};
 }
 
 bool SetupToolModel::previewBusy() const

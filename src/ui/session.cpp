@@ -377,6 +377,18 @@ void Session::showModel(const QObject* owner, doc::DocStatePtr state, doc::Build
     syncScene(true);
 }
 
+void Session::noteInStatus(const std::string& documentId, const QString& note)
+{
+    if (note.isEmpty())
+        return;
+    if (documentId == docId_ && shownBuild_ && modelOwner_ == nullptr && context_) {
+        context_->setStatusText(context_->statusText() + tr(" · %1").arg(note));
+        return;
+    }
+    statusNote_ = note;
+    statusNoteDoc_ = documentId;
+}
+
 void Session::clearShownModel(const QObject* owner)
 {
     if (modelOwner_ == nullptr || owner != modelOwner_)
@@ -505,6 +517,10 @@ void Session::syncScene(bool force)
         QString status = bodies == 1 ? tr("%1: 1 body").arg(title_) : tr("%1: %2 bodies").arg(title_).arg(bodies);
         if (failed > 0)
             status += failed == 1 ? tr(", 1 feature failed") : tr(", %1 features failed").arg(failed);
+        if (!statusNote_.isEmpty() && statusNoteDoc_ == docId_) {
+            status += tr(" · %1").arg(statusNote_);
+            statusNote_.clear();
+        }
         context_->setStatusText(status);
     }
     if (build)

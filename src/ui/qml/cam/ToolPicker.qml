@@ -82,10 +82,28 @@ FocusScope {
         anchors.right: parent.right
         anchors.verticalCenter: search.verticalCenter
         iconName: "endmill"
+        // Labelled: an end mill alone does not say "the tool library".
+        text: qsTr("Library")
         toolTipText: qsTr("Open the tool library") + (Shortcuts.revision >= 0 && Shortcuts.shortcutText("cam.toolLibrary.open") !== ""
                                                       ? " (" + Shortcuts.shortcutText("cam.toolLibrary.open") + ")" : "")
         Accessible.name: qsTr("Open the tool library")
-        onClicked: Commands.trigger("cam.toolLibrary.open")
+        // Opened from here, the library offers "Use this tool", which picks it here; closing it brings the focus back.
+        onClicked: {
+            picker.waitingForLibrary = true
+            CamTools.showToChoose()
+        }
+    }
+    property bool waitingForLibrary: false
+    Connections {
+        target: CamTools
+        enabled: picker.waitingForLibrary
+        function onToolChosen(toolId, origin) {
+            picker.picked(toolId, origin)
+        }
+        function onChoiceEnded() {
+            picker.waitingForLibrary = false
+            search.forceActiveFocus(Qt.OtherFocusReason)
+        }
     }
 
     Rectangle {

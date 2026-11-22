@@ -34,7 +34,17 @@ QString statusText(cam::OpStatus status, double progress = -1);
 struct Badge {
     cam::OpStatus status = cam::OpStatus::Stale;
     QString message;
+    // Stale with no toolpath at all: nothing changed, it was never generated in this session (toolpaths are not saved
+    // with the document, so every operation of a document opened anew starts so). Shown as "Not generated", not as
+    // out of date; posting is blocked the same way (api::cam_post BlockReason::NoToolpath).
+    bool notGenerated = false;
 };
+// An operation's badge from the engine's state.
+Badge badgeOf(const cam::OpState& state);
+// statusKey / statusText of a badge: "notGenerated" / "Not generated" for a badge that is notGenerated.
+QString statusKey(const Badge& badge);
+QString statusText(const Badge& badge, double progress = -1);
+// (Stale outranks not generated.)
 std::optional<Badge> setupBadge(const std::optional<Status>& own, const std::vector<const cam::OpState*>& operations);
 
 // ---------- Origin ----------

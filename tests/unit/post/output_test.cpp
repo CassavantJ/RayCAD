@@ -385,13 +385,14 @@ std::optional<std::string> smbFolder(const std::string& local, std::string* why)
 // ======================================================================================================== names
 TEST_CASE("output: naming patterns expand every field", "[post][output]")
 {
-    CHECK(nameOf(kDefaultFileNamePattern) == "Bracket_Op 1 - top.nc");
+    // A field's value has no spaces in the name: each run of whitespace in it is one '_'.
+    CHECK(nameOf(kDefaultFileNamePattern) == "Bracket_Op_1_-_top.nc");
     CHECK(nameOf("O{program:05}") == "O01001.nc");
     CHECK(nameOf("O{program:4}") == "O1001.nc");
     CHECK(nameOf("{program}") == "1001.nc");
-    CHECK(nameOf("{part}") == "Bracket body.nc");
-    CHECK(nameOf("{doc} {comment}") == "Bracket rev A.nc");
-    CHECK(nameOf("{post}-{machine}") == "haas-ngc-Haas VF-2.nc");
+    CHECK(nameOf("{part}") == "Bracket_body.nc");
+    CHECK(nameOf("{doc} {comment}") == "Bracket rev_A.nc"); // the pattern's own space stays as typed
+    CHECK(nameOf("{post}-{machine}") == "haas-ngc-Haas_VF-2.nc");
     // {ext} places the extension; it is then not appended again.
     CHECK(nameOf("{program}{ext}") == "1001.nc");
     CHECK(nameOf("{program}{ext}.bak") == "1001.nc.bak");
@@ -432,9 +433,19 @@ TEST_CASE("output: names are made valid on Windows, Linux and macOS", "[post][ou
     CHECK(named("a/b\\c:d*e?f\"g<h>i|j") == "a_b_c_d_e_f_g_h_i_j.nc");
     CHECK(named(std::string("tab\there\x01") + "\x7f") == "tab_here__.nc");
     CHECK(named("Geh\xC3\xA4use") == "Geh_use.nc");           // one '_' per character, not per byte
-    CHECK(named("rocket \xF0\x9F\x9A\x80") == "rocket _.nc"); // a 4-byte character
+    CHECK(named("rocket \xF0\x9F\x9A\x80") == "rocket__.nc"); // a 4-byte character
     CHECK(named("  ..hidden") == "hidden.nc");                // no leading dots or spaces
-    CHECK(named("trailing. . ") == "trailing.nc");            // Windows drops trailing dots and spaces
+    CHECK(named("trailing..") == "trailing.nc");              // Windows drops trailing dots and spaces
+    // Whitespace in a field's value: none at its ends, one '_' for each run inside it.
+    CHECK(named("Setup 1") == "Setup_1.nc");
+    CHECK(named(" Setup \t  1 \r\n") == "Setup_1.nc");
+    CHECK(named("a b c") == "a_b_c.nc");
+    CHECK(fieldNameText("  x  y ") == "x_y");
+    CHECK(fieldNameText("") == "");
+    CHECK(fieldNameText(" \t ") == "");
+    // The pattern's literal text keeps its spaces (only the invalid characters are replaced).
+    CHECK(nameOf("Part {setup} rev") == "Part Op_1_-_top rev.nc");
+    CHECK(nameOf("my  name") == "my  name.nc");
     CHECK(named("") == "program.nc");
     CHECK(named("...") == "program.nc");
     for (const char* device : {"CON", "con", "Prn", "AUX", "NUL", "COM1", "com9", "LPT1", "LPT9", "COM0", "nul.txt"})
@@ -495,6 +506,7 @@ TEST_CASE("output: the machine's name length limit cuts the stem, with a note", 
     REQUIRE(n);
     CHECK(n->name == "Bracket_.nc");
     CHECK(n->stem == "Bracket_");
+    CHECK(fileNameFor("{doc}_{setup}", fields(), 12)->stem == "Bracket_Op_1");
     CHECK(n->extension == ".nc");
     REQUIRE_FALSE(n->notes.empty());
     CHECK_THAT(n->notes.back(), ContainsSubstring("cut to 8 characters"));
@@ -503,7 +515,7 @@ TEST_CASE("output: the machine's name length limit cuts the stem, with a note", 
     CHECK(n->name == "O01001.nc"); // fits: unchanged, no note
     CHECK(n->notes.empty());
     // A cut never ends in a dot or a space.
-    n = fileNameFor("{setup}", fields(), 3);
+    n = fileNameFor("Op {setup}", fields(), 3);
     REQUIRE(n);
     CHECK(n->stem == "Op");
 }

@@ -179,6 +179,19 @@ struct Window {
         REQUIRE_FALSE(context()->messageIsError());
         grab();
     }
+    // A new document (inches, the default for new documents) with `path` imported into it. A STEP file opened on its
+    // own takes the unit it declares (these are metric); one imported into a document keeps the document's.
+    void openInNewDocument(const QString& path) const
+    {
+        host->files()->newPart();
+        REQUIRE(QTest::qWaitFor([&] { return session()->hasDocument() && settled(); }, kOpenTimeoutMs));
+        host->files()->importFile(path);
+        REQUIRE(QTest::qWaitFor(
+            [&] { return (host->scene()->bodyCount() >= 1 && settled()) || context()->messageIsError(); },
+            kOpenTimeoutMs));
+        REQUIRE_FALSE(context()->messageIsError());
+        grab();
+    }
 
     // ---- the settings panel ----
     QObject* panelPopup() const { return findObject(QStringLiteral("settingsPanel")); }
@@ -454,7 +467,7 @@ TEST_CASE("the selection read-out switches units live and follows the decimals s
 {
     QTemporaryDir user;
     Window w(user.path());
-    w.open(kBoxHole); // a new document: inch, the default
+    w.openInNewDocument(kBoxHole); // a new document: inch, the default
     CHECK(w.units()->system() == UnitSystem::Inch);
     w.host->selection()->selectBody(0, 0);
     REQUIRE(QTest::qWaitFor([&] { return !w.host->selection()->infoBusy() && !w.host->selection()->info().isEmpty(); },
@@ -726,11 +739,11 @@ TEST_CASE("the measure panel, its labels over the view and the selection read-ou
     RAY_REQUIRE_RHI();
     QTemporaryDir user;
     Window w(user.path());
-    w.open(kPlate);
+    w.openInNewDocument(kPlate);
     ui::MeasureModel* m = w.measure();
     REQUIRE(w.host->commands()->trigger(QStringLiteral("measure.tool")));
     REQUIRE(QTest::qWaitFor([&] { return w.rightTab() == 1 && m->active(); }, 3000));
-    // Two holes 30 mm apart (radius 3.3 mm): the read-out shows the last one's radius.
+    // Two holes 30 mm apart (6.6 mm across): the read-out shows the last one's diameter.
     w.selectFaces(w.holeAt(30, 80.0 / 3.0), w.holeAt(60, 80.0 / 3.0));
     REQUIRE(QTest::qWaitFor([&] { return !m->busy() && !w.host->selection()->pending() && m->hasResult(); }, 20000));
     REQUIRE(QTest::qWaitFor([&] { return !w.host->selection()->infoBusy() && !w.host->selection()->info().isEmpty(); },
@@ -739,13 +752,13 @@ TEST_CASE("the measure panel, its labels over the view and the selection read-ou
     REQUIRE(toggle != nullptr);
 
     // Everything that shows a length: the panel, the label over the view, the selection read-out, the status bar.
-    const auto showing = [&](const QString& distance, const QString& radius, const QString& label) {
+    const auto showing = [&](const QString& distance, const QString& diameter, const QString& label) {
         return QTest::qWaitFor(
             [&] {
                 w.grab();
                 const QStringList readOut = readOutValues(w, true);
                 return w.panelValue(QStringLiteral("centerDistance")) == distance &&
-                       w.labelTexts().contains(distance) && readOut.contains(radius) &&
+                       w.labelTexts().contains(distance) && readOut.contains(diameter) &&
                        std::none_of(readOut.begin(), readOut.end(),
                                     [&](const QString& v) {
                                         return v.endsWith(label == QStringLiteral("in") ? QStringLiteral(" mm")
@@ -765,15 +778,15 @@ TEST_CASE("the measure panel, its labels over the view and the selection read-ou
     };
     // A new document: inch, 4 decimals.
     describe();
-    REQUIRE(showing(QStringLiteral("1.1811 in"), QStringLiteral("0.1299 in"), QStringLiteral("in")));
+    REQUIRE(showing(QStringLiteral("1.1811 in"), QStringLiteral("0.2598 in"), QStringLiteral("in")));
 
     // 1. The status bar's toggle.
     REQUIRE(QMetaObject::invokeMethod(toggle, "clicked"));
     describe();
-    REQUIRE(showing(QStringLiteral("30.000 mm"), QStringLiteral("3.300 mm"), QStringLiteral("mm")));
+    REQUIRE(showing(QStringLiteral("30.000 mm"), QStringLiteral("6.600 mm"), QStringLiteral("mm")));
     CHECK_FALSE(m->busy()); // re-formatted, not measured again
     REQUIRE(QMetaObject::invokeMethod(toggle, "clicked"));
-    REQUIRE(showing(QStringLiteral("1.1811 in"), QStringLiteral("0.1299 in"), QStringLiteral("in")));
+    REQUIRE(showing(QStringLiteral("1.1811 in"), QStringLiteral("0.2598 in"), QStringLiteral("in")));
 
     // 2. The Settings panel: the display units of this document, and the decimals.
     w.openPanel("general");
@@ -781,25 +794,25 @@ TEST_CASE("the measure panel, its labels over the view and the selection read-ou
     REQUIRE(mmButton != nullptr);
     REQUIRE(QMetaObject::invokeMethod(mmButton, "clicked"));
     describe();
-    REQUIRE(showing(QStringLiteral("30.000 mm"), QStringLiteral("3.300 mm"), QStringLiteral("mm")));
+    REQUIRE(showing(QStringLiteral("30.000 mm"), QStringLiteral("6.600 mm"), QStringLiteral("mm")));
     REQUIRE(w.settings()->set(QStringLiteral("units.decimalsMetric"), 1));
-    REQUIRE(showing(QStringLiteral("30.0 mm"), QStringLiteral("3.3 mm"), QStringLiteral("mm")));
+    REQUIRE(showing(QStringLiteral("30.0 mm"), QStringLiteral("6.6 mm"), QStringLiteral("mm")));
     QQuickItem* inchButton = w.find(QStringLiteral("displayUnits.inch"));
     REQUIRE(QMetaObject::invokeMethod(inchButton, "clicked"));
     REQUIRE(w.settings()->set(QStringLiteral("units.decimalsInch"), 2));
     describe();
-    REQUIRE(showing(QStringLiteral("1.18 in"), QStringLiteral("0.13 in"), QStringLiteral("in")));
+    REQUIRE(showing(QStringLiteral("1.18 in"), QStringLiteral("0.26 in"), QStringLiteral("in")));
     w.closePanel();
 
     // 3. The Measure panel's own in/mm buttons drive the same switch.
     QQuickItem* measureMm = w.find(QStringLiteral("measureUnits.mm"));
     REQUIRE(measureMm != nullptr);
     REQUIRE(QMetaObject::invokeMethod(measureMm, "clicked"));
-    REQUIRE(showing(QStringLiteral("30.0 mm"), QStringLiteral("3.3 mm"), QStringLiteral("mm")));
+    REQUIRE(showing(QStringLiteral("30.0 mm"), QStringLiteral("6.6 mm"), QStringLiteral("mm")));
     CHECK(w.find(QStringLiteral("measureUnits"))->property("currentIndex").toInt() == 1);
     // ...and MeasureTool's setter (scripts, tests) as well.
     m->setUnits(QStringLiteral("inch"));
-    REQUIRE(showing(QStringLiteral("1.18 in"), QStringLiteral("0.13 in"), QStringLiteral("in")));
+    REQUIRE(showing(QStringLiteral("1.18 in"), QStringLiteral("0.26 in"), QStringLiteral("in")));
     CHECK(w.find(QStringLiteral("measureUnits"))->property("currentIndex").toInt() == 0);
     // The document itself never changed: switching is display only.
     CHECK(w.app()->active()->document->state()->settings.units == UnitSystem::Inch);

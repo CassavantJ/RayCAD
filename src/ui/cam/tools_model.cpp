@@ -672,6 +672,33 @@ void ToolLibraryModel::hide()
     shown_ = false;
     deleteAsked_ = false;
     emit shownChanged();
+    if (choosing_) {
+        choosing_ = false;
+        emit choosingChanged();
+        emit choiceEnded();
+    }
+}
+
+void ToolLibraryModel::showToChoose()
+{
+    if (!choosing_) {
+        choosing_ = true;
+        emit choosingChanged();
+    }
+    show();
+}
+
+bool ToolLibraryModel::useSelected()
+{
+    if (!choosing_ || editorKind() != QLatin1String("tool") || dirty())
+        return false;
+    const QString origin = selectedOrigin();
+    if (origin != QLatin1String("library") && origin != QLatin1String("document"))
+        return false; // a new item or a copy not saved yet
+    const QString id = selectedId();
+    emit toolChosen(id, origin);
+    hide();
+    return true;
 }
 
 void ToolLibraryModel::refresh()

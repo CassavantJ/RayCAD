@@ -206,6 +206,11 @@ public:
     void clearShownModel(const QObject* owner);
     bool showingModel() const { return modelOwner_ != nullptr; }
 
+    // A note for the status line of the active document (Files: the unit a STEP file was opened in), after the
+    // build's own status ("bracket: 1 body · ..."): at once when the document's build is shown already, else with the
+    // first one. Once: a later build's status leaves it out.
+    void noteInStatus(const std::string& documentId, const QString& note);
+
     // The title of a registered action ("" if unknown), for menus (shortcut texts: the Shortcuts singleton).
     Q_INVOKABLE QString actionTitle(const QString& id) const;
     // Cancels a job of the list (its jobId) or the foreground job (Esc). No-op if nothing runs.
@@ -254,6 +259,8 @@ private:
     int docListener_ = 0;
     std::uint64_t docGeneration_ = 0;
     doc::BuildResultPtr shownBuild_;
+    QString statusNote_; // noteInStatus, until a build of statusNoteDoc_ is shown
+    std::string statusNoteDoc_;
     QTimer rebuildPoll_;
     // showModel(): the model shown instead of the document's build, and who asked for it.
     const QObject* modelOwner_ = nullptr;

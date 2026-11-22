@@ -422,6 +422,13 @@ void Files::startOpen(const QString& path, QStringList importAfter, std::string 
                 return;
             }
             api::OpenDocument* od = *result;
+            // A STEP or IGES file opened as a new document takes the length unit it declares (IApp::open), which may
+            // not be the default for new documents: the status line says which.
+            if (!recovering && kindOf(path) == Kind::Import && od->document && self->session_) {
+                const bool metric = od->document->state()->settings.units == UnitSystem::Metric;
+                self->session_->noteInStatus(od->id, metric ? tr("millimetres, the unit %1 declares").arg(name)
+                                                            : tr("inches, the unit %1 declares").arg(name));
+            }
             // The shell shows one document: the one this open replaces goes now that the new one is there.
             if (!replaceId.empty() && replaceId != od->id)
                 self->closeDocument(replaceId);

@@ -98,6 +98,10 @@ class SetupToolModel : public QObject {
     Q_PROPERTY(QVariantList markers READ markers NOTIFY markersChanged)
     Q_PROPERTY(QVariantList triadLabels READ triadLabels NOTIFY markersChanged)
     Q_PROPERTY(QObject* view READ view WRITE setView NOTIFY viewChanged)
+    // The WCS of the CAM tree's current setup (or of its current operation's setup) while the panel is closed in the
+    // CAM workspace: a small triad in the view and, in view coordinates, its work offset at the origin
+    // {text ("G54"), x, y}; empty while none is shown.
+    Q_PROPERTY(QVariantMap wcsLabel READ wcsLabel NOTIFY markersChanged)
 
 public:
     SetupToolModel(SceneController* scene, SelectionModel* selection, Session* session, AppContext* context,
@@ -132,6 +136,10 @@ public:
     QVariantList triadLabels() const;
     QObject* view() const;
     void setView(QObject* view);
+    QVariantMap wcsLabel() const;
+    // The setup whose WCS is shown while the panel is closed (none: nothing). SetupTreeModel calls it as its current
+    // row or the document changes; the frame is resolved on a worker.
+    void showWcsOf(std::optional<SetupId> setup);
 
     // ---- QML ----
     Q_INVOKABLE bool start();
@@ -158,6 +166,9 @@ public:
     int resolvesCancelled() const { return resolvesCancelled_; }
     const std::optional<api::cam_setup::Preview>& lastPreview() const { return preview_; }
     const LineOverlay& triadLines() const { return *lines_; }
+    const LineOverlay& wcsLines() const { return *wcsLines_; }
+    // The shown WCS's frame (nullopt while none is shown).
+    const std::optional<api::cam_setup::Preview>& shownWcs() const { return wcsShown_; }
     // The arguments OK would run now, or why it cannot.
     camui::ArgsResult arguments() const;
 
@@ -192,6 +203,8 @@ private:
     void showPreview(const api::cam_setup::Preview& preview);
     void clearPreview();
     void drawTriad(const api::cam_setup::Preview& preview);
+    void keepInView(const api::cam_setup::Preview& preview);
+    void updateWcs();
     std::optional<QPointF> toView(Vec3 world) const;
     QString exprOf(const QString& text) const;
     QString bodyName(const QString& id) const;
@@ -206,6 +219,15 @@ private:
     QPointer<ViewportItem> view_;
     QList<QMetaObject::Connection> viewConnections_;
     std::unique_ptr<LineOverlay> lines_;
+    // The current setup's WCS while the panel is closed (showWcsOf).
+    std::unique_ptr<LineOverlay> wcsLines_;
+    std::optional<SetupId> wcsSetup_;
+    doc::DocStatePtr wcsState_;
+    doc::BuildResultPtr wcsBuild_;
+    std::optional<api::cam_setup::Preview> wcsShown_;
+    int wcsOffset_ = 1;
+    std::uint64_t wcsSerial_ = 0;
+    JobHandle<std::shared_ptr<const api::cam_setup::Preview>> wcsJob_;
 
     // The document observed.
     std::string docId_;

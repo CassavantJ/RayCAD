@@ -35,6 +35,7 @@
 #include "operation_logic.h"
 
 #include <ray/api.h>
+#include <ray/render.h>
 #include <ray_api/cam_operation.h>
 
 #include <QtCore/QJsonObject>
@@ -104,6 +105,11 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(QString geometryPrompt READ geometryPrompt NOTIFY typeChanged)
     Q_PROPERTY(QVariantList picks READ picks NOTIFY picksChanged)
     Q_PROPERTY(bool picking READ picking NOTIFY picksChanged)
+    // How many are picked, in words for the panel's fixed header ("3 holes", "No faces picked"); "" when the type
+    // picks nothing. Every pick is highlighted in the view (SelectionModel::setToolHighlight: a hole by all its faces);
+    // hoveredPick (the list row under the pointer, -1 none) is drawn with the hover highlight on top.
+    Q_PROPERTY(QString pickCountText READ pickCountText NOTIFY picksChanged)
+    Q_PROPERTY(int hoveredPick READ hoveredPick WRITE setHoveredPick NOTIFY picksChanged)
     // Feeds: the materials [{id, name}], the one used, where it comes from ("setup", "document", "chosen", "").
     Q_PROPERTY(QVariantList materials READ materials NOTIFY optionsChanged)
     Q_PROPERTY(QString materialId READ materialId NOTIFY feedsChanged)
@@ -163,6 +169,9 @@ public:
     QString geometryPrompt() const;
     QVariantList picks() const;
     bool picking() const { return picking_; }
+    QString pickCountText() const;
+    int hoveredPick() const { return hoveredPick_; }
+    void setHoveredPick(int index);
     QVariantList materials() const;
     QString materialId() const { return materialId_; }
     QString materialSource() const { return materialSource_; }
@@ -211,6 +220,9 @@ public:
     std::shared_ptr<const sim::Backplot> previewBackplot() const { return previewBackplot_; }
     std::size_t holeCount() const { return holes_.size(); }
     const std::vector<api::cam_operation::Hole>& holes() const { return holes_; }
+    // The view's highlight of pick `index`: its faces (a hole's every face) or its edge; empty when it does not
+    // resolve or its body is not shown.
+    std::vector<render::PickHit> pickHits(int index) const;
     // The arguments OK would run now, or why it cannot (the field it is about in *field).
     std::optional<QJsonObject> arguments(QString* error, QString* field) const;
 
@@ -232,7 +244,9 @@ private:
         QString body;    // body id
         std::uint32_t element = 0;
         QString text;
+        bool resolved = true; // false: a stored reference that does not resolve (element means nothing)
     };
+    void updatePickHighlight();
     api::IApp* app() const;
     doc::Document* liveDoc() const;
     void subscribe();
@@ -311,6 +325,7 @@ private:
     QVariantList holderList_;
     bool showAllTools_ = false;
     std::vector<Pick> picks_;
+    int hoveredPick_ = -1;
     bool picking_ = false;
     std::uint8_t savedFilter_ = 0;
     bool filterSaved_ = false;

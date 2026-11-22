@@ -132,6 +132,12 @@ FormField parseProperty(const QString& key, const QJsonValue& value)
                     f.enumTitles[i] = titles[i].toString();
             }
         }
+        // x-enumDescriptions: a detail line per value (a list of another length is ignored, as titles are).
+        const QJsonArray descriptions = p.value(QStringLiteral("x-enumDescriptions")).toArray();
+        if (descriptions.size() == f.enumValues.size()) {
+            for (const QJsonValue& d : descriptions)
+                f.enumDescriptions << (d.isString() ? d.toString() : QString());
+        }
         return f;
     }
     if (!type.isString()) {
@@ -646,7 +652,8 @@ QVariantList SchemaFormModel::choicesOf(const QString& key) const
     if (const FormField* f = field(key)) {
         for (qsizetype i = 0; i < f->enumValues.size(); ++i)
             choices.push_back(QVariantMap{{QStringLiteral("value"), f->enumValues[i]},
-                                          {QStringLiteral("text"), f->enumTitles.value(i, f->enumValues[i])}});
+                                          {QStringLiteral("text"), f->enumTitles.value(i, f->enumValues[i])},
+                                          {QStringLiteral("description"), f->enumDescriptions.value(i)}});
     }
     return choices;
 }
