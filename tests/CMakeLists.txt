@@ -81,6 +81,16 @@ foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_star
     target_link_libraries(${_target} PRIVATE ray_ui_test_screen)
 endforeach()
 
+# ---------- The real mouse pointer ----------
+# The same tests ignore the system pointer over their windows: they drive them with Qt's own event injection, and a
+# pointer resting on a test window must not change what it does (ui/real_pointer_listener.cpp says why).
+# Compiles to nothing off Windows.
+foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
+                         ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
+                         ray_ui_sketch_tests ray_ui_model_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/real_pointer_listener.cpp")
+endforeach()
+
 # ---------- Sanitizer run options for every test ----------
 # Adds `options` to the environment variable `var` (ASAN_OPTIONS, ...) of every test under `dir`. A test that sets
 # the variable itself (a suppression file) keeps its options; these are added to them.
