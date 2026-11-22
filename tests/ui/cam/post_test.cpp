@@ -40,6 +40,7 @@
 #include <ray/sim.h>
 #include <ray_api/cam_operation.h>
 #include <ray_api/cam_setup.h>
+#include <ray_api/cam_tools.h>
 
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
@@ -451,8 +452,7 @@ void addDrill(const Window& w, std::uint64_t n, std::size_t holes, double rpm = 
         QStringLiteral("library"),
         QJsonObject{
             {QStringLiteral("tools"),
-             QJsonArray{
-                 QJsonDocument::fromJson(QByteArray::fromStdString(api::cam_operation::toolJson(*t))).object()}}});
+             QJsonArray{QJsonDocument::fromJson(QByteArray::fromStdString(api::cam_tools::toolJson(*t))).object()}}});
     (void)w.invokeResult("cam.operation.add", jsonText(args));
 }
 

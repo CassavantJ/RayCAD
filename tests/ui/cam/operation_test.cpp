@@ -469,7 +469,7 @@ std::string libraryTool(const Window& w, const QString& id)
 {
     const lib::Tool* t = w.host->app()->libraries()->tool(ToolId{Uuid::fromString(id.toStdString())});
     REQUIRE(t != nullptr);
-    return api::cam_operation::toolJson(*t);
+    return api::cam_tools::toolJson(*t);
 }
 
 // A setup on body 0 through the API: machine 1 of the engine tests and 6061-T6 as its stock material.

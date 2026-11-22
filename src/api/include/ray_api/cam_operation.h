@@ -42,13 +42,9 @@ Result<doc::Command> completeCommand(IApp& app, const doc::DocState& state, cons
 Result<double> evaluate(const doc::DocState& state, std::string_view expression, doc::Parameter::Kind kind);
 
 // ---------- Library items ----------
-// The JSON of an item as a cam.* command's "library" member takes it (the library's file format, lib::toJson).
-std::string toolJson(const lib::Tool& tool);
-std::string holderJson(const lib::Holder& holder);
+// The JSON of a material as a cam.* command's "library" member takes it (the library's file format, lib::toJson).
+// Tools and holders, and the tool type names: ray_api/cam_tools.h.
 std::string materialJson(const lib::Material& material);
-// The tool type as the library files spell it ("flatEndMill", "spotDrill", "drill", "tap", ...) and back.
-std::string toolTypeName(lib::ToolType type);
-std::optional<lib::ToolType> toolTypeFromName(std::string_view name);
 
 // ---------- Feeds and speeds ----------
 // cam::computeFeeds for an operation of type `opType` (pure; no document involved). `opClass` "" lets it choose.

@@ -31,21 +31,6 @@ const cam::Setup* findSetup(const cam::CamState& cam, const SetupId& id)
     return it == cam.setups.end() ? nullptr : &*it;
 }
 
-constexpr std::pair<lib::ToolType, const char*> kToolTypes[] = {
-    {lib::ToolType::FlatEndMill, "flatEndMill"},
-    {lib::ToolType::BallEndMill, "ballEndMill"},
-    {lib::ToolType::BullEndMill, "bullEndMill"},
-    {lib::ToolType::ChamferMill, "chamferMill"},
-    {lib::ToolType::FaceMill, "faceMill"},
-    {lib::ToolType::SpotDrill, "spotDrill"},
-    {lib::ToolType::Drill, "drill"},
-    {lib::ToolType::Tap, "tap"},
-    {lib::ToolType::Reamer, "reamer"},
-    {lib::ToolType::BoringBar, "boringBar"},
-    {lib::ToolType::ThreadMill, "threadMill"},
-    {lib::ToolType::EngraveCutter, "engraveCutter"},
-};
-
 // The setup's frame and its snapshot, for the hole and backplot helpers.
 struct SetupFrame {
     cam::CamSnapshot snap;
@@ -131,39 +116,9 @@ Result<double> evaluate(const doc::DocState& state, std::string_view expression,
     }
 }
 
-std::string toolJson(const lib::Tool& tool)
-{
-    return lib::toJson(tool);
-}
-
-std::string holderJson(const lib::Holder& holder)
-{
-    return lib::toJson(holder);
-}
-
 std::string materialJson(const lib::Material& material)
 {
     return lib::toJson(material);
-}
-
-std::string toolTypeName(lib::ToolType type)
-{
-    for (const auto& [t, name] : kToolTypes) {
-        if (t == type) {
-            return name;
-        }
-    }
-    return {};
-}
-
-std::optional<lib::ToolType> toolTypeFromName(std::string_view name)
-{
-    for (const auto& [t, n] : kToolTypes) {
-        if (name == n) {
-            return t;
-        }
-    }
-    return std::nullopt;
 }
 
 Result<cam::FeedsResult> computeFeeds(const FeedsRequest& r)

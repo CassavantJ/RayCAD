@@ -6,6 +6,7 @@
 #include "cam/operation_logic.h"
 
 #include <ray_api/cam_operation.h>
+#include <ray_api/cam_tools.h>
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -147,7 +148,7 @@ TEST_CASE("the form of every registered operation type, from its schema alone", 
         for (const QString& c : cuttingUsed(schema))
             CHECK(cuttingKeys().contains(c));
         for (const QString& tool : toolTypesFor(schema, params))
-            CHECK(api::cam_operation::toolTypeFromName(tool.toStdString()).has_value());
+            CHECK(api::cam_tools::toolTypeFromName(tool.toStdString()).has_value());
     }
     CHECK(drill);
 }
