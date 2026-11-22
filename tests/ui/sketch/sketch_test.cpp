@@ -16,6 +16,7 @@
 // Screenshots: with RAY_T092_SHOTS set to a folder, the window is saved there.
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -490,18 +491,9 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
     const Vec2 start = *w.sketch()->displayView().point(end);
     const Vec2 target{start.x - 20, start.y + 30};
 
-    QElapsedTimer clock;
-    qint64 last = 0, worst = 0;
-    QTimer tick;
-    tick.setTimerType(Qt::PreciseTimer);
-    tick.setInterval(2);
-    QObject::connect(&tick, &QTimer::timeout, [&] {
-        const qint64 now = clock.elapsed();
-        worst = std::max(worst, now - last);
-        last = now;
-    });
-    clock.start();
-    tick.start();
+    // Watchdog (ui_watchdog.h): the worst time the UI thread was busy or blocked between two of its 2 ms ticks.
+    ray::test::UiWatchdog dog;
+    dog.start();
 
     w.moveTo(start);
     w.sendMouse(QEvent::MouseButtonPress, w.scenePoint(start), Qt::LeftButton, Qt::LeftButton);
@@ -513,26 +505,25 @@ TEST_CASE("dragging a point of a 200-curve sketch: the model follows, the UI thr
         // The pointer positions are fixed in the window before the drag changes the view's content.
         at = w.scenePoint(p);
         w.sendMouse(QEvent::MouseMove, at, Qt::LeftButton, Qt::LeftButton);
-        QTest::qWait(16);
+        ray::test::waitMs(16); // without sleeping the UI thread (ui_watchdog.h)
     }
     CHECK(w.sketch()->dragging());
     // The drag itself ends at the release; what follows is the commit (the drag's end on the worker, then sketch.set:
     // the document command, its journal record and the rebuild scheduling), reported separately.
-    const qint64 worstDrag = worst;
-    worst = 0;
+    const ray::test::UiWatchdog::Gap drag = dog.worst();
+    const ray::test::UiWatchdog::Gap dragWall = dog.worstWall();
+    dog.reset();
     w.sendMouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
-    REQUIRE(QTest::qWaitFor([&] { return !w.sketch()->dragging(); }, 30000));
-    REQUIRE(w.settled());
-    tick.stop();
-    const qint64 worstCommit = worst;
-    worst = worstDrag;
-    INFO("worst UI-thread gap " << worst << " ms; drag steps solved " << w.sketch()->dragSteps() << ", slowest "
-                                << w.sketch()->slowestDragStepMs() << " ms");
-    WARN("UI-thread watchdog while dragging a 200-curve sketch: worst gap "
-         << worst << " ms, " << w.sketch()->dragSteps() << " steps, slowest step " << w.sketch()->slowestDragStepMs()
-         << " ms");
-    WARN("the commit after the drag: worst UI-thread gap " << worstCommit << " ms");
-    CHECK(worst < ray::test::uiBudgetMs(50));
+    REQUIRE(ray::test::waitFor([&] { return !w.sketch()->dragging(); }, 30000));
+    REQUIRE(ray::test::waitFor(
+        [&] { return w.sketch()->inFlight() == 0 && !w.sketch()->solving() && !w.sketch()->dragging(); }, 20000));
+    dog.stop();
+    INFO("drag steps solved " << w.sketch()->dragSteps() << ", slowest " << w.sketch()->slowestDragStepMs() << " ms");
+    WARN("UI-thread watchdog while dragging a 200-curve sketch: worst "
+         << drag.describe() << "; longest gap " << dragWall.describe() << "; " << w.sketch()->dragSteps()
+         << " steps, slowest step " << w.sketch()->slowestDragStepMs() << " ms");
+    WARN("the commit after the drag: worst " << dog.worst().describe());
+    CHECK(drag.stallMs() < ray::test::uiBudgetMs(50));
     CHECK(w.sketch()->dragSteps() > 0);
 
     // The document has the dragged geometry (one undo step).

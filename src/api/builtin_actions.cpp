@@ -255,6 +255,8 @@ std::string commandSchema(std::string_view commandSchemaJson)
 // The arguments of a command checked against the snapshot it is applied to, and possibly completed (empty: as given).
 using ArgsCheck = std::function<Result<doc::Command>(const doc::DocState&, const doc::Command&)>;
 
+} // namespace
+
 // cam.operation.add and cam.operation.edit: "params" checked against the operation type's schema
 // (IOperationType::paramsSchemaJson; the document has no operation registry, so its commands cannot), with the
 // schema's top-level defaults filled in for params left out, so the document stores them. The type is "type", else (an
@@ -326,6 +328,8 @@ Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, c
     args->set("params", std::move(params));
     return doc::Command{command.name, json::canonical(*args), command.label};
 }
+
+namespace {
 
 Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const doc::Command& given, JobContext& ctx,
                                 const ArgsCheck& check = {})

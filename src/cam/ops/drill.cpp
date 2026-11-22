@@ -69,6 +69,17 @@ public:
         return {};
     }
 
+    // T-045: the plan's warnings too (the same plan as validate and generate), for the operation panel.
+    Result<std::vector<std::string>> check(const GenerateInput& in) const override
+    {
+        JobContext ctx;
+        auto plan = planDrill(in, ctx);
+        if (!plan) {
+            return tl::unexpected(plan.error());
+        }
+        return std::move(plan->warnings);
+    }
+
     Result<Toolpath> generate(const GenerateInput& in, JobContext& ctx) const override
     {
         auto plan = planDrill(in, ctx);

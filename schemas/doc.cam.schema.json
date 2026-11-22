@@ -52,6 +52,7 @@
             }
           },
           "machine": { "type": ["string", "null"], "description": "Embedded machine id, or null for none yet." },
+          "material": { "type": "string", "description": "Embedded material id of the stock (T-045): what the feeds of the setup's operations are calculated for. Written only when set; absent: none. Not in any input hash." },
           "post": { "type": "string", "description": "Post script file stem, e.g. haas-ngc." },
           "programNumber": { "type": "integer", "minimum": 0 },
           "programComment": { "type": "string" },
@@ -106,7 +107,24 @@
           "geometry": { "type": "array", "items": { "type": "object", "required": ["body", "kind", "names"] }, "description": "TopoRefs (naming.h) of what the operation machines." },
           "params": { "type": "object", "description": "Type-specific; described by the operation type's own schema (IOperationType::paramsSchemaJson)." },
           "template": { "type": "string", "description": "Shop template or rule that made it; empty when made by hand." },
-          "suppressed": { "type": "boolean" }
+          "suppressed": { "type": "boolean" },
+          "calculatedFeeds": {
+            "type": "object",
+            "description": "What 'Use calculated' (computeFeeds) last wrote into the cutting data (T-045), so the operation panel tells calculated values from typed ones. Written only when set; not in the input hash.",
+            "required": ["tool", "material", "machine", "opClass", "rpm", "feedCut", "feedPlunge", "feedRamp"],
+            "properties": {
+              "tool": { "type": "string" },
+              "material": { "type": ["string", "null"] },
+              "machine": { "type": ["string", "null"] },
+              "opClass": { "type": "string", "description": "The preset asked for; empty: chosen by computeFeeds." },
+              "surfaceSpeed": { "type": ["number", "null"], "description": "Override given, m/min; null: the preset's." },
+              "chipLoad": { "type": ["number", "null"], "description": "Override given, mm per flute; null: the preset's." },
+              "rpm": { "type": "number", "minimum": 0 },
+              "feedCut": { "type": "number", "minimum": 0, "description": "mm/min" },
+              "feedPlunge": { "type": "number", "minimum": 0 },
+              "feedRamp": { "type": "number", "minimum": 0 }
+            }
+          }
         }
       }
     }

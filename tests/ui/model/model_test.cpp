@@ -17,6 +17,7 @@
 // Screenshots: with RAY_T098_SHOTS set to a folder, the window is saved there (every tool's panel, the finished part).
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -63,6 +64,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -602,27 +604,20 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
     // The preview never commits, and never stalls the UI thread while the values change.
     {
         const std::size_t undoBefore = w.document()->undoCount();
-        QElapsedTimer clock;
-        qint64 last = 0, worst = 0;
-        QTimer tick;
-        tick.setTimerType(Qt::PreciseTimer);
-        tick.setInterval(2);
-        QObject::connect(&tick, &QTimer::timeout, [&] {
-            const qint64 now = clock.elapsed();
-            worst = std::max(worst, now - last);
-            last = now;
-        });
-        clock.start();
-        tick.start();
+        ray::test::UiWatchdog dog; // ui_watchdog.h
+        dog.start();
         for (const char* d : {"11 mm", "11.5 mm", "13 mm", "12 mm"}) {
             w.typeInto(QStringLiteral("distance"), QString::fromLatin1(d));
-            QTest::qWait(60);
+            ray::test::waitMs(60);
         }
+        // As w.previewed(), without sleeping the UI thread between passes of the event loop.
+        CHECK(ray::test::waitFor([&] { return !w.tool()->previewBusy(); }, kTimeoutMs));
+        dog.stop();
         w.previewed();
-        tick.stop();
-        WARN("UI-thread watchdog while the extrude preview rebuilt the part: worst gap "
-             << worst << " ms, " << w.tool()->previewBuilds() << " preview builds");
-        CHECK(worst < ray::test::uiBudgetMs(50));
+        WARN("UI-thread watchdog while the extrude preview rebuilt the part: worst "
+             << dog.worst().describe() << "; longest gap " << dog.worstWall().describe() << "; "
+             << w.tool()->previewBuilds() << " preview builds");
+        CHECK(dog.worstStallMs() < ray::test::uiBudgetMs(50));
         CHECK(w.document()->undoCount() == undoBefore);
         CHECK(w.stateHash() == finished);
     }
@@ -971,20 +966,60 @@ TEST_CASE("fillet edges are picked and unpicked in the view while the preview is
         QQuickItem* ok = w.find(QStringLiteral("featureOk"));
         REQUIRE(ok != nullptr);
         CHECK(ok->isEnabled());
-        // OK stays where it is while a preview builds (the status line comes and goes below it).
+        // OK stays where it is while the values are typed and their previews build: the status line and the
+        // message about the values come and go below it. Typed a key at a time, every value on the way previewed:
+        // the half-typed "2.5 m" is 2.5 metres, a radius far too large, so a message comes and goes as well.
         w.grab();
         const QPointF centre(ok->width() / 2, ok->height() / 2);
         const QPointF before = ok->mapToScene(centre);
-        w.typeInto(QStringLiteral("radius"), QStringLiteral("2.5 mm"));
-        CHECK(w.tool()->previewBusy()); // scheduled: busy from the change on
-        REQUIRE(QTest::qWaitFor(
-            [&] { return w.tool()->previewStatus() == QStringLiteral("building") || !w.tool()->previewBusy(); },
-            kTimeoutMs));
-        w.grab();
-        CHECK(ok->mapToScene(centre) == before);
+        // What the panel shows, for a failure.
+        const auto layout = [&] {
+            std::ostringstream out;
+            out << "OK at " << ok->mapToScene(centre).x() << "," << ok->mapToScene(centre).y() << " (before "
+                << before.x() << "," << before.y() << "), status '" << w.tool()->previewStatus().toStdString()
+                << "', message '" << w.tool()->message().toStdString() << "' (field '"
+                << w.tool()->messageField().toStdString() << "'); the panel's rows:";
+            for (QQuickItem* row : ok->parentItem()->parentItem()->childItems()) {
+                if (row->isVisible())
+                    out << "\n  " << row->objectName().toStdString() << " (" << row->metaObject()->className()
+                        << ") at " << row->y() << ", " << row->height() << " high";
+            }
+            return out.str();
+        };
+        QQuickItem* field = w.find(QStringLiteral("featureInput.radius"));
+        REQUIRE(field != nullptr);
+        field->forceActiveFocus();
+        QMetaObject::invokeMethod(field, "selectAll");
+        bool messageShown = false;
+        for (const QChar c : QStringLiteral("2.5 mm")) {
+            QTest::keyClick(w.window(), c.toLatin1());
+            INFO("typed '" << c.toLatin1() << "', the field says '" << field->property("text").toString().toStdString()
+                           << "'");
+            REQUIRE(QTest::qWaitFor(
+                [&] { return w.tool()->previewStatus() == QStringLiteral("building") || !w.tool()->previewBusy(); },
+                kTimeoutMs));
+            w.grab();
+            INFO("building: " << layout());
+            CHECK(ok->mapToScene(centre) == before);
+            REQUIRE(QTest::qWaitFor([&] { return !w.tool()->previewBusy(); }, kTimeoutMs));
+            w.grab();
+            INFO("built: " << layout());
+            CHECK(ok->mapToScene(centre) == before);
+            if (!w.tool()->message().isEmpty()) {
+                messageShown = true;
+                QQuickItem* message = w.find(QStringLiteral("featureMessage"));
+                REQUIRE(message != nullptr);
+                CHECK(message->isVisible());
+                CHECK(message->mapToScene(QPointF(0, 0)).y() > before.y()); // below OK
+                CHECK(field->property("invalid").toBool() == (w.tool()->messageField() == QStringLiteral("radius")));
+            }
+        }
+        CHECK(messageShown);
+        CHECK(w.tool()->previewStatus() == QStringLiteral("ok"));
         w.typeInto(QStringLiteral("radius"), QStringLiteral("2 mm"));
         w.previewed();
         w.grab();
+        INFO(layout());
         CHECK(ok->mapToScene(centre) == before);
     }
     w.commit();

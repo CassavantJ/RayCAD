@@ -7,6 +7,7 @@
 //   - the controls gallery at the current scale (QT_SCALE_FACTOR; CTest runs it at 1, 1.5 and 2): no control is
 //     smaller than its implicit size and no text is elided or clipped
 //   - no QML warnings anywhere
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -366,9 +367,8 @@ TEST_CASE("the shell is usable from the keyboard", "[keyboard][shell]")
 {
     Window w(options("dark"));
     QQuickWindow* window = w.window();
-    window->requestActivate();
-    // Keyboard events are sent to the window directly, so the test does not depend on the OS granting focus.
-    (void)QTest::qWaitForWindowActive(window, 2000);
+    // Keys go to Qt's focus window: taken whether or not the desktop grants it (window_focus.h).
+    REQUIRE(ray::test::focusWindow(window));
 
     // Tab walks through the top bar; every stop has an accessible name.
     QStringList stops;

@@ -41,6 +41,14 @@
 //  - operationInputHash covers the threads of the hole features named on the setup's part bodies, so a thread edit
 //    (which changes no geometry: the thread is not modelled) makes the operations on that body stale;
 //  - registerBuiltinOperationTypes: the operation types src/cam ships ("drill"), which the app registers.
+// Amended by T-045 (the operation panel; each also in docs/interfaces/cam.h):
+//  - Setup::material: the stock material the feeds are calculated for (none was stored anywhere a command can set);
+//    Operation::calculated: what "Use calculated" last wrote. Neither is read by a generator or in the input hash;
+//  - IOperationType::check: validate plus the warnings a generation would report, for live feedback (a default
+//    that calls validate, so existing types need no change);
+//  - OpState::progress; ICamEngine::subscribe (the engine says when a status it holds changed, so the UI need not
+//    poll), statusAsync (status on a worker, owned by the engine), validate (check on a worker) and preview (a
+//    toolpath of a snapshot that is not the document's, cached by input hash but never an operation's latest).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -85,6 +93,9 @@ struct Setup {
     StockDef stock;
     Wcs wcs;
     MachineId machine;
+    // Added by T-045: the stock material (an embedded one, CamState::materials), nil for none; the feeds and speeds
+    // of the setup's operations are calculated for it (computeFeeds). Not read by generators, not in the input hash.
+    MaterialId material;
     std::string postId;                        // post script file stem, e.g. "haas-ngc"
     int programNumber = 1001;
     std::string programComment;
@@ -108,6 +119,18 @@ struct Heights {               // all relative to the WCS Z of the referenced le
     double top = 0, bottom = 0;    // machining range; may be driven by geometry references
 };
 
+// Added by T-045: what "Use calculated" (computeFeeds) last wrote into an operation's cutting data, so the operation
+// panel tells calculated values from the user's own and offers (never forces) an update when the tool or material
+// changes. A record only: no generator reads it, it is not in the input hash. Feeds in mm/min.
+struct CalculatedFeeds {
+    ToolId tool;                                        // calculated for this tool,
+    MaterialId material;                                // this material (nil: none known)
+    MachineId machine;                                  // and this machine (nil: none known)
+    std::string opClass;                                // the preset asked for; "" = chosen by computeFeeds
+    std::optional<double> surfaceSpeedMMin, chipLoadMm; // the overrides given, if any
+    double spindleRpm = 0, feedCut = 0, feedPlunge = 0, feedRamp = 0;   // the values written
+};
+
 struct Operation {
     OperationId id;
     std::string type;          // "face","contour2d","pocket2d","adaptive2d","slot","chamfer2d","engrave",
@@ -120,6 +143,7 @@ struct Operation {
     std::string paramsJson;                    // type-specific, canonical JSON; schema from IOperationType
     std::string templateId;                    // shop template or rule that created it, empty if manual
     bool suppressed = false;
+    std::optional<CalculatedFeeds> calculated; // T-045: set by "Use calculated"; empty when the values are typed
     std::string extraJson;                     // unknown keys, kept and written back (document.h)
 };
 
@@ -333,6 +357,14 @@ public:
     virtual Status validate(const GenerateInput&) const = 0;    // cheap; runs on every edit
     // Pure function of GenerateInput. Runs on a worker. Must not read tier, thread count, clock or locale.
     virtual Result<Toolpath> generate(const GenerateInput&, JobContext&) const = 0;
+    // Added by T-045: validate's error, or the warnings generate would put in Toolpath::warnings (in that order), for
+    // the operation panel's live feedback. Runs on a worker (ICamEngine::validate). The default is validate() with no
+    // warnings; a type whose warnings come from a plan it makes anyway (drill) returns them here.
+    virtual Result<std::vector<std::string>> check(const GenerateInput& in) const
+    {
+        if (auto st = validate(in); !st) return tl::unexpected(st.error());
+        return std::vector<std::string>{};
+    }
 };
 // Filled once at start-up, then shared read-only (the engine reads it from workers without a lock).
 class OperationRegistry {
@@ -350,11 +382,40 @@ void registerBuiltinOperationTypes(OperationRegistry&);
 
 // ---------- Staleness / associativity ----------
 enum class OpStatus { UpToDate, Stale, Generating, Failed, ReferenceBroken, Suppressed };
-struct OpState { OpStatus status = OpStatus::Stale; std::string message; std::shared_ptr<const Toolpath> toolpath; };
+// progress (T-045): 0..1 while Generating once the generator reported any, else -1.
+struct OpState { OpStatus status = OpStatus::Stale; std::string message; std::shared_ptr<const Toolpath> toolpath; double progress = -1; };
+// T-045: what ICamEngine::validate found. `error`: validate's error, or why the operation cannot be generated at all
+// (suppressed, a broken reference, an unknown type: `status` says which); empty when it would generate. `warnings`:
+// those a generation would report (IOperationType::check). `status`: UpToDate when a toolpath of these exact inputs
+// is cached, Stale when it is valid and not generated, else as OpState.
+struct OpValidation { OpStatus status = OpStatus::Stale; std::optional<Error> error; std::vector<std::string> warnings; };
 
 class ICamEngine {
 public:
     virtual ~ICamEngine() = default;
+    // ---- Added by T-045 (the operation panel and the CAM tree) ----
+    // Notification: `listener(op)` is called on the UI thread (posted through the job system's dispatcher, never
+    // inside an engine call) whenever something the engine holds about `op` changed: a generation started, reported
+    // progress (at most 30 times a second) or ended (filed, failed or cancelled), or a preview toolpath was filed in
+    // the cache. Document changes are not notified (the caller sees those itself). 0 for an empty listener. A listener
+    // may call the engine. The defaults do nothing.
+    using Listener = std::function<void(const OperationId&)>;
+    virtual int subscribe(Listener) { return 0; }
+    virtual void unsubscribe(int) {}
+    // status() on a worker: the job holds what it needs (never a pointer to the engine), so it may outlive the engine
+    // (it then reports what the engine held). The result arrives through then() on the UI thread. An engine without it
+    // returns an empty handle.
+    virtual JobHandle<std::map<OperationId, OpState>> statusAsync(doc::DocStatePtr, doc::BuildResultPtr) { return {}; }
+    // IOperationType::check of operation `op` of the snapshot, on a worker (setup resolution included): live feedback
+    // for an edit that is not committed (Document::previewState). Changes nothing the engine holds. Empty by default.
+    virtual JobHandle<OpValidation> validate(doc::DocStatePtr, doc::BuildResultPtr, OperationId) { return {}; }
+    // The toolpath of `op` in a snapshot that is not the document's own (a panel's preview): input hash, resolution and
+    // generation all on a worker; found in the cache by input hash, or generated and filed there (so the committed
+    // operation with the same inputs is UpToDate at once), but never made the operation's latest toolpath nor its
+    // running generation, so the tree's view of the document is untouched. Cancel through the handle; each call is a
+    // job of its own. Failures are not remembered. Empty by default.
+    virtual JobHandle<std::shared_ptr<const Toolpath>> preview(doc::DocStatePtr, doc::BuildResultPtr, OperationId) { return {}; }
+    // ---- T-032 ----
     // Computes the input hash of every operation against the given build; anything whose hash differs
     // from its stored toolpath becomes Stale. A Stale or ReferenceBroken operation can NOT be posted.
     virtual std::map<OperationId, OpState> status(doc::DocStatePtr, doc::BuildResultPtr) const = 0;
@@ -492,7 +553,9 @@ struct CamEngineOptions {
 // generate() for an operation already generating with the same inputs returns that job; with other inputs it
 // cancels it. Failures are remembered by input hash (Failed until the inputs change); a cancelled run leaves the
 // operation Stale. `jobs`, and the dispatcher it posts to, must outlive the engine; continuations that run after the
-// engine is gone do nothing.
+// engine is gone do nothing. T-045: a running generation's status carries its progress (OpState::progress); the
+// listeners (ICamEngine::subscribe) are called as that section says; statusAsync, validate and preview run wholly on
+// workers of `jobs`.
 std::unique_ptr<ICamEngine> makeCamEngine(IJobSystem& jobs, std::shared_ptr<const OperationRegistry> types,
                                           CamSnapshotFn snapshot, CamEngineOptions options = {});
 

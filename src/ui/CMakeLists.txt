@@ -41,6 +41,8 @@ add_library(ray_ui STATIC
     model/preview.cpp
     cam/setup_logic.h # T-044
     cam/setup_logic.cpp
+    cam/operation_logic.h # T-045
+    cam/operation_logic.cpp
     cam/tools_logic.h # T-046
     cam/tools_logic.cpp)
 ray_module(ray_ui)
@@ -119,6 +121,8 @@ set(RAY_UI_QML_FILES
     qml/model/ParameterTable.qml
     qml/cam/SetupPanel.qml
     qml/cam/CamTree.qml
+    qml/cam/SchemaForm.qml
+    qml/cam/OperationPanel.qml
     qml/cam/ToolLibrary.qml # T-046
     qml/cam/ToolProfile.qml
     qml/cam/ToolFields.qml
@@ -177,6 +181,12 @@ qt_add_qml_module(ray_ui
         cam/setup_tool.cpp
         cam/setup_tree.h
         cam/setup_tree.cpp
+        cam/operation_form.h
+        cam/operation_form.cpp
+        cam/operation_tool.h
+        cam/operation_tool.cpp
+        cam/operation_view.h
+        cam/operation_view.cpp
         cam/tools_model.h # T-046
         cam/tools_model.cpp
     QML_FILES ${RAY_UI_QML_FILES}

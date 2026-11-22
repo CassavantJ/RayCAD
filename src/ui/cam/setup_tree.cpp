@@ -25,9 +25,9 @@ namespace {
 // T-044: the CAM tree's commands, on its current row. Their keys work in the CAM workspace only.
 // clang-format off
 constexpr UiCommand kCamTreeCommands[] = {
-    {"cam.tree.edit", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Edit Setup"),
+    {"cam.tree.edit", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Edit Setup or Operation"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "CAM"),
-     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the setup selected in the CAM tree in the setup panel"), "", CommandContext::Cam, "cam.setup.edit"},
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Opens the setup or operation selected in the CAM tree in its panel"), "", CommandContext::Cam, "cam.setup.edit cam.operation.edit"},
     {"cam.tree.rename", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Rename"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "CAM"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Renames the setup or operation selected in the CAM tree"), "", CommandContext::Cam, ""},
@@ -74,9 +74,11 @@ SetupTreeModel::SetupTreeModel(SceneController* scene, Session* session, AppCont
     refreshTimer_.setSingleShot(true);
     refreshTimer_.setInterval(0);
     connect(&refreshTimer_, &QTimer::timeout, this, [this] { refresh(); });
-    generatingPoll_.setSingleShot(true);
-    generatingPoll_.setInterval(250);
-    connect(&generatingPoll_, &QTimer::timeout, this, [this] { refresh(); });
+    // T-045: the engine's notices (a generation's progress comes at up to 30 Hz) make one status run per kNoticeMs.
+    constexpr int kNoticeMs = 100;
+    noticeTimer_.setSingleShot(true);
+    noticeTimer_.setInterval(kNoticeMs);
+    connect(&noticeTimer_, &QTimer::timeout, this, [this] { refresh(); });
     if (session_) {
         connect(session_, &Session::documentChanged, this, [this] {
             if (!session_)
@@ -94,7 +96,29 @@ SetupTreeModel::~SetupTreeModel()
     if (commands_)
         commands_->setUiHandler(QStringLiteral("cam.tree."), {});
     statusJob_.cancel();
+    setupJob_.cancel();
     unsubscribe();
+    if (engineListener_ != 0 && app() != nullptr && app()->cam() == engine_)
+        engine_->unsubscribe(engineListener_);
+}
+
+void SetupTreeModel::subscribeEngine()
+{
+    cam::ICamEngine* engine = app() ? app()->cam() : nullptr;
+    if (engine == engine_)
+        return;
+    engine_ = engine;
+    engineListener_ = 0;
+    if (engine_ == nullptr)
+        return;
+    QPointer<SetupTreeModel> self(this);
+    engineListener_ = engine_->subscribe([self](const OperationId&) {
+        if (!self)
+            return;
+        ++self->notices_;
+        if (!self->noticeTimer_.isActive())
+            self->noticeTimer_.start();
+    });
 }
 
 SetupTreeModel* SetupTreeModel::create(QQmlEngine* qml, QJSEngine*)
@@ -178,8 +202,10 @@ void SetupTreeModel::unsubscribe()
     ++statusSerial_;
     statusJob_.cancel();
     statusJob_ = {};
+    setupJob_.cancel();
+    setupJob_ = {};
     statuses_ = {};
-    generatingPoll_.stop();
+    noticeTimer_.stop();
     generating_.clear();
     progress_.clear();
 }
@@ -249,6 +275,12 @@ void SetupTreeModel::sync()
         current_ = -1;
         emit currentChanged();
     }
+    if (!pendingSelect_.isEmpty()) {
+        if (const int row = rowOf(pendingSelect_); row >= 0) {
+            pendingSelect_.clear();
+            setCurrentIndex(row);
+        }
+    }
     emit changed();
     scheduleRefresh();
 }
@@ -273,45 +305,80 @@ void SetupTreeModel::refresh()
         statuses_ = {};
         return;
     }
-    // The run before is superseded.
+    subscribeEngine();
+    // The runs before are superseded. The operations' statuses are the engine's own job (statusAsync: it holds
+    // what it needs, not the engine); the setups' resolution is a job here (it reads the snapshot only).
     statusJob_.cancel();
+    setupJob_.cancel();
+    noticeTimer_.stop();
     const std::uint64_t serial = ++statusSerial_;
-    statusJob_ = jobs->submit<std::shared_ptr<const Statuses>>(
-        JobInfo{"CAM status", JobPriority::Interactive, false},
-        [engine, state, build](JobContext& ctx) -> Result<std::shared_ptr<const Statuses>> {
+    statusJob_ = engine->statusAsync(state, build);
+    setupJob_ = jobs->submit<std::shared_ptr<const std::map<SetupId, Status>>>(
+        JobInfo{"CAM setup status", JobPriority::Interactive, false},
+        [state, build](JobContext& ctx) -> Result<std::shared_ptr<const std::map<SetupId, Status>>> {
             if (auto ok = ctx.cancel.check(); !ok)
                 return tl::unexpected(ok.error());
-            auto out = std::make_shared<Statuses>();
-            out->ops = engine->status(state, build);
-            out->setups = api::cam_setup::setupStates(state, build, ctx);
+            auto out = std::make_shared<std::map<SetupId, Status>>(api::cam_setup::setupStates(state, build, ctx));
             if (auto ok = ctx.cancel.check(); !ok)
                 return tl::unexpected(ok.error());
-            return std::shared_ptr<const Statuses>(std::move(out));
+            return std::shared_ptr<const std::map<SetupId, Status>>(std::move(out));
         });
     QPointer<SetupTreeModel> self(this);
-    statusJob_.then([self, serial](Result<std::shared_ptr<const Statuses>> r) {
+    const auto shown = [self] {
+        if (!self->rows_.empty())
+            emit self->dataChanged(self->index(0), self->index(self->count() - 1));
+        ++self->revision_;
+        emit self->changed();
+    };
+    statusJob_.then([self, serial, shown](Result<std::map<OperationId, cam::OpState>> r) {
         if (!self || serial != self->statusSerial_)
             return;
         self->statusJob_ = {};
         if (!r)
             return;
-        self->statuses_ = **r;
+        self->statuses_.ops = std::move(*r);
         ++self->statusRuns_;
-        // A generation the tree did not start (the engine says Generating, and no job of ours) ends without notice:
-        // look again shortly, until it is over.
-        bool foreign = false;
-        for (const auto& [id, st] : self->statuses_.ops) {
-            if (st.status == cam::OpStatus::Generating && self->generating_.count(id) == 0)
-                foreign = true;
-        }
-        if (foreign)
-            self->generatingPoll_.start();
-        if (!self->rows_.empty())
-            emit self->dataChanged(self->index(0), self->index(self->count() - 1));
-        ++self->revision_;
-        emit self->changed();
+        shown();
+    });
+    setupJob_.then([self, serial, shown](Result<std::shared_ptr<const std::map<SetupId, Status>>> r) {
+        if (!self || serial != self->statusSerial_)
+            return;
+        self->setupJob_ = {};
+        if (!r)
+            return;
+        self->statuses_.setups = **r;
+        shown();
     });
     emit changed();
+}
+
+const cam::OpState* SetupTreeModel::opState(const OperationId& id) const
+{
+    const auto it = statuses_.ops.find(id);
+    return it == statuses_.ops.end() ? nullptr : &it->second;
+}
+
+std::optional<SetupId> SetupTreeModel::currentSetup() const
+{
+    const Row* r = rowAt(current_);
+    return r ? std::optional<SetupId>(r->setupId) : std::nullopt;
+}
+
+std::optional<OperationId> SetupTreeModel::currentOperation() const
+{
+    const Row* r = rowAt(current_);
+    return r && !r->setup ? std::optional<OperationId>(r->opId) : std::nullopt;
+}
+
+void SetupTreeModel::selectWhenListed(const QString& id)
+{
+    const int row = rowOf(id);
+    if (row >= 0) {
+        pendingSelect_.clear();
+        setCurrentIndex(row);
+        return;
+    }
+    pendingSelect_ = id;
 }
 
 std::optional<cam::OpStatus> SetupTreeModel::statusOf(const OperationId& id) const
@@ -358,9 +425,11 @@ QVariant SetupTreeModel::data(const QModelIndex& index, int role) const
         badge = camui::setupBadge(own == statuses_.setups.end() ? std::optional<Status>() : own->second, ops);
     } else if (const auto it = statuses_.ops.find(r->opId); it != statuses_.ops.end()) {
         badge = camui::Badge{it->second.status, qs(it->second.message)};
-        if (const auto p = progress_.find(r->opId);
-            p != progress_.end() && it->second.status == cam::OpStatus::Generating)
-            progress = p->second;
+        if (it->second.status == cam::OpStatus::Generating) {
+            // A generation the tree started reports through its job; any other's progress is in the status (T-045).
+            const auto p = progress_.find(r->opId);
+            progress = p != progress_.end() ? std::max(p->second, it->second.progress) : it->second.progress;
+        }
     }
     switch (role) {
     case KindRole:
@@ -636,8 +705,6 @@ QString SetupTreeModel::commandReason(const QString& id) const
         return trt("Select a setup or an operation in the CAM tree first");
     if (id == QLatin1String("cam.tree.suppress") && r->setup)
         return trt("Select an operation: setups are not suppressed");
-    if (id == QLatin1String("cam.tree.edit") && !r->setup)
-        return trt("Operations are edited in the operation panel");
     if (id == QLatin1String("cam.tree.moveUp") && r->index == 0)
         return trt("It is the first one already");
     if (id == QLatin1String("cam.tree.moveDown") && r->index + 1 >= r->siblings)
