@@ -290,7 +290,8 @@ TEST_CASE("unknown JSON keys survive a round trip", "[doc][state]")
     insertAfter(R"("settings":{)", R"("tolerance":0.001)");
     insertAfter(R"({"expression":"4 in",)", R"("comment":"overall width")");
     insertAfter(R"({"color":[0.72,0.74,0.78,1],)", R"("opacityMode":"glass","tags":["a","b"])");
-    text = withMembers(text, R"("cam":")" + std::string(64, 'c') + R"(","embedded":{"tools":{}},"zz":null)");
+    // ("cam" and "embedded" are not unknown any more: T-032 reads them, tests/unit/cam/engine_document_test.cpp.)
+    text = withMembers(text, R"("camFuture":")" + std::string(64, 'c') + R"(","library":{"tools":{}},"zz":null)");
 
     const auto loaded = load(text, store);
     REQUIRE(loaded.has_value());
@@ -298,7 +299,7 @@ TEST_CASE("unknown JSON keys survive a round trip", "[doc][state]")
     CHECK(loaded->parameters[0].extraJson == R"({"comment":"overall width"})");
     CHECK(loaded->bodies[0].extraJson == R"({"opacityMode":"glass","tags":["a","b"]})");
     CHECK(loaded->features[1].extraJson == R"({"futureFlag":{"a":"x","z":[1,2.5]}})");
-    CHECK(loaded->extraJson == R"({"cam":")" + std::string(64, 'c') + R"(","embedded":{"tools":{}},"zz":null})");
+    CHECK(loaded->extraJson == R"({"camFuture":")" + std::string(64, 'c') + R"(","library":{"tools":{}},"zz":null})");
 
     const StateObjects again = ray::doc::serializeState(*loaded);
     CHECK(again.manifest == text);
