@@ -248,7 +248,7 @@ QString numberText(double value, Unit unit, const QString& lengthUnit)
 {
     if (unit == Unit::Length) {
         if (lengthUnit == QLatin1String("in"))
-            return cText(value / 25.4, 6) + QStringLiteral(" in");
+            return cText(value / 25.4) + QStringLiteral(" in");
         return cText(value) + QStringLiteral(" mm");
     }
     const QString label = unitLabel(unit, lengthUnit);
@@ -362,12 +362,31 @@ const FormField* SchemaFormModel::field(const QString& key) const
     return nullptr;
 }
 
+QVariant SchemaFormModel::fullTextOf(const FormField& f, const QJsonValue& v) const
+{
+    if ((f.kind != FormField::Kind::Number && f.kind != FormField::Kind::Integer) || !v.isDouble())
+        return {};
+    return QVariant(camui::numberText(v.toDouble(), f.unit, lengthUnit_));
+}
+
+void SchemaFormModel::setLengthFormat(std::function<QString(double mm)> format)
+{
+    const QJsonObject now = params();
+    lengthFormat_ = std::move(format);
+    load(now);
+}
+
 QVariant SchemaFormModel::textOf(const FormField& f, const QJsonValue& v) const
 {
     switch (f.kind) {
     case FormField::Kind::Number:
     case FormField::Kind::Integer:
-        return v.isDouble() ? QVariant(camui::numberText(v.toDouble(), f.unit, lengthUnit_)) : QVariant(QString());
+        if (!v.isDouble())
+            return QVariant(QString());
+        // A length at rest in the app's display format (Units); the full value while it is edited (fullTextOf).
+        if (f.unit == camui::Unit::Length && lengthFormat_)
+            return QVariant(lengthFormat_(v.toDouble()));
+        return QVariant(camui::numberText(v.toDouble(), f.unit, lengthUnit_));
     case FormField::Kind::Boolean:
         return QVariant(v.toBool());
     case FormField::Kind::Enum:
@@ -395,6 +414,7 @@ void SchemaFormModel::load(const QJsonObject& params)
         if (!stored.isUndefined()) {
             e.loaded = stored;
             e.loadedText = e.text;
+            e.fullText = fullTextOf(f, stored);
         }
         entries_[f.key] = std::move(e);
     }
@@ -411,7 +431,7 @@ std::optional<QJsonValue> SchemaFormModel::read(const FormField& f, QString* err
         return std::nullopt;
     }
     const Entry& e = it->second;
-    if (e.loaded && e.text == e.loadedText)
+    if (e.loaded && (e.text == e.loadedText || (e.fullText.isValid() && e.text == e.fullText)))
         return *e.loaded; // as stored: no round trip through the display text
     switch (f.kind) {
     case FormField::Kind::Boolean:
@@ -596,6 +616,9 @@ QVariantList SchemaFormModel::fields() const
         m.insert(QStringLiteral("unit"), camui::unitLabel(f.unit, lengthUnit_));
         const auto e = entries_.find(f.key);
         m.insert(QStringLiteral("value"), e == entries_.end() ? QVariant(QString()) : e->second.text);
+        // While the field shows a stored value, the text it edits: that value in full.
+        const bool atRest = e != entries_.end() && e->second.loaded && e->second.text == e->second.loadedText;
+        m.insert(QStringLiteral("fullValue"), atRest ? e->second.fullText.toString() : QString());
         QVariantList choices;
         for (qsizetype i = 0; i < f.enumValues.size(); ++i)
             choices.push_back(QVariantMap{{QStringLiteral("value"), f.enumValues[i]},
@@ -652,6 +675,7 @@ void SchemaFormModel::resetField(const QString& key)
     e.text = textOf(*f, f->defaultValue);
     e.loaded = f->defaultValue; // exactly the default, whatever the display unit
     e.loadedText = e.text;
+    e.fullText = fullTextOf(*f, f->defaultValue);
     external_.erase(key);
     bump();
     emit edited(key);

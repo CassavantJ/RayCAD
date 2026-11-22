@@ -596,6 +596,10 @@ TEST_CASE("forget releases what the engine holds for closed operations; their to
     };
     const auto generated = [&](const doc::DocStatePtr& state, std::uint64_t op) {
         auto job = engine->generate(state, f.build, opId(op));
+        // Waited for as the UI does, by its turns: job.wait() on a job no worker has started yet runs it on this
+        // thread, and the job system's queued task for it then holds the job (and its toolpath) until a worker gets
+        // to that task, which on a busy machine is a while after the check below.
+        REQUIRE(until([&] { return job.done(); }));
         REQUIRE(job.wait());
         REQUIRE(until([&] { return engine->status(state, f.build).at(opId(op)).status == OpStatus::UpToDate; }));
     };
@@ -618,7 +622,8 @@ TEST_CASE("forget releases what the engine holds for closed operations; their to
     // Forgetting c1 (its document closed) releases it.
     const std::vector<OperationId> closing{opId(1)};
     engine->forget(closing);
-    CHECK(first.expired());
+    // The worker that made it lets go of its task just after reporting the job done; nothing else holds it.
+    CHECK(until([&] { return first.expired(); }));
     OpState st = statusOf(state, 1);
     CHECK(st.status == OpStatus::Stale);
     CHECK(st.toolpath == nullptr);

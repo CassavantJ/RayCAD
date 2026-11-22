@@ -1,1 +1,2 @@
+post property smoothing = finish is not posted: the Haas classic control documents G187 with E (corner rounding) only [H1 p.17], not the P1/P2/P3 levels; set smoothingCorner for G187 E, or Setting 191 on the control
 section 4 (Chip-break drill): the peck clearance 0.3 is not posted; the control takes it from Setting 22 [H1 p.77, p.95]

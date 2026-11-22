@@ -52,6 +52,7 @@ QString rpmText(double rpm);                      // "1200 rpm"
 QString feedText(double mmMin, bool inch);        // "320 mm/min", "12.6 in/min"
 QString surfaceSpeedText(double mMin, bool inch); // "300 m/min", "984 sfm"
 QString chipLoadText(double mm, bool inch);       // "0.05 mm/tooth", "0.0020 in/tooth"
+QString feedPerRevText(double mm, bool inch);     // a tap's pitch: "1.25 mm/rev", "0.0492 in/rev"
 QString powerText(double kw);                     // "1.2 kW"
 // A feed field as mm/min: a bare number in the display unit, a trailing mm/min, in/min or ipm, an expression before
 // it. nullopt with the reason.

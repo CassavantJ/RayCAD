@@ -58,6 +58,7 @@ add_subdirectory(ui/dispatch)
 add_subdirectory(ui/sketch)
 add_subdirectory(ui/model) # T-098
 add_subdirectory(ui/cam) # T-044, T-045
+add_subdirectory(ui/cam_tools) # T-046 (sets up its own screen and driver-thread listeners)
 # (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
 # ---------- Graphics driver threads ----------
@@ -82,6 +83,29 @@ foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_star
                          ray_ui_cam_post_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/screen/test_screen_listener.cpp")
     target_link_libraries(${_target} PRIVATE ray_ui_test_screen)
+endforeach()
+
+# ---------- The rest of the desktop ----------
+# The same tests ignore the system pointer over their windows and other programs taking the activation: they drive
+# their windows with Qt's own event injection, and where the owner's mouse rests or which window another test opens
+# must not change what they do (ui/foreign_input_listener.cpp says why). A test that needs the keyboard focus takes it
+# with ray::test::focusWindow, which does not depend on the desktop granting it (ui/window_focus.h).
+# The listener compiles to nothing off Windows.
+find_package(Qt6 6.12 REQUIRED COMPONENTS GuiPrivate)
+foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
+                         ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
+                         ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/foreign_input_listener.cpp"
+                                      "${CMAKE_CURRENT_SOURCE_DIR}/ui/window_focus.cpp")
+    target_link_libraries(${_target} PRIVATE Qt6::GuiPrivate) # window_focus.cpp: QWindowSystemInterface
+endforeach()
+
+# ---------- The UI-thread watchdog ----------
+# The stall tests ([wallclock]) judge the time the UI thread itself was busy or blocked in its worst gap, not the time
+# it was runnable and not run (ui/ui_watchdog.h).
+foreach(_target IN ITEMS ray_ui_viewport_tests ray_ui_start_tests ray_ui_measure_tests ray_ui_sketch_tests
+                         ray_ui_model_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/ui_watchdog.cpp")
 endforeach()
 
 # ---------- Sanitizer run options for every test ----------

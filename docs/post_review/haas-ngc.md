@@ -100,6 +100,10 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 9. Canned cycles inside one run: later holes write X/Y and only the words that changed; "R plane value and the Z
    depth value" may change while the cycle is active (H1 p.72). A change of the cycle G code inside a run is written as
    G80, a rapid back up to the clearance and the new cycle, so that the initial level (G98) is never lowered.
+10. G98 after G99 holes in one run is written as it is (no restart, unlike the generic and FANUC posts after the T-043
+    finding F1): the workbook defines G98 as the return to "Z position it was at when the canned cycle was first
+    defined" and shows exactly this case, G99 holes then `G98 X1.5 Y-2.5` "position to initial start point" (H1 p.74,
+    program O10074), so the doubt RS274/NGC's wording leaves does not apply here.
 
 ## G and M words this post can write (for T-043)
 

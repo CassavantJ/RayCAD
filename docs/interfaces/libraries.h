@@ -40,6 +40,9 @@
 // Changed so start-up does not wait for network folders: LibraryStack::setRootsInBackground, RootInfo::loading.
 // Changed for the feeds power model: Material::mc, optional, the chip thickness exponent of kc (kc1.1 alone reads about
 // half the power at typical chip thicknesses).
+// Changed for the tool library UI (T-046), so that neither a rescan nor a save of a network share runs on the UI
+// thread: LibraryStack::refreshInBackground (refresh() on a worker, merged on the UI thread) and
+// LibraryStack::sharedLibrary (a writable root's library that a worker may keep using across a later setRoots).
 #pragma once
 #include "core.h"
 #include <chrono>
@@ -224,6 +227,13 @@ public:
                               std::size_t openNow, std::chrono::milliseconds waitAtMost);
     std::vector<LibraryIssue> issues() const;                  // of every root, lowest root first
     bool refresh();                                            // rescans every root (and retries failed ones)
+    // As refresh(), but the folders are read on a worker of `jobs`: every open root is rescanned there
+    // (ILibrary::refresh) and a root that did not open (and is not loading) is opened again there. The job's
+    // continuation (posted through the job system's dispatcher) merges on the UI thread, calls the listeners when
+    // something changed and then `done` with whether anything did. Returns at once. A later setRoots or
+    // setRootsInBackground, or the stack's destruction, cancels the job and drops its result (`done` is not called).
+    // `jobs` and its dispatcher must outlive the stack.
+    void refreshInBackground(IJobSystem& jobs, std::function<void(bool changed)> done = {});
 
     struct RootInfo {
         std::string dir;            // as given to setRoots
@@ -236,6 +246,10 @@ public:
     // The library of a writable root, to save into or remove from; null for a read-only root, one that is not open
     // or an index past the end. Call remerge() after changing it, so the merged lists show the change.
     ILibrary* library(std::size_t root);
+    // The same library, shared: it stays alive (ILibrary is thread-safe) after a later setRoots replaced it or the
+    // stack is gone, so a worker can save into it. Null where library() is. The caller calls remerge() on the UI
+    // thread afterwards, as with library().
+    std::shared_ptr<ILibrary> sharedLibrary(std::size_t root);
     // The merged lists again from what the libraries hold now, without reading any folder. Listeners are called.
     void remerge();
     // The root whose copy of the item the stack uses (the highest that has it); nullopt if no root has it.

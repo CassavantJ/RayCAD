@@ -18,6 +18,8 @@ add_library(ray_api STATIC
     cam_post.cpp
     cam_post_actions.h
     cam_post_actions.cpp
+    include/ray_api/cam_tools.h # the tool library manager's item formats and checked saves (T-046)
+    cam_tools.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

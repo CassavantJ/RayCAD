@@ -46,3 +46,5 @@ add_dependencies(ray_post_output_tests ray_post_output_helper)
 set_property(TARGET ray_post_output_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_post_output_tests COMMAND ray_post_output_tests)
 ray_test_runtime_path(ray_post_output_tests)
+
+add_subdirectory(roundtrip) # T-043: the independent G-code interpreter and the round trip of the goldens

@@ -10,7 +10,7 @@ O02001 (Realistic: bracket top, six tools)
 (T6 D0.3937 chamferMill 10 mm 90 deg chamfer mill)
 G20
 G17 G40 G49 G80 G90 G94
-G187 P3
+G187 E0.002
 (Face top)
 G00 G53 G49 Z0.
 (T1 50 mm face mill in CAT40 ER32)
@@ -138,6 +138,5 @@ G00 G53 G49 Z0.
 M05
 M09
 G00 G53 Y0.
-G187
 M30
 %

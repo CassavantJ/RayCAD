@@ -43,6 +43,8 @@ add_library(ray_ui STATIC
     cam/setup_logic.cpp
     cam/operation_logic.h # T-045
     cam/operation_logic.cpp
+    cam/tools_logic.h # T-046
+    cam/tools_logic.cpp
     cam/post_logic.h # T-047
     cam/post_logic.cpp)
 ray_module(ray_ui)
@@ -123,6 +125,10 @@ set(RAY_UI_QML_FILES
     qml/cam/CamTree.qml
     qml/cam/SchemaForm.qml
     qml/cam/OperationPanel.qml
+    qml/cam/ToolLibrary.qml # T-046
+    qml/cam/ToolProfile.qml
+    qml/cam/ToolFields.qml
+    qml/cam/ToolPicker.qml
     qml/cam/PostDialog.qml # T-047
     qml/cam/GcodeView.qml)
 qt_add_qml_module(ray_ui
@@ -185,7 +191,9 @@ qt_add_qml_module(ray_ui
         cam/operation_tool.cpp
         cam/operation_view.h
         cam/operation_view.cpp
-        cam/post_view.h
+        cam/tools_model.h # T-046
+        cam/tools_model.cpp
+        cam/post_view.h # T-047
         cam/post_view.cpp
         cam/post_tool.h
         cam/post_tool.cpp

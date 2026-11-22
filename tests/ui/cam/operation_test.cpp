@@ -65,6 +65,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -273,6 +274,9 @@ struct Window {
         double target = contentY;
         if (y < 0 || y + item->height() > h)
             target = std::clamp(contentY + y - h / 3, 0.0, maxY);
+        // On whole device pixels, as the panel's own scrolling (pixelAligned).
+        const double dpr = window()->effectiveDevicePixelRatio();
+        target = std::round(target * dpr) / dpr;
         flick->setProperty("contentY", target);
         QCoreApplication::processEvents();
     }
@@ -572,6 +576,42 @@ QRect inkBox(const QImage& img, QQuickItem* item)
     return box;
 }
 
+// The footer (OK, Cancel, what blocks OK) is wholly inside the panel and the window, and the header on top, when the
+// form is taller than the panel: at the top of the scroll and at its bottom.
+void checkFooter(const Window& w)
+{
+    QQuickItem* panel = w.shown(QStringLiteral("operationPanel"));
+    QQuickItem* flick = w.shown(QStringLiteral("operationScroll"));
+    INFO("form " << flick->property("contentHeight").toDouble() << " px in a scroll area of " << flick->height());
+    REQUIRE(flick->property("contentHeight").toDouble() > flick->height()); // taller than the window allows
+    const qreal dpr = w.window()->effectiveDevicePixelRatio();
+    const QRectF panelRect(panel->mapToScene(QPointF(0, 0)), QSizeF(panel->width(), panel->height()));
+    const QRectF windowRect(QPointF(0, 0), QSizeF(w.window()->width(), w.window()->height()));
+    for (const double at : {0.0, 1.0}) {
+        const double maxY = flick->property("contentHeight").toDouble() - flick->height();
+        flick->setProperty("contentY", std::round(at * maxY * dpr) / dpr);
+        QCoreApplication::processEvents();
+        const QImage img = w.grab();
+        for (const char* name : {"operationOk", "operationCancel", "operationPanelTitle", "operationPanelSubject"}) {
+            QQuickItem* item = w.shown(QLatin1String(name));
+            const QRectF r(item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height()));
+            INFO(name << " at scroll " << at << ": " << r.x() << "," << r.y() << " " << r.width() << " x " << r.height()
+                      << " in panel " << panelRect.y() << ".." << panelRect.bottom());
+            CHECK(panelRect.contains(r));
+            CHECK(windowRect.contains(r));
+            // Drawn: the text's ink inside the item.
+            const QRect ink = inkBox(img, item);
+            CHECK_FALSE(ink.isEmpty());
+            CHECK(QRectF(r.x() * dpr - 1, r.y() * dpr - 1, r.width() * dpr + 2, r.height() * dpr + 2)
+                      .contains(QRectF(ink)));
+        }
+        // Neither header nor footer scrolls.
+        CHECK_FALSE(flick->isAncestorOf(w.find(QStringLiteral("operationOk"))));
+        CHECK_FALSE(flick->isAncestorOf(w.find(QStringLiteral("operationPanelSubject"))));
+    }
+    flick->setProperty("contentY", 0.0);
+}
+
 void checkPanelLayout(const Window& w)
 {
     QQuickItem* panel = w.shown(QStringLiteral("operationPanel"));
@@ -702,6 +742,32 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
     CHECK(w.shown(QStringLiteral("operationCombo.type"))->property("displayText").toString() ==
           QStringLiteral("Drilling"));
     CHECK(w.op()->geometryKind() == QStringLiteral("hole"));
+    // Picking holes needs faces (any face of a hole picks it): the selection takes faces only while picking.
+    CHECK(w.op()->picking());
+    CHECK(w.host->selection()->filterMask() == static_cast<std::uint8_t>(render::PickFilter::Faces));
+    // The header names what is edited, whatever the scroll.
+    CHECK(w.shown(QStringLiteral("operationPanelSubject"))->property("text").toString() ==
+          QStringLiteral("Drilling 1 · Drilling"));
+    // Lengths at rest in the app's display format (Units), in full while edited; the stored value exact.
+    {
+        auto* units = w.singleton<ui::UnitsObject>("Units");
+        QQuickItem* clearance = w.shown(QStringLiteral("operationInput.clearance"));
+        CHECK(clearance->property("text").toString() == units->formatLength(15.24));
+        QQuickItem* breakthrough = w.shown(QStringLiteral("schemaInput.breakthrough"));
+        CHECK(breakthrough->property("text").toString() == units->formatLength(1.0));
+        w.inView(breakthrough);
+        breakthrough->forceActiveFocus();
+        QCoreApplication::processEvents();
+        CHECK(breakthrough->property("text").toString() ==
+              ui::camui::numberText(1.0, ui::camui::Unit::Length, units->unitLabel()));
+        clearance->forceActiveFocus();
+        QCoreApplication::processEvents();
+        CHECK(breakthrough->property("text").toString() == units->formatLength(1.0));
+        CHECK(clearance->property("text").toString() ==
+              ui::camui::numberText(15.24, ui::camui::Unit::Length, units->unitLabel()));
+        w.window()->contentItem()->forceActiveFocus();
+        QCoreApplication::processEvents();
+    }
     // The heights the type reads, and no others.
     CHECK(w.find(QStringLiteral("operationField.clearance"))->isVisible());
     CHECK(w.find(QStringLiteral("operationField.feedPlane")) == nullptr);
@@ -744,6 +810,14 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
 
     // Feeds: calculated for the drill in the setup's 6061 on its machine; typed values would be the user's.
     CHECK(w.op()->materialSource() == QStringLiteral("setup"));
+    // The library's name as it is ("6061-T6"), in the list and drawn: the hyphen is there.
+    {
+        QQuickItem* material = w.shown(QStringLiteral("operationCombo.material"));
+        CHECK(material->property("displayText").toString() == QStringLiteral("6061-T6"));
+        QQuickItem* label = Window::findItem(material, QStringLiteral("label"));
+        REQUIRE(label != nullptr);
+        CHECK(label->property("text").toString() == QStringLiteral("6061-T6"));
+    }
     REQUIRE(w.op()->calculated().value(QStringLiteral("available")).toBool());
     CHECK(w.op()->feedsState() == QStringLiteral("none"));
     w.click(QStringLiteral("operationUseCalculated"));
@@ -791,6 +865,8 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
     CHECK(op.calculated->feedCut == op.cutting.feedCut);
     CHECK(op.calculated->material == MaterialId{Uuid::fromString(kAl6061)});
     CHECK(op.paramsJson.find("\"cycle\":\"drill\"") != std::string::npos); // the defaults are stored
+    CHECK(op.paramsJson.find("\"breakthrough\":1,") != std::string::npos); // exact, though shown rounded
+    CHECK(op.heights.clearance == 15.24);
     const int row = w.tree()->rowOf(id);
     REQUIRE(row >= 0);
     w.waitStatus(row, "upToDate");
@@ -837,6 +913,17 @@ TEST_CASE("editing an operation: the preview follows a parameter, relevance, Esc
     CHECK(w.find(QStringLiteral("operationChoice.type"))->isVisible() == false); // the type stays
     REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 2; }, kTimeoutMs));
     w.previewed("ok");
+    // Editing an operation that has its holes: not picking, the user's own filter; the pick button picks faces.
+    CHECK_FALSE(w.op()->picking());
+    const std::uint8_t userFilter = w.host->selection()->filterMask();
+    w.click(QStringLiteral("operationPickButton"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picking(); }, 5000));
+    CHECK(w.host->selection()->filterMask() == static_cast<std::uint8_t>(render::PickFilter::Faces));
+    w.click(QStringLiteral("operationPickButton"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->picking(); }, 5000));
+    CHECK(w.host->selection()->filterMask() == userFilter);
+    CHECK(w.shown(QStringLiteral("operationPanelSubject"))->property("text").toString() ==
+          QStringLiteral("Drill 1 · Drilling"));
     REQUIRE(w.op()->previewToolpath() != nullptr);
     const Nm z0 = w.op()->previewToolpath()->moves.at(1).z;
     CHECK(statusLine(w) == QStringLiteral("Ready: Apply changes the operation"));
@@ -863,6 +950,11 @@ TEST_CASE("editing an operation: the preview follows a parameter, relevance, Esc
     // first, as everywhere in the shell: wait for the preview of the last change.)
     w.previewed("ok");
     REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->property("jobActive").toBool(); }, kTimeoutMs));
+    // From the panel's name field (the screenshots above moved the pointer and switched the theme).
+    QQuickItem* name = w.shown(QStringLiteral("operationInput.name"));
+    w.inView(name);
+    name->forceActiveFocus();
+    QCoreApplication::processEvents();
     QTest::keyClick(w.window(), Qt::Key_Escape);
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
     CHECK(w.stateHash() == before);
@@ -996,6 +1088,22 @@ TEST_CASE("validation: a parameter out of range and a tap that does not fit the 
     CHECK_FALSE(w.op()->canCommit());
     CHECK_FALSE(w.shown(QStringLiteral("operationOk"))->isEnabled());
     CHECK(statusLine(w) == QStringLiteral("Fix the error above first"));
+    // The blocking message is in the footer beside OK, in view whatever the scroll.
+    {
+        QQuickItem* error = w.shown(QStringLiteral("operationError.0"));
+        CHECK_FALSE(w.find(QStringLiteral("operationScroll"))->isAncestorOf(error));
+        CHECK(w.find(QStringLiteral("operationFooter"))->isAncestorOf(error));
+        QQuickItem* panel = w.find(QStringLiteral("operationPanel"));
+        const QRectF p(panel->mapToScene(QPointF(0, 0)), QSizeF(panel->width(), panel->height()));
+        const QRectF r(error->mapToScene(QPointF(0, 0)), QSizeF(error->width(), error->height()));
+        CHECK(p.contains(r));
+    }
+    // A tap advances by its pitch per revolution, not a chip load per tooth.
+    {
+        QQuickItem* pitch = w.shown(QStringLiteral("operationCalculatedChipLoad"));
+        CHECK(pitch->property("label").toString() == QStringLiteral("Pitch"));
+        CHECK(pitch->property("value").toString().endsWith(QStringLiteral(" in/rev"))); // an inch document
+    }
     w.shotsBothThemes(QStringLiteral("t045_tap_mismatch"));
 
     // The tool changed since the feeds were calculated: an update is offered, not made.
@@ -1114,6 +1222,7 @@ TEST_CASE("the operation panel's labels are not cut short at this scale", "[scal
         w.host->theme()->setProperty("mode", QLatin1String(theme));
         QTest::qWait(100);
         checkPanelLayout(w);
+        checkFooter(w);
         w.shot(QStringLiteral("t045_scale_%1_%2")
                    .arg(scale, QLatin1String(theme))
                    .replace(QLatin1Char('.'), QLatin1Char('_')));

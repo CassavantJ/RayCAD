@@ -16,6 +16,7 @@ add_executable(ray_lib_tests
     library_test.cpp
     shipped_test.cpp
     stack_test.cpp
+    stack_refresh_test.cpp # T-046
 )
 target_link_libraries(ray_lib_tests PRIVATE ray_lib ray_core Catch2::Catch2WithMain)
 # codec.h, schema.h, json.h, tool_query.h, fileio.h and library_internal.h are private to src/lib; test_dispatcher.h is

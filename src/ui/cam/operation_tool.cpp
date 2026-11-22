@@ -491,8 +491,13 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
     ++pickSerial_;
     pickPending_ = false;
     exact_.clear();
+    fullText_.clear();
     form_->setLengthUnit(inch() ? QStringLiteral("in") : QStringLiteral("mm"));
     form_->setExprFn(exprFn());
+    if (units_) {
+        QPointer<UnitsObject> units = units_;
+        form_->setLengthFormat([units](double mm) { return units ? units->formatLength(mm) : QString(); });
+    }
     applyType(type, false);
     loadOptions();
     std::vector<QJsonObject> refs;
@@ -634,8 +639,38 @@ void OperationToolModel::setType(const QString& type)
     schedulePreview();
 }
 
+bool OperationToolModel::isExactText(const QString& key, const QString& text) const
+{
+    const auto it = exact_.find(key);
+    if (it != exact_.end() && it->second.first == text)
+        return true;
+    const auto full = fullText_.find(key);
+    return full != fullText_.end() && full->second == text;
+}
+
+void OperationToolModel::setStoredLength(const QString& key, double mm)
+{
+    values_[key] = lengthText(mm);
+    exact_[key] = {values_.value(key).toString(), mm};
+    fullText_[key] = camui::numberText(mm, camui::Unit::Length, inch() ? QStringLiteral("in") : QStringLiteral("mm"));
+}
+
+QVariantMap OperationToolModel::fullValues() const
+{
+    QVariantMap out;
+    for (const auto& [key, text] : fullText_) {
+        // Only while the field still shows the stored value (not once it is typed over).
+        if (const auto it = exact_.find(key); it != exact_.end() && it->second.first == values_.value(key).toString())
+            out.insert(key, text);
+    }
+    return out;
+}
+
 QString OperationToolModel::lengthText(double mm) const
 {
+    // At rest a length shows in the app's one display format (Units); being edited, in full (fullValues).
+    if (units_)
+        return units_->formatLength(mm);
     return camui::numberText(mm, camui::Unit::Length, inch() ? QStringLiteral("in") : QStringLiteral("mm"));
 }
 
@@ -658,10 +693,8 @@ void OperationToolModel::defaults(const doc::DocState& state)
                                                       {"feedPlane", in ? 2.54 : 2.0},
                                                       {"top", 0.0},
                                                       {"bottom", 0.0}};
-    for (const auto& [key, mm] : heights) {
-        values_[QLatin1String(key)] = lengthText(mm);
-        exact_[QLatin1String(key)] = {values_.value(QLatin1String(key)).toString(), mm};
-    }
+    for (const auto& [key, mm] : heights)
+        setStoredLength(QLatin1String(key), mm);
     for (const char* key : {"rpm", "feedCut", "feedPlunge", "feedRamp", "feedLeadIn", "feedLeadOut"})
         values_[QLatin1String(key)] = QString();
     values_[QStringLiteral("coolant")] = QStringLiteral("flood");
@@ -681,7 +714,7 @@ void OperationToolModel::loadOperation(const doc::DocState& state, const cam::Op
                                                       {"top", op.heights.top},
                                                       {"bottom", op.heights.bottom}};
     for (const auto& [key, mm] : heights)
-        values_[QLatin1String(key)] = lengthText(mm);
+        setStoredLength(QLatin1String(key), mm);
     const bool in = inch();
     values_[QStringLiteral("rpm")] = cText(op.cutting.spindleRpm);
     const std::pair<const char*, double> feeds[] = {{"feedCut", op.cutting.feedCut},
@@ -694,7 +727,7 @@ void OperationToolModel::loadOperation(const doc::DocState& state, const cam::Op
     static const char* const coolants[] = {"off", "flood", "mist", "throughTool", "air"};
     values_[QStringLiteral("coolant")] = QLatin1String(coolants[static_cast<int>(op.cutting.coolant)]);
     values_[QStringLiteral("clockwise")] = op.cutting.clockwise;
-    values_[QStringLiteral("stickOut")] = lengthText(op.tool.stickOut);
+    setStoredLength(QStringLiteral("stickOut"), op.tool.stickOut);
     values_[QStringLiteral("toolNumber")] = QString::number(op.tool.toolNumber);
     toolId_ = idText(op.tool.tool.value);
     holderId_ = op.tool.holder.value == Uuid{} ? QString() : idText(op.tool.holder.value);
@@ -706,13 +739,9 @@ void OperationToolModel::loadOperation(const doc::DocState& state, const cam::Op
         materialSource_ = QStringLiteral("chosen");
     }
     // What is shown is what is stored: these texts read back as the stored values exactly (see length()).
-    exact_.clear();
-    for (const auto& [key, mm] : heights)
-        exact_[QLatin1String(key)] = {values_.value(QLatin1String(key)).toString(), mm};
     for (const auto& [key, mm] : feeds)
         exact_[QLatin1String(key)] = {values_.value(QLatin1String(key)).toString(), mm};
     exact_[QStringLiteral("rpm")] = {values_.value(QStringLiteral("rpm")).toString(), op.cutting.spindleRpm};
-    exact_[QStringLiteral("stickOut")] = {values_.value(QStringLiteral("stickOut")).toString(), op.tool.stickOut};
 }
 
 // The tools (the document's and the library's), holders and materials on offer.
@@ -925,7 +954,7 @@ QVariantMap OperationToolModel::fieldMessages() const
     const bool in = inch();
     const auto exact = [&](const QString& key, const QString& text) -> std::optional<double> {
         const auto it = exact_.find(key);
-        return it != exact_.end() && it->second.first == text ? std::optional<double>(it->second.second) : std::nullopt;
+        return it != exact_.end() && isExactText(key, text) ? std::optional<double>(it->second.second) : std::nullopt;
     };
     check(QStringLiteral("rpm"), [&](const QString& t, QString* e) {
         return exact(QStringLiteral("rpm"), t) ? std::optional<double>(1) : camui::readRpm(t, expr, e);
@@ -984,7 +1013,7 @@ camui::ExprFn OperationToolModel::exprFn() const
 std::optional<double> OperationToolModel::length(const QString& key, QString* error) const
 {
     const QString text = values_.value(key).toString();
-    if (const auto it = exact_.find(key); it != exact_.end() && it->second.first == text)
+    if (const auto it = exact_.find(key); it != exact_.end() && isExactText(key, text))
         return it->second.second;
     return camui::readNumber(text, camui::Unit::Length, inch() ? QStringLiteral("in") : QStringLiteral("mm"), exprFn(),
                              error);
@@ -1143,10 +1172,11 @@ void OperationToolModel::updateFeeds()
             calculated_.insert(QStringLiteral("available"), true);
             calculated_.insert(QStringLiteral("rpm"), camui::rpmText(f.rpm));
             calculated_.insert(QStringLiteral("feed"), camui::feedText(f.feedMmMin, in));
-            calculated_.insert(QStringLiteral("chipLoad"),
-                               f.mode == cam::FeedsMode::Tapping
-                                   ? trs("pitch %1").arg(camui::chipLoadText(f.feedPerRevMm, in))
-                                   : camui::chipLoadText(f.chipLoadMm, in));
+            // A tap advances by its pitch per revolution; every other tool takes a chip load per tooth.
+            const bool tapping = f.mode == cam::FeedsMode::Tapping;
+            calculated_.insert(QStringLiteral("chipLoadLabel"), tapping ? trs("Pitch") : trs("Chip load"));
+            calculated_.insert(QStringLiteral("chipLoad"), tapping ? camui::feedPerRevText(f.feedPerRevMm, in)
+                                                                   : camui::chipLoadText(f.chipLoadMm, in));
             calculated_.insert(QStringLiteral("surfaceSpeed"), camui::surfaceSpeedText(f.surfaceSpeedMMin, in));
             calculated_.insert(QStringLiteral("actualSurfaceSpeed"),
                                camui::surfaceSpeedText(f.actualSurfaceSpeedMMin, in));
@@ -1189,7 +1219,7 @@ void OperationToolModel::updateFeeds()
     const auto value = [&](const char* key, bool feed) -> std::optional<double> {
         const QString k = QLatin1String(key);
         const QString text = values_.value(k).toString();
-        if (const auto it = exact_.find(k); it != exact_.end() && it->second.first == text)
+        if (const auto it = exact_.find(k); it != exact_.end() && isExactText(k, text))
             return it->second.second;
         QString e;
         return feed ? camui::readFeed(text, in, expr, &e) : camui::readRpm(text, expr, &e);
@@ -1528,7 +1558,7 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
     const bool inchUnits = inch();
     const auto exact = [&](const QString& key) -> std::optional<double> {
         const auto it = exact_.find(key);
-        return it != exact_.end() && it->second.first == values_.value(key).toString()
+        return it != exact_.end() && isExactText(key, values_.value(key).toString())
                    ? std::optional<double>(it->second.second)
                    : std::nullopt;
     };

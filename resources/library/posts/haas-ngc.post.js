@@ -108,6 +108,9 @@ function arcPieces(m, start, n) {
 }
 
 const CONTROL = "Haas NGC";
+// Whether the control takes G187 P1/P2/P3 smoothness levels [H2] (the classic post sets this false: its workbook
+// documents G187 with E only [H1 p.17]).
+const G187_LEVELS = true;
 
 definePost({
   title: "Haas mill, Next Generation Control (NGC)",
@@ -229,12 +232,23 @@ definePost({
     }
     out.block(out.modal("units", this.units));
     out.block(out.modal("plane", "G17"), "G40", "G49", "G80", out.modal("distance", "G90"), "G94");
-    if (this.smoothing !== "off") {
-      const level = { rough: "P1", medium: "P2", finish: "P3" }[this.smoothing];
-      const corner = p.smoothingCorner > 0
-        ? out.word("E", this.inch ? p.smoothingCorner / 25.4 : p.smoothingCorner, { decimals: this.inch ? 4 : 3 })
-        : null;
-      out.block("G187", level, corner);
+    const corner = p.smoothingCorner > 0
+      ? out.word("E", this.inch ? p.smoothingCorner / 25.4 : p.smoothingCorner, { decimals: this.inch ? 4 : 3 })
+      : null;
+    this.g187Written = false;
+    if (G187_LEVELS) {
+      if (this.smoothing !== "off") {
+        out.block("G187", { rough: "P1", medium: "P2", finish: "P3" }[this.smoothing], corner);
+        this.g187Written = true;
+      }
+    } else {
+      // This control documents G187 with E only [H1 p.17, p.25]: the smoothness level is not posted.
+      if (this.smoothing !== "off") {
+        out.warn("post property smoothing = " + this.smoothing + " is not posted: the " + CONTROL + " documents G187 " +
+          "with E (corner rounding) only [H1 p.17], not the P1/P2/P3 levels; set smoothingCorner for G187 E, or " +
+          "Setting 191 on the control");
+      }
+      if (corner !== null) out.block("G187", corner);
     }
   },
 
@@ -378,7 +392,7 @@ definePost({
     if (this.cycleActive) out.block("G80");
     if (this.spindle !== null) out.block("M05");
     this.coolantOff(out);
-    if (this.smoothing !== "off") out.block("G187"); // back to Setting 191 [H2]
+    if (this.g187Written) out.block("G187"); // back to Setting 191 [H2]
     out.block("M30"); // end and reset [H1 p.43]
     out.raw("%");
   },

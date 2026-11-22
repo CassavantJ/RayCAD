@@ -13,7 +13,7 @@ for the classic control the H1 citations are direct.
 | | NGC post | Classic post |
 |---|---|---|
 | dialect, title | `haas-ngc` | `haas-classic` |
-| G187 | P1/P2/P3 smoothness with optional E [H2, partly verified] | the workbook lists G187 with E only ("Accuracy Control for High Speed Machining (E)", H1 p.17); P levels need a later classic software version: **unverified**. Off by default |
+| G187 | P1/P2/P3 smoothness with optional E [H2, partly verified]; `G187` again before M30 | **E only.** The workbook lists G187 for this control with E only ("Accuracy Control for High Speed Machining (E)", H1 p.17; E range 0.0001-0.25 in, H1 p.25). Chosen after the T-043 round trip (finding F3): the post writes `G187 E..` when smoothingCorner is set and never a P level; a smoothing level other than off is not posted and gives a warning naming the cause. No `G187` before M30 (resetting with a bare G187 is documented for the NGC only) |
 | everything else | | identical |
 
 ## Goldens
@@ -22,12 +22,13 @@ The same set as the NGC post (`01`-`20`; no `32-arcs-r`), plus:
 
 | Golden | Shows | Check |
 |---|---|---|
-| 30-g187-smoothing | `G187 P3` (finish, no E) | does the machine's software accept P on G187? |
+| 30-g187-smoothing | smoothing = finish and smoothingCorner = 0.05 mm: `G187 E0.05` (inch `E0.002`), no P; the warning in `.warnings.txt` | is G187 E right for the machine? |
 | 31-peck-ijk | `G83 ... I J K` | H1 p.77-79 |
 
 ## Questions for the owner
 
-1. Which classic software version? Does its G187 take P1/P2/P3, or E only?
+1. Which classic software version? If its G187 takes P1/P2/P3, the NGC post's levels could be enabled here (the post
+   writes E only until that is confirmed).
 2. As for the NGC post: rigid tapping, through-spindle coolant, Settings 22 and 28.
 
 ## Review record
