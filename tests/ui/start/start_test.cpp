@@ -18,6 +18,7 @@
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
 #include "../ui_watchdog.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -177,8 +178,7 @@ struct Window {
     // Shortcuts only fire in the active window. True if the OS let this one become active.
     bool activate() const
     {
-        window()->requestActivate();
-        return QTest::qWaitForWindowActive(window(), 3000);
+        return ray::test::focusWindow(window(), 3000); // window_focus.h
     }
 
     void checkNoWarnings() const

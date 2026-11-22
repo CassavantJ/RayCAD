@@ -14,6 +14,7 @@
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
 #include "../ui_watchdog.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -262,8 +263,7 @@ TEST_CASE("two holes show their centre distance; inch and mm switch live; copy; 
     // M with the view focused shows the Measure tab.
     CHECK(w.rightTab() == 0);
     w.view()->forceActiveFocus();
-    w.window()->requestActivate();
-    if (QTest::qWaitForWindowActive(w.window(), 3000)) {
+    if (ray::test::focusWindow(w.window())) {
         QTest::keyClick(w.window(), Qt::Key_M);
         REQUIRE(QTest::qWaitFor([&] { return w.rightTab() == 1; }, 3000));
         CHECK(m.active());

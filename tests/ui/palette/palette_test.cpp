@@ -10,6 +10,7 @@
 //   - with a document open the file, edit and export commands enable; a read-only one disables Save (Save As hint);
 //     file commands that need a path use the native file dialog instead of the form (T-019)
 #include "../scene_graph_probe.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -158,6 +159,8 @@ struct Window {
         host->files()->setUseNativeDialogs(false);
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        // The palette's keys and shortcuts need Qt's focus window (window_focus.h).
+        REQUIRE(ray::test::focusWindow(host->window()));
         if (session) {
             // As runApp does: after the window is up.
             REQUIRE(host->startSession(userData.toStdString()));
@@ -653,8 +656,7 @@ TEST_CASE("file and edit commands follow the session's document; path commands u
     REQUIRE(commands.trigger(QStringLiteral("file.open")));
     CHECK(openAsked.count() == 1);
     CHECK(formAsked.count() == 0);
-    w.window()->requestActivate();
-    if (QTest::qWaitForWindowActive(w.window(), 3000)) {
+    if (ray::test::focusWindow(w.window())) {
         w.host->viewport()->forceActiveFocus();
         QTest::keyClick(w.window(), Qt::Key_O, Qt::ControlModifier);
         QTest::qWait(100);
