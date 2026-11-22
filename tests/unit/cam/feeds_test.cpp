@@ -51,7 +51,7 @@ lib::Material material(double kc)
 
 lib::ToolPreset preset(std::string opClass, double vc, double fz, double radial = 1, double axial = 1)
 {
-    return lib::ToolPreset{kMat, std::move(opClass), vc, fz, radial, axial, 0};
+    return lib::ToolPreset{kMat, std::move(opClass), vc, fz, radial, axial, 0, {}};
 }
 
 lib::Tool tool(lib::ToolType type, double d, int flutes)
@@ -1188,7 +1188,7 @@ TEST_CASE("feeds: preset selection, missing presets and overrides", "[cam][feeds
     lib::Tool t = tool(lib::ToolType::FlatEndMill, 10, 4);
     t.presets = {preset("rough", 100, 0.05, 0.2, 1.5), preset("slot", 80, 0.04, 1, 0.5),
                  preset("finish", 120, 0.04, 0.05, 1.5)};
-    t.presets.push_back(lib::ToolPreset{kOtherMat, "rough", 999, 0.9, 1, 1, 0});
+    t.presets.push_back(lib::ToolPreset{kOtherMat, "rough", 999, 0.9, 1, 1, 0, {}});
 
     // Default class: rough for a pocket, slot for a slot op or a full-width cut, finish only when asked for.
     CHECK(run(t, mat, m, 2, 5, "pocket2d").opClass == "rough");
