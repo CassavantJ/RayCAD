@@ -786,7 +786,12 @@ TEST_CASE("the side view is to scale and is remade when and only when the geomet
         CHECK(std::abs(ratio - 6.0) < 6.0 * 0.06);
     }
     const int rev = m->profileRevision();
-    const QImage before = grabItem(view);
+    // The drawing itself (the shape, not the sizes under it: text drawn as distance fields, at a fractional device
+    // pixel ratio, can come out a shade different once other text has added glyphs to the shared glyph cache).
+    QQuickItem* drawing = w.find(QStringLiteral("toolProfileShape"));
+    REQUIRE(drawing != nullptr);
+    const QString sizes = w.find(QStringLiteral("toolProfileSizes"))->property("text").toString();
+    const QImage before = grabItem(drawing);
     // Not geometry: the same drawing, not remade.
     w.typeInto(QStringLiteral("toolInput.name"), QStringLiteral("Renamed end mill"));
     w.typeInto(QStringLiteral("toolInput.vendor"), QStringLiteral("Acme"));
@@ -794,13 +799,15 @@ TEST_CASE("the side view is to scale and is remade when and only when the geomet
     w.click("toolRowToggle.0");    // its card opens
     w.typeInto(QStringLiteral("toolInput.presets.0.surfaceSpeed"), QStringLiteral("150 m/min"));
     CHECK(m->profileRevision() == rev);
-    CHECK(grabItem(view) == before);
+    CHECK(grabItem(drawing) == before);
+    CHECK(w.find(QStringLiteral("toolProfileSizes"))->property("text").toString() == sizes);
     // Geometry: remade, and drawn differently.
     // (Set whole, as a paste would: typed key by key, "3" is already a valid flute length.)
     m->setValue(QStringLiteral("fluteLength"), QStringLiteral("35 mm"));
     CHECK(m->profileRevision() == rev + 1);
     QTest::qWait(50);
-    CHECK(grabItem(view) != before);
+    CHECK(grabItem(drawing) != before);
+    CHECK(view->isVisible());
     // While a length does not read, the last drawing stays.
     w.typeInto(QStringLiteral("toolInput.overallLength"), QStringLiteral("x"));
     CHECK(m->profileRevision() == rev + 1);
