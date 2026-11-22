@@ -64,14 +64,15 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | 06-coolant | flood, mist, through, air, off on one tool, then a new tool | the codes come from coolantCodes set to `through=M88/M89 air=M83/M84` for this golden: those two are examples, not FANUC codes |
 | 07-names | program 42 with characters no control accepts | `O0042`; parentheses, `;`, `%`, `[ ]`, non-ASCII turned into spaces; upper case |
 | 08-sequence-numbers | N numbers on every block | N10, N20...; `%`, O line and comments without N |
-| 09-spot-drill | G81 over eight holes, R changes on a step | G99 between holes, G98 before the step and at the end; on the R change: G80, back up to the initial level, a full new G81 block |
+| 09-spot-drill | G81 over eight holes with different depths; R changes on a step | the first hole a full block (G98/G99, X, Y, Z, R, F); later holes only X/Y and the words that change (Z, R); G98 on the hole before the step and on the last hole; G80 at the end |
 | 10-drill-dwell | G82 with 0.3 s | `P300` (milliseconds) |
 | 11-peck | G83, Q3 | Q in program units; G98 on the last hole |
 | 12-chip-break | G73, Q1.5; the IR's 0.3 mm back-off | a warning (parameter 5114), no word for it |
 | 13-bore | G89 with 0.2 s | `P200` |
 | 14-ream | G85 | feed out (G85), no dwell |
 | 15-tap | M6x1 rigid G84, then a left-hand G74 with its own tool | `M29 S500` before each cycle; spindle not started with M3 before M29; F500. = 1 mm x 500 rpm; inch F19.6850 |
-| 20-realistic | face, contour with comp and arcs, spot, drill with dwell, chip break (same tool), tap, chamfer | the whole program |
+| 16-cycle-change | one run: G81, G82 (dwell), deeper G82 with another R, G81 | G81 to G82: G80, G0 back to the clearance, a full G82 block; the depth and R change: only Z and R on the hole's block; G82 to G81: restart again |
+| 20-realistic | face, contour with comp and arcs, spot, drill with dwell, chip break (same tool), tap, chamfer | the whole program; the warning about the chip break's peck clearance (`.warnings.txt`) |
 | 30-tap-plain-g84 | property tapping = plainG84 | M3 before G84, M4 before G74, no M29 |
 | 31-arcs-r | property arcFormat = R | each quadrant arc one block with R10.; full circles as four R blocks |
 | 32-g53-dwell-x-style-one | G53 retracts, end Z then X Y, dwell X, decimal style one | `G0 G53 Z0.`, `G0 G53 X0. Y0.`; `G4 X0.5`; numbers as `X10.0` |
@@ -109,6 +110,11 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 6. Helical arcs in G18/G19 are cut as lines (safe, slower).
 7. Comment length: no limit by default (property commentMaxLength); FANUC limits are not known to the author.
 8. Maximum line length: none documented in the sources read; not enforced.
+9. Canned cycles inside one run: a hole whose depth, R, Q, P or F differs writes only those words and keeps the
+   cycle active (the usual FANUC practice, unverified; RS274/NGC calls Z and R "sticky", N 3.5.16). The initial level
+   (G98) is where the cycle started, the clearance. When the cycle G code itself changes inside a run (G81 to G82,
+   say), the post writes G80, rapids back up to the clearance and starts the new cycle there, so that the initial
+   level is never lowered to an R plane.
 
 ## G and M words this post can write (for T-043)
 

@@ -173,8 +173,8 @@ Program helical()
     m.push_back(arc(false, mm(25), mm(20), -mm(3), mm(20), mm(20), 0, f));
     m.push_back(arc(false, mm(20), mm(25), -3'500'000, mm(20), mm(20), 0, f));
     m.push_back(arc(false, mm(20), mm(25), -3'500'000, mm(20), mm(20), 0, f)); // flat full circle at the bottom
-    m.push_back(dwell(500));                                                    // half a second there (G4)
-    m.push_back(linear(mm(20), mm(20), -3'500'000, f));                         // to the centre
+    m.push_back(dwell(500));                                                   // half a second there (G4)
+    m.push_back(linear(mm(20), mm(20), -3'500'000, f));                        // to the centre
     m.push_back(rapid(mm(20), mm(25), mm(5)));
     m.push_back(rapid(mm(40), mm(30), mm(5)));
     m.push_back(linear(mm(40), mm(30), 0, mmPerMin(200), MoveRole::Plunge));
@@ -210,8 +210,8 @@ Program toolChange()
         m.push_back(rapid(mm(60), y, mm(k == 0 ? 5 : 25)));
     }
     {
-        cam::Toolpath& t = p.section("Spot", "drill", 3, makeTool("10 mm spot drill", lib::ToolType::SpotDrill, 10, 2),
-                                     2000);
+        cam::Toolpath& t =
+            p.section("Spot", "drill", 3, makeTool("10 mm spot drill", lib::ToolType::SpotDrill, 10, 2), 2000);
         auto& m = t.moves;
         m.push_back(rapid(mm(20), mm(45), mm(25)));
         m.push_back(rapid(mm(20), mm(45), mm(5)));
@@ -281,7 +281,8 @@ Program coolant()
 // parenthesis inside a comment, non-ASCII text and a long name.
 Program names()
 {
-    Program p = titled(42, "Bracket (rev B) \xC3\xB8" "10 bore; 100% [check] \xE2\x80\x94 op 1/2 *top*");
+    Program p = titled(42, "Bracket (rev B) \xC3\xB8"
+                           "10 bore; 100% [check] \xE2\x80\x94 op 1/2 *top*");
     p.setup.name = "Op 1 (top) \xE2\x80\x93 vise";
     cam::Toolpath& t = millSection(p, "Pocket (rough) \xE2\x80\x94 \"A\" side", 8,
                                    endMill(10, "10mm (3FL) end-mill, ALTiN coated \xC2\xB5m"), 6000);
@@ -354,13 +355,37 @@ Program tapping(bool leftHand)
     return p;
 }
 
+// One run of drilling holes whose cycle code changes: G81, then G82 (a dwell), then G81 again with a deeper hole and
+// another R plane. The code change restarts the cycle from the initial level; the depth and R change do not.
+Program cycleChange()
+{
+    Program p = titled(1116, "Matrix: cycle code and values changing inside one run");
+    cam::Toolpath& t = p.section("Drill, mixed", "drill", 4, drillTool(5, "5 mm drill"), 2000);
+    t.startX = mm(10);
+    t.startY = mm(10);
+    t.startZ = mm(30);
+    auto& m = t.moves;
+    m.push_back(rapid(mm(10), mm(10), mm(30)));
+    const auto hole = [](Nm x, Nm bottom, Nm r, std::int32_t dwellMs, cam::CycleReturn ret) {
+        return levels(cycle(MoveKind::CycleDrill, x, mm(10), bottom, r, mmPerMin(150), 0, dwellMs), mm(20), mm(30),
+                      ret);
+    };
+    m.push_back(hole(mm(10), mm(12), mm(22), 0, cam::CycleReturn::RPlane));
+    m.push_back(hole(mm(20), mm(12), mm(22), 200, cam::CycleReturn::RPlane));
+    m.push_back(hole(mm(30), mm(8), mm(23), 200, cam::CycleReturn::RPlane));
+    m.push_back(hole(mm(40), mm(8), mm(23), 0, cam::CycleReturn::Initial));
+    m.push_back(cycleCancel());
+    return p;
+}
+
 // Several tools: face, contour with compensation and arcs, spot, drill, peck, tap and a chamfer.
 Program realistic()
 {
     Program p = titled(2001, "Realistic: bracket top, six tools");
     p.setup.name = "Op 1 top";
     {
-        cam::Toolpath& t = millSection(p, "Face top", 1, makeTool("50 mm face mill", lib::ToolType::FaceMill, 50, 5), 2500);
+        cam::Toolpath& t =
+            millSection(p, "Face top", 1, makeTool("50 mm face mill", lib::ToolType::FaceMill, 50, 5), 2500);
         auto& m = t.moves;
         m.push_back(rapid(-mm(30), mm(12), mm(25)));
         m.push_back(rapid(-mm(30), mm(12), mm(22)));
@@ -397,9 +422,8 @@ Program realistic()
     drillSection(p, "Chip-break drill", 4, drillTool(5, "5 mm drill"), 2400, "drill_chipbreak");
     drillSection(p, "Tap M6x1", 5, tapTool(6, 1, "M6x1"), 500, "drill_tap");
     {
-        cam::Toolpath& t =
-            millSection(p, "Chamfer top edge", 6, makeTool("10 mm 90 deg chamfer mill", lib::ToolType::ChamferMill, 10, 4),
-                        8000);
+        cam::Toolpath& t = millSection(p, "Chamfer top edge", 6,
+                                       makeTool("10 mm 90 deg chamfer mill", lib::ToolType::ChamferMill, 10, 4), 8000);
         auto& m = t.moves;
         const std::int32_t f = mmPerMin(700);
         m.push_back(rapid(mm(40), -mm(8), mm(35)));
@@ -412,7 +436,7 @@ Program realistic()
 }
 
 struct Feature {
-    const char* file;        // golden name without units and extension
+    const char* file; // golden name without units and extension
     std::function<Program()> make;
     std::map<std::string, std::string> properties; // for every post
 };
@@ -430,23 +454,26 @@ std::vector<Feature> matrix()
         {"08-sequence-numbers", sequence, {{"sequenceNumbers", "every"}}},
         {"09-spot-drill",
          [] {
-             return cycleProgram(1109, "Matrix: spot drilling G81", "drill_spot", drillTool(10, "10 mm spot drill", lib::ToolType::SpotDrill),
-                                 3, 1500);
+             return cycleProgram(1109, "Matrix: spot drilling G81", "drill_spot",
+                                 drillTool(10, "10 mm spot drill", lib::ToolType::SpotDrill), 3, 1500);
          },
          {}},
         {"10-drill-dwell",
-         [] { return cycleProgram(1110, "Matrix: drilling with dwell G82", "drill_drill", drillTool(5, "5 mm drill"), 4, 2000); },
+         [] {
+             return cycleProgram(1110, "Matrix: drilling with dwell G82", "drill_drill", drillTool(5, "5 mm drill"), 4,
+                                 2000);
+         },
          {}},
         {"11-peck",
          [] {
-             return cycleProgram(1111, "Matrix: peck drilling G83", "drill_peck_corpus", drillTool(6.6, "6.6 mm drill"), 4,
-                                 2200);
+             return cycleProgram(1111, "Matrix: peck drilling G83", "drill_peck_corpus", drillTool(6.6, "6.6 mm drill"),
+                                 4, 2200);
          },
          {}},
         {"12-chip-break",
          [] {
-             return cycleProgram(1112, "Matrix: chip-break drilling G73", "drill_chipbreak", drillTool(5, "5 mm drill"), 4,
-                                 2400);
+             return cycleProgram(1112, "Matrix: chip-break drilling G73", "drill_chipbreak", drillTool(5, "5 mm drill"),
+                                 4, 2400);
          },
          {}},
         {"13-bore",
@@ -462,6 +489,7 @@ std::vector<Feature> matrix()
          },
          {}},
         {"15-tap", [] { return tapping(true); }, {}},
+        {"16-cycle-change", cycleChange, {}},
         {"20-realistic", realistic, {}},
     };
 }
@@ -495,11 +523,17 @@ std::vector<Extra> extras()
     return {
         {"fanuc", "30-tap-plain-g84", [] { return tapping(true); }, {{"tapping", "plainG84"}}},
         {"fanuc", "31-arcs-r", arcsXY, {{"arcFormat", "R"}}},
-        {"fanuc", "32-g53-dwell-x-style-one", helical,
-         {{"toolChangeRetract", "G53"}, {"endRetract", "G53"}, {"endPosition", "zThenXY"}, {"decimalStyle", "one"},
+        {"fanuc",
+         "32-g53-dwell-x-style-one",
+         helical,
+         {{"toolChangeRetract", "G53"},
+          {"endRetract", "G53"},
+          {"endPosition", "zThenXY"},
+          {"decimalStyle", "one"},
           {"dwellUnits", "X-seconds"}}},
         {"generic-iso", "30-arcs-r", arcsXY, {{"arcFormat", "R"}}},
-        {"generic-iso", "31-dwell-ms-g28",
+        {"generic-iso",
+         "31-dwell-ms-g28",
          [] {
              Program p = cycleProgram(1131, "ISO: dwell in milliseconds, G28 retracts", "drill_bore",
                                       makeTool("6 mm boring bar", lib::ToolType::BoringBar, 6, 1), 9, 900);
@@ -508,11 +542,21 @@ std::vector<Extra> extras()
          {{"dwellUnits", "milliseconds"}, {"toolChangeRetract", "G28"}, {"endRetract", "G28"}}},
         {"generic-iso", "32-helical-dwell-ms", helical, {{"dwellUnits", "milliseconds"}}},
         {"haas-ngc", "30-g187-smoothing", realistic, {{"smoothing", "medium"}, {"smoothingCorner", "0.05"}}},
-        {"haas-ngc", "31-peck-ijk", [] { return cycleProgram(1131, "Haas: G83 with I J K peck reduction", "drill_peck_corpus", drillTool(6.6, "6.6 mm drill"), 4, 2200); },
+        {"haas-ngc",
+         "31-peck-ijk",
+         [] {
+             return cycleProgram(1131, "Haas: G83 with I J K peck reduction", "drill_peck_corpus",
+                                 drillTool(6.6, "6.6 mm drill"), 4, 2200);
+         },
          {{"peckReduction", "true"}}},
         {"haas-ngc", "32-arcs-r", arcsXY, {{"arcFormat", "R"}}},
         {"haas-classic", "30-g187-smoothing", realistic, {{"smoothing", "finish"}}},
-        {"haas-classic", "31-peck-ijk", [] { return cycleProgram(1131, "Haas: G83 with I J K peck reduction", "drill_peck_corpus", drillTool(6.6, "6.6 mm drill"), 4, 2200); },
+        {"haas-classic",
+         "31-peck-ijk",
+         [] {
+             return cycleProgram(1131, "Haas: G83 with I J K peck reduction", "drill_peck_corpus",
+                                 drillTool(6.6, "6.6 mm drill"), 4, 2200);
+         },
          {{"peckReduction", "true"}}},
     };
 }
@@ -618,7 +662,8 @@ bool hasLetter(const std::vector<Word>& w, char letter)
 }
 bool hasAxis(const std::vector<Word>& w)
 {
-    return std::any_of(w.begin(), w.end(), [](const Word& x) { return std::string("XYZIJKR").find(x.letter) != std::string::npos; });
+    return std::any_of(w.begin(), w.end(),
+                       [](const Word& x) { return std::string("XYZIJKR").find(x.letter) != std::string::npos; });
 }
 // G codes as numbers times ten: "G1" 10, "G54.1" 541, "G0" 0.
 std::vector<int> gCodes(const std::vector<Word>& w)
@@ -680,8 +725,12 @@ std::vector<std::string> structuralProblems(const std::string& post, const std::
         }
         const auto g = gCodes(w);
         const auto m = mCodes(w);
-        auto hasG = [&](int code) { return std::find(g.begin(), g.end(), code) != g.end(); };
-        auto hasM = [&](int code) { return std::find(m.begin(), m.end(), code) != m.end(); };
+        auto hasG = [&](int code) {
+            return std::find(g.begin(), g.end(), code) != g.end();
+        };
+        auto hasM = [&](int code) {
+            return std::find(m.begin(), m.end(), code) != m.end();
+        };
         if (m.size() > 1) {
             problem(n, "more than one M code in a block");
         }
@@ -869,7 +918,8 @@ namespace {
 
 // A pairwise covering set over the declared properties' values: every pair of values of two properties appears in
 // at least one combination (greedy, deterministic).
-std::vector<std::map<std::string, std::string>> pairwise(const std::vector<std::pair<std::string, std::vector<std::string>>>& params)
+std::vector<std::map<std::string, std::string>>
+pairwise(const std::vector<std::pair<std::string, std::vector<std::string>>>& params)
 {
     struct Pair {
         std::size_t a, va, b, vb;
@@ -1007,17 +1057,24 @@ TEST_CASE("shipped posts: refusals and warnings name their cause", "[post][shipp
              m[3].compensation = 0;
              m[4].compensation = 0;
          },
-         {}, "on an arc", false},
+         {},
+         "on an arc",
+         false},
         {"comp left on",
          [](Program& p) {
              auto& m = p.paths[1].moves;
              m[m.size() - 2].compensation = 1; // the lead-out keeps compensation, the rapid follows
          },
-         {}, "cutter compensation", false},
+         {},
+         "cutter compensation",
+         false},
         {"spindle too fast", [](Program& p) { p.ops[1].cutting.spindleRpm = 20000; }, {}, "above the machine's", false},
         {"no spindle speed", [](Program& p) { p.ops[1].cutting.spindleRpm = 0; }, {}, "no spindle speed", false},
-        {"mist without a code", [](Program& p) { p.ops[1].cutting.coolant = cam::CuttingData::Coolant::Air; },
-         {{"coolantCodes", "flood=M8/M9 mist=M7/M9 through=/ air=/"}}, "coolant mode 'air' has no M code", false},
+        {"mist without a code",
+         [](Program& p) { p.ops[1].cutting.coolant = cam::CuttingData::Coolant::Air; },
+         {{"coolantCodes", "flood=M8/M9 mist=M7/M9 through=/ air=/"}},
+         "coolant mode 'air' has no M code",
+         false},
         {"bad coolant codes", [](Program&) {}, {{"coolantCodes", "flood=M8"}}, "post property coolantCodes", false},
         {"tap feed not pitch x rpm", [](Program& p) { p.ops[5].cutting.spindleRpm = 600; }, {}, "pitch x rpm", false},
         {"left-hand tap, spindle clockwise",
@@ -1028,7 +1085,9 @@ TEST_CASE("shipped posts: refusals and warnings name their cause", "[post][shipp
                  }
              }
          },
-         {}, "-hand tap", false},
+         {},
+         "-hand tap",
+         false},
         {"peck clearance in the IR", [](Program&) {}, {}, "peck clearance", true}, // drill_chipbreak has 0.3 mm
     };
     for (const char* id : kPosts) {

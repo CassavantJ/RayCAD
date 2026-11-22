@@ -304,10 +304,10 @@ definePost({
 
   retract(method, out) {
     if (method === "G53") {
-      out.block("G0", "G53", "Z0.");
+      out.block("G0", "G53", out.word("Z", 0));
       out.modal("motion", "G0");
     } else if (method === "G28") {
-      out.block("G91", "G28", "Z0.");
+      out.block("G91", "G28", out.word("Z", 0));
       out.block("G90");
       out.resetModal("distance", "motion");
       out.modal("distance", "G90");
@@ -334,7 +334,7 @@ definePost({
     this.spindle = null;
     this.coolantOff(out);
     if (last && p.endPosition !== "zOnly") {
-      const axes = p.endPosition === "zThenXY" ? ["X0.", "Y0."] : ["Y0."];
+      const axes = p.endPosition === "zThenXY" ? [out.word("X", 0), out.word("Y", 0)] : [out.word("Y", 0)];
       if (p.endRetract === "G28") {
         out.block("G91", "G28", ...axes);
         out.block("G90");

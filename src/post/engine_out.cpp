@@ -329,8 +329,8 @@ JSValue jsSetFormat(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
         const bool ok = JS_IsNumber(v) && !JS_ToFloat64(ctx, &d, v) && std::floor(d) == d && d >= lo && d <= hi;
         JS_FreeValue(ctx, v);
         if (!ok) {
-            JS_ThrowRangeError(ctx, "out.setFormat: %s must be a whole number from %d to %d", key,
-                               static_cast<int>(lo), static_cast<int>(hi));
+            JS_ThrowRangeError(ctx, "out.setFormat: %s must be a whole number from %d to %d", key, static_cast<int>(lo),
+                               static_cast<int>(hi));
             return false;
         }
         target = static_cast<std::remove_reference_t<decltype(target)>>(d);

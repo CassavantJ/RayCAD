@@ -23,7 +23,8 @@ One document per shipped post:
 for the milling features no operation generates yet. Each program is posted in millimetres (`*_mm.nc`) and inches
 (`*_inch.nc`); the inch files are the same metric toolpaths converted, so their numbers are not round. The machine is
 a test VMC (12000 rpm, rigid tapping, travel X 0-762, Y 0-406, Z -508-0 mm). The program's header comment (the O line)
-says what the file demonstrates.
+says what the file demonstrates. When the post warns, the warnings are in `<name>.warnings.txt` beside the program
+(and the test fails if they change).
 
 The test compares every golden byte for byte on every OS. To write the produced files after a reviewed change:
 

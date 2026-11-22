@@ -43,7 +43,8 @@ std::string axisWord(Writer& w, char letter, std::int64_t n)
 }
 
 // A post whose handlers are the given script text: onProgramStart(ctx, out) gets `body`.
-Result<PostOutput> runStart(const std::string& body, const std::string& caps = "", UnitSystem units = UnitSystem::Metric)
+Result<PostOutput> runStart(const std::string& body, const std::string& caps = "",
+                            UnitSystem units = UnitSystem::Metric)
 {
     const std::string source = "definePost({ title: 't', dialect: 'fanuc', fileExtension: '.nc', apiVersion: 1,\n"
                                "  capabilities: { arcs: 'IJK', helical: true, maxArcDegrees: 360, cannedCycles: [],\n"
@@ -157,7 +158,7 @@ TEST_CASE("arcs outside arcPlanes and helices outside helicalPlanes become lines
     p.startX = mm(10);
     p.moves.push_back(arc(true, -mm(10), 0, 0, 0, 0, 0, mmPerMin(500), cam::ArcPlane::XZ)); // XZ half circle
     p.moves.push_back(linear(mm(10), 0, 0, mmPerMin(500)));
-    p.moves.push_back(arc(false, 0, mm(10), -mm(1), 0, 0, 0, mmPerMin(500))); // XY helix
+    p.moves.push_back(arc(false, 0, mm(10), -mm(1), 0, 0, 0, mmPerMin(500)));  // XY helix
     p.moves.push_back(arc(false, -mm(10), 0, -mm(1), 0, 0, 0, mmPerMin(500))); // XY plain arc
     auto kinds = [](const std::vector<MotionEvent>& ev, std::uint32_t move) {
         std::vector<EventKind> out;
@@ -222,7 +223,7 @@ TEST_CASE("scripts: setFormat, feed decimals, sequence.max and the plane capabil
     CHECK(text[0] == "(A LONG C)");
     CHECK(text[1] == "X1.0 R2.0 F35.7143"); // style "one"; the second, equal feed is modal
     CHECK(text[2] == "N99998 A");
-    CHECK(text[3] == "N99999 B"); // the machine's maxBlockNumber
+    CHECK(text[3] == "N99999 B");  // the machine's maxBlockNumber
     CHECK(text[4] == "N100000 C"); // max 0: no limit
     CHECK(text[5] == "N99998 D");  // past max 100000: wraps to start
     CHECK(text[6] == "(FANUC 99999 4 100000)");
@@ -260,10 +261,9 @@ TEST_CASE("scripts: setFormat, feed decimals, sequence.max and the plane capabil
 
 TEST_CASE("inch output: setFormat decimals apply to inch words", "[post][engine][t040]")
 {
-    const auto out =
-        runStart("out.setFormat({ axisDecimals: 5, feedDecimals: 3, trailingZeros: 'all' });\n"
-                 "out.block(out.axis('X', 0.5), out.feed(12.5));",
-                 "", UnitSystem::Inch);
+    const auto out = runStart("out.setFormat({ axisDecimals: 5, feedDecimals: 3, trailingZeros: 'all' });\n"
+                              "out.block(out.axis('X', 0.5), out.feed(12.5));",
+                              "", UnitSystem::Inch);
     REQUIRE(out.has_value());
     CHECK(lines(out->text)[0] == "X0.50000 F12.500");
 }

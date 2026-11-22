@@ -18,7 +18,7 @@ for the classic control the H1 citations are direct.
 
 ## Goldens
 
-The same set as the NGC post (`01`-`20`), plus:
+The same set as the NGC post (`01`-`20`; no `32-arcs-r`), plus:
 
 | Golden | Shows | Check |
 |---|---|---|

@@ -69,10 +69,10 @@ public:
     // digit), "all" X12.000 X12.500 (every decimal). A decimal point is written in every style.
     enum class Trailing : std::uint8_t { Trim, One, All };
     struct Format {
-        int axisDecimals = 3;               // 0..6
-        int feedDecimals = 1;               // 0..6
+        int axisDecimals = 3; // 0..6
+        int feedDecimals = 1; // 0..6
         Trailing trailing = Trailing::Trim;
-        std::size_t commentMaxLength = 0;   // characters inside the parentheses; 0 = no limit
+        std::size_t commentMaxLength = 0; // characters inside the parentheses; 0 = no limit
     };
     const Format& format() const { return format_; }
     // Sets the format and forgets every axis and the feed (their rounded values change with the decimals).

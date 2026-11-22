@@ -62,7 +62,8 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | 08-sequence-numbers | N on every block | |
 | 09-14 | G81, G82, G83, G73, G89, G85 | P in seconds with three decimals |
 | 15-tap | G84, then G74 with its own tool | M03 / M04 first (not needed on a Haas, H1 p.82, but harmless); F to 3 decimals mm / 4 inch |
-| 20-realistic | the whole program | |
+| 16-cycle-change | G81, G82, G82 deeper with another R, G81 in one run | the code changes restart from the clearance; Z and R change in the hole's block |
+| 20-realistic | the whole program | the peck clearance warning (`.warnings.txt`) |
 | 30-g187-smoothing | `G187 P2 E0.05` | the E value in program units (0.0020 in inch) |
 | 31-peck-ijk | `G83 I3. J0.75 K0.75`, no Q | J and K as fractions of the peck (properties) |
 | 32-arcs-r | R format | |
@@ -96,6 +97,9 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 6. Mist coolant has no code in the workbook's M code list (it may on a given machine).
 7. Program end brings Y to machine zero (table forward) by default, as H1 p.43; property endPosition.
 8. Max comment and line length: not documented in H1; no limit enforced by default.
+9. Canned cycles inside one run: later holes write X/Y and only the words that changed; "R plane value and the Z
+   depth value" may change while the cycle is active (H1 p.72). A change of the cycle G code inside a run is written as
+   G80, a rapid back up to the clearance and the new cycle, so that the initial level (G98) is never lowered.
 
 ## G and M words this post can write (for T-043)
 

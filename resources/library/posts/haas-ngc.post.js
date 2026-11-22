@@ -331,11 +331,11 @@ definePost({
 
   retract(method, out) {
     if (method === "G53") {
-      out.block("G00", "G53", "G49", "Z0."); // [H1 p.43, p.46-47]
+      out.block("G00", "G53", "G49", out.word("Z", 0)); // [H1 p.43, p.46-47]
       out.modal("motion", "G00");
       this.h = null;
     } else if (method === "G28") {
-      out.block("G28", "G91", "Z0."); // [H1 p.43]: G91 makes Z0. the current point, so only Z moves home
+      out.block("G28", "G91", out.word("Z", 0)); // [H1 p.43]: G91 makes Z0. the current point, so only Z moves home
       out.block("G90");
       out.resetModal("distance", "motion");
       out.modal("distance", "G90");
@@ -364,7 +364,7 @@ definePost({
     this.spindle = null;
     this.coolantOff(out);
     if (last && p.endPosition !== "zOnly") {
-      const axes = p.endPosition === "zThenXY" ? ["X0.", "Y0."] : ["Y0."];
+      const axes = p.endPosition === "zThenXY" ? [out.word("X", 0), out.word("Y", 0)] : [out.word("Y", 0)];
       if (p.endRetract === "G28") {
         out.block("G28", "G91", ...axes);
         out.block("G90");

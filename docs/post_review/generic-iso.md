@@ -55,6 +55,7 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | 08-sequence-numbers | N on every block | |
 | 09-spot-drill .. 14-ream | G81, G82, G83, G73 expanded, G89, G85 | 12: no G73, plain G0/G1 moves with 0.3 mm back-offs (the IR's value) |
 | 15-tap | right-hand G84 only | M3 before G84; F = pitch x rpm |
+| 16-cycle-change | G81, G82, G82 deeper with another R, G81 in one run | the code changes restart from the clearance |
 | 20-realistic | the whole program | chip break expanded |
 | 30-arcs-r | R format | |
 | 31-dwell-ms-g28 | dwell in milliseconds, G28 retracts | `G89 ... P200`; `G91 G28 Z0.` then `G90` |
@@ -85,6 +86,9 @@ Each file exists as `_mm.nc` and `_inch.nc`.
    time differs.
 4. G84 and G83 have no dwell word in RS274/NGC: a dwell there is warned about and not posted.
 5. Coolant codes for through-spindle and air are not standard.
+6. Canned cycles inside one run: later holes write X/Y and only the cycle words that changed (Z and R are "sticky",
+   N 3.5.16); a change of the cycle G code inside a run is written as G80, a rapid back up to the clearance, and the
+   new cycle, so that the initial level (G98) is never lowered.
 
 ## G and M words this post can write (for T-043)
 
