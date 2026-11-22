@@ -139,6 +139,8 @@ Item {
                             required property bool canMoveUp
                             required property bool canMoveDown
                             required property string rowTemplate // T-057: the template it came from, "" none
+                            required property string cycleTime    // T-059: a setup's estimate, "est. h:mm:ss"
+                            required property string cycleTimeTip // and in full, with what it assumed
 
                             readonly property bool isSetup: rowKind === "setup"
                             readonly property bool current: CamTreeModel.currentIndex === index
@@ -239,6 +241,14 @@ Item {
                                     color: row.suppressed ? Theme.textSecondary : Theme.textPrimary
                                     elide: Text.ElideRight
                                     textFormat: Text.PlainText
+                                    // T-059: the cycle-time estimate of the operation or setup, in full.
+                                    readonly property bool hovered: nameHover.hovered
+                                    HoverHandler {
+                                        id: nameHover
+                                    }
+                                    HoverToolTip {
+                                        text: row.cycleTimeTip
+                                    }
                                 }
                                 TextField {
                                     id: nameField
@@ -433,8 +443,18 @@ Item {
                                 maximumLineCount: 4
                                 font: Theme.smallFont
                                 color: row.bad ? Theme.error : Theme.textSecondary
+                                // T-059: a setup's cycle-time estimate on a line of its own; in full in the tooltip.
+                                // T-057: an operation's template.
                                 text: row.bad ? row.message
-                                      : row.isSetup ? row.rowDetail : qsTr("From template %1").arg(row.rowTemplate)
+                                      : row.isSetup ? row.rowDetail + (row.cycleTime !== "" ? "\n" + row.cycleTime : "")
+                                      : qsTr("From template %1").arg(row.rowTemplate)
+                                readonly property bool hovered: detailsHover.hovered
+                                HoverHandler {
+                                    id: detailsHover
+                                }
+                                HoverToolTip {
+                                    text: row.bad ? "" : row.cycleTimeTip
+                                }
                             }
                         }
                     }

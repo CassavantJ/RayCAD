@@ -6,6 +6,7 @@
 #include "../scene_controller.h"
 #include "../session.h"
 #include "../ui_commands.h"
+#include "cycletime_logic.h"
 #include "setup_tool.h" // setup_tree.h's inline setSetupTool needs the whole type
 #include "setup_tree.h"
 
@@ -111,6 +112,25 @@ PostToolModel::PostToolModel(SceneController* scene, Session* session, AppContex
                 close(); // the document closed or another became active
         });
     }
+    connect(this, &PostToolModel::activeChanged, this, &PostToolModel::cycleTimeChanged); // T-059
+}
+
+// T-059: the cycle-time estimate is the CAM tree's (worked out there after every status run).
+void PostToolModel::setTree(SetupTreeModel* tree)
+{
+    if (tree_)
+        disconnect(tree_.data(), &SetupTreeModel::cycleTimesChanged, this, &PostToolModel::cycleTimeChanged);
+    tree_ = tree;
+    if (tree_)
+        connect(tree_.data(), &SetupTreeModel::cycleTimesChanged, this, &PostToolModel::cycleTimeChanged);
+}
+
+QString PostToolModel::cycleTime() const
+{
+    const SetupTreeModel::CycleTimeEstimate* e = tree_ && setup_ ? tree_->cycleTimeOf(*setup_) : nullptr;
+    if (e == nullptr || e->input.operations.empty())
+        return {};
+    return camui::cycleTimeDetails(e->time, e->time.assumptions, e->input.complete);
 }
 
 PostToolModel::~PostToolModel()

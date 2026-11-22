@@ -46,7 +46,9 @@ add_library(ray_ui STATIC
     cam/tools_logic.h # T-046
     cam/tools_logic.cpp
     cam/post_logic.h # T-047
-    cam/post_logic.cpp)
+    cam/post_logic.cpp
+    cam/cycletime_logic.h # T-059
+    cam/cycletime_logic.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).

@@ -115,7 +115,8 @@ endforeach()
 
 add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp
     operation_unit_test.cpp # T-045: the schema form over every registered type and synthetic schemas, the panel logic
-    post_unit_test.cpp) # T-047: the viewer's tokens and index, post properties as a form, the gate through cam.post
+    post_unit_test.cpp # T-047: the viewer's tokens and index, post properties as a form, the gate through cam.post
+    cycletime_unit_test.cpp) # T-059: the cycle-time estimate's text, and a setup's input from the engine's statuses
 target_link_libraries(ray_ui_cam_unit_tests PRIVATE ray_ui ray_api Qt6::Core Catch2::Catch2WithMain)
 target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/tests/unit/cam") # T-047: test.op

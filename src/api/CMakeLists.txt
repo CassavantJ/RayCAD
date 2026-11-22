@@ -22,6 +22,8 @@ add_library(ray_api STATIC
     cam_tools.cpp
     cam_template_actions.h # operation templates: the cam.template.* actions and cam.batch (T-057)
     cam_template_actions.cpp
+    include/ray_api/cam_cycletime.h # the cycle-time estimate per setup and operation (T-059)
+    cam_cycletime.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

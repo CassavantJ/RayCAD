@@ -13,6 +13,7 @@
 //   - remembered per setup (the post, its properties, the folder, the rule), the program number written back to the
 //     setup, every overwrite rule, a loopback SMB folder with a locked file, and the same bytes on a second post
 //   - keyboard: Ctrl+P opens the dialog, Tab stays inside it, Enter posts, Esc closes; the viewer's keys
+//   - T-059: the cycle-time estimate in the CAM tree (per setup and per operation) and in the dialog's summary
 //   - [wallclock] a program of 200,000 lines: the UI thread within its budget while it is posted and shown, and the
 //     time per scroll step measured over the whole program
 //
@@ -23,6 +24,7 @@
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
+#include "cam/cycletime_logic.h"
 #include "cam/operation_view.h"
 #include "cam/post_tool.h"
 #include "cam/post_view.h"
@@ -39,6 +41,7 @@
 #include "viewport_navigation.h"
 
 #include <ray/sim.h>
+#include <ray_api/cam_cycletime.h>
 #include <ray_api/cam_operation.h>
 #include <ray_api/cam_setup.h>
 #include <ray_api/cam_tools.h>
@@ -50,6 +53,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
@@ -1187,6 +1191,120 @@ TEST_CASE("settings are remembered per setup, overwrite rules, a second post wri
     CHECK(QFileInfo::exists(QDir(w.out.path()).filePath(QStringLiteral("warned 8500.nc"))));
     w.shown(QStringLiteral("postMessageText.0"));
     p->close();
+    w.checkNoWarnings();
+}
+
+// ======================================================================================================= cycle time
+// T-059: the cycle-time estimate in the CAM tree (a setup's in its secondary text and tooltip, an operation's in its
+// name's tooltip: h:mm:ss, marked as an estimate, with what it assumed) and in the post dialog's summary; worked out
+// on a worker after the statuses, again when a toolpath changes.
+TEST_CASE("the cycle-time estimate: per operation and setup in the tree, in the post dialog, again when a toolpath "
+          "changes",
+          "[cam][post][cycletime]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    drillSetup(w);
+    SetupTreeModel* tree = w.tree();
+    const SetupId setup{Uuid::fromString(ct::id('a', 1))};
+    const OperationId drill1 = ct::opId(1);
+    // The estimate arrives (one job after the statuses) and is the whole setup's.
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const SetupTreeModel::CycleTimeEstimate* e = tree->cycleTimeOf(setup);
+            return e != nullptr && e->input.complete && e->input.operations.size() == 1;
+        },
+        kTimeoutMs));
+    const SetupTreeModel::CycleTimeEstimate* e = tree->cycleTimeOf(setup);
+    // It is cam::estimateCycleTime of the toolpath the engine holds, on the setup's machine.
+    const cam::CycleTime direct = api::cam_cycletime::estimate(e->input);
+    CHECK(e->time.totalSec == direct.totalSec);
+    CHECK(e->time.totalSec > 0);
+    CHECK(e->time.cutSec > 0);
+    CHECK(e->time.toolChanges == 1);
+    CHECK(e->time.assumptions.accelerationUnknown);     // the shipped machine definitions publish no accelerations
+    CHECK_FALSE(e->time.assumptions.toolChangeUnknown); // the Generic VMC states 4.2 s
+    REQUIRE(tree->cycleTimeOf(drill1) != nullptr);
+    CHECK(tree->cycleTimeOf(drill1)->totalSec == e->time.totalSec);
+    const double firstTotal = e->time.totalSec; // e is replaced when the estimate is worked out again
+    const QString total = camui::formatDuration(firstTotal);
+    CHECK(QRegularExpression(QStringLiteral("^\\d+:\\d\\d:\\d\\d$")).match(total).hasMatch());
+
+    // The setup row: its secondary line ends with the marked estimate; its tooltip has the split and the assumption.
+    const int setupRow = tree->rowOf(QString::fromStdString(ct::id('a', 1)));
+    const int opRow = tree->rowOf(QString::fromStdString(ct::id('c', 1)));
+    REQUIRE((setupRow >= 0 && opRow >= 0));
+    const QVariantMap s = tree->get(setupRow);
+    CHECK(s.value(QStringLiteral("cycleTime")).toString() == QStringLiteral("est. ") + total);
+    const QString setupTip = s.value(QStringLiteral("cycleTimeTip")).toString();
+    CHECK(setupTip.startsWith(QStringLiteral("Estimated cycle time ") + total));
+    CHECK(setupTip.contains(QStringLiteral("Machine accelerations unknown")));
+    const QString details = w.shown(QStringLiteral("camRowDetails.%1").arg(setupRow))->property("text").toString();
+    CHECK(details.endsWith(QStringLiteral("est. ") + total));
+    // The operation row: in its name's tooltip only (its right slot, the badge and the tools, is untouched).
+    const QVariantMap o = tree->get(opRow);
+    CHECK(o.value(QStringLiteral("cycleTime")).toString().isEmpty());
+    CHECK(o.value(QStringLiteral("cycleTimeTip")).toString().startsWith(QStringLiteral("Estimated cycle time ")));
+    CHECK(o.value(QStringLiteral("status")).toString() == QStringLiteral("upToDate"));
+    // Hovering the name shows the tooltip.
+    QQuickItem* opItem = w.shown(QStringLiteral("operationRow.%1").arg(opRow));
+    QQuickItem* name = nullptr;
+    for (QQuickItem* child : opItem->findChildren<QQuickItem*>()) {
+        if (child->objectName() == QLatin1String("camRowName"))
+            name = child;
+    }
+    REQUIRE(name != nullptr);
+    w.grab();
+    w.sendMouse(QEvent::MouseMove, w.centreOf(name), Qt::NoButton, Qt::NoButton);
+    REQUIRE(QTest::qWaitFor([&] { return name->property("hovered").toBool(); }, 5000));
+    const auto tipShown = [&] {
+        for (QQuickItem* child : name->childItems()) {
+            if (child->property("active").toBool())
+                return true; // the HoverToolTip's loader
+        }
+        return false;
+    };
+    CHECK(QTest::qWaitFor(tipShown, 5000));
+    w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                Qt::NoButton);
+
+    // The post dialog's summary says the same.
+    openFromRow(w);
+    QQuickItem* label = w.shown(QStringLiteral("postDialogCycleTime"));
+    CHECK(label->property("text").toString() == setupTip);
+    CHECK(w.post()->cycleTime() == setupTip);
+    w.shotsBothThemes(QStringLiteral("t059_post_cycle_time"));
+    w.post()->close();
+
+    // A second operation: while it is not generated the setup has no total (the operation's own stays); generated,
+    // the estimate is worked out again, counting both.
+    const int runs = tree->cycleTimeRuns();
+    addDrill(w, 2, 6);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const SetupTreeModel::CycleTimeEstimate* x = tree->cycleTimeOf(setup);
+            return x != nullptr && !x->input.complete;
+        },
+        kTimeoutMs));
+    CHECK(tree->get(setupRow).value(QStringLiteral("cycleTime")).toString().isEmpty());
+    CHECK(tree->get(setupRow)
+              .value(QStringLiteral("cycleTimeTip"))
+              .toString()
+              .contains(QStringLiteral("Only the generated toolpaths are counted")));
+    w.generate(2);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const SetupTreeModel::CycleTimeEstimate* x = tree->cycleTimeOf(setup);
+            return x != nullptr && x->input.complete && x->input.operations.size() == 2;
+        },
+        kTimeoutMs));
+    CHECK(tree->cycleTimeRuns() > runs);
+    const SetupTreeModel::CycleTimeEstimate* both = tree->cycleTimeOf(setup);
+    CHECK(both->time.totalSec > firstTotal);
+    CHECK(both->time.operations.size() == 2);
+    CHECK(both->time.toolChanges == 1); // the same tool (number 1): no change between them
+    CHECK(tree->get(setupRow).value(QStringLiteral("cycleTime")).toString() ==
+          QStringLiteral("est. ") + camui::formatDuration(both->time.totalSec));
     w.checkNoWarnings();
 }
 

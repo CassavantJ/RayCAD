@@ -105,3 +105,12 @@ target_include_directories(ray_cam_templates_tests PRIVATE "${CMAKE_SOURCE_DIR}/
 target_compile_definitions(ray_cam_templates_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_templates_tests)
+# Cycle time (task T-059): the hand-calculated cases, the bits on every platform, the 1,000,000-move budget ([wallclock],
+# split out by tests/tiers.cmake) and the comparison with times measured on real machines (tests/data/cycletime).
+add_executable(ray_cam_cycletime_tests cycletime_test.cpp)
+target_link_libraries(ray_cam_cycletime_tests PRIVATE ray_cam ray_lib ray_core Catch2::Catch2WithMain)
+target_compile_definitions(ray_cam_cycletime_tests PRIVATE
+    RAY_CYCLETIME_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data/cycletime")
+set_property(TARGET ray_cam_cycletime_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_cam_cycletime_tests COMMAND ray_cam_cycletime_tests "~[wallclock]")
+ray_test_runtime_path(ray_cam_cycletime_tests)

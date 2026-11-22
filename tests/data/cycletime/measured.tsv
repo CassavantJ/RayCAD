@@ -1,0 +1,21 @@
+# Cycle times measured on real machines, to compare the estimate (cam.h estimateCycleTime) with (task T-059; filled in
+# M8). tests/unit/cam/cycletime_test.cpp "cycle time against times measured on real machines" reads this file: it
+# estimates every record, prints the error, and fails a record whose error is above the record's own limit. While the
+# file has no records the test is skipped.
+#
+# FORMAT. UTF-8 text. Lines starting with # and empty lines are ignored. One record per line, six fields separated by
+# a TAB (not spaces):
+#   1 program      the setup's toolpaths in program order: RCTP files (cam.h Toolpath::serialize, the golden toolpath
+#                  format; raycad-cli writes them), comma-separated, relative to this folder
+#   2 machine      the machine definition the program ran on, a library machine file (lib::toJson, *.machine.json),
+#                  relative to this folder; it should carry the machine's real rapid rates, feeds, accelerations and
+#                  tool change time where they are known
+#   3 tools        the tool number of each toolpath (cam.h ToolRef::toolNumber), comma-separated, as many as in field 1
+#   4 measured     the measured time in seconds, from cycle start to the end of the program (M30), with 100 % rapid,
+#                  feed and spindle overrides
+#   5 max error    the error allowed for this record, in percent of the measured time; the test fails above it
+#   6 source       free text: the machine and control, its settings that change motion (smoothing or look-ahead mode,
+#                  exact stop), how the time was taken (the control's cycle timer, a stopwatch) and the date
+#
+# Example (not a record):
+# bp1/op1.rctp,bp1/op2.rctp	bp1/vf2.machine.json	1,2	754.2	15	Haas VF-2, NGC, smoothing medium, cycle timer, 2027-03-01

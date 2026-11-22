@@ -20,6 +20,7 @@
 #pragma once
 
 #include <ray/api.h>
+#include <ray_api/cam_cycletime.h>
 
 #include <QtCore/QAbstractListModel>
 #include <QtCore/QPointer>
@@ -74,6 +75,11 @@ public:
         OperationCountRole,
         CanMoveUpRole,
         CanMoveDownRole,
+        // T-059: the cycle-time estimate. A setup: camui::cycleTimeShort of its total while every operation that is
+        // not suppressed is up to date, else ""; an operation: "" (its time is in the tip). The tip: camui::
+        // cycleTimeDetails of the row's part (the operation's, or the setup's), "" while there is none.
+        CycleTimeRole,
+        CycleTimeTipRole,
         TemplateRole, // T-057: the name of the template the operation came from, "" when none
     };
 
@@ -128,8 +134,23 @@ public:
     int notices() const { return notices_; }
     // Re-reads the statuses now (also done by every document notification).
     void refresh();
+    // T-059: the cycle-time estimate of each setup, worked out on the job system after every status run that changed
+    // what it is made of (api::cam_cycletime: the up-to-date toolpaths, their tool numbers, the machine), so a
+    // toolpath generated, edited or gone changes it. Null while there is none for the setup. CycleTime::operations
+    // parallels input.operations (the setup's operations that are up to date and not suppressed).
+    struct CycleTimeEstimate {
+        api::cam_cycletime::SetupInput input;
+        cam::CycleTime time;
+    };
+    const CycleTimeEstimate* cycleTimeOf(const SetupId& id) const;
+    // An operation's part of its setup's estimate; null while there is none.
+    const cam::CycleTimePart* cycleTimeOf(const OperationId& id) const;
+    // Estimates finished (tests).
+    int cycleTimeRuns() const { return cycleTimeRuns_; }
 
 signals:
+    // T-059: a setup's cycle-time estimate arrived or went.
+    void cycleTimesChanged();
     void changed();
     void currentChanged();
     void messageChanged();
@@ -198,6 +219,14 @@ private:
     int notices_ = 0;
     QString pendingSelect_;
     bool selectFirst_ = false; // a document was opened: its first setup becomes current once its rows are there
+
+    // T-059: cycle-time estimates.
+    void estimateCycleTimes();
+    void showCycleTimes();
+    std::map<SetupId, std::shared_ptr<const CycleTimeEstimate>> cycleTimes_;
+    JobHandle<std::shared_ptr<const std::vector<CycleTimeEstimate>>> cycleTimeJob_;
+    std::uint64_t cycleTimeSerial_ = 0;
+    int cycleTimeRuns_ = 0;
 };
 
 } // namespace ray::ui

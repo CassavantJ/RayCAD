@@ -4,6 +4,8 @@ add_library(ray_cam STATIC
     engine.cpp   # ICamEngine, makeCamEngine (task T-032)
     setup.cpp    # resolveSetup, resolveSetupGeometry (task T-033)
     feeds.cpp    # computeFeeds (task T-048)
+    cycletime.cpp # estimateCycleTime (task T-059)
+    cycletime.h
     holes.cpp    # recognizeHoles, orderHolesShortestPath (task T-034)
     json.cpp     # the JSON reader of operation params (a copy of src/lib's; task T-035)
     json.h
