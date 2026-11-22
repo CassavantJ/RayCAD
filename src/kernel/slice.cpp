@@ -300,6 +300,8 @@ Result<std::vector<ProfileLoop>> silhouette(const Shape& shape, const Xform& fra
     auto trsf = detail::rigidTrsf(frame, where);
     if (!trsf)
         return tl::unexpected(trsf.error());
+    if (auto st = ctx.cancel.check(); !st)
+        return tl::unexpected(st.error());
     return guarded(where, [&]() -> Result<std::vector<ProfileLoop>> {
         const TopoDS_Shape moved = detail::topologyCopy(detail::occt(shape)).Moved(TopLoc_Location(*trsf));
         const Box3 bounds = tightBox(moved);

@@ -142,6 +142,8 @@ Result<double> minInternalCornerRadius(const Shape& shape, Vec3 toolAxis, JobCon
     if (!std::isfinite(length) || length <= 1e-12)
         return tl::unexpected(
             makeError(ErrorCode::InvalidArgument, "The tool axis must be a non-zero direction.", where));
+    if (auto st = ctx.cancel.check(); !st)
+        return tl::unexpected(st.error());
     return guarded(where, [&]() -> Result<double> {
         const gp_Dir axis(toolAxis.x / length, toolAxis.y / length, toolAxis.z / length);
         double best = std::numeric_limits<double>::infinity();

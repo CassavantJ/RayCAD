@@ -684,6 +684,8 @@ Status checkDistance(Coord d)
 
 Result<Regions> boolean(const Regions& a, const Regions& b, Clipper2Lib::ClipType type, JobContext& ctx)
 {
+    if (auto st = ctx.cancel.check(); !st)
+        return tl::unexpected(st.error());
     if (auto st = checkRegions(a); !st)
         return tl::unexpected(st.error());
     if (auto st = checkRegions(b); !st)
@@ -715,6 +717,8 @@ std::size_t literalEdgeCount()
 
 Result<Regions> offset(const Regions& regions, Coord delta, JobContext& ctx, Coord sag)
 {
+    if (auto st = ctx.cancel.check(); !st)
+        return tl::unexpected(st.error());
     if (auto st = checkRegions(regions); !st)
         return tl::unexpected(st.error());
     if (auto st = checkDistance(delta); !st)
@@ -739,6 +743,8 @@ Result<Regions> offset(const Regions& regions, Coord delta, JobContext& ctx, Coo
 
 Result<Paths> offsetOpen(const Path& open, Coord d, Side side, JobContext& ctx, Coord sag)
 {
+    if (auto st = ctx.cancel.check(); !st)
+        return tl::unexpected(st.error());
     if (auto st = checkRange(open); !st)
         return tl::unexpected(st.error());
     if (d <= 0 || d > kMaxCoord)
@@ -815,6 +821,8 @@ Result<Paths> offsetOpen(const Path& open, Coord d, Side side, JobContext& ctx, 
 
 Result<Regions> sweptArea(std::span<const Path> paths, Coord r, JobContext& ctx, Coord sag)
 {
+    if (auto st = ctx.cancel.check(); !st)
+        return tl::unexpected(st.error());
     if (r <= 0 || r > kMaxCoord)
         return tl::unexpected(invalid("A swept area needs a radius above 0."));
     Raw raw;
