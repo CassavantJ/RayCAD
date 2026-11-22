@@ -16,6 +16,11 @@
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
+// Amended by T-034 (hole recognition): recognizeHoles takes the setup frame, has an overload without a resolver, and
+// HoleSegment, RecognizedHole and HoleOptions grew (see that section).
+// Amended for the chip-thickness exponent (lib::Material::mc): PowerModel MillingKcMc and DrillingKcMc, and
+// FeedsResult::meanChipThicknessMm and specificCuttingForceNmm2.
+// Amended so closed documents do not leak: ICamEngine::forget (a no-op by default).
 // Amended by T-044 (CAM workspace, setups): Wcs::flipX and Wcs::flipZ, since the X edge's curve direction is not the
 // user's choice; resolveSetup and the input hash read them (a setup with neither keeps its hash).
 // Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
@@ -333,6 +338,13 @@ public:
     // Operations run in parallel; each is internally deterministic and MUST be re-entrant (no shared globals, no
     // clock-driven branches). Cancellation is polled by iteration count, never by wall clock.
     virtual void generateAllStale(doc::DocStatePtr, doc::BuildResultPtr) = 0;
+    // Drops what the engine holds for these operations by id: the latest toolpath of each (shown while stale) and the
+    // record of a running generation. Called when their document closes, after their generations were cancelled; a
+    // generation that still ends later is filed in the cache by its input hash only. The cache by input hash is kept
+    // (bounded: CamEngineOptions::cacheEntries), so a document opened again finds toolpaths whose inputs it still has.
+    // Ids are not per document: the caller leaves out operations another open document has (a second copy of a file).
+    // The default does nothing (an engine without per-operation state).
+    virtual void forget(std::span<const OperationId>) {}
 };
 
 // ---------- The engine (task T-032) ----------
@@ -464,10 +476,63 @@ struct LinkOptions { double maxStayDownDistance = 0; bool allowRapidRetract = fa
 Result<std::vector<Move>> linkPasses(std::span<const std::vector<Move>> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&);
 
 // ---------- Hole recognition (v1: cylinders with planar/conical bottoms; full AFR is v2) ----------
-struct HoleSegment { double diameter, depth; bool conical; double coneAngleDeg; };
-struct RecognizedHole { naming::TopoRef axisFace; Vec3 top, axis; std::vector<HoleSegment> segments; bool through; std::string threadSpec; };
-Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId, Vec3 setupZ, JobContext&);
-std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);   // deterministic nearest-neighbour + 2-opt
+// Task T-034, src/cam/holes.cpp, which states every rule and tolerance. Amended by T-034: recognition takes the setup
+// frame (wcsFromModel, so positions come out in the WCS in nanometres, as the toolpath IR needs them) instead of setup
+// Z alone; a second overload without a resolver serves generators, which get shapes and SubIds but no resolver
+// (GenerateInput); HoleSegment and RecognizedHole carry what the drilling operation (T-035) needs; HoleOptions carries
+// the thread pickup from hole features (T-097b) and a size limit.
+//
+// A hole is a stack of coaxial concave faces along setup Z, open at the top to an up-facing plane with nothing above
+// it: cylinders (pieces of one cylinder merged, as STEP exporters split them), cones (countersinks, chamfers, drill
+// points) and planar steps; it ends in a flat floor, a cone (drill point) or by breaking out (through). Segments run
+// from the top down; planar steps between them are not segments.
+struct HoleSegment {
+    double diameter, depth; bool conical; double coneAngleDeg;   // cone: diameter at its top, included angle
+    // Added by T-034:
+    double bottomDiameter;    // the diameter at the segment's lower end: = diameter for a cylinder, 0 at a drill point
+    Nm zTop, zBottom;         // WCS Z of the segment's ends (a drill point's zBottom is its tip); depth = zTop - zBottom
+};
+enum class HoleBottom : std::uint8_t { Through, Flat, Conical };
+struct RecognizedHole {
+    naming::TopoRef axisFace;  // the main bore's wall (its lowest SubId); empty from the overload without a resolver
+    Vec3 top;                  // the WCS point (x, y, zTop) in mm
+    Vec3 axis;                 // the hole axis in the model frame, pointing out of the hole (unit)
+    std::vector<HoleSegment> segments;   // top down; at least one cylinder
+    bool through;              // == (bottom == HoleBottom::Through)
+    std::string threadSpec;    // the hole feature's thread designation ("M6x1"), empty when unknown or not tapped
+    // Added by T-034:
+    Nm x = 0, y = 0;           // the axis in the WCS
+    Nm zTop = 0, zBottom = 0;  // the top, and the lowest point (a drill point's tip; where a through hole breaks out)
+    HoleBottom bottom = HoleBottom::Through;
+    std::size_t bore = 0;      // index in segments of the main bore: the lowest cylinder, the drilled diameter
+    bool counterbored = false; // a cylinder above the bore is wider than it
+    bool countersunk = false;  // an entry cone (above the first cylinder) wider than a chamfer (holes.cpp, kChamferMax*)
+    bool chamfered = false;    // an entry cone no wider than a chamfer: an edge break, not a countersink
+    double threadPitch = 0;    // mm, with threadSpec; 0 when unknown
+    kernel::SubId axisSub{};   // the face axisFace names, in the shape passed
+    std::vector<kernel::SubId> faces;   // every face of the hole (walls, steps, floor) in the shape passed, sorted
+};
+// Thread pickup (T-097b): the thread of the hole feature `feature`, which made the bore (TopoName::origin of a name
+// of role "hole.*" on the bore's faces, read through `names`); nullopt when the feature has none.
+struct HoleThread { std::string spec; double pitch = 0; };
+struct HoleOptions {
+    const naming::ElementMap* names = nullptr;   // the body's element map; null: no thread pickup
+    std::function<std::optional<HoleThread>(const FeatureId&)> threadOf;   // empty: no thread pickup
+    double maxDiameter = 0;   // > 0: holes whose bore is wider are not reported (circular pockets); 0: no limit
+};
+// Holes of `shape` (model frame) along Z of the frame wcsFromModel (a rigid move: the setup's ResolvedSetup), sorted
+// by (x, y, zTop) and then axisSub, so the result does not depend on face order. Deterministic. Errors:
+// InvalidArgument for a null shape or a frame that is not a rigid move; KernelFailure when a face or edge cannot be
+// read; Cancelled. Polls cancellation per face.
+Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId,
+                                                   const Xform& wcsFromModel, JobContext&, const HoleOptions& = {});
+Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const Xform& wcsFromModel, JobContext&,
+                                                   const HoleOptions& = {});
+// The visiting order of points `xy` from `start`: nearest neighbour (ties to the lower index), then 2-opt and Or-opt
+// improvement with a fixed pass bound, never longer than the nearest-neighbour tour. Deterministic: integer
+// nanometre coordinates (toNm of each value) and integer squared distances for every comparison. holes.cpp has the
+// complexity. A permutation of 0..xy.size()-1.
+std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);
 
 // ---------- Feeds and speeds (task T-048, src/cam/feeds.cpp) ----------
 // Amended by T-048: computeFeeds returns Result (errors are values); FeedsInput can name the preset and replace its
@@ -500,13 +565,16 @@ struct FeedsInput {
 };
 
 enum class FeedsMode : std::uint8_t { Milling, Drilling, Tapping };
-// How power and torque were estimated. lib::Material has no chip-thickness exponent mc, so every model uses kc1.1
-// flat, which reads low for chips thinner than 1 mm (feeds.cpp, kc model).
+// How power and torque were estimated (feeds.cpp, kc model). With the material's chip-thickness exponent mc
+// (lib::Material::mc), milling and drilling take kc = kc1.1 hm^-mc at the mean chip thickness hm of the cut; without
+// it kc1.1 flat, which reads low for chips thinner than 1 mm. Taps always use kc1.1 flat.
 enum class PowerModel : std::uint8_t {
     Unknown,        // the material's kc1.1 is 0 (not known): power and torque are 0, their limits Unknown
     MillingKc11,    // P = ae ap vf kc1.1
     DrillingKc11,   // P = MRR kc1.1 (equal to vc f D kc / 240000 for solid drilling; an annulus when opening a hole)
-    TappingKc11     // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+    TappingKc11,    // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+    MillingKcMc,    // P = ae ap vf kc, kc = kc1.1 hm^-mc
+    DrillingKcMc    // P = MRR kc, kc = kc1.1 hm^-mc
 };
 // One machine limit: the machine's value (0 = not known), what the cutting data asked for before this limit, and
 // what happened. Exceeded: the limit could not be met by changing rpm or feed (a tap's torque, a tap feed held up by
@@ -539,6 +607,8 @@ struct FeedsResult {
     double feedPerRevMm = 0;          // feed / rpm (taps: the pitch)
     double cuttingPowerKw = 0;        // at the cutting edges (tool wear factor in), before spindle efficiency
     PowerModel powerModel = PowerModel::Unknown;
+    double meanChipThicknessMm = 0;   // hm of the programmed feed (KcMc models; 0 otherwise)
+    double specificCuttingForceNmm2 = 0;   // the kc power and torque use (kc1.1 for the Kc11 models; 0 if unknown)
     bool tapFeedExact = true;         // taps: feedMicronPerMin x 1000 == pitch in nm x rpm, no rounding
     struct Limits { FeedsLimit maxRpm, minRpm, maxFeed, power, torque; } limits;
     std::vector<std::string> notes;   // user-presentable English, in a fixed order: defaults used, unknown limits, ...

@@ -502,12 +502,30 @@ TEST_CASE("transformed moves rigidly and maps every sub-shape", "[kernel][transf
     CHECK(close(volumeOf(cut.shape), 1000.0 - 125.0, 1e-9));
 }
 
-TEST_CASE("transformed rejects the identity, scaling and mirroring", "[kernel][transform][errors]")
+TEST_CASE("transformed returns the input for the identity", "[kernel][transform]")
+{
+    const Shape body = take(testing::makeCutBody());
+    const OpResult same = take(transformed(body, Xform::identity()));
+    CHECK(same.shape.contentHash() == body.contentHash());
+    CHECK(same.warnings.empty());
+    checkHistory(same, {&body});
+    std::size_t entries = 0;
+    for (const SubKind kind : {SubKind::Vertex, SubKind::Edge, SubKind::Face, SubKind::Solid}) {
+        CHECK(same.shape.count(kind) == body.count(kind));
+        entries += body.count(kind);
+    }
+    REQUIRE(same.history.entries.size() == entries);
+    for (const HistoryEntry& e : same.history.entries) {
+        CHECK(e.relation == HistoryEntry::Relation::Modified);
+        CHECK(e.inputIndex == 0);
+        REQUIRE(e.results.size() == 1);
+        CHECK(e.results[0] == e.source);
+    }
+}
+
+TEST_CASE("transformed rejects scaling and mirroring", "[kernel][transform][errors]")
 {
     const Shape block = box({0, 0, 0}, {10, 10, 10});
-    auto identity = transformed(block, Xform::identity());
-    REQUIRE_FALSE(identity.has_value());
-    CHECK(identity.error().code == ErrorCode::KernelFailure);
     Xform scale = Xform::identity();
     scale.m[0] = 2.0;
     Xform mirror = Xform::identity();

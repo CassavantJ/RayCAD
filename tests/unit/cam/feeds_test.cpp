@@ -1,6 +1,7 @@
 // Feeds and speeds (cam.h computeFeeds, task T-048).
 //
-//  - 39 hand-calculated cases. Each states its inputs and the arithmetic, step by step, with the rules of
+//  - 43 hand-calculated cases (40 to 42 with the chip-thickness exponent mc). Each states its inputs and the
+//  arithmetic, step by step, with the rules of
 //    src/cam/feeds.cpp: n = 1000 vc / (pi Deff) rounded down to a whole rpm; vf = n fz z x thinning, rounded down to a
 //    whole um/min; Q = ae ap vf / 1000 (drilling: pi/4 D^2 vf / 1000); Pc = Q kc W / 60000 with the tool wear factor
 //    W = 1.2; motor power P = Pc / 0.8; torque T = Pc 60000 / (2 pi n). The expected values were worked out by hand
@@ -50,7 +51,7 @@ lib::Material material(double kc)
 
 lib::ToolPreset preset(std::string opClass, double vc, double fz, double radial = 1, double axial = 1)
 {
-    return lib::ToolPreset{kMat, std::move(opClass), vc, fz, radial, axial, 0};
+    return lib::ToolPreset{kMat, std::move(opClass), vc, fz, radial, axial, 0, {}};
 }
 
 lib::Tool tool(lib::ToolType type, double d, int flutes)
@@ -665,6 +666,98 @@ TEST_CASE("feeds hand 33: ball nose cutting with its tip is bounded", "[cam][fee
     CHECK(hasNote(r, "a fifth of the tool diameter"));
 }
 
+// ---------- The chip-thickness exponent mc: kc = kc1.1 hm^-mc ----------
+// The expected values were computed apart from computeFeeds (the formulas below with a library pow, in plain double
+// arithmetic) and are checked to 1e-9: feeds.cpp computes h^(k/256) by repeated square roots, so only rounding differs.
+namespace {
+lib::Material materialMc(double kc, double mc)
+{
+    lib::Material m = material(kc);
+    m.mc = mc;
+    return m;
+}
+#define CHECK_TIGHT(actual, expected) CHECK_THAT((actual), WithinRel((expected), 1e-9))
+} // namespace
+
+TEST_CASE("feeds hand 40: kc from mc at the mean chip thickness, milling", "[cam][feeds][hand][mc]")
+{
+    // Hand 2's cut (10 mm 4FL, ae 2, ap 10, vc 100, fz 0.05) in a material with kc1.1 2000 and mc 0.25.
+    // n = 3183; thinning 1.25: fz = 0.0625, vf = 3183 x 0.0625 x 4 = 795.75 mm/min (795750 um/min exactly).
+    // phi = arccos(1 - 2 x 2 / 10) = arccos(0.6) = 0.92729521800161 rad.
+    // hm = fz (2 ae / D) / phi = 0.0625 x 0.4 / 0.92729521800161 = 0.026960130403645.
+    // kc = 2000 x 0.026960130403645^-0.25 = 2000 / 0.405210... = 4935.7084537093.
+    // Pc = (2 x 10 x 795.75 / 1000) x 4935.7084537093 x 1.2 / 60000 = 15.915 x 4935.7084537093 x 2e-5
+    // = 1.5710360008157; P = 1.5710360008157 / 0.8 = 1.9637950010196 kW; T = 1.5710360008157 x 60000 / (2 pi 3183)
+    // = 4.7132543884098 N m. kc1.1 flat would give Pc = 0.6366 kW: about 2.5 times less.
+    auto r = run(tool(lib::ToolType::FlatEndMill, 10, 4, "rough", 100, 0.05), materialMc(2000, 0.25), machine(kBig), 2,
+                 10, "pocket2d");
+    CHECK(r.powerModel == PowerModel::MillingKcMc);
+    CHECK(r.rpm == 3183);
+    CHECK(r.feedMicronPerMin == 795750);
+    CHECK_TIGHT(r.meanChipThicknessMm, 0.026960130403645123);
+    CHECK_TIGHT(r.specificCuttingForceNmm2, 4935.7084537093087);
+    CHECK_TIGHT(r.cuttingPowerKw, 1.571036000815673);
+    CHECK_TIGHT(r.powerKw, 1.963795001019591);
+    CHECK_TIGHT(r.torqueNm, 4.7132543884097506);
+    CHECK_FALSE(hasNote(r, "without a chip-thickness correction"));
+    // mc 0: kc1.1 flat, with the note (hand 2).
+    auto flat = run(tool(lib::ToolType::FlatEndMill, 10, 4, "rough", 100, 0.05), materialMc(2000, 0), machine(kBig), 2,
+                    10, "pocket2d");
+    CHECK(flat.powerModel == PowerModel::MillingKc11);
+    CHECK(flat.specificCuttingForceNmm2 == 2000);
+    CHECK(flat.meanChipThicknessMm == 0);
+    CHECK_TIGHT(flat.cuttingPowerKw, 0.6366);
+    CHECK(hasNote(flat, "without a chip-thickness correction"));
+}
+
+TEST_CASE("feeds hand 41: kc from mc in drilling, mc used in steps of 1/256", "[cam][feeds][hand][mc]")
+{
+    // 10 mm 2FL drill, 135 deg point, vc 20, fz 0.1; kc1.1 2000, mc 0.21 -> k = round(0.21 x 256) = round(53.76) = 54,
+    // mc used 54/256 = 0.2109375. n = floor(20000 / (pi 10)) = floor(636.62) = 636; vf = 636 x 0.1 x 2 = 127.2.
+    // hm = fz sin(67.5 deg) = 0.1 x 0.92387953251129 = 0.092387953251129.
+    // kc = 2000 x 0.092387953251129^-0.2109375 = 3305.3732542405.
+    // Q = pi/4 x 100 x 127.2 / 1000 = 9.9902646384155; Pc = 9.9902646384155 x 3305.3732542405 x 1.2 / 60000 =
+    // 0.66043107077206; P = 0.82553883846508 kW; T = 0.66043107077206 x 60000 / (2 pi 636) = 9.9161197627214 N m.
+    lib::Tool drill = tool(lib::ToolType::Drill, 10, 2, "drill", 20, 0.1);
+    drill.tipAngleDeg = 135;
+    auto r = run(drill, materialMc(2000, 0.21), machine(kBig), 0, 0, "drill");
+    CHECK(r.powerModel == PowerModel::DrillingKcMc);
+    CHECK(r.rpm == 636);
+    CHECK(r.feedMicronPerMin == 127200);
+    CHECK_TIGHT(r.meanChipThicknessMm, 0.092387953251128682);
+    CHECK_TIGHT(r.specificCuttingForceNmm2, 3305.3732542404746);
+    CHECK_TIGHT(r.mrrCm3Min, 9.9902646384155425);
+    CHECK_TIGHT(r.powerKw, 0.82553883846507781);
+    CHECK_TIGHT(r.torqueNm, 9.9161197627214239);
+    // 0.2109 rounds to the same step (53.99 -> 54): the same result, bit for bit.
+    auto same = run(drill, materialMc(2000, 0.2109), machine(kBig), 0, 0, "drill");
+    CHECK(same.powerKw == r.powerKw);
+    // Taps keep kc1.1 flat whatever mc is, and say why.
+    auto tap = run(tapTool(6, 1, 10), materialMc(2000, 0.25), machine(kBig), 0, 0, "drill");
+    CHECK(tap.powerModel == PowerModel::TappingKc11);
+    CHECK(tap.specificCuttingForceNmm2 == 2000);
+    CHECK(hasNote(tap, "a tap's chip thickness depends on its chamfer"));
+}
+
+TEST_CASE("feeds hand 42: a power limit with mc lowers the feed to the largest one within it", "[cam][feeds][hand][mc]")
+{
+    // Hand 40's cut on a spindle of 1 kW (other limits as kBig). P grows as vf^(1 - mc) = vf^0.75, so the feed is not
+    // simply scaled by 1 / 1.963795: the largest whole um/min with P <= 1 kW, found by bisection on
+    // P(f) = (2 x 10 x f / 1000) x 2000 hm(f)^-0.25 x 1.2 / 60000 / 0.8, hm(f) = f / (3183 x 4) x 0.4 /
+    // 0.92729521800161, is f = 323580 um/min: P(323.580) = 0.99999981 kW, P(323.581) = 1.0000021 kW.
+    Limits limits = kBig;
+    limits.powerKw = 1;
+    auto r = run(tool(lib::ToolType::FlatEndMill, 10, 4, "rough", 100, 0.05), materialMc(2000, 0.25), machine(limits),
+                 2, 10, "pocket2d");
+    CHECK(r.limitedByPower);
+    CHECK(r.limits.power.state == LimitState::Applied);
+    CHECK_TIGHT(r.limits.power.requested, 1.963795001019591);
+    CHECK(r.rpm == 3183);
+    CHECK(r.feedMicronPerMin == 323580);
+    CHECK(r.powerKw <= 1.0);
+    CHECK_TIGHT(r.powerKw, 0.99999981049614228);
+}
+
 // ---------- Shipped library on shipped machines ----------
 namespace {
 
@@ -713,8 +806,12 @@ TEST_CASE("feeds hand 34 (library): 1/2 in 3FL rough in 6061 on the Haas", "[cam
     // tool.em.flat.1-2.3fl: D 12.7, 3FL; 6061 rough preset vc 250, fz 0.1016, maxRadial 0.15, maxAxial 2. Haas: 8100
     // rpm, 16510 mm/min, 22.4 kW, 122 N m. Engagement not given: ae = 0.15 x 12.7 = 1.905, ap = 2 x 12.7 = 25.4.
     // n = 250000 / (pi 12.7) = 6265.94 -> 6265. radial = 12.7 / (2 sqrt(1.905 x 10.795)) = 12.7 / 9.069500 = 1.400280.
-    // vf = 6265 x 0.1016 x 1.400280 x 3 = 2673.935. Q = 1.905 x 25.4 x 2673.935 / 1000 = 129.3837; kc 700:
-    // Pc = 129.3837 x 700 x 1.2 / 60000 = 1.811372; P = 2.264215 kW; T = 1.811372 x 60000 / (2 pi 6265) = 2.760946 N m.
+    // vf = 6265 x 0.1016 x 1.400280 x 3 = 2673.935. Q = 1.905 x 25.4 x 2673.935 / 1000 = 129.3837.
+    // 6061 has kc1.1 700 and mc 0.25 (= 64/256 exactly): fz = 2673.935 / (6265 x 3) = 0.142268;
+    // phi = arccos(1 - 2 x 1.905 / 12.7) = arccos(0.7) = 0.795399 rad; hm = 0.142268 x 0.3 / 0.795399 = 0.0536593;
+    // kc = 700 x 0.0536593^-0.25 = 700 / 0.481302 = 1454.410. Pc = 129.3837 x 1454.410 x 1.2 / 60000 = 3.763539;
+    // P = 4.704423 kW; T = 3.763539 x 60000 / (2 pi 6265) = 5.736496 N m. (With kc1.1 flat, before the material had
+    // mc: P 2.264215 kW, T 2.760946 N m.)
     const auto& s = shipped();
     auto r = run(s.tool("3fb7624c-615b-4f07-8f57-ecc8432f07df"), s.material(k6061), s.machine(kHaas), 0, 0, "pocket2d");
     CHECK(r.opClass == "rough");
@@ -724,8 +821,11 @@ TEST_CASE("feeds hand 34 (library): 1/2 in 3FL rough in 6061 on the Haas", "[cam
     CHECK_REL(r.radialThinningFactor, 1.400280);
     CHECK_REL(r.feedMmMin, 2673.935);
     CHECK_REL(r.mrrCm3Min, 129.3837);
-    CHECK_REL(r.powerKw, 2.264215);
-    CHECK_REL(r.torqueNm, 2.760946);
+    CHECK(r.powerModel == PowerModel::MillingKcMc);
+    CHECK_REL(r.meanChipThicknessMm, 0.0536593);
+    CHECK_REL(r.specificCuttingForceNmm2, 1454.410);
+    CHECK_REL(r.powerKw, 4.704423);
+    CHECK_REL(r.torqueNm, 5.736496);
     CHECK(r.limits.maxRpm.state == LimitState::NotReached);
     CHECK(r.limits.power.state == LimitState::NotReached);
     CHECK(r.limits.torque.state == LimitState::NotReached);
@@ -751,14 +851,18 @@ TEST_CASE("feeds hand 35 (library): 1/8 in 2FL rough in 6061 on the Fanuc", "[ca
 TEST_CASE("feeds hand 36 (library): 10 mm drill in 4140 on the Mazak", "[cam][feeds][hand][shipped]")
 {
     // tool.drill.10mm: 2FL; 4140 annealed drill vc 18, fz 0.06 (0.12 mm/rev). Mazak: 12000 rpm, 18 kW, feed and torque
-    // 0. n = 18000 / (pi 10) = 572.96 -> 572. vf = 572 x 0.06 x 2 = 68.64. Q = pi/4 x 100 x 68.64 / 1000 = 5.390973; kc
-    // 2000: Pc = 0.215639; P = 0.269549 kW.
+    // 0. n = 18000 / (pi 10) = 572.96 -> 572. vf = 572 x 0.06 x 2 = 68.64. Q = pi/4 x 100 x 68.64 / 1000 = 5.390973.
+    // 4140 annealed: kc1.1 2000, mc 0.24 -> 61/256 = 0.238281. 135 deg point: hm = 0.06 sin(67.5 deg) = 0.0554328;
+    // kc = 2000 x 0.0554328^-0.238281 = 3984.436 (ln 0.0554328 = -2.892584, x -0.238281 = 0.689248, e^ = 1.992218).
+    // Pc = 5.390973 x 3984.436 x 1.2 / 60000 = 0.429600; P = 0.537000 kW. (kc1.1 flat: 0.269549 kW.)
     const auto& s = shipped();
     auto r = run(s.tool("5a0addb3-3dab-40bc-bc10-1871e0c0fbd8"), s.material(k4140), s.machine(kMazak), 0, 0, "drill");
     CHECK(r.rpm == 572);
     CHECK_REL(r.feedMmMin, 68.64);
     CHECK_REL(r.mrrCm3Min, 5.390973);
-    CHECK_REL(r.powerKw, 0.269549);
+    CHECK(r.powerModel == PowerModel::DrillingKcMc);
+    CHECK_REL(r.meanChipThicknessMm, 0.0554328);
+    CHECK_REL(r.powerKw, 0.537000);
     CHECK(r.limits.maxFeed.state == LimitState::Unknown);
     CHECK(r.limits.power.state == LimitState::NotReached);
     CHECK(r.limits.torque.state == LimitState::Unknown);
@@ -778,18 +882,54 @@ TEST_CASE("feeds hand 37 (library): M6x1 tap in 304 on the Haas", "[cam][feeds][
     CHECK(r.limits.torque.state == LimitState::NotReached);
 }
 
+TEST_CASE("feeds hand 37b (library): shipped inch taps carry 25.4 / TPI to the nanometre",
+          "[cam][feeds][hand][shipped]")
+{
+    // The starter library writes inch pitches with 6 decimals (tools/gen_library.py), so toNm gives 25.4 / TPI rounded
+    // to the nearest nm; 4 decimals made #8-32 0.7937 and 1/2-13 1.9538 mm.
+    // tool.tap.no8-32unc: D 4.1656, P = 25.4 / 32 = 0.79375 mm = 793750 nm; 1018 tap vc 9.
+    // n = 9000 / (pi 4.1656) = 687.73 -> 687; gcd(793750, 1000) = 250, step 4 -> 684. feed = 793750 x 684 / 1000 =
+    // 542925 um/min exactly.
+    const auto& s = shipped();
+    const lib::Tool& tap832 = s.tool("e0e813b4-7d3d-42a8-890f-a37e7efd2ce0");
+    CHECK(toNm(tap832.threadPitch) == 793750);
+    auto r = run(tap832, s.material(k1018), s.machine(kHaas), 0, 0, "drill");
+    CHECK(r.rpm == 684);
+    CHECK(r.feedMicronPerMin == 542925);
+    CHECK(r.tapFeedExact);
+    // tool.tap.1-2-13unc: D 12.7, P = 25.4 / 13 = 1.953846 mm = 1953846 nm; gcd(1953846, 1000) = 2, step 500 > 10:
+    // plain rpm. n = 9000 / (pi 12.7) = 225.57 -> 225. feed = 1953846 x 225 / 1000 = 439615.35 -> 439615 um/min (not
+    // exact).
+    const lib::Tool& tap1213 = s.tool("7ff37b22-17c4-4849-a50c-d66f0f571508");
+    CHECK(toNm(tap1213.threadPitch) == 1953846);
+    r = run(tap1213, s.material(k1018), s.machine(kHaas), 0, 0, "drill");
+    CHECK(r.rpm == 225);
+    CHECK(r.feedMicronPerMin == 439615);
+    CHECK_FALSE(r.tapFeedExact);
+    // The other inch pitches of the shipped taps, to the nanometre.
+    CHECK(toNm(s.tool("1d953741-d500-44a8-8d98-68857bc24ce6").threadPitch) == 1058333); // #10-24: 25.4 / 24
+    CHECK(toNm(s.tool("be514908-39fd-464a-ab26-f1fe6a11f8f0").threadPitch) == 907143);  // 1/4-28: 25.4 / 28
+    CHECK(toNm(s.tool("fcf692f4-d52e-4eb4-840c-9f0104a6682f").threadPitch) == 1411111); // 5/16-18: 25.4 / 18
+    CHECK(toNm(s.tool("a8490dc2-b551-43b1-9b11-cb08580cea2d").threadPitch) == 1270000); // 1/4-20: 25.4 / 20
+}
+
 TEST_CASE("feeds hand 38 (library): 2 in face mill in 1018 on the Haas", "[cam][feeds][hand][shipped]")
 {
     // tool.face.2in.45.4z: D 50.8, 4 inserts; 1018 face vc 180, fz 0.1, maxRadial 0.75, maxAxial 0.04.
-    // ae = 38.1, ap = 2.032. n = 1127; vf = 450.8. Q = 38.1 x 2.032 x 450.8 / 1000 = 34.900575; kc 1700:
-    // Pc = 1.186620; P = 1.483274 kW; T = 1.186620 x 60000 / (2 pi 1127) = 10.054465 N m.
+    // ae = 38.1, ap = 2.032. n = 1127; vf = 450.8. Q = 38.1 x 2.032 x 450.8 / 1000 = 34.900575.
+    // 1018: kc1.1 1700, mc 0.21 -> 54/256 = 0.2109375. Face mill, centred cut: fz = 450.8 / (1127 x 4) = 0.1;
+    // hm = fz (ae / D) / arcsin(ae / D) = 0.1 x 0.75 / 0.848062 = 0.0884369; kc = 1700 x 0.0884369^-0.2109375 =
+    // 2835.590 (ln 0.0884369 = -2.425466, x -0.2109375 = 0.511622, e^ = 1.667994). Pc = 34.900575 x 2835.590 x 1.2 /
+    // 60000 = 1.979274; P = 2.474093 kW; T = 1.979274 x 60000 / (2 pi 1127) = 16.770787 N m. (kc1.1 flat: P 1.483274.)
     const auto& s = shipped();
     auto r = run(s.tool("91e50525-1a88-4f40-a282-2997b0fb4852"), s.material(k1018), s.machine(kHaas), 0, 0, "face");
     CHECK(r.rpm == 1127);
     CHECK_REL(r.feedMmMin, 450.8);
     CHECK_REL(r.mrrCm3Min, 34.900575);
-    CHECK_REL(r.powerKw, 1.483274);
-    CHECK_REL(r.torqueNm, 10.054465);
+    CHECK(r.powerModel == PowerModel::MillingKcMc);
+    CHECK_REL(r.meanChipThicknessMm, 0.0884369);
+    CHECK_REL(r.powerKw, 2.474093);
+    CHECK_REL(r.torqueNm, 16.770787);
 }
 
 TEST_CASE("feeds hand 39 (library): 6 mm ball finishing 7075 on the Mazak", "[cam][feeds][hand][shipped]")
@@ -1048,7 +1188,7 @@ TEST_CASE("feeds: preset selection, missing presets and overrides", "[cam][feeds
     lib::Tool t = tool(lib::ToolType::FlatEndMill, 10, 4);
     t.presets = {preset("rough", 100, 0.05, 0.2, 1.5), preset("slot", 80, 0.04, 1, 0.5),
                  preset("finish", 120, 0.04, 0.05, 1.5)};
-    t.presets.push_back(lib::ToolPreset{kOtherMat, "rough", 999, 0.9, 1, 1, 0});
+    t.presets.push_back(lib::ToolPreset{kOtherMat, "rough", 999, 0.9, 1, 1, 0, {}});
 
     // Default class: rough for a pocket, slot for a slot op or a full-width cut, finish only when asked for.
     CHECK(run(t, mat, m, 2, 5, "pocket2d").opClass == "rough");
@@ -1245,7 +1385,10 @@ TEST_CASE("feeds: every shipped preset on every shipped machine, pinned", "[cam]
     CHECK(count == 2088); // 696 presets x 3 machines
     // The rpm and feed of every combination, the values that reach toolpaths: identical on every platform. Changes
     // only when the library, the formulas or the constants of feeds.cpp change (then review and update this).
-    CHECK(h.finish().hex() == "99be74e907961782b72e9d9b7cf47a14d434554a7d7bf02b4d2044fc62edb42a");
+    // Re-pinned when the shipped inch tap pitches became exact (25.4 / TPI to 6 decimals instead of 4): the rounded
+    // pitches had happened to make every tap feed exact; with the true ones the 24, 28, 18 and 13 TPI taps round
+    // their feed (tapFeedExact false) and 32 TPI taps move to the rpm step of 4.
+    CHECK(h.finish().hex() == "dec74b088e27e3c895b9fcc5c4ee8a9121cf96fd78c279981489aef72080ab5a");
 }
 
 // Not a test: a table of the shipped presets that hit a limit on all three shipped machines (run by hand with

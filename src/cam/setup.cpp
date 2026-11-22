@@ -339,12 +339,6 @@ Xform rotationOf(const Axes& r)
     return Xform{{r.x.x, r.x.y, r.x.z, 0.0, r.y.x, r.y.y, r.y.z, 0.0, r.z.x, r.z.y, r.z.z, 0.0}};
 }
 
-bool isIdentity(const Xform& xf)
-{
-    const Xform id = Xform::identity();
-    return std::equal(std::begin(xf.m), std::end(xf.m), std::begin(id.m));
-}
-
 // The box of `shape` in the WCS orientation O (p -> R p), or an error naming `what`.
 Result<Box3> boundsIn(const kernel::Shape& shape, const Axes& r, const std::string& what)
 {
@@ -569,9 +563,8 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
             const Box3& s = out.stockBounds;
             Result<kernel::Shape> made = kernel::Shape{};
             if (stockBody != nullptr) {
-                if (isIdentity(out.wcsFromModel)) {
-                    made = stockBody->shape;
-                } else if (auto moved = kernel::transformed(stockBody->shape, out.wcsFromModel)) {
+                // kernel::transformed hands the identity back as the input shape itself.
+                if (auto moved = kernel::transformed(stockBody->shape, out.wcsFromModel)) {
                     made = moved->shape;
                 } else {
                     made = tl::unexpected(moved.error());

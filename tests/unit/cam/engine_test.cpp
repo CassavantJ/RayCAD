@@ -574,6 +574,83 @@ TEST_CASE("status: Suppressed, unknown types, no build yet, and generateAllStale
     CHECK(Gate::instance().runs == 2);
 }
 
+TEST_CASE("forget releases what the engine holds for closed operations; their toolpaths are found again by hash",
+          "[cam][engine][forget]")
+{
+    Fixture f;
+    ray::test::TestDispatcher ui;
+    auto jobs = makeJobSystem(ui, 4);
+    REQUIRE(jobs);
+    CamEngineOptions options;
+    options.cacheEntries = 1; // one toolpath kept by hash: a second generation pushes the first out of the cache
+    auto engine = makeCamEngine(*jobs, testOperations(), &doc::camSnapshot, options);
+    REQUIRE(engine);
+    Gate::instance().reset();
+    const auto until = [&](auto done) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (std::chrono::steady_clock::now() < deadline && !done()) {
+            ui.runPending();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return done();
+    };
+    const auto generated = [&](const doc::DocStatePtr& state, std::uint64_t op) {
+        auto job = engine->generate(state, f.build, opId(op));
+        REQUIRE(job.wait());
+        REQUIRE(until([&] { return engine->status(state, f.build).at(opId(op)).status == OpStatus::UpToDate; }));
+    };
+    const auto statusOf = [&](const doc::DocStatePtr& state, std::uint64_t op) {
+        return engine->status(state, f.build).at(opId(op));
+    };
+    const auto state = exec(f.state, opAdd(2, 1, 1));
+    const auto edited = exec(state, opEdit(R"("cutting":{"rpm":9999})")); // c1 with other inputs
+
+    // c1's toolpath, then c2's: c1's leaves the one-entry cache, and only its "latest" entry (shown while stale) holds
+    // it.
+    generated(state, 1);
+    std::weak_ptr<const Toolpath> first = statusOf(state, 1).toolpath;
+    const std::vector<std::byte> firstBytes = first.lock()->serialize();
+    generated(state, 2);
+    CHECK(statusOf(state, 1).status == OpStatus::Stale);
+    CHECK(statusOf(edited, 1).toolpath == first.lock()); // still shown
+    REQUIRE_FALSE(first.expired());
+
+    // Forgetting c1 (its document closed) releases it.
+    const std::vector<OperationId> closing{opId(1)};
+    engine->forget(closing);
+    CHECK(first.expired());
+    OpState st = statusOf(state, 1);
+    CHECK(st.status == OpStatus::Stale);
+    CHECK(st.toolpath == nullptr);
+    // c2's toolpath stays in the cache by input hash: forgotten too, it is found again at once (a reopened document).
+    const std::vector<OperationId> second{opId(2)};
+    engine->forget(second);
+    st = statusOf(state, 2);
+    CHECK(st.status == OpStatus::UpToDate);
+    REQUIRE(st.toolpath != nullptr);
+    // c1 generates again, to the same toolpath: same input hash, same bytes.
+    const int runs = Gate::instance().runs.load();
+    generated(state, 1);
+    CHECK(Gate::instance().runs.load() == runs + 1);
+    CHECK(statusOf(state, 1).toolpath->serialize() == firstBytes);
+
+    // A generation still running when its operation is forgotten is not filed as that operation's latest toolpath when
+    // it ends (it goes into the cache under its input hash, as any result does).
+    const auto blocking = exec(state, opEdit(R"("params":{"mode":"block"})"));
+    Gate::instance().open = false;
+    auto job = engine->generate(blocking, f.build, opId(1));
+    REQUIRE(until([] { return Gate::instance().waiting.load() == 1; }));
+    engine->forget(closing);
+    Gate::instance().open = true;
+    REQUIRE(job.wait());
+    REQUIRE(until([&] { return statusOf(blocking, 1).status == OpStatus::UpToDate; }));
+    st = statusOf(edited, 1);
+    CHECK(st.status == OpStatus::Stale);
+    CHECK(st.toolpath == nullptr);
+    engine.reset();
+    jobs.reset();
+}
+
 TEST_CASE("the operation registry keeps the first type of a name and lists them sorted", "[cam][engine]")
 {
     struct Named final : IOperationType {

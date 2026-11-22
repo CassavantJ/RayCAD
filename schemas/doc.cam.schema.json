@@ -201,7 +201,8 @@
         "name": { "type": "string" }, "group": { "type": "string" },
         "hardnessHb": { "type": "number", "minimum": 0 },
         "specificCuttingForce": { "type": "number", "minimum": 0, "description": "N/mm2" },
-        "density": { "type": "number", "minimum": 0, "description": "g/cm3" }
+        "density": { "type": "number", "minimum": 0, "description": "g/cm3" },
+        "mc": { "type": "number", "minimum": 0, "exclusiveMaximum": 1, "description": "Optional chip thickness exponent; 0 or absent: not known" }
       }
     }
   }

@@ -19,12 +19,6 @@ Vec3 apply(const Xform& xf, Vec3 p)
                 m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]};
 }
 
-bool isIdentity(const Xform& xf)
-{
-    const Xform id = Xform::identity();
-    return std::equal(std::begin(xf.m), std::end(xf.m), std::begin(id.m));
-}
-
 const cam::Setup* findSetup(const cam::CamState& cam, const SetupId& id)
 {
     const auto it = std::find_if(cam.setups.begin(), cam.setups.end(), [&](const cam::Setup& s) { return s.id == id; });
@@ -71,9 +65,8 @@ Result<Preview> previewSetup(const doc::DocStatePtr& state, const doc::BuildResu
             return tl::unexpected(Error{ErrorCode::ReferenceBroken, "The stock body is not built", {}});
         }
         out.stock = body->shape;
-    } else if (isIdentity(resolved->modelFromWcs)) {
-        out.stock = resolved->stockSolid;
     } else {
+        // The stock moved back into the model (kernel::transformed hands the identity back as the shape itself).
         auto moved = kernel::transformed(resolved->stockSolid, resolved->modelFromWcs);
         if (!moved) {
             return tl::unexpected(moved.error());

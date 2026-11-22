@@ -4,7 +4,9 @@
 // The engine keeps derived data only: toolpaths by input hash (a bounded cache, so undo, redo and edits that come
 // back to an earlier state find their toolpath again), the latest toolpath of each operation (shown while it is
 // stale), failures by input hash, and the generation running for each operation. The document holds no toolpath;
-// an operation's status is a pure function of (snapshot, build, what the engine holds).
+// an operation's status is a pure function of (snapshot, build, what the engine holds). forget() drops the latest
+// toolpath and running record of operations whose document closed (the latest map would otherwise only grow); the
+// bounded cache by hash stays, so a reopened document finds toolpaths of inputs it still has.
 //
 // Threads: status() reads under the mutex from any thread. generate() computes the input hash on the calling thread,
 // submits the generator to the job system and records the running job; the job's continuation, posted to the UI
@@ -17,6 +19,8 @@
 #include <exception>
 #include <mutex>
 #include <new>
+#include <set>
+#include <span>
 #include <utility>
 
 namespace ray::cam {
@@ -60,6 +64,10 @@ struct Shared {
     };
     std::map<OperationId, Running> running;
     std::uint64_t nextTicket = 1;
+    // Every generation whose continuation has not run yet (ticket -> operation), and those of them whose operation was
+    // forgotten meanwhile: their result is cached by hash only, never made the operation's latest.
+    std::map<std::uint64_t, OperationId> outstanding;
+    std::set<std::uint64_t> dropped;
 
     // Caller holds the mutex. Drops the least recently used entries above the capacity.
     template <class Map>
@@ -180,6 +188,7 @@ public:
                     return run(*snap, *resolver, *types, resolve, id, hash, ctx);
                 });
             s_->running[id] = Shared::Running{hash, ticket, job};
+            s_->outstanding[ticket] = id;
             std::weak_ptr<Shared> weak = s_;
             job.then([weak, id, ticket, hash](Result<ToolpathPtr> result) {
                 if (auto s = weak.lock()) {
@@ -197,6 +206,21 @@ public:
         for (const auto& [id, st] : status(state, build)) {
             if (st.status == OpStatus::Stale) {
                 (void)generate(state, build, id);
+            }
+        }
+    }
+
+    void forget(std::span<const OperationId> ops) override
+    {
+        const std::set<OperationId> gone(ops.begin(), ops.end());
+        std::lock_guard<std::mutex> lock(s_->mutex);
+        for (const OperationId& id : gone) {
+            s_->latest.erase(id);
+            s_->running.erase(id); // not cancelled here: the caller has done that (cam.h)
+        }
+        for (const auto& [ticket, id] : s_->outstanding) {
+            if (gone.count(id) != 0) {
+                s_->dropped.insert(ticket);
             }
         }
     }
@@ -318,11 +342,13 @@ private:
         if (current) {
             s.running.erase(run);
         }
+        s.outstanding.erase(ticket);
+        const bool forgotten = s.dropped.erase(ticket) != 0; // its operation was forgotten while it ran
         if (result) {
             s.toolpaths[hash] = Shared::Cached{*result, ++s.clock};
             s.failures.erase(hash);
             s.trim(s.toolpaths);
-            if (current || s.latest.count(id) == 0) {
+            if (!forgotten && (current || s.latest.count(id) == 0)) {
                 s.latest[id] = *result;
             }
         } else if (result.error().code != ErrorCode::Cancelled) {

@@ -98,6 +98,10 @@ struct Camera { Vec3 eye, target, up; bool perspective; double fovDeg, orthoHeig
 struct SectionPlane { Vec3 origin, normal; bool cap; };
 
 // `point` needs a depth read-back at the picked pixel in addition to the ID buffer (spike S1).
+// Toolpath (T-038): only PickFilter::Toolpath finds a backplot. A hit on one of its segments has kind Edge and both
+// subIndex and moveIndex equal to that segment's sim::BackplotVertex::moveIndex (all 32 bits); moveIndex is 0 for
+// every other hit. setHighlight with a hit on a backplot item highlights the move `moveIndex` (kind and subIndex are
+// not read), so a hit can be made from a G-code line through PostOutput::lineMap.
 struct PickHit { ItemId item; kernel::SubKind kind; std::uint32_t subIndex; Vec3 point; std::uint32_t moveIndex; };
 enum class PickFilter : std::uint8_t { Faces = 1, Edges = 2, Vertices = 4, Bodies = 8, Toolpath = 16 };
 
@@ -107,9 +111,23 @@ public:
     // All calls on the UI thread. Uploads are queued and applied on the render thread at the next sync.
     virtual ItemId addMesh(std::shared_ptr<const kernel::Mesh>, const Xform&, MeshStyle) = 0;
     virtual void updateMesh(ItemId, std::shared_ptr<const kernel::Mesh>, std::optional<Box3> dirty) = 0;   // incremental sim stock
+    // Backplot (T-038): drawn by move type in the tokens PathCut, PathRapid (dashed), PathPlunge, PathRamp, PathLead
+    // (LeadIn, LeadOut) and PathLink (Link, Retract, Approach); a rapid is PathRapid whatever its role. Width: theme
+    // metric "line.path.px", else "line.thin.px", in device-independent pixels. The backplot is shared, never copied,
+    // and must not change afterwards. setStyle: `edge` PathCut (the default) keeps the colours by move type, any
+    // other token draws the whole path in it (e.g. PathStale); `opacity` applies; the other fields are ignored.
+    // Over TierPreset::maxBackplotSegments segments it is decimated for display (src/render/lines.h).
     virtual ItemId addBackplot(std::shared_ptr<const sim::Backplot>) = 0;
-    virtual void setBackplotRange(ItemId, std::uint32_t firstMove, std::uint32_t lastMove) = 0;            // timeline scrubbing
+    // Moves firstMove to lastMove INCLUSIVE are drawn and pickable, the others hidden; values past the last move are
+    // clamped, firstMove > lastMove shows nothing. A new backplot shows all its moves. Costs a draw-range change only
+    // (no upload). Timeline scrubbing.
+    virtual void setBackplotRange(ItemId, std::uint32_t firstMove, std::uint32_t lastMove) = 0;
+    // `segments`: pairs of end points, one segment per pair (an odd last point is dropped).
     virtual ItemId addLines(std::span<const Vec3> segments, Token colour, float widthPx, bool dashed) = 0;
+    // `revolvedProfile`: (radius, height) points in mm from the tip up (sim::ToolShape's profiles, e.g. cutting,
+    // shank and holder profiles joined), revolved about +Z with the tip at the item's origin; shaded like a mesh in
+    // `colour`. Place and move it with setTransform (a uniform change, cheap every frame). It answers no picks
+    // (PickMode::Never in ray_render/viewport.h), so it never hides the toolpath under the cursor.
     virtual ItemId addToolGlyph(std::span<const Vec2> revolvedProfile, Token colour) = 0;
     virtual void setTransform(ItemId, const Xform&) = 0;
     virtual void setStyle(ItemId, MeshStyle) = 0;

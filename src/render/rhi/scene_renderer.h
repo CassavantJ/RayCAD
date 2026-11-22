@@ -5,6 +5,7 @@
 #pragma once
 
 #include "frame_pass.h"
+#include "path_lines.h"
 #include "rhi_util.h"
 
 #include "../pick.h"
@@ -29,6 +30,13 @@ struct GpuItem {
     Owned<QRhiBuffer> wideEdges; // mesh edges or line items: one instance per segment, p0 p1 edge id (28 bytes)
     std::uint32_t indexCount = 0, thinEdgeVertexCount = 0, segmentCount = 0;
     std::shared_ptr<const detail::MeshIndex> index; // mesh items: face, edge and vertex lookups (T-015)
+    // Backplot items (T-038, path_lines.h): the vertices in chunks, the display decimation they were made with, and
+    // the segment count of that copy.
+    std::vector<PathChunk> pathChunks;
+    std::uint32_t pathStride = 1;
+    std::uint64_t pathSegments = 0;
+    std::vector<std::vector<PathChunk>> lodChunks; // per level of detail, once the worker has made them
+    bool lodsUploaded = false;
 };
 
 class PickPass;
@@ -115,8 +123,10 @@ private:
     std::vector<DrawItem> draws_;
     std::vector<std::unique_ptr<IFramePass>> passes_;
 
-    Owned<QRhiBuffer> quad_;    // full-screen triangle
-    Owned<QRhiBuffer> corners_; // wide-line quad template
+    Owned<QRhiBuffer> quad_;              // full-screen triangle
+    Owned<QRhiBuffer> corners_;           // wide-line quad template
+    Owned<QRhiBuffer> pathCorners_;       // backplot strip template (T-038, path_lines.h)
+    std::uint64_t pathSegmentsDrawn_ = 0; // backplot segments of the last drawn frame (ViewportInfo::pathSegments)
     Owned<QRhiBuffer> uniforms_;
     quint32 uniformCapacity_ = 0;
     Owned<QRhiShaderResourceBindings> bindings_;

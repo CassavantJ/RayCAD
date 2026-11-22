@@ -58,11 +58,13 @@ std::shared_ptr<const MeshIndex> buildMeshIndex(const kernel::Mesh&);
 // What the ID buffer stores per pixel.
 // Cap (T-023): a section cap, which belongs to its body but is no kernel element. It answers only PickFilter::Bodies
 // and hides the faces behind it.
-enum class IdKind : std::uint8_t { None = 0, Face = 1, Edge = 2, Segment = 3, Cap = 4 };
+// Path (T-038): a backplot segment; `index` is its move index (all 32 bits). It answers only PickFilter::Toolpath, as
+// kind Edge with subIndex and moveIndex the move index; for faces under it, it counts as a line drawn over them.
+enum class IdKind : std::uint8_t { None = 0, Face = 1, Edge = 2, Segment = 3, Cap = 4, Path = 5 };
 struct IdPixel {
     ItemId item = 0;
     IdKind kind = IdKind::None;
-    std::uint32_t index = 0; // kernel face or edge index, or segment index of an addLines item
+    std::uint32_t index = 0; // kernel face or edge index, segment index of an addLines item, or move index (Path)
     double depth = 1.0;      // 0..1: 0.5 * NDC z + 0.5 of the backend's clip space
 };
 

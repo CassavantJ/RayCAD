@@ -284,10 +284,16 @@ IdWindow decodeIdWindow(int x0, int y0, int width, int height, const std::uint8_
             IdPixel& p = win.pixels[std::size_t(y) * std::size_t(win.width) + std::size_t(x)];
             const std::uint32_t idPlusOne = le24(ids + src);
             const std::uint8_t kind = ids[src + 3];
-            if (idPlusOne == 0 || kind == 0 || kind > std::uint8_t(IdKind::Cap))
-                continue;
-            p.kind = IdKind(kind);
-            p.index = idPlusOne - 1;
+            if (kind == std::uint8_t(IdKind::Path)) {
+                // T-038: the move index itself, its high byte in the item attachment's alpha.
+                p.kind = IdKind::Path;
+                p.index = idPlusOne | (std::uint32_t(items[src + 3]) << 24);
+            } else {
+                if (idPlusOne == 0 || kind == 0 || kind > std::uint8_t(IdKind::Cap))
+                    continue;
+                p.kind = IdKind(kind);
+                p.index = idPlusOne - 1;
+            }
             p.item = le24(items + src);
             p.depth = double(le24(depths + src)) / 16777215.0;
         }
@@ -391,7 +397,7 @@ std::optional<PickHit> resolvePick(const PickView& view, const IdWindow& win, in
     const int span = int(std::ceil(reach));
     const double cx = x + 0.5, cy = y + 0.5;
 
-    Candidate edge, face;
+    Candidate edge, face, path;
     std::set<std::pair<ItemId, std::uint32_t>> nearEdges; // mesh edges for the vertex search
     for (int py = y - span; py <= y + span; ++py) {
         for (int px = x - span; px <= x + span; ++px) {
@@ -402,6 +408,11 @@ std::optional<PickHit> resolvePick(const PickView& view, const IdWindow& win, in
             if (p->kind == IdKind::Face) {
                 if (d2 <= kFaceUnderEdgePx * kFaceUnderEdgePx && better(face, d2, *p))
                     face = Candidate{p, px, py, d2};
+                continue;
+            }
+            if (p->kind == IdKind::Path) { // T-038: toolpath segments, a kind of their own
+                if (d2 <= r2 && better(path, d2, *p))
+                    path = Candidate{p, px, py, d2};
                 continue;
             }
             if (d2 <= r2 && better(edge, d2, *p))
@@ -435,13 +446,23 @@ std::optional<PickHit> resolvePick(const PickView& view, const IdWindow& win, in
     };
     if (wants(mask, PickFilter::Vertices) && vertex)
         return PickHit{vertex->item, SubKind::Vertex, vertex->vertex->code, vertex->world, 0};
+    // T-038: a toolpath segment answers as an edge of its backplot, subIndex and moveIndex its move; with Edges
+    // wanted as well, the nearer of the two (then the nearer to the eye) wins.
+    const bool pathWins = wants(mask, PickFilter::Toolpath) && path.pixel &&
+                          !(wants(mask, PickFilter::Edges) && edge.pixel && !better(edge, path.d2, *path.pixel));
+    if (pathWins) {
+        PickHit hit = hitAt(path, SubKind::Edge, path.pixel->index);
+        hit.moveIndex = path.pixel->index;
+        return hit;
+    }
     if (wants(mask, PickFilter::Edges) && edge.pixel)
         return hitAt(edge, subKindOf(edge.pixel->kind), edge.pixel->index);
     if (wants(mask, PickFilter::Faces) && face.pixel)
         return hitAt(face, SubKind::Face, face.pixel->index);
     if (wants(mask, PickFilter::Bodies)) {
-        // The body of whatever is under the cursor, else of the nearest element inside the tolerance.
-        if (centre && centre->kind != IdKind::None)
+        // The body of whatever is under the cursor, else of the nearest element inside the tolerance. A toolpath is
+        // no body (T-038).
+        if (centre && centre->kind != IdKind::None && centre->kind != IdKind::Path)
             return PickHit{centre->item, SubKind::Solid, 0, view.unproject(x, y, centre->depth), 0};
         if (vertex)
             return PickHit{vertex->item, SubKind::Solid, 0, vertex->world, 0};
@@ -521,6 +542,11 @@ std::vector<PickHit> resolvePickRect(const PickView& view, const IdWindow& win, 
             const IdPixel* p = win.at(px, py);
             if (!p || p->kind == IdKind::None)
                 continue;
+            if (p->kind == IdKind::Path) { // T-038: one hit per move, Toolpath only
+                if (wants(mask, PickFilter::Toolpath))
+                    keep(Key{p->item, SubKind::Edge, p->index}, p, px, py);
+                continue;
+            }
             if (p->kind == IdKind::Face && wants(mask, PickFilter::Faces))
                 keep(Key{p->item, SubKind::Face, p->index}, p, px, py);
             if ((p->kind == IdKind::Edge || p->kind == IdKind::Segment) && wants(mask, PickFilter::Edges))
@@ -540,8 +566,9 @@ std::vector<PickHit> resolvePickRect(const PickView& view, const IdWindow& win, 
             found.erase(Key{edge.first, SubKind::Edge, edge.second});
     }
     for (const auto& [key, c] : found) {
-        out.push_back(
-            PickHit{std::get<0>(key), std::get<1>(key), std::get<2>(key), view.unproject(c.x, c.y, c.pixel->depth), 0});
+        const std::uint32_t move = c.pixel->kind == IdKind::Path ? c.pixel->index : 0;
+        out.push_back(PickHit{std::get<0>(key), std::get<1>(key), std::get<2>(key),
+                              view.unproject(c.x, c.y, c.pixel->depth), move});
     }
     if (wants(mask, PickFilter::Vertices)) {
         for (const VertexCandidate& v : vertexCandidates(view, win, meshEdges)) {

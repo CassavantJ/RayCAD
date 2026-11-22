@@ -30,6 +30,28 @@ target_include_directories(ray_cam_setup_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/
 target_compile_definitions(ray_cam_setup_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_setup_tests)
+# Hole recognition and ordering (task T-034): the labelled corpus parts (holes_labels.txt), parts built through the
+# kernel for each kind and each non-hole, hole features in a rebuilt document (thread pickup), and the drilling order.
+# Same links and include folders as the setup tests.
+add_executable(ray_cam_holes_tests
+    holes_document_test.cpp
+    holes_kernel_test.cpp
+    holes_order_test.cpp
+    holes_test.cpp
+    holes_test_util.h
+)
+target_link_libraries(ray_cam_holes_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_naming ray_kernel ray_core
+    Catch2::Catch2WithMain)
+target_include_directories(ray_cam_holes_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/doc" "${CMAKE_SOURCE_DIR}/tests/unit/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_holes_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_HOLES_LABELS="${CMAKE_CURRENT_SOURCE_DIR}/holes_labels.txt"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+set_property(TARGET ray_cam_holes_tests PROPERTY FOLDER "tests")
+# The timing cases ([wallclock]: a plate of a few thousand holes, ordering thousands of points) run alone, in the
+# split tests/tiers.cmake makes.
+add_test(NAME ray_cam_holes_tests COMMAND ray_cam_holes_tests "~[wallclock]")
+ray_test_runtime_path(ray_cam_holes_tests)
 # The toolpath IR: the RCTP format (Toolpath::serialize) and the canned-cycle rules of the toolpath invariant checker
 # (invariants/, where T-058 adds the rest of the checker).
 add_executable(ray_cam_toolpath_tests

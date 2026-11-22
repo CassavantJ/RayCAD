@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -21,6 +22,11 @@ using ray::api::Caller;
 using ray::test::jsonString;
 using ray::test::kWait;
 using ray::test::TempDir;
+
+namespace ray::lib::detail {
+// Defined in src/lib/stack.cpp (declared in its private library_internal.h): blocks background library reads in tests.
+void setBackgroundReadHook(std::function<void(const std::string& dir, const CancelToken& cancel)> hook);
+} // namespace ray::lib::detail
 
 namespace {
 
@@ -85,6 +91,24 @@ public:
     }
 };
 
+// "test.schema" (test only): params with a range, a choice and defaults, no other keys. Generates nothing.
+class TestSchemaType final : public cam::IOperationType {
+public:
+    std::string_view typeName() const override { return "test.schema"; }
+    std::string_view paramsSchemaJson() const override
+    {
+        return R"({"type":"object","additionalProperties":false,"properties":{)"
+               R"("stepover":{"type":"number","exclusiveMinimum":0,"maximum":1,"default":0.4},)"
+               R"("direction":{"enum":["climb","conventional"],"default":"climb"},)"
+               R"("passes":{"type":"integer","minimum":1}}})";
+    }
+    Status validate(const cam::GenerateInput&) const override { return {}; }
+    Result<cam::Toolpath> generate(const cam::GenerateInput&, JobContext&) const override
+    {
+        return tl::unexpected(Error{ErrorCode::Internal, "not used", {}});
+    }
+};
+
 std::string uuid(char kind, int n)
 {
     std::string tail = std::to_string(n);
@@ -142,7 +166,18 @@ std::unique_ptr<api::HeadlessApp> makeCamApp(const std::string& userDataDir, con
     REQUIRE(app != nullptr);
     REQUIRE(app->operationTypes() != nullptr);
     app->operationTypes()->add(std::make_unique<TestGenerator>());
+    app->operationTypes()->add(std::make_unique<TestSchemaType>());
     return app;
+}
+
+// The error of an action that must fail.
+Error invokeFails(api::HeadlessApp& app, const std::string& action, const std::string& args)
+{
+    auto done = app.wait(app.actions().invoke(action, args, Caller::User), kWait);
+    if (done) {
+        FAIL(action << " should have failed");
+    }
+    return done.error();
 }
 
 std::string invoke(api::HeadlessApp& app, const std::string& action, const std::string& args)
@@ -260,6 +295,11 @@ TEST_CASE("the default library stack: built-in, shared folders from the settings
     std::filesystem::create_directories(ray::test::fsPath(shop));
     auto app = makeCamApp(user, builtin);
     lib::LibraryStack& stack = *app->libraries();
+    const auto allRead = [&stack] {
+        const auto now = stack.roots();
+        return std::none_of(now.begin(), now.end(), [](const lib::LibraryStack::RootInfo& r) { return r.loading; });
+    };
+    REQUIRE(app->runUntil(allRead, kWait)); // the user library is read on a worker (within the start-up wait, usually)
     auto roots = stack.roots();
     REQUIRE(roots.size() == 2);
     CHECK(roots[0].dir == builtin);
@@ -271,7 +311,7 @@ TEST_CASE("the default library stack: built-in, shared folders from the settings
 
     // A shared folder in the settings joins the stack between the built-in and the user library.
     invoke(*app, "settings.set", R"({"key":"library.sharedFolders","value":[)" + jsonString(shop) + "]}");
-    REQUIRE(app->runUntil([&] { return stack.roots().size() == 3; }, kWait));
+    REQUIRE(app->runUntil([&] { return stack.roots().size() == 3 && allRead(); }, kWait));
     roots = stack.roots();
     CHECK(roots[1].dir == shop);
     CHECK(roots[1].writable);
@@ -288,7 +328,7 @@ TEST_CASE("the default library stack: built-in, shared folders from the settings
     const std::string elsewhere = dir.file("elsewhere");
     std::filesystem::create_directories(ray::test::fsPath(elsewhere));
     invoke(*app, "settings.set", R"({"key":"library.userFolder","value":)" + jsonString(elsewhere) + "}");
-    REQUIRE(app->runUntil([&] { return stack.roots().back().dir == elsewhere; }, kWait));
+    REQUIRE(app->runUntil([&] { return stack.roots().back().dir == elsewhere && allRead(); }, kWait));
     CHECK(stack.tool(mine.id)->name == "6 mm 3FL carbide"); // the built-in one again
 }
 
@@ -389,4 +429,192 @@ TEST_CASE("closing a document cancels its generations; the app's destructor canc
         REQUIRE(app->runUntil([] { return Seen::get().blocking.load(); }, kWait));
     } // the destructor cancels the generation and waits for it
     CHECK(Seen::get().cancelled.load() == 1);
+}
+
+TEST_CASE("operation params are checked against the type's schema, with its defaults filled in", "[api][cam][params]")
+{
+    TempDir dir;
+    const std::string builtin = dir.file("builtin");
+    writeLibrary(builtin, "Built-in");
+    auto app = makeCamApp("", builtin);
+    invoke(*app, "file.new", "{}");
+    makeBlock(*app);
+    addSetupAndOperation(*app, 1, R"({"mode":"plain"})"); // test.gen: any object
+    const auto opArgs = [](int op, const std::string& type, const std::string& paramsMember) {
+        return R"({"id":")" + uuid('c', op) + R"(","setup":")" + uuid('a', 1) + R"(","type":")" + type +
+               R"(","name":"Op )" + std::to_string(op) + R"(","tool":{"tool":")" + uuid('d', 1) + R"("},"cutting":)" +
+               kCutting + R"(,"heights":)" + kHeights + paramsMember + "}";
+    };
+    const auto paramsOf = [&](int op) {
+        return app->active()
+            ->document->state()
+            ->cam->operations.at(OperationId{Uuid::fromString(uuid('c', op))})
+            .paramsJson;
+    };
+    const std::string before = app->active()->document->state()->stateHash().hex();
+
+    // Out of range, not one of the choices, the wrong type, an unknown key: refused, naming the value, and the
+    // document is unchanged.
+    Error e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"stepover":2})"));
+    CHECK(e.code == ErrorCode::InvalidArgument);
+    CHECK_THAT(e.message, ContainsSubstring("test.schema"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/stepover: must be at most 1"));
+    e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"direction":"sideways"})"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/direction: must be one of"));
+    e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"passes":1.5})"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/passes: must be an integer"));
+    e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"mode":"plain"})"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/mode: is not a known argument"));
+    CHECK(app->active()->document->state()->stateHash().hex() == before);
+
+    // Params left out (all of them, or some) take the schema's defaults, stored in the document.
+    invoke(*app, "cam.operation.add", opArgs(2, "test.schema", ""));
+    CHECK(paramsOf(2) == R"({"direction":"climb","stepover":0.4})");
+    invoke(*app, "cam.operation.add", opArgs(3, "test.schema", R"(,"params":{"passes":3,"stepover":0.25})"));
+    CHECK(paramsOf(3) == R"({"direction":"climb","passes":3,"stepover":0.25})");
+
+    // An edit with params is checked and completed the same way (params are replaced whole).
+    e = invokeFails(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 2) + R"(","params":{"stepover":0}})");
+    CHECK_THAT(e.message, ContainsSubstring("/params/stepover: must be greater than 0"));
+    invoke(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 2) + R"(","params":{"direction":"conventional"}})");
+    CHECK(paramsOf(2) == R"({"direction":"conventional","stepover":0.4})");
+    // An edit of something else is not a params check; a change of type checks the params it keeps.
+    invoke(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 2) + R"(","name":"Renamed"})");
+    e = invokeFails(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 1) + R"(","type":"test.schema"})");
+    CHECK_THAT(e.message, ContainsSubstring("/params/mode: is not a known argument"));
+    invoke(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 1) + R"(","type":"test.schema","params":{}})");
+    CHECK(paramsOf(1) == R"({"direction":"climb","stepover":0.4})");
+
+    // Not an object at all.
+    e = invokeFails(*app, "cam.operation.add", opArgs(4, "test.schema", R"(,"params":[1])"));
+    CHECK_THAT(e.message, ContainsSubstring("/params: must be an object"));
+    // A type the app does not have is not checked (the engine reports it Failed).
+    invoke(*app, "cam.operation.add", opArgs(4, "no.such.type", R"(,"params":{"anything":[1,2]})"));
+    CHECK(paramsOf(4) == R"({"anything":[1,2]})");
+    CHECK(statusOf(*app, 4).status == cam::OpStatus::Failed);
+}
+TEST_CASE("closing a document makes the engine forget its operations, unless another open copy has them",
+          "[api][cam][forget]")
+{
+    Seen::get().reset();
+    TempDir dir;
+    const std::string builtin = dir.file("builtin");
+    writeLibrary(builtin, "Built-in");
+    const std::string a = dir.file("a.raycad");
+    const std::string b = dir.file("b.raycad");
+    auto app = makeCamApp("", builtin);
+    invoke(*app, "file.new", "{}");
+    makeBlock(*app);
+    addSetupAndOperation(*app, 1, R"({"mode":"plain"})");
+    invoke(*app, "file.saveAs", R"({"path":)" + jsonString(a) + "}");
+    REQUIRE(app->close(*app->active()));
+    std::filesystem::copy_file(ray::test::fsPath(a), ray::test::fsPath(b)); // a second file, same operation ids
+    const auto open = [&](const std::string& path) {
+        invoke(*app, "file.open", R"({"path":)" + jsonString(path) + "}");
+        REQUIRE(app->waitForBuild(*app->active(), kWait));
+        return app->active();
+    };
+    const auto editRpm = [&](int rpm) {
+        invoke(*app, "cam.operation.edit",
+               R"({"id":")" + uuid('c', 1) + R"(","cutting":{"rpm":)" + std::to_string(rpm) + "}}");
+    };
+
+    api::OpenDocument* first = open(a);
+    const auto toolpath = generate(*app, 1);
+    REQUIRE(Seen::get().runs.load() == 1);
+    api::OpenDocument* second = open(b);
+    CHECK(statusOf(*app, 1).status == cam::OpStatus::UpToDate); // the same inputs: found by input hash
+    editRpm(9000);
+    CHECK(statusOf(*app, 1).status == cam::OpStatus::Stale);
+    CHECK(statusOf(*app, 1).toolpath == toolpath); // the operation's latest toolpath, shown while stale
+
+    // Closing the first copy leaves the second one's entries alone.
+    REQUIRE(app->close(*first));
+    REQUIRE(app->active() == second);
+    CHECK(statusOf(*app, 1).toolpath == toolpath);
+
+    // Closing the last copy forgets them: reopened, an operation that is stale shows no old toolpath, and one whose
+    // inputs are those of a cached toolpath finds it again by input hash without generating.
+    REQUIRE(app->close(*second));
+    open(a);
+    CHECK(statusOf(*app, 1).status == cam::OpStatus::UpToDate);
+    CHECK(statusOf(*app, 1).toolpath == toolpath);
+    CHECK(Seen::get().runs.load() == 1);
+    REQUIRE(app->close(*app->active()));
+    open(a);
+    editRpm(7000);
+    const cam::OpState stale = statusOf(*app, 1);
+    CHECK(stale.status == cam::OpStatus::Stale);
+    CHECK(stale.toolpath == nullptr);
+    CHECK(generate(*app, 1)->inputHash != toolpath->inputHash);
+}
+TEST_CASE("start-up does not wait for a slow shared library folder; it joins the stack when read",
+          "[api][cam][library][background]")
+{
+    TempDir dir;
+    const std::string builtin = dir.file("builtin");
+    const std::string shop = dir.file("shop");
+    const std::string user = dir.file("user");
+    writeLibrary(builtin, "Built-in");
+    std::filesystem::create_directories(ray::test::fsPath(shop));
+    lib::Tool shopTool = libraryTool();
+    shopTool.id = ToolId{Uuid::fromString(uuid('d', 2))};
+    shopTool.name = "shop tool";
+    {
+        auto library = lib::ILibrary::open(shop);
+        REQUIRE(library);
+        REQUIRE((*library)->save(shopTool));
+    }
+    { // The shared folder goes into the persisted settings.
+        auto app = makeCamApp(user, builtin);
+        invoke(*app, "settings.set", R"({"key":"library.sharedFolders","value":[)" + jsonString(shop) + "]}");
+    }
+    std::atomic<bool> release{false};
+    std::atomic<int> blocked{0};
+    std::atomic<int> cancelled{0};
+    lib::detail::setBackgroundReadHook([&](const std::string& folder, const CancelToken& cancel) {
+        if (folder != shop) {
+            return;
+        }
+        ++blocked;
+        while (!release.load()) {
+            if (cancel.cancelled()) {
+                ++cancelled;
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+    {
+        const auto start = std::chrono::steady_clock::now();
+        auto app = makeCamApp(user, builtin);
+        CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(10)); // not the share's (endless) read
+        lib::LibraryStack& stack = *app->libraries();
+        auto roots = stack.roots();
+        REQUIRE(roots.size() == 3);
+        CHECK(roots[0].open); // the built-in library, read at once
+        CHECK(stack.tool(ToolId{Uuid::fromString(uuid('d', 1))}) != nullptr);
+        CHECK(roots[1].dir == shop);
+        CHECK(roots[1].loading);
+        CHECK(stack.tool(shopTool.id) == nullptr);
+        REQUIRE(app->runUntil([&] { return blocked.load() == 1; }, kWait));
+        int calls = 0;
+        stack.subscribe([&calls] { ++calls; });
+        // When the read ends, the share's items appear and the listeners are told.
+        release = true;
+        REQUIRE(app->runUntil([&] { return stack.tool(shopTool.id) != nullptr; }, kWait));
+        CHECK(calls >= 1);
+        CHECK(stack.roots()[1].open);
+        CHECK(stack.rootOf(lib::ItemKind::Tool, shopTool.id.value) == std::optional<std::size_t>(1));
+    }
+    // Shutting the app down while the share is being read: the read is cancelled and the destructor returns.
+    release = false;
+    blocked = 0;
+    {
+        auto app = makeCamApp(user, builtin);
+        REQUIRE(app->runUntil([&] { return blocked.load() == 1; }, kWait));
+        CHECK(app->libraries()->roots()[1].loading);
+    }
+    CHECK(cancelled.load() == 1);
+    lib::detail::setBackgroundReadHook({});
 }
