@@ -44,6 +44,9 @@ struct PostJob {
     std::optional<std::string> fixedDate;             // ISO date; tests leave empty
 };
 
+// line: 0-based index into text. moveIndex: into that section's Toolpath::moves (an arc split in pieces or an expanded
+// cycle maps every line to its one IR move). Lines of onSectionStart map to the section's first move, of onSectionEnd
+// to its last; program start and end lines have no entry. One entry per mapped line, in line order (T-039).
 struct GcodeLineMap { std::uint32_t line; std::uint32_t sectionIndex; std::uint32_t moveIndex; };
 struct PostOutput {
     std::string text;                        // line endings per property (CRLF default)
@@ -75,7 +78,9 @@ std::unique_ptr<IPostEngine> makeQuickJsPostEngine();
 // Host-side helpers exposed to scripts (documented in post_api.d.ts) and reused by tests.
 struct NumberFormat { int decimals; bool trimTrailingZeros; bool forceDecimalPoint; bool leadingZero; double scale; };
 // Snaps the double back to integer nanometres (llround(value * 1e6) for mm), then rounds half-even with integer
-// arithmetic; "-0" never emitted. Matched an integer-only reference byte for byte in S8. Inch output: untested.
+// arithmetic; "-0" never emitted. Matched an integer-only reference byte for byte in S8. scale 0 means 1; a value that
+// is not finite or beyond 1e10 gives an empty string. Inch output in a post run snaps to a 25.4e6-per-inch grid
+// instead (src/post/format.h), so inch words round integer nanometres exactly (T-039).
 std::string formatNumber(double value, const NumberFormat&);
 // Fits lines to arcs is NOT done in posts; arcs come from the IR. Posts may only LINEARISE arcs the control cannot do.
 

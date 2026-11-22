@@ -87,6 +87,7 @@ set(RAY_WALLCLOCK_SPLITS
     ray_sketch_tests=ray_sketch_tests
     ray_store_tests=ray_store_tests
     ray_sim_tests=ray_sim_tests
+    ray_post_tests=ray_post_tests
     ray_ui_start_tests=ray_ui_start_tests
     ray_ui_viewport_tests=ray_ui_viewport_tests
     ray_ui_measure_tests=ray_ui_measure_tests

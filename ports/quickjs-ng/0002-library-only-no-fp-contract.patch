@@ -1,0 +1,72 @@
+RayCAD patch to QuickJS-NG 0.18.0 (MIT; this file is under the same terms).
+
+What, two build changes to CMakeLists.txt, no source change:
+- An option QJS_BUILD_PROGRAMS (default ON, which builds what upstream builds today). OFF configures and installs
+  only the qjs library: the quickjs-libc library (the std, os and bjson modules, console, print) and the qjs, qjsc,
+  run-test262, api-test, lre-test and function_source programs are not configured at all. The overlay portfile
+  passes -DQJS_BUILD_PROGRAMS=OFF, so nothing in a RayCAD build compiles quickjs-libc.c (PLAN.md T-039).
+- -ffp-contract=off on GCC and Clang. Post output must be byte-identical on Windows, Linux and macOS (PLAN.md
+  section 8), and Clang fuses a*b+c into one FMA instruction by default on arm64, which rounds differently. MSVC is
+  left alone: it does not contract under its default /fp:precise.
+
+Upstream: not reported.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -41,6 +41,8 @@ xoption(QJS_ENABLE_MSAN "Enable MemorySanitizer (MSan)" OFF)
+ xoption(QJS_ENABLE_TSAN "Enable ThreadSanitizer (TSan)" OFF)
+ xoption(QJS_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer (UBSan)" OFF)
+ xoption(QJS_ENABLE_GC_STRESS "Force a full GC before every allocation (GC stress test)" OFF)
++# RayCAD patch 0002: OFF builds only the qjs library (no quickjs-libc, no executables).
++xoption(QJS_BUILD_PROGRAMS "Build quickjs-libc, the qjs and qjsc executables and the test programs" ON)
+
+ # Used to properly define JS_LIBC_EXTERN.
+ add_compile_definitions(QUICKJS_NG_BUILD)
+@@ -109,6 +111,12 @@ if(NOT SUNOS)
+ xcheck_add_c_compiler_flag(-funsigned-char)
+ endif()
+
++# RayCAD patch 0002: no floating-point contraction (FMA fusing), so that number results do not depend on the
++# compiler and the CPU (the default -ffp-contract of Clang fuses on arm64).
++if(NOT MSVC)
++    xcheck_add_c_compiler_flag(-ffp-contract=off)
++endif()
++
+ # Clang on Windows without MSVC command line fails because the codebase uses
+ # functions like strcpy over strcpy_s
+ if(CMAKE_C_COMPILER_ID STREQUAL "Clang" AND WIN32 AND NOT MSVC)
+@@ -336,7 +344,7 @@ if(WIN32)
+     )
+ endif()
+
+-if(NOT QJS_BUILD_LIBC)
++if(NOT QJS_BUILD_LIBC AND QJS_BUILD_PROGRAMS)
+     add_library(qjs-libc STATIC quickjs-libc.c)
+     target_compile_definitions(qjs-libc PRIVATE ${qjs_defines})
+     target_link_libraries(qjs-libc PRIVATE ${qjs_libs} qjs)
+@@ -361,6 +369,7 @@ if(EMSCRIPTEN)
+ endif()
+
+
++if(QJS_BUILD_PROGRAMS)
+ # QuickJS bytecode compiler
+ #
+
+@@ -485,6 +494,7 @@ add_qjs_libc_if_needed(function_source)
+ target_include_directories(function_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+ target_compile_definitions(function_source PRIVATE ${qjs_defines})
+ target_link_libraries(function_source PRIVATE qjs)
++endif() # QJS_BUILD_PROGRAMS
+
+ # Examples
+ #
+@@ -563,7 +573,7 @@ if (QJS_ENABLE_INSTALL)
+     if(QJS_BUILD_LIBC)
+         install(FILES quickjs-libc.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+     endif()
+-    if(NOT IOS AND NOT TVOS AND NOT WATCHOS)
++    if(QJS_BUILD_PROGRAMS AND NOT IOS AND NOT TVOS AND NOT WATCHOS)
+         install(TARGETS qjs_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+         install(TARGETS qjsc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+         install(FILES qjs.man DESTINATION ${CMAKE_INSTALL_DATADIR}/man/man1 RENAME qjs.1)
