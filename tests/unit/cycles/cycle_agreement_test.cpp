@@ -7,8 +7,10 @@
 //    first hole are the backplot's first motions of that move, and the end of each hole as the Cycle event states it
 //    (x, y and the return level) is the backplot's last vertex of that move.
 // Every kind, G98 and G99, a run that starts above its clearance, peck clearances from the move, the machine and the
-// 0.5 mm fallback, dwells and a left-hand tap. Coordinates are compared as the backplot stores them (float mm, identity
-// frame): the host's integer nanometres converted by the same expression, so "equal" means equal.
+// 0.5 mm fallback, dwells and a left-hand tap. T-059 adds the third expansion, the cycle-time estimate's (src/cam
+// cycletime.h), which must move as the backplot draws. Coordinates are compared as the backplot stores them (float mm,
+// identity frame): the host's integer nanometres converted by the same expression, so "equal" means equal.
+#include "cycletime.h"
 #include "engine_motion.h"
 
 #include <ray/cam.h>
@@ -217,6 +219,52 @@ TEST_CASE("expanded cycles: the post host moves exactly as the backplot draws", 
                 }
             }
             CHECK(motions > s.tp.moves.size()); // the cycles were expanded
+        }
+    }
+}
+
+// T-059: the cycle-time estimate (src/cam, cycletime.h expandCycle) times cycles from an expansion of its own (cam may
+// depend on neither sim nor post). It must move exactly as the backplot draws, every kind (tapping too), and dwell at
+// the bottom where the move has a dwell.
+TEST_CASE("cycle time: the estimate's expansion moves exactly as the backplot draws", "[cycles][sim][cam]")
+{
+    using K = cam::MoveKind;
+    std::vector<Scenario> scenarios = expandable();
+    cam::Move left = hole(K::CycleTap, 20, 0, -12, g99);
+    left.cycleLeftHand = 1;
+    scenarios.push_back({"tap (G84) from above the clearance, then a left-hand tap (G74)",
+                         path({hole(K::CycleTap, 10, 0, -12, g98, 0, 100), left, rapid(30, 0, 40)})});
+    for (const lib::MachineDef& machine : machines()) {
+        for (const Scenario& s : scenarios) {
+            INFO(s.name << ", machine peck clearance " << machine.peckClearance);
+            const sim::Backplot bp = sim::buildBackplot(s.tp, Xform::identity(), 0.01, &machine);
+            cam::cycletime::Point pos{s.tp.startX, s.tp.startY, s.tp.startZ};
+            std::size_t cycles = 0;
+            for (std::size_t m = 0; m < s.tp.moves.size(); ++m) {
+                INFO("move " << m);
+                const cam::Move& mv = s.tp.moves[m];
+                if (!cam::cycletime::isCycleMotion(mv.kind)) {
+                    if (mv.kind != K::Dwell && mv.kind != K::CycleCancel)
+                        pos = {mv.x, mv.y, mv.z};
+                    continue;
+                }
+                ++cycles;
+                std::vector<Motion> timed;
+                bool dwelt = false;
+                pos = cam::cycletime::expandCycle(mv, pos, &machine, [&](const cam::cycletime::CycleStep& st) {
+                    if (st.kind == cam::cycletime::StepKind::Dwell) {
+                        dwelt |= st.dwellMs == mv.cycleDwellMs && st.to.z == mv.z;
+                        return;
+                    }
+                    const bool isRapid = st.kind == cam::cycletime::StepKind::Rapid;
+                    timed.push_back({isRapid, toFloat(st.to.x), toFloat(st.to.y), toFloat(st.to.z),
+                                     isRapid ? 0.0f : feedFloat(st.feed),
+                                     isRapid ? std::uint8_t{0} : static_cast<std::uint8_t>(st.role)});
+                });
+                CHECK(timed == drawn(bp, m));
+                CHECK(dwelt == (mv.cycleDwellMs > 0));
+            }
+            CHECK(cycles > 0);
         }
     }
 }

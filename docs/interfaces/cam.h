@@ -49,6 +49,9 @@
 //  - OpState::progress; ICamEngine::subscribe (the engine says when a status it holds changed, so the UI need not
 //    poll), statusAsync (status on a worker, owned by the engine), validate (check on a worker) and preview (a
 //    toolpath of a snapshot that is not the document's, cached by input hash but never an operation's latest).
+// Amended by T-059 (cycle time): CycleTimeOperation, CycleTimePart, CycleTimeAssumptions, CycleTimeOptions and the
+// default constants; CycleTime derives from CycleTimePart (its four members unchanged) and carries the operations'
+// parts, the assumptions and notes; estimateCycleTime takes tool numbers (the plan draft's form stays).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -718,8 +721,71 @@ struct FeedsResult {
 // when the tool has no preset for the material and opClass and the overrides do not replace it.
 Result<FeedsResult> computeFeeds(const FeedsInput&);
 
-// ---------- Cycle time ----------
-struct CycleTime { double cutSec = 0, rapidSec = 0, toolChangeSec = 0, totalSec = 0; };
-CycleTime estimateCycleTime(std::span<const Toolpath* const>, const lib::MachineDef&);   // v1: trapezoidal accel per axis
+// ---------- Cycle time (task T-059, src/cam/cycletime.cpp) ----------
+// Amended by T-059: the toolpath IR carries no tool number, so the estimate takes each operation's tool number with its
+// toolpath (CycleTimeOperation) to count tool changes; CycleTime keeps its four members and adds dwell time, distances,
+// the split of each operation and the assumptions made where the machine definition is silent; CycleTimeOptions holds
+// what MachineDef has no field for (G0 interpolation, the corner rule).
+//
+// How long one setup's program runs on `machine`, from the toolpath IR alone: the setup's operations in program order,
+// one call per setup (a setup is one program). An estimate: cycletime.cpp states the model, its simplifications and
+// its constants. In short: every motion has a trapezoidal velocity profile (constant acceleration, no jerk limit); a
+// straight motion is limited by each axis's acceleration and speed scaled by that axis's share of the direction; feeds
+// run at the programmed feed held under the machine's maximum feed per axis; an arc's speed is also held so that its
+// centripetal acceleration stays within its plane's axes; rapids run at the axes' rapid rates and stop at their ends;
+// consecutive feed moves run through a junction (at the lower of the two speeds) where the direction turns by at most
+// CycleTimeOptions::cornerStopDeg and stop there otherwise; canned cycles run as cam.h "Canned cycles" expands them,
+// every peck and retract included; dwells and tool changes add their time. Deterministic (plain IEEE arithmetic in a
+// fixed order and ray::dmath): the same inputs give the same bits on every platform.
+// A machine value of 0 is "not known": the documented default below is used instead (slow on purpose, so the estimate
+// errs long) and CycleTimeAssumptions says so, for the UI to show "estimate, machine accelerations unknown".
+inline constexpr double kCycleTimeDefaultAccelMmS2 = 1000;      // per axis, when AxisDef::accelMmS2 is 0
+inline constexpr double kCycleTimeDefaultRapidMmMin = 10000;    // per axis, when AxisDef::rapidMmMin is 0
+inline constexpr double kCycleTimeDefaultToolChangeSec = 10;    // when MachineDef::toolChangeSec is 0
+struct CycleTimeOptions {
+    // G0: false moves each axis at its own rapid rate, so the axes may finish at different times (a dogleg: Fanuc's
+    // default, parameter LRP = 0, and Haas); true moves along the straight line, every axis scaled to finish together.
+    bool rapidInterpolated = false;
+    // Two feed moves whose directions differ by more than this (degrees) stop at their junction; others run through it.
+    double cornerStopDeg = 10;
+};
+struct CycleTimeOperation {
+    const Toolpath* toolpath = nullptr;   // null: the operation adds nothing (no toolpath yet)
+    int toolNumber = 0;                   // ToolRef::toolNumber; 0 or less: not known, counted as a tool change
+};
+// Time in seconds and path length in mm by kind of motion.
+struct CycleTimePart {
+    double cutSec = 0;          // feed motion: G1, G2, G3 and the feeds of cycles, whatever their role
+    double rapidSec = 0;        // G0 and the rapids of cycles
+    double toolChangeSec = 0;
+    double totalSec = 0;        // cutSec + rapidSec + toolChangeSec + dwellSec
+    double dwellSec = 0;        // Dwell moves and the dwells of cycles
+    double cutMm = 0, rapidMm = 0;   // path length; a rapid counted along its straight line
+    int toolChanges = 0;
+};
+// What the estimate assumed because the machine definition (or the toolpath) did not say.
+struct CycleTimeAssumptions {
+    bool accelerationUnknown = false;   // an X, Y or Z axis without acceleration: kCycleTimeDefaultAccelMmS2
+    bool rapidUnknown = false;          // an X, Y or Z axis without rapid rate: kCycleTimeDefaultRapidMmMin
+    bool maxFeedUnknown = false;        // an X, Y or Z axis without maximum feed: its rapid rate limits feeds
+    bool toolChangeUnknown = false;     // a tool change was counted and the machine's time is not known
+    bool feedMissing = false;           // a feed move without a feed: the one before it, else the maximum feed
+    bool any() const { return accelerationUnknown || rapidUnknown || maxFeedUnknown || toolChangeUnknown || feedMissing; }
+};
+// The whole setup (the members it inherits, unchanged from the plan draft for cutSec, rapidSec, toolChangeSec and
+// totalSec), each operation's part in input order (an operation's tool change, or its rapid from the previous
+// operation's end when the tool stays, is its own), and the assumptions with one English note each, in the order of
+// CycleTimeAssumptions' members.
+struct CycleTime : CycleTimePart {
+    std::vector<CycleTimePart> operations;
+    CycleTimeAssumptions assumptions;
+    std::vector<std::string> notes;
+};
+// Between operations: a tool change before the first operation and wherever the tool number changes (or is not
+// known) takes the machine's tool change time and no motion (the change ends with the tool at the next toolpath's
+// start); where the tool stays, the tool rapids from the previous operation's end to the next one's start.
+CycleTime estimateCycleTime(std::span<const CycleTimeOperation>, const lib::MachineDef&, const CycleTimeOptions& = {});
+// The plan draft's form: tool numbers not known, so every toolpath counts a tool change.
+CycleTime estimateCycleTime(std::span<const Toolpath* const>, const lib::MachineDef&);
 
 } // namespace ray::cam
