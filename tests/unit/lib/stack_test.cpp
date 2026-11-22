@@ -41,10 +41,8 @@ std::vector<std::string> names(const std::vector<ray::lib::Tool>& tools)
 // The names a query finds; the test fails if the query is malformed.
 std::vector<std::string> names(const ray::Result<std::vector<ray::lib::Tool>>& found)
 {
-    if (!found) {
-        FAIL("the query failed: " << found.error().message);
-        return {};
-    }
+    INFO((found ? std::string() : "the query failed: " + found.error().message));
+    REQUIRE(found);
     return names(*found);
 }
 
