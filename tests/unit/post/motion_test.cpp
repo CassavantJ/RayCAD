@@ -193,21 +193,21 @@ TEST_CASE("declared cycles run modally and end with CycleEnd", "[post][motion]")
     caps.cycles[static_cast<std::size_t>(CycleKind::Drill)] = true;
     caps.cycles[static_cast<std::size_t>(CycleKind::Peck)] = true;
     const auto p = pathFrom(0, 0, mm(25),
-                            {rapid(0, 0, mm(10)),                                                     // 0
-                             cycle(cam::MoveKind::CycleDrill, mm(5), mm(5), -mm(3), mm(2), 200000),   // 1 first
-                             cycle(cam::MoveKind::CycleDrill, mm(10), mm(5), -mm(3), mm(2), 200000),  // 2
-                             cycle(cam::MoveKind::CycleDrill, mm(15), mm(5), -mm(4), mm(2), 200000),  // 3 deeper
+                            {rapid(0, 0, mm(10)),                                                          // 0
+                             cycle(cam::MoveKind::CycleDrill, mm(5), mm(5), -mm(3), mm(2), 200000),        // 1 first
+                             cycle(cam::MoveKind::CycleDrill, mm(10), mm(5), -mm(3), mm(2), 200000),       // 2
+                             cycle(cam::MoveKind::CycleDrill, mm(15), mm(5), -mm(4), mm(2), 200000),       // 3 deeper
                              cycle(cam::MoveKind::CyclePeck, mm(20), mm(5), -mm(9), mm(2), 150000, mm(2)), // 4 kind
-                             cycleCancel(),                                                           // 5
-                             cycle(cam::MoveKind::CycleDrill, mm(5), mm(10), -mm(3), mm(2), 200000),  // 6
-                             rapid(0, 0, mm(25))});                                                   // 7
+                             cycleCancel(),                                                                // 5
+                             cycle(cam::MoveKind::CycleDrill, mm(5), mm(10), -mm(3), mm(2), 200000),       // 6
+                             rapid(0, 0, mm(25))});                                                        // 7
     const auto ev = expand(p, caps);
     std::vector<std::pair<EventKind, std::uint32_t>> seq;
     for (const auto& e : ev) {
         seq.emplace_back(e.kind, e.move);
     }
     const std::vector<std::pair<EventKind, std::uint32_t>> want = {
-        {EventKind::Rapid, 0}, {EventKind::Cycle, 1}, {EventKind::Cycle, 2},    {EventKind::Cycle, 3},
+        {EventKind::Rapid, 0},    {EventKind::Cycle, 1}, {EventKind::Cycle, 2},    {EventKind::Cycle, 3},
         {EventKind::CycleEnd, 3}, {EventKind::Cycle, 4}, {EventKind::CycleEnd, 5}, {EventKind::Cycle, 6},
         {EventKind::CycleEnd, 6}, {EventKind::Rapid, 7}};
     CHECK(seq == want);
@@ -217,7 +217,7 @@ TEST_CASE("declared cycles run modally and end with CycleEnd", "[post][motion]")
     CHECK(ev[5].first);
     CHECK(ev[5].cycle == CycleKind::Peck);
     CHECK(ev[5].peck == mm(2));
-    CHECK(ev[5].clearance == mm(2)); // G99: the drill run left the tool at its R plane
+    CHECK(ev[5].clearance == mm(2));  // G99: the drill run left the tool at its R plane
     CHECK(ev[1].clearance == mm(10)); // the Z before the run
     CHECK(ev[1].retract == mm(2));
     CHECK(ev[1].z == -mm(3));
@@ -238,9 +238,8 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
     // cycle_conventions: G99, the tool ends each hole at the R plane.
     SECTION("drill with dwell")
     {
-        const auto ev = expand(pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleDrill, mm(5), 0, -mm(3), mm(2),
-                                                             100000, 0, 500)}),
-                               caps);
+        const auto ev = expand(
+            pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleDrill, mm(5), 0, -mm(3), mm(2), 100000, 0, 500)}), caps);
         const std::vector<std::pair<K, Nm>> want = {
             {K::Rapid, mm(10)}, {K::Rapid, mm(2)}, {K::Linear, -mm(3)}, {K::Dwell, -mm(3)}, {K::Rapid, mm(2)}};
         CHECK(kinds(ev) == want);
@@ -255,37 +254,34 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
             pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CyclePeck, mm(5), 0, -mm(5), mm(1), 100000, mm(2))}),
             caps);
         const Nm re = kPeckReentryNm;
-        const std::vector<std::pair<K, Nm>> want = {
-            {K::Rapid, mm(1)},       {K::Linear, -mm(1)}, {K::Rapid, mm(1)},  {K::Rapid, -mm(1) + re},
-            {K::Linear, -mm(3)},     {K::Rapid, mm(1)},   {K::Rapid, -mm(3) + re}, {K::Linear, -mm(5)},
-            {K::Rapid, mm(1)}};
+        const std::vector<std::pair<K, Nm>> want = {{K::Rapid, mm(1)},       {K::Linear, -mm(1)}, {K::Rapid, mm(1)},
+                                                    {K::Rapid, -mm(1) + re}, {K::Linear, -mm(3)}, {K::Rapid, mm(1)},
+                                                    {K::Rapid, -mm(3) + re}, {K::Linear, -mm(5)}, {K::Rapid, mm(1)}};
         CHECK(kinds(ev) == want);
     }
     SECTION("chip break: back off between pecks")
     {
-        const auto ev = expand(pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CycleChipBreak, mm(5), 0, -mm(3),
-                                                                 mm(1), 100000, mm(2))}),
-                               caps);
+        const auto ev = expand(
+            pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CycleChipBreak, mm(5), 0, -mm(3), mm(1), 100000, mm(2))}),
+            caps);
         const Nm back = kChipBreakBackoffNm;
-        const std::vector<std::pair<K, Nm>> want = {{K::Rapid, mm(1)},         {K::Linear, -mm(1)},
-                                                    {K::Rapid, -mm(1) + back}, {K::Linear, -mm(3)},
-                                                    {K::Rapid, mm(1)}};
+        const std::vector<std::pair<K, Nm>> want = {
+            {K::Rapid, mm(1)}, {K::Linear, -mm(1)}, {K::Rapid, -mm(1) + back}, {K::Linear, -mm(3)}, {K::Rapid, mm(1)}};
         CHECK(kinds(ev) == want);
     }
     SECTION("bore and ream feed out")
     {
         for (const auto kind : {cam::MoveKind::CycleBore, cam::MoveKind::CycleReam}) {
             const auto ev = expand(pathFrom(mm(5), 0, mm(10), {cycle(kind, mm(5), 0, -mm(3), mm(1), 100000)}), caps);
-            const std::vector<std::pair<K, Nm>> want = {
-                {K::Rapid, mm(1)}, {K::Linear, -mm(3)}, {K::Linear, mm(1)}};
+            const std::vector<std::pair<K, Nm>> want = {{K::Rapid, mm(1)}, {K::Linear, -mm(3)}, {K::Linear, mm(1)}};
             CHECK(kinds(ev) == want);
             CHECK(ev[2].role == cam::MoveRole::Retract);
         }
     }
     SECTION("peck 0 drills in one feed")
     {
-        const auto ev =
-            expand(pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CyclePeck, mm(5), 0, -mm(3), mm(1), 100000)}), caps);
+        const auto ev = expand(
+            pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CyclePeck, mm(5), 0, -mm(3), mm(1), 100000)}), caps);
         CHECK(ev.size() == 3);
     }
 }
@@ -294,7 +290,8 @@ TEST_CASE("toolpaths the post cannot take are refused", "[post][motion]")
 {
     MotionCaps caps;
     Collect c;
-    auto tap = pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleTap, 0, 0, -mm(10), mm(2), 1250 * 1000, 0, 0, 1250000)});
+    auto tap =
+        pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleTap, 0, 0, -mm(10), mm(2), 1250 * 1000, 0, 0, 1250000)});
     auto r = expandSection(tap, 0, caps, c);
     REQUIRE_FALSE(r.has_value());
     CHECK(r.error().code == ErrorCode::PostFailed);
@@ -329,9 +326,10 @@ TEST_CASE("a sink that stops ends the expansion", "[post][motion]")
 
 TEST_CASE("section stats", "[post][motion]")
 {
-    auto p = pathFrom(0, 0, mm(10), {rapid(0, 0, mm(2)), linear(mm(10), 0, mm(2), mmPerMin(600)),
-                                     arc(false, -mm(10), 0, mm(2), 0, 0, 0, mmPerMin(600)), dwell(1500),
-                                     linear(-mm(10), 0, -mm(4), mmPerMin(600))});
+    auto p = pathFrom(0, 0, mm(10),
+                      {rapid(0, 0, mm(2)), linear(mm(10), 0, mm(2), mmPerMin(600)),
+                       arc(false, -mm(10), 0, mm(2), 0, 0, 0, mmPerMin(600)), dwell(1500),
+                       linear(-mm(10), 0, -mm(4), mmPerMin(600))});
     const SectionStats s = sectionStats(p, 6000);
     CHECK(s.minZ == -mm(4));
     CHECK(s.maxZ == mm(10));

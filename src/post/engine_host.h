@@ -46,7 +46,7 @@ std::string_view handlerName(Handler h);
 // A declared post property with its default, typed.
 using PropertyValue = std::variant<bool, double, std::string>;
 struct DeclaredProperty {
-    PostProperty info;   // as PostInfo reports it (defaultValue as text)
+    PostProperty info; // as PostInfo reports it (defaultValue as text)
     PropertyValue defaultValue;
     std::optional<double> min, max; // int and number
 };
@@ -62,7 +62,7 @@ struct Declaration {
 };
 
 // The host properties every post has, declared by the host unless the post declares them itself.
-constexpr std::string_view kPropLineEnding = "lineEnding"; // enum "crlf" | "lf", default "crlf"
+constexpr std::string_view kPropLineEnding = "lineEnding";   // enum "crlf" | "lf", default "crlf"
 constexpr std::string_view kPropIncludeDate = "includeDate"; // bool, default false
 
 class Session {
@@ -109,8 +109,32 @@ public:
 
     // Interned atoms for move objects (engine_program.cpp builds them).
     enum Atom : std::uint8_t {
-        aX, aY, aZ, aFeed, aRole, aComp, aCw, aPlane, aCx, aCy, aCz, aI, aJ, aK, aRadius, aSweep,
-        aKind, aTop, aBottom, aRetract, aClearance, aPeck, aDwell, aPitch, aFirst, kAtomCount
+        aX,
+        aY,
+        aZ,
+        aFeed,
+        aRole,
+        aComp,
+        aCw,
+        aPlane,
+        aCx,
+        aCy,
+        aCz,
+        aI,
+        aJ,
+        aK,
+        aRadius,
+        aSweep,
+        aKind,
+        aTop,
+        aBottom,
+        aRetract,
+        aClearance,
+        aPeck,
+        aDwell,
+        aPitch,
+        aFirst,
+        kAtomCount
     };
     JSAtom atom(Atom a) const { return atoms_[a]; }
     // Interned strings: move roles, arc planes and cycle kinds.

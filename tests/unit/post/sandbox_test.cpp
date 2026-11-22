@@ -19,6 +19,14 @@ using namespace ray::post::test;
 
 namespace {
 
+// How late a CPU stop may be: the poll sees the limit between native calls, so it can lag by one call. One sort of
+// 20,000 strings takes milliseconds in an optimised build and over half a second in a Debug (unoptimised) engine.
+#if defined(NDEBUG)
+constexpr double kCpuLateness = 0.25;
+#else
+constexpr double kCpuLateness = 2.0;
+#endif
+
 enum class Want { Ok, Script, Heap, Cpu, Output, Warnings, Cancelled };
 
 struct Outcome {
@@ -42,7 +50,8 @@ Outcome runScript(const std::string& file, const EngineLimits& limits, const Pro
 Program arcProgram()
 {
     Program p;
-    cam::Toolpath& path = p.section("arcs", "contour2d", 7, makeTool("6 mm end mill", lib::ToolType::FlatEndMill, 6, 3));
+    cam::Toolpath& path =
+        p.section("arcs", "contour2d", 7, makeTool("6 mm end mill", lib::ToolType::FlatEndMill, 6, 3));
     path.startX = mm(5);
     path.startY = 0;
     path.moves.push_back(arc(false, 0, mm(5), 0, 0, 0, 0, mmPerMin(800)));
@@ -81,8 +90,8 @@ const char* kindText(Want w)
 struct Case {
     const char* file;
     Want want;
-    const char* message;   // substring of the error message, or nullptr
-    int line;              // 0: the /*HERE*/ line; -1: no line expected; -2: any line; >0: that line
+    const char* message; // substring of the error message, or nullptr
+    int line;            // 0: the /*HERE*/ line; -1: no line expected; -2: any line; >0: that line
     std::size_t heapMb = 64;
     double cpuSeconds = 5.0;
     std::size_t outMb = 16;
@@ -121,7 +130,7 @@ void check(const Case& c)
         if (c.want == Want::Cpu) {
             // On time: the interrupt is polled every 100 back-edges (vendor patch), and each poll is cheap. Stock
             // QuickJS-NG stopped cpu_native_sort.js 7.4 s late here (spike S8).
-            CHECK(o.diag.cpuSeconds < c.cpuSeconds + 0.25);
+            CHECK(o.diag.cpuSeconds < c.cpuSeconds + kCpuLateness);
         }
     }
     // The runtime is freed to zero bytes whatever happened, and the heap never ran far past its limit.
@@ -215,8 +224,8 @@ TEST_CASE("Math's trigonometry comes from ray::dmath", "[post][sandbox]")
     REQUIRE(got.size() == 4);
     for (std::size_t i = 0; i < 4; ++i) {
         const double x = xs[i];
-        const double want[] = {dmath::sin(x), dmath::cos(x), dmath::tan(x), dmath::atan2(x, 1.0), dmath::atan2(x, 2),
-                               dmath::hypot(x, 3), dmath::asin(x / 4), dmath::acos(x / 4)};
+        const double want[] = {dmath::sin(x),      dmath::cos(x),      dmath::tan(x),      dmath::atan2(x, 1.0),
+                               dmath::atan2(x, 2), dmath::hypot(x, 3), dmath::asin(x / 4), dmath::acos(x / 4)};
         // JavaScript writes the shortest text that reads back as the same double: compare the doubles.
         std::size_t from = 0;
         for (const double w : want) {

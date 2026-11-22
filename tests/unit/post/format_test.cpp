@@ -46,7 +46,7 @@ TEST_CASE("formatNumber rounds half to even on the nanometre grid", "[post][form
     CHECK(formatNumber(12.3445, kMm) == "12.344"); // 12344.5 um: 12344 is even, so down
     CHECK(formatNumber(-12.3455, kMm) == "-12.346");
     CHECK(formatNumber(-12.3445, kMm) == "-12.344");
-    CHECK(formatNumber(0.0005, kMm) == "0.");     // a tie onto 0 (even)
+    CHECK(formatNumber(0.0005, kMm) == "0."); // a tie onto 0 (even)
     CHECK(formatNumber(0.0015, kMm) == "0.002");
     // 2.675 is 2.67499999999999982236431605997495353221893310546875 as a double; printf("%.2f") gives 2.67. The
     // host snaps to 2675000 nm first, so the tie is exact and goes to even: 2.68.
@@ -76,7 +76,7 @@ TEST_CASE("formatNumber options", "[post][format]")
     CHECK(formatNumber(1234.5678, NumberFormat{0, true, true, true, 1.0}) == "1235.");
     CHECK(formatNumber(0.000001, NumberFormat{6, true, true, true, 1.0}) == "0.000001");
     CHECK(formatNumber(0.0000004, NumberFormat{6, true, true, true, 1.0}) == "0.");
-    CHECK(formatNumber(1.5, NumberFormat{9, true, true, true, 1.0}) == "1.5");  // decimals clamp to 6
+    CHECK(formatNumber(1.5, NumberFormat{9, true, true, true, 1.0}) == "1.5"); // decimals clamp to 6
     CHECK(formatNumber(1.5, NumberFormat{-2, true, true, true, 1.0}) == "2."); // and to 0
     // scale: the value is multiplied first; 0 (a value-initialised format) means 1.
     CHECK(formatNumber(1.25, NumberFormat{3, true, true, true, 1000.0}) == "1250.");
@@ -129,7 +129,8 @@ TEST_CASE("formatNumber is not affected by the C locale", "[post][format]")
     const char* before = std::setlocale(LC_ALL, nullptr);
     const std::string saved = before ? before : "C";
     // A locale with a decimal comma, where one is installed; the result must not change either way.
-    const bool switched = std::setlocale(LC_ALL, "de_DE.UTF-8") != nullptr || std::setlocale(LC_ALL, "German") != nullptr;
+    const bool switched =
+        std::setlocale(LC_ALL, "de_DE.UTF-8") != nullptr || std::setlocale(LC_ALL, "German") != nullptr;
     CHECK(formatNumber(1234.5, kMm) == "1234.5");
     CHECK(formatNumber(-0.125, kFixed) == "-0.125");
     std::setlocale(LC_ALL, saved.c_str());

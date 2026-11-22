@@ -150,7 +150,8 @@ bool Writer::raw(std::string_view text)
     std::size_t begin = 0;
     for (;;) {
         const std::size_t end = text.find('\n', begin);
-        std::string_view part = text.substr(begin, end == std::string_view::npos ? std::string_view::npos : end - begin);
+        std::string_view part =
+            text.substr(begin, end == std::string_view::npos ? std::string_view::npos : end - begin);
         if (end != std::string_view::npos && !part.empty() && part.back() == '\r') {
             part.remove_suffix(1);
         }

@@ -15,9 +15,9 @@
 namespace ray::post {
 
 struct WriterOptions {
-    bool inch = false;             // output units: inch (4 coordinate decimals) or millimetres (3)
-    std::string dialect;           // PostDefinition.dialect; picks the comment rules
-    bool crlf = true;              // line ending of every line, the last one included
+    bool inch = false;   // output units: inch (4 coordinate decimals) or millimetres (3)
+    std::string dialect; // PostDefinition.dialect; picks the comment rules
+    bool crlf = true;    // line ending of every line, the last one included
     std::size_t maxOutputBytes = std::size_t(1) << 20;
     std::size_t maxWarnings = 1000;
     std::size_t maxWarningBytes = 1000; // a longer warning is cut (UTF-8 safe) and marked with "..."

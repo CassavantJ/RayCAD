@@ -17,21 +17,21 @@ enum class ArcOutput : std::uint8_t { IJK, R, None }; // capabilities.arcs
 enum class CycleKind : std::uint8_t { Drill, Peck, ChipBreak, Tap, Bore, Ream };
 constexpr std::size_t kCycleKindCount = 6;
 
-std::string_view cycleKindName(CycleKind kind);                     // "drill", "peck", "chipBreak", ...
-std::optional<CycleKind> cycleKindFromName(std::string_view name);   // inverse; nullopt for anything else
-std::optional<CycleKind> cycleKindOfMove(cam::MoveKind kind);        // CycleDrill..CycleReam
+std::string_view cycleKindName(CycleKind kind);                    // "drill", "peck", "chipBreak", ...
+std::optional<CycleKind> cycleKindFromName(std::string_view name); // inverse; nullopt for anything else
+std::optional<CycleKind> cycleKindOfMove(cam::MoveKind kind);      // CycleDrill..CycleReam
 
 // What the post declared (definePost capabilities), as the expander needs it.
 struct MotionCaps {
     ArcOutput arcs = ArcOutput::IJK;
     bool helical = true;
-    double maxArcDegrees = 360.0;             // (0, 360]
+    double maxArcDegrees = 360.0;               // (0, 360]
     std::array<bool, kCycleKindCount> cycles{}; // canned cycles the post emits itself
     bool cutterComp = false;
 };
 
 // Constants of the host's own arc linearisation, in nanometres.
-constexpr Nm kLinearizeToleranceNm = 1'000;      // chord error when an arc is replaced by lines
+constexpr Nm kLinearizeToleranceNm = 1'000; // chord error when an arc is replaced by lines
 constexpr std::int64_t kMaxSegmentsPerArc = 65'536;
 
 // ---------- Canned-cycle conventions: ONE place, shared with the backplot (T-037) ----------
@@ -46,9 +46,9 @@ constexpr std::int64_t kMaxSegmentsPerArc = 65'536;
 //  - Bore and ream are G85 (feed in, feed out to R), or G89 (with a dwell at the bottom) when Move::cycleDwellMs > 0.
 // Neither clearance distance is in the IR.
 namespace cycle_conventions {
-constexpr bool kReturnToRetractPlane = true;     // G99; false would return to the level before the run (G98)
-constexpr Nm kPeckReentryNm = 500'000;           // 0.5 mm
-constexpr Nm kChipBreakBackoffNm = 500'000;      // 0.5 mm
+constexpr bool kReturnToRetractPlane = true; // G99; false would return to the level before the run (G98)
+constexpr Nm kPeckReentryNm = 500'000;       // 0.5 mm
+constexpr Nm kChipBreakBackoffNm = 500'000;  // 0.5 mm
 } // namespace cycle_conventions
 using cycle_conventions::kChipBreakBackoffNm;
 using cycle_conventions::kPeckReentryNm;
@@ -60,23 +60,23 @@ enum class EventKind : std::uint8_t { Rapid, Linear, Arc, Cycle, CycleEnd, Dwell
 struct MotionEvent {
     EventKind kind = EventKind::Rapid;
     std::uint32_t move = 0;
-    Nm x = 0, y = 0, z = 0;      // end point; for Cycle the hole (x, y) and z = bottom
-    std::int32_t feed = 0;       // micrometres per minute (Linear, Arc, Cycle)
+    Nm x = 0, y = 0, z = 0; // end point; for Cycle the hole (x, y) and z = bottom
+    std::int32_t feed = 0;  // micrometres per minute (Linear, Arc, Cycle)
     cam::MoveRole role = cam::MoveRole::Cut;
-    std::uint8_t comp = 0;       // 0 off, 1 left, 2 right
+    std::uint8_t comp = 0; // 0 off, 1 left, 2 right
     // Arc: direction as G2/G3 (seen from the positive end of the plane normal: +Z for XY, +Y for XZ, +X for YZ).
     bool cw = false;
     cam::ArcPlane plane = cam::ArcPlane::XY;
-    Nm cx = 0, cy = 0, cz = 0;   // absolute centre; the out-of-plane coordinate is the start's
-    Nm i = 0, j = 0, k = 0;      // centre minus start (0 along the plane normal)
-    double radiusNm = 0;         // distance from the start to the centre
-    double sweepDegrees = 0;     // (0, 360]
+    Nm cx = 0, cy = 0, cz = 0; // absolute centre; the out-of-plane coordinate is the start's
+    Nm i = 0, j = 0, k = 0;    // centre minus start (0 along the plane normal)
+    double radiusNm = 0;       // distance from the start to the centre
+    double sweepDegrees = 0;   // (0, 360]
     // Cycle
     CycleKind cycle = CycleKind::Drill;
     Nm top = 0, retract = 0, clearance = 0, peck = 0;
     std::int32_t dwellMs = 0;
     std::int32_t pitchNm = 0;
-    bool first = false;          // first hole of a run, or a hole whose cycle parameters changed
+    bool first = false; // first hole of a run, or a hole whose cycle parameters changed
 };
 
 class MotionSink {

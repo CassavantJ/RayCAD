@@ -154,8 +154,7 @@ public:
                 s_.setHostError(Error{ErrorCode::Cancelled, s_.scriptName() + ": posting was cancelled", {}});
                 return false;
             }
-            job_.progress.set(static_cast<double>(movesBefore_ + e.move) / static_cast<double>(totalMoves_),
-                              "Posting");
+            job_.progress.set(static_cast<double>(movesBefore_ + e.move) / static_cast<double>(totalMoves_), "Posting");
         }
         s_.writer().enterMove(section_, e.move);
         const bool ok = dispatch(e);
@@ -184,8 +183,12 @@ private:
             values[static_cast<std::size_t>(n)] = v;
             ++n;
         };
-        auto num = [&](A a, double v) { put(a, JS_NewFloat64(c_, v)); };
-        auto object = [&] { return JS_NewObjectFrom(c_, n, atoms.data(), values.data()); };
+        auto num = [&](A a, double v) {
+            put(a, JS_NewFloat64(c_, v));
+        };
+        auto object = [&] {
+            return JS_NewObjectFrom(c_, n, atoms.data(), values.data());
+        };
         switch (e.kind) {
         case EventKind::Rapid:
             num(A::aX, u_.len(e.x));
@@ -342,7 +345,9 @@ Result<PostOutput> runProgram(Session& s, const Declaration& decl, const PostJob
     setVal(c, p, "sections", JS_DupValue(c, sections.get()));
 
     // ---------- The program ----------
-    auto failed = [&]() -> Result<PostOutput> { return tl::unexpected(s.error()); };
+    auto failed = [&]() -> Result<PostOutput> {
+        return tl::unexpected(s.error());
+    };
     {
         JSValueConst argv[2] = {p, s.out()};
         if (!s.call(kOnProgramStart, 2, argv, false)) {

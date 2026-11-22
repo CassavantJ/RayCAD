@@ -202,8 +202,8 @@ const JSMallocFunctions& countingAllocator()
 std::string_view handlerName(Handler h)
 {
     static constexpr std::array<std::string_view, kHandlerCount> kNames = {
-        "onProgramStart", "onSectionStart", "onRapid",      "onLinear",       "onArc",
-        "onCycle",        "onCycleEnd",     "onDwell",      "onSectionEnd",   "onProgramEnd"};
+        "onProgramStart", "onSectionStart", "onRapid", "onLinear",     "onArc",
+        "onCycle",        "onCycleEnd",     "onDwell", "onSectionEnd", "onProgramEnd"};
     return kNames[h];
 }
 
@@ -652,9 +652,13 @@ void readProperty(Reader& r, JSValueConst spec, const std::string& key, std::vec
 DeclaredProperty hostLineEnding()
 {
     DeclaredProperty p;
-    p.info = PostProperty{std::string(kPropLineEnding), "Line endings",
-                          "CRLF (the default; what most controls and DNC software expect) or LF.", "Output",
-                          PostProperty::Type::Enum, "crlf", {"crlf", "lf"}};
+    p.info = PostProperty{std::string(kPropLineEnding),
+                          "Line endings",
+                          "CRLF (the default; what most controls and DNC software expect) or LF.",
+                          "Output",
+                          PostProperty::Type::Enum,
+                          "crlf",
+                          {"crlf", "lf"}};
     p.defaultValue = std::string("crlf");
     return p;
 }
@@ -662,9 +666,13 @@ DeclaredProperty hostLineEnding()
 DeclaredProperty hostIncludeDate()
 {
     DeclaredProperty p;
-    p.info = PostProperty{std::string(kPropIncludeDate), "Include date",
+    p.info = PostProperty{std::string(kPropIncludeDate),
+                          "Include date",
                           "Gives the post the posting date (ProgramContext.date) to put in the program header.",
-                          "Output", PostProperty::Type::Bool, "false", {}};
+                          "Output",
+                          PostProperty::Type::Bool,
+                          "false",
+                          {}};
     p.defaultValue = false;
     return p;
 }
@@ -725,8 +733,7 @@ Result<Declaration> Session::readDeclaration()
         d.motion.maxArcDegrees = maxDeg.value_or(360.0);
         d.rigidTap = r.boolean(caps, "rigidTap", "capabilities.rigidTap", true).value_or(false);
         d.motion.cutterComp = r.boolean(caps, "cutterComp", "capabilities.cutterComp", true).value_or(false);
-        d.toolLengthProbe =
-            r.boolean(caps, "toolLengthProbe", "capabilities.toolLengthProbe", false).value_or(false);
+        d.toolLengthProbe = r.boolean(caps, "toolLengthProbe", "capabilities.toolLengthProbe", false).value_or(false);
         JSValue cycles = r.get(caps, "cannedCycles");
         std::int64_t count = 0;
         if (!r.problem && (!JS_IsArray(cycles) || JS_GetLength(ctx_, cycles, &count) || count > 100)) {
@@ -849,13 +856,14 @@ void Session::installOut()
 void Session::makeInternedValues()
 {
     static constexpr std::array<const char*, kAtomCount> kAtomNames = {
-        "x",     "y",      "z",       "feed",      "role",   "comp",         "cw",    "plane", "cx",
-        "cy",    "cz",     "i",       "j",         "k",      "radius",       "sweepDegrees",   "kind",
-        "top",   "bottom", "retract", "clearance", "peck",   "dwellSeconds", "pitch", "first"};
+        "x",    "y",   "z",      "feed",    "role",      "comp", "cw",           "plane",
+        "cx",   "cy",  "cz",     "i",       "j",         "k",    "radius",       "sweepDegrees",
+        "kind", "top", "bottom", "retract", "clearance", "peck", "dwellSeconds", "pitch",
+        "first"};
     for (std::size_t i = 0; i < kAtomCount; ++i) {
         atoms_[i] = JS_NewAtom(ctx_, kAtomNames[i]);
     }
-    static constexpr std::array<const char*, 8> kRoles = {"cut",    "plunge", "ramp",    "leadIn",
+    static constexpr std::array<const char*, 8> kRoles = {"cut",     "plunge", "ramp",    "leadIn",
                                                           "leadOut", "link",   "retract", "approach"};
     for (std::size_t i = 0; i < roles_.size(); ++i) {
         roles_[i] = JS_NewString(ctx_, kRoles[i]);

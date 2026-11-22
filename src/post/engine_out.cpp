@@ -77,7 +77,8 @@ bool numberArg(JSContext* ctx, JSValueConst v, const char* fn, double scale, std
         d *= scale;
     }
     if (!fmt::snapToGrid(d, n, sessionOf(ctx).writer().grid())) {
-        JS_ThrowRangeError(ctx, "out.%s: %s is not a finite number within 1e10", fn, std::isnan(d) ? "NaN" : "the value");
+        JS_ThrowRangeError(ctx, "out.%s: %s is not a finite number within 1e10", fn,
+                           std::isnan(d) ? "NaN" : "the value");
         return false;
     }
     return true;

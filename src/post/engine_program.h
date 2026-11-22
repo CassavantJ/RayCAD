@@ -27,7 +27,7 @@ struct ProgramPlan {
     Units units;
     std::vector<std::pair<std::string, PropertyValue>> properties; // resolved, in declaration order
     std::optional<std::string> date;
-    std::vector<bool> toolChanged;  // per section
+    std::vector<bool> toolChanged;   // per section
     std::vector<SectionStats> stats; // per section
     std::size_t totalMoves = 0;
     std::vector<std::string> warnings; // host warnings, put first in PostOutput::warnings

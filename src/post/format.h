@@ -35,8 +35,7 @@ std::int64_t roundGrid(std::int64_t n, int decimals, std::int64_t grid) noexcept
 
 // Appends q / 10^decimals as text. trimZeros drops trailing zeros of the fraction; forcePoint keeps a decimal point
 // when no fraction digit is left ("12."); leadingZero writes "0.5" rather than ".5". Never writes "-0".
-void appendFixed(std::string& out, std::int64_t q, int decimals, bool trimZeros, bool forcePoint,
-                 bool leadingZero);
+void appendFixed(std::string& out, std::int64_t q, int decimals, bool trimZeros, bool forcePoint, bool leadingZero);
 
 // Appends a grid value formatted with `format` (decimals clamped to 0..kMaxDecimals; scale is not applied here).
 void appendGrid(std::string& out, std::int64_t n, const NumberFormat& format, std::int64_t grid);

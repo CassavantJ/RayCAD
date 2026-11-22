@@ -30,25 +30,25 @@
 namespace ray::post {
 
 struct EngineLimits {
-    std::size_t heapBytes = std::size_t(64) << 20;    // hard; the soft limit is 7/8 of it
-    double cpuSecondsBase = 10.0;                     // CPU limit: base + per move
+    std::size_t heapBytes = std::size_t(64) << 20; // hard; the soft limit is 7/8 of it
+    double cpuSecondsBase = 10.0;                  // CPU limit: base + per move
     double cpuSecondsPerMove = 20.0e-6;
     std::size_t outputBytesBase = std::size_t(1) << 20; // output limit: base + per move
     std::size_t outputBytesPerMove = 256;
     std::size_t maxWarnings = 1000;
     std::size_t jsStackBytes = 256 * 1024;
     std::size_t threadStackBytes = std::size_t(4) << 20; // at least 1 MB (PLAN.md section 7)
-    double inspectCpuSeconds = 10.0;                  // inspect() runs only the declaration block
+    double inspectCpuSeconds = 10.0;                     // inspect() runs only the declaration block
 };
 
 // What the last inspect() or run() left behind, for tests and the bench.
 struct RunDiagnostics {
-    std::size_t heapPeakBytes = 0;       // live bytes of the JS allocator, highest
-    std::size_t heapAfterFreeBytes = 0;  // after JS_FreeRuntime: 0 unless the engine leaked
+    std::size_t heapPeakBytes = 0;      // live bytes of the JS allocator, highest
+    std::size_t heapAfterFreeBytes = 0; // after JS_FreeRuntime: 0 unless the engine leaked
     std::size_t bytecodeBytes = 0;
-    double cpuSeconds = 0;               // thread CPU time of the whole run
+    double cpuSeconds = 0; // thread CPU time of the whole run
     std::uint64_t interruptPolls = 0;
-    std::size_t movesPosted = 0;         // IR moves handed to the script
+    std::size_t movesPosted = 0; // IR moves handed to the script
 };
 
 class QuickJsPostEngine final : public IPostEngine {

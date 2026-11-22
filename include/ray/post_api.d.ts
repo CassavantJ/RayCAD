@@ -1,6 +1,9 @@
 // RayCAD post-processor script API, version 1 (PLAN DRAFT)
 // A post is one .post.js file that calls definePost({...}). This API is original to RayCAD; it does not
 // mirror any vendor's post API. Everything here is deterministic: no Date, no Math.random, no I/O.
+// Host notes (T-039): the script runs in strict mode; Math.sin, cos, tan, asin, acos, atan, atan2 and hypot are the
+// host's deterministic versions. `this` in every handler is the object given to definePost. Numbers reach the script
+// in output units and are snapped back to integer nanometres by `out`, so print them through `out`, not toFixed.
 
 declare function definePost(post: PostDefinition): void;
 
@@ -18,7 +21,9 @@ interface PostDefinition {
     rigidTap: boolean;
     cutterComp: boolean;
   };
-  properties: Record<string, PropertySpec>;
+  properties: Record<string, PropertySpec>;      // the host also reads lineEnding ("crlf" | "lf", default "crlf")
+                                                 // and includeDate (bool, default false), and declares them if the
+                                                 // post does not
 
   onProgramStart(ctx: ProgramContext, out: Writer): void;
   onSectionStart(section: Section, ctx: ProgramContext, out: Writer): void;   // tool change, WCS, spindle, coolant
@@ -43,7 +48,7 @@ type MoveRole = "cut" | "plunge" | "ramp" | "leadIn" | "leadOut" | "link" | "ret
 
 interface MoveXYZ { x: number; y: number; z: number; }      // output units (inch or mm), already converted by the host
 interface ArcMove extends MoveXYZ {
-  cw: boolean; plane: "XY" | "XZ" | "YZ";
+  cw: boolean; plane: "XY" | "XZ" | "YZ";               // cw as G2, seen from +Z (XY), +Y (XZ) or +X (YZ)
   cx: number; cy: number; cz: number;                       // absolute centre
   i: number; j: number; k: number;                          // centre relative to start
   radius: number; sweepDegrees: number; feed: number; comp: 0 | 1 | 2;
@@ -51,6 +56,8 @@ interface ArcMove extends MoveXYZ {
 interface CycleMove {
   kind: CycleKind; x: number; y: number; top: number; bottom: number; retract: number; clearance: number;
   feed: number; peck: number; dwellSeconds: number; pitch: number; first: boolean;
+  // clearance: the tool's Z before the run; first: the run's first hole, or one whose cycle parameters changed.
+  // The host takes the tool to be back at the R plane (retract) after each hole, as with G99.
 }
 
 interface ToolInfo {
@@ -85,7 +92,8 @@ interface Writer {
   axis(letter: string, value: number): string | null;       // formatted with the dialect's coordinate format; null if unchanged
   word(letter: string, value: number, fmt?: FormatSpec): string;   // always emitted
   feed(value: number): string | null;
-  resetModal(...groups: string[]): void;                    // no args resets all, e.g. after a tool change
+  resetModal(...groups: string[]): void;                    // no args resets all, e.g. after a tool change;
+                                                            // "feed", "axes" and one letter "A".."Z" (that axis) also reset
   sequence: { enabled: boolean; start: number; increment: number; onlyOnToolChange: boolean };
   warn(message: string): void;                              // surfaces in the UI; does not stop posting
   fail(message: string): never;                             // stops posting with an error

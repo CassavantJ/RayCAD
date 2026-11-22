@@ -259,7 +259,8 @@ function testPost(handlers) {
 inline Program linearProgram(std::size_t moves)
 {
     Program p;
-    cam::Toolpath& path = p.section("lines", "contour2d", 7, makeTool("6 mm end mill", lib::ToolType::FlatEndMill, 6, 3));
+    cam::Toolpath& path =
+        p.section("lines", "contour2d", 7, makeTool("6 mm end mill", lib::ToolType::FlatEndMill, 6, 3));
     for (std::size_t i = 0; i < moves; ++i) {
         path.moves.push_back(linear(um(static_cast<std::int64_t>(i) * 10), um(static_cast<std::int64_t>(i % 7)), -mm(1),
                                     mmPerMin(1200)));

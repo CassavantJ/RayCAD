@@ -21,7 +21,8 @@ namespace {
 Program benchProgram(std::size_t count)
 {
     Program p;
-    cam::Toolpath& path = p.section("bench", "pocket2d", 4, makeTool("8 mm end mill", lib::ToolType::FlatEndMill, 8, 3));
+    cam::Toolpath& path =
+        p.section("bench", "pocket2d", 4, makeTool("8 mm end mill", lib::ToolType::FlatEndMill, 8, 3));
     auto& moves = path.moves;
     moves.reserve(count);
     std::uint64_t state = 0x5EED5EED5EED5EEDull;
@@ -31,7 +32,9 @@ Program benchProgram(std::size_t count)
         z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
         return z ^ (z >> 31);
     };
-    auto range = [&](std::int64_t lo, std::int64_t hi) { return lo + static_cast<std::int64_t>(next() % (hi - lo + 1)); };
+    auto range = [&](std::int64_t lo, std::int64_t hi) {
+        return lo + static_cast<std::int64_t>(next() % (hi - lo + 1));
+    };
     auto snap = [&](Nm v) {
         switch (next() & 3) {
         case 0:

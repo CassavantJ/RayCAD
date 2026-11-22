@@ -417,9 +417,9 @@ TEST_CASE("units: inch output converts every length and feed", "[post][engine]")
     REQUIRE(inch.has_value());
     const std::string& t = inch->text;
     CHECK(t.find("G20") != std::string::npos);
-    CHECK(t.find("G3 X1.5748 Y.7874") == std::string::npos); // leading zeros are kept
+    CHECK(t.find("G3 X1.5748 Y.7874") == std::string::npos);                  // leading zeros are kept
     CHECK(t.find("G3 X1.5748 Y0.7874 I0. J0.3937\r\n") != std::string::npos); // 40 mm, 20 mm, 10 mm
-    CHECK(t.find(" X1.1811 F47.24\r\n") != std::string::npos); // 30 mm at 1200 mm/min
+    CHECK(t.find(" X1.1811 F47.24\r\n") != std::string::npos);                // 30 mm at 1200 mm/min
     CHECK(t.find(" Z0.1969\r\n") != std::string::npos); // 5 mm = 0.19685039 in, on the nanometre grid
     CHECK(t.find("G99 G81 X0.3937 Y0.3937 Z-0.4724 R0.0787 F5.91") != std::string::npos);
     CHECK(t.find("(T2 DRILL D0.268 6.8 MM DRILL)") != std::string::npos);
@@ -452,9 +452,13 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
     REQUIRE(out.has_value());
     CHECK(out->text.find('\r') == std::string::npos);
 
-    for (const auto& [key, value] : std::vector<std::pair<std::string, std::string>>{
-             {"numberStep", "1000"}, {"numberStep", "2.5"}, {"homeZ", "abc"}, {"homeZ", ""}, {"coolantStyle", "m7"},
-             {"numberBlocks", "yes"}, {"lineEnding", "cr"}}) {
+    for (const auto& [key, value] : std::vector<std::pair<std::string, std::string>>{{"numberStep", "1000"},
+                                                                                     {"numberStep", "2.5"},
+                                                                                     {"homeZ", "abc"},
+                                                                                     {"homeZ", ""},
+                                                                                     {"coolantStyle", "m7"},
+                                                                                     {"numberBlocks", "yes"},
+                                                                                     {"lineEnding", "cr"}}) {
         INFO(key << " = " << value);
         Program bad = goldenProgram(true);
         bad.properties[key] = value;

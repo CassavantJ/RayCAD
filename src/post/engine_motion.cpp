@@ -71,9 +71,9 @@ Nm lerpNm(Nm start, Nm end, std::int64_t k, std::int64_t n)
 
 struct ArcFrame {
     PlaneAxes axes;
-    double a0 = 0;      // start angle
-    double sweep = 0;   // radians, (0, 2 pi]
-    double radius = 0;  // nm
+    double a0 = 0;     // start angle
+    double sweep = 0;  // radians, (0, 2 pi]
+    double radius = 0; // nm
     bool full = false;
     double direction = 1; // +1 counter-clockwise, -1 clockwise
     Nm cu = 0, cv = 0;
@@ -322,8 +322,7 @@ private:
         return true;
     }
 
-    Result<bool> linearise(const Move& m, const ArcFrame& f, const Point& start, const Point& end,
-                           std::uint32_t index)
+    Result<bool> linearise(const Move& m, const ArcFrame& f, const Point& start, const Point& end, std::uint32_t index)
     {
         std::int64_t n = 1;
         const double tol = static_cast<double>(kLinearizeToleranceNm);
@@ -350,8 +349,7 @@ private:
 
     static CycleParams paramsOf(const Move& m, CycleKind kind)
     {
-        return CycleParams{kind, m.z, m.cycleRetract, m.cyclePeck, m.cycleDwellMs, m.threadPitchNm,
-                           m.feedMicronPerMin};
+        return CycleParams{kind, m.z, m.cycleRetract, m.cyclePeck, m.cycleDwellMs, m.threadPitchNm, m.feedMicronPerMin};
     }
 
     Result<bool> checkCycle(const Move& m, std::uint32_t index) const
@@ -360,7 +358,8 @@ private:
             return tl::unexpected(failure(moveLabel(index) + " is a cycle without a feed"));
         }
         if (m.z >= m.cycleRetract) {
-            return tl::unexpected(failure(moveLabel(index) + " is a cycle whose bottom is not below its retract plane"));
+            return tl::unexpected(
+                failure(moveLabel(index) + " is a cycle whose bottom is not below its retract plane"));
         }
         return true;
     }
@@ -434,10 +433,16 @@ private:
         const Nm retract = m.cycleRetract;
         const Nm bottom = m.z;
         const std::int32_t feed = m.feedMicronPerMin;
-        auto at = [&](Nm z) { return Point{{m.x, m.y, z}}; };
+        auto at = [&](Nm z) {
+            return Point{{m.x, m.y, z}};
+        };
         std::vector<std::pair<bool, Point>> steps; // (rapid?, target); a cycle is a few dozen moves at most
-        auto rapid = [&](Nm z) { steps.emplace_back(true, at(z)); };
-        auto feedTo = [&](Nm z) { steps.emplace_back(false, at(z)); };
+        auto rapid = [&](Nm z) {
+            steps.emplace_back(true, at(z));
+        };
+        auto feedTo = [&](Nm z) {
+            steps.emplace_back(false, at(z));
+        };
 
         Result<bool> r = true;
         if (pos_[2] < clearance) {
