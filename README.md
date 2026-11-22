@@ -64,7 +64,10 @@ build\windows-msvc\bin\Debug\raycad.exe
 
 The OpenCASCADE DLLs are delay-loaded and are not copied next to the executables. Code that calls the
 kernel also needs `build\vcpkg_installed\x64-windows\bin` (Release) or `...\x64-windows\debug\bin` (Debug)
-on `PATH`; CTest sets this for the tests.
+on `PATH`; CTest sets this for the tests. A test executable run directly without it fails every case that
+reaches the kernel with "structured exception 0xc06d007e (an OpenCASCADE DLL or one of its functions could not
+be loaded)", and Catch2 exits with the number of failed cases (`ray_cam_engine_tests.exe` in Debug: 9). That is
+expected; run it through `ctest -R <name>` or put that folder on `PATH` first.
 
 To check a change, run `tools\verify.cmd [quick|full|ci]` with `VCPKG_ROOT` and `QT_ROOT_DIR` set (and
 `VCPKG_DEFAULT_BINARY_CACHE` if you use one); "Which tests to run" below says which mode when. `quick` (the
