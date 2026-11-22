@@ -10,13 +10,15 @@
 // (the host linearises arcs in other planes), out.setFormat (decimals per dialect, trailing-zero style, comment
 // length), the decimals argument of out.feed (tapping feeds), out.sequence.max, and machine.controlDialect,
 // maxBlockNumber and maxProgramNameLength in ProgramContext.
+// T-042: the dialect names list the two Mazak posts, mazak-smooth and mazak-matrix (one per control generation), in
+// place of mazak-eia. No other change.
 
 declare function definePost(post: PostDefinition): void;
 
 interface PostDefinition {
   title: string;
   vendor: string;
-  dialect: "haas-ngc" | "haas-classic" | "fanuc" | "mazak-eia" | "generic-iso" | string;
+  dialect: "haas-ngc" | "haas-classic" | "fanuc" | "mazak-smooth" | "mazak-matrix" | "generic-iso" | string;
   fileExtension: string;
   apiVersion: 1;
   capabilities: {

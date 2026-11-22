@@ -52,7 +52,7 @@
       "type": "object",
       "required": ["dialect", "defaultPost"],
       "properties": {
-        "dialect": { "type": "string", "minLength": 1, "description": "'haas-ngc', 'fanuc', 'mazak-eia', 'generic-iso', ..." },
+        "dialect": { "type": "string", "minLength": 1, "description": "'haas-ngc', 'fanuc', 'mazak-smooth', 'mazak-matrix', 'generic-iso', ..." },
         "defaultPost": { "type": "string", "minLength": 1, "description": "File stem of the post in posts/." },
         "rigidTapping": { "type": "boolean" },
         "maxBlockNumber": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "Largest N number (0: no limit known)." },

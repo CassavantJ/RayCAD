@@ -287,10 +287,10 @@ TEST_CASE("an app has its operation registry, CAM engine, library stack and post
 
 TEST_CASE("the app's post list has the shipped posts of the built-in library", "[api][cam][library]")
 {
-    // T-040 / T-041: the built-in library is copied beside the programs (src/api/CMakeLists.txt), posts included; the
-    // setup panel lists the posts of every library root with postStems.
+    // T-040 / T-041 / T-042: the built-in library is copied beside the programs (src/api/CMakeLists.txt), posts
+    // included; the setup panel lists the posts of every library root with postStems.
     const auto stems = api::cam_setup::postStems({RAY_BUILTIN_LIBRARY_COPY});
-    for (const char* post : {"fanuc", "generic-iso", "haas-classic", "haas-ngc"}) {
+    for (const char* post : {"fanuc", "generic-iso", "haas-classic", "haas-ngc", "mazak-matrix", "mazak-smooth"}) {
         INFO(post);
         CHECK(std::find(stems.begin(), stems.end(), post) != stems.end());
     }

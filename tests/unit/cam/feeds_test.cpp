@@ -10,7 +10,7 @@
 //    deterministic sweep of 4000 random-looking inputs); the radial chip thinning factor is 1 at and above half the
 //    diameter and grows monotonically below it.
 //  - Input validation: errors, documented fallbacks, never NaN or infinity.
-//  - The shipped library (resources/library) on its three machines, and a pinned hash of every combination's rpm
+//  - The shipped library (resources/library) on its four machines, and a pinned hash of every combination's rpm
 //    and feed (the values that reach toolpaths), the same on every platform.
 #include <ray/cam.h>
 
@@ -792,7 +792,7 @@ const Shipped& shipped()
 // Ids from tools/library_ids.json.
 constexpr std::string_view kHaas = "b903ede7-5123-4c26-bc15-466e92fba4c6";  // machine.vmc.haas-ngc
 constexpr std::string_view kFanuc = "79733809-d5a1-4b1d-9502-d9ccd73a1777"; // machine.vmc.fanuc
-constexpr std::string_view kMazak = "1647afea-3110-4e8e-a439-fa1082f98a5d"; // machine.vmc.mazak-eia
+constexpr std::string_view kMazak = "1647afea-3110-4e8e-a439-fa1082f98a5d"; // machine.vmc.mazak-smooth (was mazak-eia)
 constexpr std::string_view k6061 = "b72c5171-c258-44d2-91ae-ee049b636621";
 constexpr std::string_view k7075 = "4dfd9a48-f386-449e-a847-47d763e5a0cf";
 constexpr std::string_view k1018 = "000dafba-65e0-4ceb-8fc2-284c79449e1a";
@@ -1347,7 +1347,7 @@ std::string_view opTypeFor(lib::ToolType type)
 TEST_CASE("feeds: every shipped preset on every shipped machine, pinned", "[cam][feeds][shipped]")
 {
     const auto& s = shipped();
-    REQUIRE(s.machines.size() == 3);
+    REQUIRE(s.machines.size() == 4);
     Hasher h;
     int count = 0;
     for (const auto& t : s.tools) {
@@ -1382,16 +1382,18 @@ TEST_CASE("feeds: every shipped preset on every shipped machine, pinned", "[cam]
             }
         }
     }
-    CHECK(count == 2088); // 696 presets x 3 machines
+    CHECK(count == 2784); // 696 presets x 4 machines
     // The rpm and feed of every combination, the values that reach toolpaths: identical on every platform. Changes
     // only when the library, the formulas or the constants of feeds.cpp change (then review and update this).
     // Re-pinned when the shipped inch tap pitches became exact (25.4 / TPI to 6 decimals instead of 4): the rounded
     // pitches had happened to make every tap feed exact; with the true ones the 24, 28, 18 and 13 TPI taps round
     // their feed (tapFeedExact false) and 32 TPI taps move to the rpm step of 4.
-    CHECK(h.finish().hex() == "dec74b088e27e3c895b9fcc5c4ee8a9121cf96fd78c279981489aef72080ab5a");
+    // Re-pinned for T-042: a fourth shipped machine (the Mazak Matrix VMC; the Mazak Smooth machine kept its id and
+    // values, only its name and post changed), so 696 more combinations enter the hash.
+    CHECK(h.finish().hex() == "0f77768f2aa059496f47c3085f18b8ff15688d39f1a1a3ac28d59410568bfc7d");
 }
 
-// Not a test: a table of the shipped presets that hit a limit on all three shipped machines (run by hand with
+// Not a test: a table of the shipped presets that hit a limit on every shipped machine (run by hand with
 // "[.survey]" to review the starter library's cutting data).
 TEST_CASE("feeds: survey of shipped presets limited on every machine", "[.survey]")
 {
@@ -1451,15 +1453,14 @@ TEST_CASE("feeds: survey of shipped presets limited on every machine", "[.survey
                               r->limits.maxRpm.requested, r->feedMmMin, flags.c_str());
                 what += buf;
             }
-            if (limitedCount == 3) {
-                std::printf("ALL3 %s / %s / %s%s\n", t.name.c_str(), mat->name.c_str(), p.opClass.c_str(),
-                            what.c_str());
+            if (limitedCount == static_cast<int>(s.machines.size())) {
+                std::printf("ALL %s / %s / %s%s\n", t.name.c_str(), mat->name.c_str(), p.opClass.c_str(), what.c_str());
                 ++limitedEverywhere[t.name];
             }
         }
     }
     for (const auto& [name, n] : limitedEverywhere)
-        std::printf("tool %s: %d presets limited on all three\n", name.c_str(), n);
+        std::printf("tool %s: %d presets limited on every machine\n", name.c_str(), n);
     for (const auto& [key, n] : perMachine)
         std::printf("%s: %d\n", key.c_str(), n);
     SUCCEED();

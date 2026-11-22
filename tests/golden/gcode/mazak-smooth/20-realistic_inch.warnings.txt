@@ -1,0 +1,2 @@
+dwell posted as P in milliseconds (property dwellUnits): the dwell unit is [unverified] for the MAZATROL Smooth control; check it before running the program
+section 4 (Chip-break drill): the peck clearance 0.0118 is not posted; the control takes the G73 return amount from a parameter [unverified]

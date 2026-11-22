@@ -1,0 +1,1 @@
+dwell posted as P in milliseconds (property dwellUnits): the dwell unit is [unverified] for the MAZATROL Matrix control; check it before running the program

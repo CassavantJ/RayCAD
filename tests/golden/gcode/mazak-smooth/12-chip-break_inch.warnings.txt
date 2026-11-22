@@ -1,0 +1,1 @@
+section 0 (chip-break drilling G73): the peck clearance 0.0118 is not posted; the control takes the G73 return amount from a parameter [unverified]

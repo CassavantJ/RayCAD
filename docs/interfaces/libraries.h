@@ -105,7 +105,7 @@ struct MachineDef {
     std::vector<AxisDef> axes;
     double maxRpm = 0, minRpm = 0, spindlePowerKw = 0, spindleTorqueNm = 0;   // 0 = not published / not known
     int toolCapacity = 0; double toolChangeSec = 0;
-    std::string controlDialect;        // "haas-ngc","fanuc","mazak-eia","generic-iso"
+    std::string controlDialect;        // "haas-ngc","fanuc","mazak-smooth","generic-iso"
     std::string defaultPost;           // file stem in posts/
     bool rigidTapping = false, throughSpindleCoolant = false, hasProbe = false, hasToolSetter = false;
     int maxBlockNumber = 0; int maxProgramNameLength = 0;

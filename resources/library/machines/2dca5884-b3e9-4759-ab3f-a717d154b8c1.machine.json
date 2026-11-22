@@ -1,0 +1,59 @@
+{
+  "axes": [
+    {
+      "accel": 0,
+      "letter": "X",
+      "max": 1049.02,
+      "maxFeed": 0,
+      "min": 0,
+      "rapid": 35999.42
+    },
+    {
+      "accel": 0,
+      "letter": "Y",
+      "max": 530.352,
+      "maxFeed": 0,
+      "min": 0,
+      "rapid": 35999.42
+    },
+    {
+      "accel": 0,
+      "letter": "Z",
+      "max": 510.032,
+      "maxFeed": 0,
+      "min": 0,
+      "rapid": 35999.42
+    }
+  ],
+  "comment": "Mazak no longer publishes Matrix-generation machines on mazak.com, so these values are from a used-machine dealer listing, not from Mazak: Surplus Record listing 1058083 (surplusrecord.com, 'Mazak #Nexus-530C-II TT, CNC vertical machining center, Mazatrol Matrix Nexus 2 Control', 2014): travels from its description 41.3 x 20.88 x 20.08 in (1049.02 x 530.352 x 510.032 mm; its title says 20.8 for Y and Z), 12000 rpm, 15 hp 30 min rating (11.19 kW), CAT-40, 30 tools, rapid 1417.3 in/min (35999.42 mm/min). Torque, cutting feed, tool change time, acceleration and rigid tapping are not stated there: 0 / false = unknown. Axis directions are not stated; travels are given from 0. Post: mazak-matrix (MAZATROL Matrix family, EIA/ISO; written without a Mazak manual, see docs/post_review/mazak-matrix.md). Not verified on a real machine.",
+  "control": {
+    "defaultPost": "mazak-matrix",
+    "dialect": "mazak-matrix",
+    "maxBlockNumber": 0,
+    "maxProgramNameLength": 0,
+    "rigidTapping": false
+  },
+  "id": "2dca5884-b3e9-4759-ab3f-a717d154b8c1",
+  "kind": "mill3",
+  "model": "",
+  "name": "Generic Mazak VMC, MAZATROL Matrix, EIA/ISO programs (VCN-530C class)",
+  "options": {
+    "probe": false,
+    "throughSpindleCoolant": false,
+    "toolSetter": false
+  },
+  "postProperties": {},
+  "schema": 1,
+  "spindle": {
+    "maxRpm": 12000,
+    "minRpm": 0,
+    "powerKw": 11.19,
+    "torqueNm": 0
+  },
+  "toolChanger": {
+    "capacity": 30,
+    "changeSeconds": 0
+  },
+  "vendor": "",
+  "verified": false
+}

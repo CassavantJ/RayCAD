@@ -152,7 +152,7 @@ TEST_CASE("comments are sanitised per dialect", "[post][writer]")
     CHECK(sanitizeComment("Rough pocket (2 mm stock)", "haas-ngc") == "Rough pocket 2 mm stock");
     CHECK(sanitizeComment("  tab\there  ", "generic-iso") == "TAB HERE");
     CHECK(sanitizeComment("ÃƒËœ12 FrÃƒÂ¤ser \xE2\x80\x94 dia", "generic-iso") == "12 FR SER DIA");
-    CHECK(sanitizeComment("a.b,c-d+e/f*g=h:i#j_k", "mazak-eia") == "A.B,C-D+E/F*G=H:I#J_K");
+    CHECK(sanitizeComment("a.b,c-d+e/f*g=h:i#j_k", "mazak-smooth") == "A.B,C-D+E/F*G=H:I#J_K");
     CHECK(sanitizeComment("((()))", "fanuc").empty());
 
     Writer w(lf());

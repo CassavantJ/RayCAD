@@ -13,8 +13,11 @@ One document per shipped post:
 | FANUC 0i-MF / 30i-MB class | `resources/library/posts/fanuc.post.js` | `tests/golden/gcode/fanuc/` | [fanuc.md](fanuc.md) |
 | Haas NGC | `resources/library/posts/haas-ngc.post.js` | `tests/golden/gcode/haas-ngc/` | [haas-ngc.md](haas-ngc.md) |
 | Haas classic | `resources/library/posts/haas-classic.post.js` | `tests/golden/gcode/haas-classic/` | [haas-classic.md](haas-classic.md) |
+| Mazak MAZATROL Smooth, EIA/ISO | `resources/library/posts/mazak-smooth.post.js` | `tests/golden/gcode/mazak-smooth/` | [mazak-smooth.md](mazak-smooth.md) |
+| Mazak MAZATROL Matrix, EIA/ISO | `resources/library/posts/mazak-matrix.post.js` | `tests/golden/gcode/mazak-matrix/` | [mazak-matrix.md](mazak-matrix.md) |
 
-(Mazak EIA, T-042, is blocked on PLAN.md section 15 question 2 and has no post yet.)
+The two Mazak posts (T-042) were written without a Mazak manual (not openly published): every Mazak-specific rule is
+[unverified], and the T-043 interpreter has no Mazak dialect yet, so their goldens are not read back by the round trip.
 
 ## How the goldens are made
 

@@ -1,0 +1,1 @@
+post property highSpeedMode = G05P2: the code form is [unverified] for the MAZATROL Matrix control; check it in the machine's EIA/ISO programming manual before running the program

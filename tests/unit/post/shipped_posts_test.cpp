@@ -195,8 +195,9 @@ std::vector<std::string> structuralProblems(const std::string& post, const std::
         }
         if (!homing && hasAxis(w)) {
             const bool feed = motion == 10 || motion == 20 || motion == 30 || (motion >= 730 && motion != 800);
-            const bool tapCycle = motion == 840 || motion == 740;
-            if (feed && !spindle && !(tapCycle && (rigid || haas))) {
+            const bool tapCycle =
+                motion == 840 || motion == 740 || motion == 842 || motion == 843; // G84.2 / G84.3: synchronous
+            if (feed && !spindle && !(tapCycle && (rigid || haas || motion == 842 || motion == 843))) {
                 problem(n, "a feed move with the spindle stopped");
             }
             if (motion != 0 || hasLetter(w, 'Z')) {
@@ -238,7 +239,7 @@ std::vector<std::string> structuralProblems(const std::string& post, const std::
 
 TEST_CASE("shipped posts load in the sandbox and declare capabilities and properties", "[post][shipped]")
 {
-    for (const char* id : kPosts) {
+    for (const std::string& id : allPosts()) {
         INFO(id);
         QuickJsPostEngine engine; // the default limits (post.h)
         const auto info = engine.inspect(shippedPost(id));
@@ -276,7 +277,7 @@ TEST_CASE("shipped posts load in the sandbox and declare capabilities and proper
 TEST_CASE("shipped posts: the feature matrix matches the goldens byte for byte", "[post][shipped][golden]")
 {
     const char* produced = std::getenv("RAYCAD_GOLDEN_PRODUCED");
-    for (const Run& r : goldenRuns()) {
+    for (const Run& r : goldenRuns(true)) {
         INFO(r.post << "/" << r.file);
         const auto out = postRun(r.post, r.program);
         if (!out) {
@@ -306,7 +307,7 @@ TEST_CASE("shipped posts: the feature matrix matches the goldens byte for byte",
 
 TEST_CASE("shipped posts: the line map covers every line with an axis word", "[post][shipped]")
 {
-    for (const Run& r : goldenRuns()) {
+    for (const Run& r : goldenRuns(true)) {
         INFO(r.post << "/" << r.file);
         const auto out = postRun(r.post, r.program);
         REQUIRE(out.has_value());
@@ -329,7 +330,7 @@ TEST_CASE("shipped posts: the line map covers every line with an axis word", "[p
 
 TEST_CASE("shipped posts: the matrix programs pass the structural checks", "[post][shipped]")
 {
-    for (const Run& r : goldenRuns()) {
+    for (const Run& r : goldenRuns(true)) {
         INFO(r.post << "/" << r.file);
         const auto out = postRun(r.post, r.program);
         REQUIRE(out.has_value());
@@ -341,7 +342,7 @@ TEST_CASE("shipped posts: the matrix programs pass the structural checks", "[pos
 
 TEST_CASE("shipped posts: every pairwise property combination passes the structural checks", "[post][shipped]")
 {
-    for (const char* id : kPosts) {
+    for (const std::string& id : allPosts()) {
         QuickJsPostEngine engine;
         const auto info = engine.inspect(shippedPost(id));
         REQUIRE(info.has_value());
@@ -428,7 +429,7 @@ TEST_CASE("shipped posts: refusals and warnings name their cause", "[post][shipp
          "m6LeavesZRetracted",
          false},
     };
-    for (const char* id : kPosts) {
+    for (const std::string& id : allPosts()) {
         for (const Case& c : cases) {
             INFO(id << ": " << c.what);
             Program p = realistic();
@@ -460,7 +461,7 @@ TEST_CASE("shipped posts: refusals and warnings name their cause", "[post][shipp
         }
     }
     // With the assertion, FANUC and generic post the program without a retract before M6.
-    for (const char* id : {"fanuc", "generic-iso"}) {
+    for (const char* id : {"fanuc", "generic-iso", "mazak-smooth", "mazak-matrix"}) {
         INFO(id);
         Program p = realistic();
         p.machine = machineFor(id);
