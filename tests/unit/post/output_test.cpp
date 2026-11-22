@@ -270,6 +270,11 @@ struct FakeFs final : public IOutputFs {
 };
 
 constexpr const char* kShare = "\\\\server\\cnc";
+// A file in the fake share, joined as the writer joins it (\ on Windows, / elsewhere).
+std::string shareFile(const char* name)
+{
+    return joinPath(kShare, name);
+}
 
 OutputTarget target(OverwriteMode mode, const std::string& name = "O1001.nc", const std::string& dir = kShare)
 {
@@ -622,7 +627,7 @@ TEST_CASE("output: cancel before the rename writes nothing; a cancel after the c
 {
     FakeFs f;
     f.folders.insert(kShare);
-    f.files[std::string(kShare) + "\\O1001.nc"] = "old";
+    f.files[shareFile("O1001.nc")] = "old";
     CancelSource source;
     CancelToken token = source.token();
     f.onWrite = [&] {
@@ -633,7 +638,7 @@ TEST_CASE("output: cancel before the rename writes nothing; a cancel after the c
     REQUIRE_FALSE(w);
     CHECK(w.error().code == ErrorCode::Cancelled);
     CHECK(problemOf(w.error()) == OutputProblem::Cancelled);
-    CHECK(f.files.at(std::string(kShare) + "\\O1001.nc") == "old");
+    CHECK(f.files.at(shareFile("O1001.nc")) == "old");
     CHECK(f.temporaries() == 0);
     // The commit closes the token: a later cancel changes nothing.
     CancelSource late;
@@ -643,7 +648,7 @@ TEST_CASE("output: cancel before the rename writes nothing; a cancel after the c
     auto ok = writeProgramFile("new", target(OverwriteMode::Replace), g, &lateToken);
     REQUIRE(ok);
     CHECK_FALSE(late.cancel());
-    CHECK(g.files.at(std::string(kShare) + "\\O1001.nc") == "new");
+    CHECK(g.files.at(shareFile("O1001.nc")) == "new");
 }
 
 // ======================================================================================================== faults
@@ -653,13 +658,13 @@ TEST_CASE("output: a full disk mid-write leaves no partial program and the old o
     FakeFs f;
     f.folders.insert(kShare);
     const std::string old = sampleProgram(3);
-    f.files[std::string(kShare) + "\\O1001.nc"] = old;
+    f.files[shareFile("O1001.nc")] = old;
     f.failWriteAfter = 100;
     f.writeProblem = OutputProblem::DiskFull;
     auto w = writeProgramFile(sampleProgram(200), target(OverwriteMode::Replace), f);
     REQUIRE_FALSE(w);
     CHECK(problemOf(w.error()) == OutputProblem::DiskFull);
-    CHECK(f.files.at(std::string(kShare) + "\\O1001.nc") == old);
+    CHECK(f.files.at(shareFile("O1001.nc")) == old);
     CHECK(f.temporaries() == 0); // the partial temporary file was removed
     CHECK(f.renames == 0);
     // A new file: nothing at all appears.
@@ -674,7 +679,7 @@ TEST_CASE("output: a share that vanishes mid-write: a clear message, nothing loa
 {
     FakeFs f;
     f.folders.insert(kShare);
-    f.files[std::string(kShare) + "\\O1001.nc"] = "old";
+    f.files[shareFile("O1001.nc")] = "old";
     f.failWriteAfter = 64;
     f.writeProblem = OutputProblem::Unreachable;
     f.vanishOnWrite = true;
@@ -684,7 +689,7 @@ TEST_CASE("output: a share that vanishes mid-write: a clear message, nothing loa
     // The temporary file could not be removed (the share is gone), but it is a .tmp no control loads, and the old
     // program is untouched.
     CHECK(f.programs() == std::vector<std::string>{"O1001.nc"});
-    CHECK(f.files.at(std::string(kShare) + "\\O1001.nc") == "old");
+    CHECK(f.files.at(shareFile("O1001.nc")) == "old");
     CHECK(f.renames == 0);
     // Gone before the start: said so at once.
     FakeFs g;
@@ -699,7 +704,7 @@ TEST_CASE("output: a failed flush and a locked destination leave the old program
 {
     FakeFs f;
     f.folders.insert(kShare);
-    const std::string path = std::string(kShare) + "\\O1001.nc";
+    const std::string path = shareFile("O1001.nc");
     f.files[path] = "old";
     f.failFlush = true;
     REQUIRE_FALSE(writeProgramFile("new", target(OverwriteMode::Replace), f));
@@ -716,7 +721,7 @@ TEST_CASE("output: a failed flush and a locked destination leave the old program
 
 TEST_CASE("output: a file that appears while writing is never replaced unless the rule says so", "[post][output][fake]")
 {
-    const std::string path = std::string(kShare) + "\\O1001.nc";
+    const std::string path = shareFile("O1001.nc");
     FakeFs f;
     f.folders.insert(kShare);
     f.appearOnRename = path;
@@ -733,7 +738,7 @@ TEST_CASE("output: a file that appears while writing is never replaced unless th
     REQUIRE(renamed);
     CHECK(renamed->fileName == "O1001_2.nc");
     CHECK(g.files.at(path) == "theirs");
-    CHECK(g.files.at(std::string(kShare) + "\\O1001_2.nc") == "mine");
+    CHECK(g.files.at(shareFile("O1001_2.nc")) == "mine");
     // A temporary name someone else holds is skipped.
     FakeFs h;
     h.folders.insert(kShare);
