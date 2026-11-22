@@ -20,6 +20,7 @@
 #include "section_model.h"
 #include "selection_model.h"
 #include "settings.h"
+#include "test_screen.h"
 #include "theme_object.h"
 #include "units.h"
 #include "viewport_item.h"
@@ -82,6 +83,7 @@ bool rhiSceneGraph()
     static const bool rhi = [] {
         QQuickWindow probe;
         probe.resize(64, 64);
+        ray::test::screen::placeBeforeShow(probe); // RAY_TEST_SCREEN: on that screen
         probe.show();
         if (!QTest::qWaitForWindowExposed(&probe))
             return false;
