@@ -4,6 +4,7 @@
 // active document. Results are canonical JSON objects.
 #include "app_impl.h"
 #include "cam_post_actions.h"
+#include "cam_template_actions.h"
 #include "measure_actions.h"
 #include "schema.h"
 
@@ -190,6 +191,9 @@ constexpr CommandText kCommandTexts[] = {
     {"cam.operation.suppress", "Suppress Operation", "Suppresses or unsuppresses an operation", "CAM"},
     {"cam.library.embed", "Embed Library Items",
      "Copies tools, holders, machines or materials into the document, or updates the copies it has", "CAM"},
+    // T-057: several CAM commands as one undo step (applying a template set).
+    {"cam.batch", "Several CAM Changes",
+     "Applies several CAM commands (operations, library items, a setup edit) in order as one undo step", "CAM"},
 };
 
 std::string titleCase(std::string_view name)
@@ -436,6 +440,10 @@ Status addCommandActions(AppImpl& app)
             if (name == "cam.operation.add" || name == "cam.operation.edit") {
                 check = [&app](const doc::DocState& state, const doc::Command& command) {
                     return checkOperationParams(app.operationTypes(), state, command);
+                };
+            } else if (name == "cam.batch") { // T-057
+                check = [&app](const doc::DocState& state, const doc::Command& command) {
+                    return checkBatchParams(app.operationTypes(), state, command);
                 };
             }
             return runCommand(app, docId, doc::Command{name, json::canonical(*args), label}, ctx, check);
@@ -901,6 +909,11 @@ Status registerBuiltinActions(AppImpl& app)
 
     // ---- posting (T-047) ----
     if (st = registerCamPostActions(app); !st) {
+        return st;
+    }
+
+    // ---- operation templates (T-057) ----
+    if (st = registerCamTemplateActions(app); !st) {
         return st;
     }
 

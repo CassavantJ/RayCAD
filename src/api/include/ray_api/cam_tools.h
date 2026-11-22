@@ -42,4 +42,12 @@ Status saveHolder(lib::ILibrary& library, const lib::Holder& holder, const std::
 Status removeTool(lib::ILibrary& library, const ToolId& id, const Hash256& base);
 Status removeHolder(lib::ILibrary& library, const HolderId& id, const Hash256& base);
 
+// T-057: operation templates (the template manager and cam.template.saveFrom), the same way: the file format and back,
+// what the editor started from, and the checked save and remove.
+std::string templateJson(const lib::OpTemplate& t);
+Result<lib::OpTemplate> templateFromJson(std::string_view json);
+Hash256 contentHash(const lib::OpTemplate& t);
+Status saveTemplate(lib::ILibrary& library, const lib::OpTemplate& t, const std::optional<Hash256>& base);
+Status removeTemplate(lib::ILibrary& library, const Uuid& id, const Hash256& base);
+
 } // namespace ray::api::cam_tools

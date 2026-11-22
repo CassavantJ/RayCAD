@@ -12,6 +12,8 @@ add_library(ray_cam STATIC
     state.cpp    # OperationRegistry, operationInputHash (task T-032)
     state.h
     toolpath.cpp # Toolpath::serialize, deserialize, hash: the RCTP format
+    templates.cpp # operation templates: variables, rules, the plan of an application (task T-057)
+    templates.h
     # Operation types (docs/operation_types.md): one set of files per type, the shared params reader, the registry.
     ops/builtin_ops.cpp # registerBuiltinOperationTypes
     ops/op_params.cpp   # params read against the type's schema (schemas/ops/<type>.schema.json)

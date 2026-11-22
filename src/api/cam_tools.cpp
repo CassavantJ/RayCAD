@@ -148,4 +148,35 @@ Status removeHolder(lib::ILibrary& library, const HolderId& id, const Hash256& b
     return library.remove(lib::ItemKind::Holder, id.value);
 }
 
+std::string templateJson(const lib::OpTemplate& t)
+{
+    return lib::toJson(t);
+}
+
+Result<lib::OpTemplate> templateFromJson(std::string_view json)
+{
+    return lib::templateFromJson(json);
+}
+
+Hash256 contentHash(const lib::OpTemplate& t)
+{
+    return hashText(lib::toJson(t));
+}
+
+Status saveTemplate(lib::ILibrary& library, const lib::OpTemplate& t, const std::optional<Hash256>& base)
+{
+    if (auto st = unchanged(currentHash(library.templates(), t.id), base, "template"); !st) {
+        return st;
+    }
+    return library.save(t);
+}
+
+Status removeTemplate(lib::ILibrary& library, const Uuid& id, const Hash256& base)
+{
+    if (auto st = unchanged(currentHash(library.templates(), id), base, "template"); !st) {
+        return st;
+    }
+    return library.remove(lib::ItemKind::Template, id);
+}
+
 } // namespace ray::api::cam_tools

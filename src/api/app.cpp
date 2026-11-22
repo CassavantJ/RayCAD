@@ -12,6 +12,7 @@
 // journal; the app's destructor keeps the journals of documents with unsaved changes. A failed append switches the
 // journal off for that document with a warning, and work goes on.
 #include "app_impl.h"
+#include "cam_template_actions.h"
 
 #include <ray_api/recent_files.h>
 
@@ -95,6 +96,17 @@ Status AppImpl::init(AppOptions options, std::unique_ptr<QueueDispatcher> owned)
     commands_ = doc::builtinCommandRegistry();
     if (!commands_) {
         return fail(ErrorCode::Internal, "Out of memory while registering the document commands");
+    }
+    {
+        // T-057: the built-in commands and cam.batch, which applies several of them as one (cam_template_actions.h).
+        auto commands = std::make_shared<doc::CommandRegistry>();
+        if (auto st = doc::registerBuiltinCommands(*commands); !st) {
+            return withContext(st.error(), "registering the document commands");
+        }
+        if (auto st = commands->add(makeCamBatchCommand(commands_)); !st) {
+            return withContext(st.error(), "registering cam.batch");
+        }
+        commands_ = std::move(commands);
     }
     userDataDir_ = resolveUserDataDir(options.userDataDir);
     recent_ = std::make_unique<RecentFiles>(userDataDir_);
