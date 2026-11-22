@@ -16,6 +16,8 @@
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
+// Amended by T-034 (hole recognition): recognizeHoles takes the setup frame, has an overload without a resolver, and
+// HoleSegment, RecognizedHole and HoleOptions grew (see that section).
 // Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
 //  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
 //    an item embedded from a library keeps them;
@@ -453,10 +455,63 @@ struct LinkOptions { double maxStayDownDistance = 0; bool allowRapidRetract = fa
 Result<std::vector<Move>> linkPasses(std::span<const std::vector<Move>> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&);
 
 // ---------- Hole recognition (v1: cylinders with planar/conical bottoms; full AFR is v2) ----------
-struct HoleSegment { double diameter, depth; bool conical; double coneAngleDeg; };
-struct RecognizedHole { naming::TopoRef axisFace; Vec3 top, axis; std::vector<HoleSegment> segments; bool through; std::string threadSpec; };
-Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId, Vec3 setupZ, JobContext&);
-std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);   // deterministic nearest-neighbour + 2-opt
+// Task T-034, src/cam/holes.cpp, which states every rule and tolerance. Amended by T-034: recognition takes the setup
+// frame (wcsFromModel, so positions come out in the WCS in nanometres, as the toolpath IR needs them) instead of setup
+// Z alone; a second overload without a resolver serves generators, which get shapes and SubIds but no resolver
+// (GenerateInput); HoleSegment and RecognizedHole carry what the drilling operation (T-035) needs; HoleOptions carries
+// the thread pickup from hole features (T-097b) and a size limit.
+//
+// A hole is a stack of coaxial concave faces along setup Z, open at the top to an up-facing plane with nothing above
+// it: cylinders (pieces of one cylinder merged, as STEP exporters split them), cones (countersinks, chamfers, drill
+// points) and planar steps; it ends in a flat floor, a cone (drill point) or by breaking out (through). Segments run
+// from the top down; planar steps between them are not segments.
+struct HoleSegment {
+    double diameter, depth; bool conical; double coneAngleDeg;   // cone: diameter at its top, included angle
+    // Added by T-034:
+    double bottomDiameter;    // the diameter at the segment's lower end: = diameter for a cylinder, 0 at a drill point
+    Nm zTop, zBottom;         // WCS Z of the segment's ends (a drill point's zBottom is its tip); depth = zTop - zBottom
+};
+enum class HoleBottom : std::uint8_t { Through, Flat, Conical };
+struct RecognizedHole {
+    naming::TopoRef axisFace;  // the main bore's wall (its lowest SubId); empty from the overload without a resolver
+    Vec3 top;                  // the WCS point (x, y, zTop) in mm
+    Vec3 axis;                 // the hole axis in the model frame, pointing out of the hole (unit)
+    std::vector<HoleSegment> segments;   // top down; at least one cylinder
+    bool through;              // == (bottom == HoleBottom::Through)
+    std::string threadSpec;    // the hole feature's thread designation ("M6x1"), empty when unknown or not tapped
+    // Added by T-034:
+    Nm x = 0, y = 0;           // the axis in the WCS
+    Nm zTop = 0, zBottom = 0;  // the top, and the lowest point (a drill point's tip; where a through hole breaks out)
+    HoleBottom bottom = HoleBottom::Through;
+    std::size_t bore = 0;      // index in segments of the main bore: the lowest cylinder, the drilled diameter
+    bool counterbored = false; // a cylinder above the bore is wider than it
+    bool countersunk = false;  // an entry cone (above the first cylinder) wider than a chamfer (holes.cpp, kChamferMax*)
+    bool chamfered = false;    // an entry cone no wider than a chamfer: an edge break, not a countersink
+    double threadPitch = 0;    // mm, with threadSpec; 0 when unknown
+    kernel::SubId axisSub{};   // the face axisFace names, in the shape passed
+    std::vector<kernel::SubId> faces;   // every face of the hole (walls, steps, floor) in the shape passed, sorted
+};
+// Thread pickup (T-097b): the thread of the hole feature `feature`, which made the bore (TopoName::origin of a name
+// of role "hole.*" on the bore's faces, read through `names`); nullopt when the feature has none.
+struct HoleThread { std::string spec; double pitch = 0; };
+struct HoleOptions {
+    const naming::ElementMap* names = nullptr;   // the body's element map; null: no thread pickup
+    std::function<std::optional<HoleThread>(const FeatureId&)> threadOf;   // empty: no thread pickup
+    double maxDiameter = 0;   // > 0: holes whose bore is wider are not reported (circular pockets); 0: no limit
+};
+// Holes of `shape` (model frame) along Z of the frame wcsFromModel (a rigid move: the setup's ResolvedSetup), sorted
+// by (x, y, zTop) and then axisSub, so the result does not depend on face order. Deterministic. Errors:
+// InvalidArgument for a null shape or a frame that is not a rigid move; KernelFailure when a face or edge cannot be
+// read; Cancelled. Polls cancellation per face.
+Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId,
+                                                   const Xform& wcsFromModel, JobContext&, const HoleOptions& = {});
+Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const Xform& wcsFromModel, JobContext&,
+                                                   const HoleOptions& = {});
+// The visiting order of points `xy` from `start`: nearest neighbour (ties to the lower index), then 2-opt and Or-opt
+// improvement with a fixed pass bound, never longer than the nearest-neighbour tour. Deterministic: integer
+// nanometre coordinates (toNm of each value) and integer squared distances for every comparison. holes.cpp has the
+// complexity. A permutation of 0..xy.size()-1.
+std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);
 
 // ---------- Feeds and speeds (task T-048, src/cam/feeds.cpp) ----------
 // Amended by T-048: computeFeeds returns Result (errors are values); FeedsInput can name the preset and replace its
