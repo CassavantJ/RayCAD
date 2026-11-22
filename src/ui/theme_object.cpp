@@ -335,7 +335,10 @@ void ThemeObject::resolveFonts()
 {
     // The theme's family if it is installed (the bundled fonts arrive with a later task, resources/fonts/README.md),
     // else the first installed fallback, else the system font of that kind. The mono fallbacks are the platforms'
-    // own programming fonts: the generic fixed font is Courier New on Windows, which reads poorly at 13 px.
+    // own programming fonts (the generic fixed font is Courier New on Windows, which reads poorly at 13 px), each with
+    // a zero marked so that it is not read as the letter O ("O1001" in G-code): slashed on Windows (Consolas, every
+    // Windows since Vista) and macOS (Menlo, SF Mono), dotted on Linux (DejaVu Sans Mono, Liberation Mono). Cascadia
+    // Mono's dot is one or two pixels at 13 px, too faint at a glance, so it comes last.
     auto pick = [](const std::map<std::string, std::string>& fonts, const char* role, QStringList fallbacks,
                    QFontDatabase::SystemFont systemFont) {
         const auto it = fonts.find(role);
@@ -350,10 +353,11 @@ void ThemeObject::resolveFonts()
         return QFontDatabase::systemFont(systemFont).family();
     };
     uiFamily_ = pick(current_->fonts, "ui", {}, QFontDatabase::GeneralFont);
-    monoFamily_ = pick(current_->fonts, "mono",
-                       {QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas"), QStringLiteral("SF Mono"),
-                        QStringLiteral("Menlo"), QStringLiteral("DejaVu Sans Mono"), QStringLiteral("Liberation Mono")},
-                       QFontDatabase::FixedFont);
+    monoFamily_ =
+        pick(current_->fonts, "mono",
+             {QStringLiteral("Consolas"), QStringLiteral("Menlo"), QStringLiteral("SF Mono"),
+              QStringLiteral("DejaVu Sans Mono"), QStringLiteral("Liberation Mono"), QStringLiteral("Cascadia Mono")},
+             QFontDatabase::FixedFont);
 }
 
 qreal ThemeObject::radiusSmall() const

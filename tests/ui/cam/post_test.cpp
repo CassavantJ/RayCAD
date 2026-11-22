@@ -53,6 +53,7 @@
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
+#include <QtGui/QFontMetricsF>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
@@ -462,6 +463,51 @@ void addDrill(const Window& w, std::uint64_t n, std::size_t holes, double rpm = 
     (void)w.invokeResult("cam.operation.add", jsonText(args));
 }
 
+// The ink of one glyph cell of a line of the G-code viewer (a one-line Text in a monospaced font), as the largest
+// colour difference from the line's background: in the middle of the cell (the inner sixth across and the middle eighth
+// of the capital height: where a zero's slash or dot is and an O has nothing) and in the whole cell (the strokes).
+struct GlyphInk {
+    int middle = 0, stroke = 0;
+    std::string where;
+};
+GlyphInk glyphInk(const QImage& img, QQuickItem* text, int column)
+{
+    const qreal dpr = img.devicePixelRatio();
+    const QFontMetricsF fm(text->property("font").value<QFont>());
+    const double adv = fm.horizontalAdvance(QLatin1Char('0'));
+    const double top = (text->height() - fm.height()) / 2; // AlignVCenter
+    const double base = top + fm.ascent();
+    const double cap = fm.capHeight();
+    const QPointF bgAt = text->mapToScene(QPointF(column * adv + adv / 2, std::max(0.0, base - cap - 2))) * dpr;
+    const QColor bg = img.pixelColor(bgAt.toPoint());
+    const auto maxDiff = [&](double x0, double x1, double y0, double y1) {
+        const QPointF a = text->mapToScene(QPointF(x0, y0)) * dpr, b = text->mapToScene(QPointF(x1, y1)) * dpr;
+        // The pixels whose centres are inside (at least the one nearest the middle).
+        const int px0 = int(std::ceil(a.x() - 0.5)), py0 = int(std::ceil(a.y() - 0.5));
+        const int px1 = std::max(px0, int(std::floor(b.x() - 0.5)));
+        const int py1 = std::max(py0, int(std::floor(b.y() - 0.5)));
+        int best = 0;
+        for (int y = py0; y <= py1; ++y) {
+            for (int x = px0; x <= px1; ++x) {
+                const QColor c = img.pixelColor(x, y);
+                best = std::max(best, std::abs(c.red() - bg.red()) + std::abs(c.green() - bg.green()) +
+                                          std::abs(c.blue() - bg.blue()));
+            }
+        }
+        return best;
+    };
+    GlyphInk out;
+    out.where = "cell " + std::to_string(column) + ": text at " +
+                std::to_string(text->mapToScene(QPointF(0, 0)).x() * dpr) + ", " +
+                std::to_string(text->mapToScene(QPointF(0, 0)).y() * dpr) + " h " +
+                std::to_string(text->height() * dpr) + " adv " + std::to_string(adv * dpr) + " base " +
+                std::to_string(base * dpr) + " cap " + std::to_string(cap * dpr) + " bg " + bg.name().toStdString() +
+                " at " + std::to_string(bgAt.y());
+    out.middle = maxDiff(column * adv + 0.42 * adv, column * adv + 0.58 * adv, base - 0.56 * cap, base - 0.44 * cap);
+    out.stroke = maxDiff(column * adv, (column + 1) * adv, base - cap, base);
+    return out;
+}
+
 // Makes setup row 0 current by a click on its name (the row's tool buttons are at its right).
 void selectSetupRow(const Window& w)
 {
@@ -857,6 +903,40 @@ TEST_CASE("the G-code viewer: colours, find, copy, keys; a line highlights its m
                       [&](const render::PickHit& h) { return h.item == hit->item && h.moveIndex == hit->moveIndex; }));
     CHECK(g->lineInfo().contains(QStringLiteral("Drill 1")));
     w.shotsBothThemes(QStringLiteral("t047_viewer_highlight"));
+    // The program number: its letter O and its zeros are told apart, in both themes (the mono font's zero has a slash
+    // or a dot in its middle, where an O has none; at the viewer's size the mark has to be as dark as the strokes).
+    {
+        int oLine = -1;
+        for (int i = 0; i < g->lineCount() && oLine < 0; ++i) {
+            const std::string_view l = index.line(static_cast<std::size_t>(i));
+            if (l.size() > 2 && l[0] == 'O' && l[1] == '0')
+                oLine = i;
+        }
+        REQUIRE(oLine >= 0);
+        QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, oLine), Q_ARG(int, 4 /* Contain */));
+        QQuickItem* line = nullptr;
+        REQUIRE(QTest::qWaitFor(
+            [&] { return (line = w.find(QStringLiteral("gcodeLine.%1").arg(oLine))) && line->isVisible(); }, 5000));
+        QQuickItem* text = Window::findItem(line, QStringLiteral("gcodeText"));
+        REQUIRE(text != nullptr);
+        INFO("mono font " << text->property("font").value<QFont>().family().toStdString());
+        for (const char* theme : {"dark", "light"}) {
+            INFO("theme " << theme);
+            w.host->theme()->setProperty("mode", QLatin1String(theme));
+            QTest::qWait(200);
+            const QImage img = w.grab();
+            const GlyphInk o = glyphInk(img, text, 0), zero = glyphInk(img, text, 1);
+            INFO(o.where << "; " << zero.where);
+            INFO(theme << ", " << text->property("font").value<QFont>().family().toStdString() << ": O middle "
+                       << o.middle << " of stroke " << o.stroke << "; 0 middle " << zero.middle << " of stroke "
+                       << zero.stroke);
+            CHECK(o.stroke > 60);
+            CHECK(zero.stroke > 60);
+            CHECK(o.middle * 4 <= o.stroke);
+            CHECK(zero.middle * 10 >= zero.stroke * 6);
+        }
+        w.host->theme()->setProperty("mode", QStringLiteral("dark"));
+    }
     // A line with no move (the program start): nothing highlighted, said quietly.
     g->selectLine(0);
     CHECK_FALSE(g->highlighted());
