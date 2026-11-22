@@ -25,6 +25,7 @@
 #include "selection_model.h"
 #include "session.h"
 #include "theme_object.h"
+#include "units.h"
 #include "viewport_item.h"
 #include "viewport_navigation.h"
 
@@ -39,6 +40,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QTemporaryDir>
+#include <QtGui/QAccessible>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
@@ -108,12 +110,12 @@ struct Window {
     int confirms = 0;
     int shots = 0;
 
-    Window()
+    explicit Window(QSize size = QSize(1440, 900))
     {
         AppOptions options;
         options.theme = QStringLiteral("light");
         options.glass = false;
-        options.size = QSize(1440, 900);
+        options.size = size;
         host = std::make_unique<AppHost>(options, cache.path());
         REQUIRE(host->optionError().isEmpty());
         REQUIRE(host->load());
@@ -374,6 +376,76 @@ Vec3 farWall(const Window& w, const api::cam_operation::Hole& h)
     return Vec3{h.top.x + 0.85 * r * d.x, h.top.y + 0.85 * r * d.y, h.top.z - 0.25 * h.depth};
 }
 
+// Every list (ComboBox) and check box under `root` that is shown: a check box's label is never elided (it wraps); a
+// list's text is elided only where its layout cannot give it more room (at its widthLimit), and its open list is as
+// wide as its longest choice, within the window. Returns how many were checked.
+int checkNoCutText(const Window& w, QQuickItem* root, const QString& where)
+{
+    REQUIRE(root != nullptr);
+    std::vector<QQuickItem*> items{root};
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        for (QQuickItem* c : items[i]->childItems())
+            items.push_back(c);
+    }
+    int checked = 0;
+    const double margin = w.host->theme()->property("spacingS").toDouble();
+    for (QQuickItem* item : items) {
+        const bool combo = item->inherits("QQuickComboBox");
+        const bool check = item->inherits("QQuickCheckBox");
+        if ((!combo && !check) || !item->isVisible())
+            continue;
+        auto* label = qvariant_cast<QQuickItem*>(item->property("contentItem"));
+        REQUIRE(label != nullptr);
+        ++checked;
+        const QString text = combo ? item->property("displayText").toString() : item->property("text").toString();
+        INFO(where.toStdString() << ": " << (combo ? "list " : "check box ") << item->objectName().toStdString() << " '"
+                                 << text.toStdString() << "', " << item->width() << " wide");
+        const bool cut = label->property("truncated").toBool();
+        if (check) {
+            CHECK_FALSE(cut);
+            continue;
+        }
+        if (cut) {
+            INFO("its limit " << item->property("widthLimit").toDouble());
+            CHECK(item->width() >= item->property("widthLimit").toDouble() - 0.5);
+        }
+        auto* popup = qvariant_cast<QObject*>(item->property("popup"));
+        REQUIRE(popup != nullptr);
+        const double open = popup->property("width").toDouble();
+        const double widest = item->property("widestText").toDouble();
+        INFO("open list " << open << " wide, longest choice " << widest);
+        CHECK(open <= w.window()->width() + 0.5);
+        CHECK((open >= widest || open >= w.window()->width() - 2 * margin - 1));
+    }
+    return checked;
+}
+
+// Every button under `root` that shows no text (an icon alone) says what it does: a tooltip and an accessible name.
+// Returns how many such buttons there were.
+int checkIconButtons(QQuickItem* root, const QString& where)
+{
+    REQUIRE(root != nullptr);
+    std::vector<QQuickItem*> items{root};
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        for (QQuickItem* c : items[i]->childItems())
+            items.push_back(c);
+    }
+    int icons = 0;
+    for (QQuickItem* item : items) {
+        if (!item->inherits("QQuickAbstractButton") || !item->isVisible() || item->inherits("QQuickCheckBox") ||
+            item->inherits("QQuickItemDelegate") || !item->property("text").toString().isEmpty())
+            continue;
+        ++icons;
+        QAccessibleInterface* a = QAccessible::queryAccessibleInterface(item);
+        const QString name = a != nullptr ? a->text(QAccessible::Name) : QString();
+        INFO(where.toStdString() << ": icon button " << item->objectName().toStdString() << " (icon '"
+                                 << item->property("iconName").toString().toStdString() << "')");
+        CHECK_FALSE(item->property("toolTipText").toString().isEmpty());
+        CHECK_FALSE(name.isEmpty());
+    }
+    return icons;
+}
+
 } // namespace
 
 TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save and reopen", "[cam][e2e][flow]")
@@ -386,6 +458,10 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     REQUIRE(QTest::qWaitFor([&] { return w.host->session()->hasDocument() && w.settled(); }, kTimeoutMs));
     w.settle();
     REQUIRE(w.host->scene()->bodyCount() == 1);
+    // A metric file opens as a metric document (new documents default to inches here), and the status line says so.
+    CHECK(w.document()->state()->settings.units == UnitSystem::Metric);
+    CHECK(w.host->context()->statusText().contains(
+        QStringLiteral("millimetres, the unit plate_thru_holes_1.stp declares")));
     w.view()->fitAll();
     w.shot("imported");
 
@@ -396,8 +472,47 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     w.shot("cam_empty");
 
     // ---- 3. A new setup: the top face, an origin, the machine, the material ----
+    const render::Camera beforeSetupPanel = w.view()->camera();
     w.click(QStringLiteral("camTreeEmptyNewSetup"));
     REQUIRE(QTest::qWaitFor([&] { return w.setupPanel()->active() && !w.setupPanel()->previewBusy(); }, kTimeoutMs));
+    // The tree's own New setup button goes while the panel makes one (the panel is where it goes on).
+    CHECK_FALSE(w.find(QStringLiteral("camTreeEmptyNewSetup"))->isVisible());
+    CHECK(w.shown(QStringLiteral("camTreeEmptyText"))->property("text").toString().contains(QStringLiteral("panel")));
+    // The stock and the WCS triad with its labels lie in the part of the view no panel or bar covers: framed there
+    // when they were not (the panel covers the left of the view; the Z arrow ran into the selection filter bar).
+    const auto frameOf = [&] {
+        const QRectF f = w.view()->frameRect();
+        return f.isEmpty() ? QRectF(0, 0, w.view()->width(), w.view()->height()) : f;
+    };
+    const auto inFrame = [&](Vec3 p, double margin) {
+        const auto v = ui::nav::project(w.view()->camera(), p, w.view()->width(), w.view()->height());
+        return v.has_value() && frameOf().adjusted(margin, margin, -margin, -margin).contains(*v);
+    };
+    const auto setupInView = [&] {
+        const auto& p = w.setupPanel()->lastPreview();
+        if (!p)
+            return false;
+        for (const Vec3& m : p->markers) {
+            if (!inFrame(m, 0))
+                return false;
+        }
+        for (QQuickItem* label :
+             {w.find(QStringLiteral("setupAxisLabel.X")), w.find(QStringLiteral("setupAxisLabel.Y")),
+              w.find(QStringLiteral("setupAxisLabel.Z"))}) {
+            if (label == nullptr || !frameOf().contains(label->mapRectToItem(w.view(), label->boundingRect())))
+                return false;
+        }
+        return true;
+    };
+    {
+        // The frame excludes the panel and the bar.
+        QQuickItem* panel = w.shown(QStringLiteral("setupPanel"));
+        CHECK(frameOf().left() >= panel->mapRectToItem(w.view(), panel->boundingRect()).right());
+        QQuickItem* bar = w.shown(QStringLiteral("selectionFilter"));
+        CHECK(frameOf().top() >= bar->mapRectToItem(w.view(), bar->boundingRect()).bottom() - 0.5);
+    }
+    REQUIRE(QTest::qWaitFor([&] { return w.settled() && setupInView(); }, kTimeoutMs));
+    CHECK(w.view()->camera().target.x != beforeSetupPanel.target.x); // it was not in view: framed anew
     {
         // The top face: a click on the plate's top between the rows of holes, clear of the panel.
         const Box3 b = kernel::bounds(w.host->scene()->body(0)->shape);
@@ -434,6 +549,8 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     w.chooseInCombo(QStringLiteral("setupCombo.material"),
                     [&] { return w.setupPanel()->values().value(QStringLiteral("material")).toString() == kAl6061; });
     REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->previewBusy() && w.setupPanel()->canCommit(); }, kTimeoutMs));
+    CHECK(checkIconButtons(w.shown(QStringLiteral("camWorkspace")), QStringLiteral("setup panel")) >= 4);
+    CHECK(setupInView());
     w.shot("setup_panel");
     w.click(QStringLiteral("setupOk"));
     REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->active(); }, kTimeoutMs));
@@ -443,15 +560,89 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     CHECK(setup.machine == MachineId{Uuid::fromString(kVmc.toStdString())});
     CHECK(setup.material == MaterialId{Uuid::fromString(kAl6061.toStdString())});
     CHECK(setup.postId == "haas-ngc");
+    // The new setup is current, and its WCS stays in the view after OK: a small triad, labelled with its work offset.
+    {
+        const bool shown = QTest::qWaitFor(
+            [&] {
+                return w.setupPanel()->shownWcs().has_value() && w.setupPanel()->wcsLines().count() == 3 &&
+                       w.setupPanel()->wcsLabel().value(QStringLiteral("text")).toString() == QStringLiteral("G54");
+            },
+            kTimeoutMs);
+        INFO("current row " << w.tree()->currentIndex() << ", WCS resolved " << w.setupPanel()->shownWcs().has_value()
+                            << ", lines " << w.setupPanel()->wcsLines().count() << ", label '"
+                            << w.setupPanel()->wcsLabel().value(QStringLiteral("text")).toString().toStdString()
+                            << "'");
+        REQUIRE(shown);
+    }
+    CHECK(w.shown(QStringLiteral("setupWcsLabel"))->property("text").toString() == QStringLiteral("G54"));
     w.shot("setup_added");
 
     // ---- 4. A drill operation: holes clicked in the view, a library tool from the picker, calculated feeds ----
     w.clickRow(QStringLiteral("setupRow.0"));
+    const render::Camera beforeOperationPanel = w.view()->camera();
     w.click(QStringLiteral("camRowNewOperation.0"));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, 5000));
     CHECK(w.op()->type() == QStringLiteral("drill"));
     CHECK(w.op()->materialSource() == QStringLiteral("setup"));
+    // Opening the panel moves no camera; Fit then frames the part beside it, in the part of the view nothing covers.
+    QTest::qWait(100);
+    CHECK(w.view()->camera().eye.x == beforeOperationPanel.eye.x);
+    CHECK(w.view()->camera().target.y == beforeOperationPanel.target.y);
+    const auto partInFrame = [&](const char* beside) {
+        QQuickItem* panel = w.shown(QLatin1String(beside));
+        const QRectF covered = panel->mapRectToItem(w.view(), panel->boundingRect());
+        const QRectF frame = w.view()->frameRect();
+        INFO(beside << " covers " << covered.left() << ".." << covered.right() << "; frame " << frame.left() << ".."
+                    << frame.right() << " x " << frame.top() << ".." << frame.bottom());
+        CHECK_FALSE(frame.intersects(covered));
+        const Box3 b = kernel::bounds(w.host->scene()->body(0)->shape);
+        for (int k = 0; k < 8; ++k) {
+            const Vec3 c{(k & 1) ? b.max.x : b.min.x, (k & 2) ? b.max.y : b.min.y, (k & 4) ? b.max.z : b.min.z};
+            const auto v = ui::nav::project(w.view()->camera(), c, w.view()->width(), w.view()->height());
+            REQUIRE(v.has_value());
+            INFO("corner " << k << " at " << v->x() << ", " << v->y());
+            CHECK(frame.adjusted(-1, -1, 1, 1).contains(*v));
+        }
+    };
+    w.view()->fitAll();
+    w.settle();
+    partInFrame("operationPanel");
     w.shot("operation_panel");
+    // The picker's Library button (labelled): the library as a large dialog inset over the shell; Esc closes it and the
+    // picker has the focus again; "Use this tool" there picks the selected tool here.
+    {
+        auto* tools = w.singleton<ui::ToolLibraryModel>("CamTools");
+        QQuickItem* library = w.shown(QStringLiteral("toolPickerOpenLibrary"));
+        CHECK(library->property("text").toString() == QStringLiteral("Library"));
+        QQuickItem* search = w.shown(QStringLiteral("toolPickerSearch"));
+        w.click(library);
+        REQUIRE(QTest::qWaitFor([&] { return tools->shown() && tools->choosing(); }, 5000));
+        {
+            const QRectF r = sceneRect(w.shown(QStringLiteral("toolLibraryBackground")));
+            const double inset = w.host->theme()->property("controlHeight").toDouble() * 2;
+            INFO("library " << r.left() << "," << r.top() << " " << r.width() << " x " << r.height() << " in "
+                            << w.window()->width() << " x " << w.window()->height());
+            CHECK(r.left() >= inset - 1);
+            CHECK(r.top() >= inset - 1);
+            CHECK(r.right() <= w.window()->width() - inset + 1);
+            CHECK(r.bottom() <= w.window()->height() - inset + 1);
+        }
+        w.shot("tool_library");
+        CHECK(checkIconButtons(w.shown(QStringLiteral("toolLibraryBackground"))->parentItem(),
+                               QStringLiteral("tool library")) >= 2);
+        if (QGuiApplication::focusWindow() != w.window())
+            ray::test::focusWindow(w.window());
+        QTest::keyClick(w.window(), Qt::Key_Escape);
+        REQUIRE(QTest::qWaitFor([&] { return !tools->shown() && !tools->choosing(); }, 5000));
+        CHECK(w.op()->active()); // Esc closed the library, not the panel under it
+        REQUIRE(QTest::qWaitFor([&] { return search->hasActiveFocus(); }, 5000));
+        w.click(library);
+        REQUIRE(QTest::qWaitFor([&] { return tools->shown(); }, 5000));
+        REQUIRE(tools->select(QStringLiteral("library"), QStringLiteral("tool"), kDrill6));
+        w.click(QStringLiteral("toolUse"));
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->toolId() == kDrill6 && !tools->shown(); }, 5000));
+        CHECK(search->hasActiveFocus());
+    }
     // The tool, from the tool library's picker.
     w.typeInto(QStringLiteral("toolPickerSearch"), QStringLiteral("6 mm HSS"));
     int row = -1;
@@ -472,7 +663,8 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     }
     // Four holes, each by a real click on its bore wall where the view shows it; the fourth is removed again below.
     REQUIRE(QTest::qWaitFor([&] { return w.op()->holeCount() == 6; }, kTimeoutMs));
-    CHECK(w.shown(QStringLiteral("operationPickCount"))->property("text").toString() == QStringLiteral("No holes picked"));
+    CHECK(w.shown(QStringLiteral("operationPickCount"))->property("text").toString() ==
+          QStringLiteral("No holes picked"));
     CHECK(w.host->selection()->toolHighlight().empty());
     std::vector<QPointF> pickedAt; // where each picked hole's bore was clicked
     {
@@ -549,7 +741,7 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
         const double dpr = w.window()->effectiveDevicePixelRatio();
         const QPoint at = (pickedAt.front() * dpr).toPoint();
         INFO("pixel at the first picked bore: " << unmarked.pixelColor(at).name().toStdString() << " -> "
-                                                 << marked.pixelColor(at).name().toStdString());
+                                                << marked.pixelColor(at).name().toStdString());
         CHECK(unmarked.pixel(at) != marked.pixel(at));
     }
     // Removing a pick from the list unmarks its hole at once.
@@ -579,6 +771,9 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->previewBusy() && w.op()->previewStatus() == QStringLiteral("ok"); },
                             kTimeoutMs));
     REQUIRE(w.op()->canCommit());
+    // Every icon-only button of the CAM workspace says what it does (here: the operation panel's and the tree's).
+    CHECK(checkIconButtons(w.shown(QStringLiteral("camWorkspace")), QStringLiteral("operation panel")) >= 5);
+    CHECK(checkIconButtons(w.shown(QStringLiteral("camTree")), QStringLiteral("CAM tree")) >= 3);
     w.shot("drill_ready");
     w.click(QStringLiteral("operationOk"));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
@@ -586,6 +781,10 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     w.waitStatus(1, "upToDate");
     const OperationId opId = w.document()->state()->cam->setups.front().operations.front();
     CHECK(w.document()->state()->cam->tools.count(ToolId{Uuid::fromString(kDrill6.toStdString())}) == 1);
+    // An operation of the setup current: its setup's WCS is shown.
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentOperation().has_value(); }, 5000));
+    REQUIRE(QTest::qWaitFor([&] { return w.setupPanel()->wcsLines().count() == 3; }, kTimeoutMs));
+    CHECK(w.shown(QStringLiteral("setupWcsLabel"))->property("text").toString() == QStringLiteral("G54"));
     w.shot("tree_up_to_date");
 
     // ---- 5. Post with haas-ngc into a folder ----
@@ -594,16 +793,65 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     REQUIRE(QTest::qWaitFor([&] { return w.post()->active(); }, 5000));
     w.postRead();
     CHECK(w.post()->postId() == QStringLiteral("haas-ngc"));
+    // The plate is a metric file, so the document is metric and so is the program by default; the dialog says so
+    // beside the post's name.
+    CHECK(w.post()->values().value(QStringLiteral("units")).toString() == QStringLiteral("metric"));
+    CHECK(w.shown(QStringLiteral("postDialogOutput"))->property("text").toString() ==
+          QStringLiteral("haas-ngc, writing millimetres (G21)"));
     const QString outDir = QDir::toNativeSeparators(w.out.path() + QStringLiteral("/nc"));
     REQUIRE(QDir().mkpath(outDir));
     w.typeInto(QStringLiteral("postInput.directory"), outDir);
     REQUIRE(QTest::qWaitFor([&] { return w.post()->canPost(); }, 5000));
+    checkIconButtons(w.shown(QStringLiteral("camWorkspace")), QStringLiteral("post dialog"));
+    {
+        // At rest the folder shows its end with "…" in front, the home folder as "~", the whole path in the tooltip;
+        // what is written to is the folder as typed.
+        QQuickItem* folder = w.shown(QStringLiteral("postInput.directory"));
+        w.shown(QStringLiteral("postInput.pattern"))->forceActiveFocus();
+        QCoreApplication::processEvents();
+        const QString atRest = folder->property("text").toString();
+        const QString home = QDir::toNativeSeparators(QDir::homePath());
+        INFO("folder at rest '" << atRest.toStdString() << "', shown '" << w.post()->directoryShown().toStdString()
+                                << "'");
+        CHECK(w.post()->values().value(QStringLiteral("directory")).toString() == outDir);
+        CHECK(folder->property("full").toString() == outDir);
+        if (outDir.startsWith(home + QDir::separator(), Qt::CaseInsensitive)) {
+            CHECK(w.post()->directoryShown() == QStringLiteral("~") + outDir.mid(home.size()));
+            CHECK_FALSE(atRest.contains(home, Qt::CaseInsensitive));
+        }
+        CHECK((atRest.startsWith(QChar(0x2026)) || atRest == w.post()->directoryShown()));
+        CHECK(atRest.endsWith(QStringLiteral("\\nc")));
+    }
+    {
+        // Scrolled to its end, the post's properties: the heading with its rows, never alone.
+        QQuickItem* flick = w.shown(QStringLiteral("postDialogScroll"));
+        const double maxY = std::max(0.0, flick->property("contentHeight").toDouble() - flick->height());
+        flick->setProperty("contentY", maxY);
+        QCoreApplication::processEvents();
+        QQuickItem* heading = w.find(QStringLiteral("postSection.properties"));
+        QQuickItem* form = w.find(QStringLiteral("postProperties"));
+        REQUIRE((heading != nullptr && form != nullptr));
+        const QRectF view = sceneRect(flick);
+        if (heading->isVisible() && view.intersects(sceneRect(heading))) {
+            CHECK(form->isVisible());
+            CHECK(form->height() > 0);
+            CHECK(view.intersects(sceneRect(form)));
+        }
+        // The edges say the body scrolls: more above now, nothing more below.
+        CHECK(w.find(QStringLiteral("postDialogScrollEdges")) != nullptr);
+        w.shot("post_dialog_end");
+        flick->setProperty("contentY", 0);
+        QCoreApplication::processEvents();
+    }
     w.shot("post_dialog");
     w.click(QStringLiteral("postPost"));
     w.posted("done");
     const QString file = w.post()->resultPath();
     const QByteArray first = readFile(file);
     CHECK((first.contains("G83") || first.contains("G81")));
+    CHECK(first.contains("G21"));
+    CHECK_FALSE(first.contains("G20"));
+    CHECK(QFileInfo(file).fileName() == QStringLiteral("plate_thru_holes_1_Setup_1.nc"));
     w.shot("posted");
 
     // ---- 6. The viewer: a line highlights its move; a move clicked in the view selects its line ----
@@ -611,6 +859,11 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     GcodeModel* g = w.gcode();
     REQUIRE(QTest::qWaitFor([&] { return g->isOpen(); }, 5000));
     w.shown(QStringLiteral("gcodeView"));
+    // Fit with the viewer open on the right: the part beside it.
+    w.view()->fitAll();
+    w.settle();
+    partInFrame("gcodeView");
+    CHECK(checkIconButtons(w.shown(QStringLiteral("camWorkspace")), QStringLiteral("G-code viewer")) >= 1);
     const camui::GcodeIndex& index = *g->program()->index;
     int moveLine = -1;
     for (int i = 0; i < g->lineCount() && moveLine < 0; ++i) {
@@ -672,12 +925,37 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     w.doubleClickRow(QStringLiteral("operationRow.1"));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active() && w.op()->editing(); }, 5000));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->previewBusy(); }, kTimeoutMs));
+    // The view was last fitted beside the G-code viewer, so the panel now covers the part: it is framed beside it.
+    w.settle();
+    partInFrame("operationPanel");
     w.chooseInCombo(QStringLiteral("schemaCombo.depthFrom"), [&] {
         return w.op()->form()->valueOf(QStringLiteral("depthFrom")).toString() == QStringLiteral("value");
     });
     w.typeInto(QStringLiteral("schemaInput.depth"), QStringLiteral("5 mm"));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->previewBusy() && w.op()->previewStatus() == QStringLiteral("ok"); },
                             kTimeoutMs));
+    {
+        // Scrolled: the area's edges under the header and over the footer are drawn (a rule and a fade) while there is
+        // more beyond them, so a row cut there reads as scrolled; at the top, none above.
+        QQuickItem* flick = w.shown(QStringLiteral("operationScroll"));
+        QQuickItem* edges = w.shown(QStringLiteral("operationScrollEdges"));
+        QQuickItem* top = Window::findItem(edges, QStringLiteral("scrollEdgeTop"));
+        QQuickItem* bottom = Window::findItem(edges, QStringLiteral("scrollEdgeBottom"));
+        REQUIRE((top != nullptr && bottom != nullptr));
+        REQUIRE(flick->property("contentY").toDouble() > 0);
+        CHECK(top->isVisible());
+        CHECK(std::abs(sceneRect(top).top() - sceneRect(flick).top()) < 1);
+        CHECK(sceneRect(top).top() >= sceneRect(w.shown(QStringLiteral("operationHeader"))).bottom());
+        const double more = flick->property("contentHeight").toDouble() - flick->height();
+        CHECK(bottom->isVisible() == (flick->property("contentY").toDouble() < more - 0.5));
+        CHECK(sceneRect(bottom).bottom() <= sceneRect(w.shown(QStringLiteral("operationFooter"))).top() + 0.5);
+        const double y = flick->property("contentY").toDouble();
+        flick->setProperty("contentY", 0);
+        QCoreApplication::processEvents();
+        CHECK_FALSE(top->isVisible());
+        flick->setProperty("contentY", y);
+        QCoreApplication::processEvents();
+    }
     w.shot("depth_edited");
     w.click(QStringLiteral("operationOk"));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
@@ -848,6 +1126,134 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     w.waitStatus(1, "upToDate");
     w.shot("regenerated");
     CHECK(w.confirms == 0);
+    w.checkNoWarnings();
+}
+
+// Run at 100 %, 150 % and 200 % (ray_ui_cam_flow_scale_*: QT_SCALE_FACTOR with the platform's own scaling off).
+TEST_CASE("no list or check box text is cut where it has room, in the CAM panels, at this scale", "[scale]")
+{
+    RAY_REQUIRE_RHI();
+    const QString scale =
+        qEnvironmentVariableIsSet("RAY_TEST_SCALE") ? qEnvironmentVariable("RAY_TEST_SCALE") : QStringLiteral("native");
+    INFO("scale " << scale.toStdString());
+    Window w(QSize(1280, 860));
+    REQUIRE(w.host->files()->open(kPlate));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->session()->hasDocument() && w.settled(); }, kTimeoutMs));
+    w.settle();
+    w.click(QStringLiteral("workspaceTab.%1").arg(ui::kCamWorkspace));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->context()->workspace() == ui::kCamWorkspace; }, 5000));
+
+    // The setup panel, with the machine of the long name and a material chosen.
+    w.click(QStringLiteral("camTreeEmptyNewSetup"));
+    REQUIRE(QTest::qWaitFor([&] { return w.setupPanel()->active(); }, kTimeoutMs));
+    w.setupPanel()->setValue(QStringLiteral("machine"), kVmc);
+    w.setupPanel()->setValue(QStringLiteral("material"), kAl6061);
+    {
+        // The top face, as the user clicks it (OK needs it).
+        const Box3 b = kernel::bounds(w.host->scene()->body(0)->shape);
+        std::optional<QPointF> at;
+        for (const double fx : {0.92, 0.85, 0.75, 0.65}) {
+            const QPointF s = w.sceneOf(Vec3{b.min.x + fx * (b.max.x - b.min.x), (b.min.y + b.max.y) / 2, b.max.z});
+            if (!at && w.clear(s))
+                at = s;
+        }
+        REQUIRE(at.has_value());
+        w.clickScene(*at);
+        REQUIRE(QTest::qWaitFor([&] { return w.setupPanel()->hasZFace(); }, kTimeoutMs));
+    }
+    REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->previewBusy() && w.setupPanel()->canCommit(); }, kTimeoutMs));
+    QTest::qWait(100);
+    CHECK(checkNoCutText(w, w.shown(QStringLiteral("setupPanel")), QStringLiteral("setup panel")) >= 8);
+    CHECK(w.shown(QStringLiteral("setupCombo.machine"))
+              ->property("displayText")
+              .toString()
+              .contains(QStringLiteral("VF-2")));
+    w.shot(
+        QStringLiteral("scale_%1_setup").arg(scale).replace(QLatin1Char('.'), QLatin1Char('_')).toLatin1().constData());
+    w.click(QStringLiteral("setupOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->active() && w.tree()->setupCount() == 1; }, kTimeoutMs));
+    w.settle();
+
+    // The operation panel (the drill: its cycle list, its check boxes).
+    w.clickRow(QStringLiteral("setupRow.0"));
+    w.click(QStringLiteral("camRowNewOperation.0"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->active() && !w.op()->previewBusy(); }, kTimeoutMs));
+    QTest::qWait(100);
+    CHECK(checkNoCutText(w, w.shown(QStringLiteral("operationPanel")), QStringLiteral("operation panel")) >= 6);
+    {
+        // The cycle's list says the cycle; the G codes are its description (the open list's second line, the tooltip).
+        QQuickItem* cycle = w.shown(QStringLiteral("schemaCombo.cycle"));
+        CHECK(cycle->property("displayText").toString() == QStringLiteral("Drill"));
+        CHECK(cycle->property("currentDescription").toString().contains(QStringLiteral("G81")));
+    }
+    w.shot(QStringLiteral("scale_%1_operation")
+               .arg(scale)
+               .replace(QLatin1Char('.'), QLatin1Char('_'))
+               .toLatin1()
+               .constData());
+    w.op()->cancel();
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+
+    // The post dialog.
+    w.clickRow(QStringLiteral("setupRow.0"));
+    w.click(QStringLiteral("camRowPost.0"));
+    REQUIRE(QTest::qWaitFor([&] { return w.post()->active(); }, 5000));
+    w.postRead();
+    QTest::qWait(100);
+    CHECK(checkNoCutText(w, w.shown(QStringLiteral("postDialog")), QStringLiteral("post dialog")) >= 3);
+    w.shot(
+        QStringLiteral("scale_%1_post").arg(scale).replace(QLatin1Char('.'), QLatin1Char('_')).toLatin1().constData());
+    w.post()->close();
+    REQUIRE(QTest::qWaitFor([&] { return !w.post()->active(); }, 5000));
+
+    // The tool library, a drill shown in its editor.
+    auto* tools = w.singleton<ui::ToolLibraryModel>("CamTools");
+    tools->show();
+    QQuickItem* background = w.shown(QStringLiteral("toolLibraryBackground"));
+    REQUIRE(tools->select(QStringLiteral("library"), QStringLiteral("tool"), kDrill6));
+    QTest::qWait(200);
+    CHECK(checkNoCutText(w, background->parentItem(), QStringLiteral("tool library")) >= 3);
+    w.shot(QStringLiteral("scale_%1_library")
+               .arg(scale)
+               .replace(QLatin1Char('.'), QLatin1Char('_'))
+               .toLatin1()
+               .constData());
+    tools->hide();
+    w.checkNoWarnings();
+}
+
+TEST_CASE("A STEP file opened as a new document takes the length unit it declares; an import does not change it",
+          "[cam][flow][units]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    // New documents are in inches unless the settings say otherwise (here they do not).
+    const QString inchPlate = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/plate_thru_holes_4.stp");
+    REQUIRE(w.host->files()->open(inchPlate));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->session()->hasDocument() && w.settled(); }, kTimeoutMs));
+    w.settle();
+    CHECK(w.document()->state()->settings.units == UnitSystem::Inch);
+    CHECK(w.host->context()->statusText().contains(QStringLiteral("inches, the unit plate_thru_holes_4.stp declares")));
+    // A metric file opened anew: a metric document, with the user's metric decimals, said in the status line.
+    REQUIRE(w.host->files()->open(kPlate));
+    if (w.host->files()->promptVisible())
+        w.host->files()->answerPrompt(QStringLiteral("discard")); // the first one's import is an unsaved change
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return w.host->session()->hasDocument() && w.settled() &&
+                   w.host->session()->documentTitle() == QStringLiteral("plate_thru_holes_1");
+        },
+        kTimeoutMs));
+    w.settle();
+    CHECK(w.document()->state()->settings.units == UnitSystem::Metric);
+    CHECK(w.document()->state()->settings.decimals == 3);
+    CHECK(w.host->context()->statusText().contains(
+        QStringLiteral("millimetres, the unit plate_thru_holes_1.stp declares")));
+    CHECK(w.singleton<ui::UnitsObject>("Units")->unitLabel() == QStringLiteral("mm"));
+    // The inch file imported into that document: the document keeps its unit (it is not new any more).
+    w.host->files()->importFile(inchPlate);
+    REQUIRE(QTest::qWaitFor([&] { return w.host->scene()->bodyCount() == 2 && w.settled(); }, kTimeoutMs));
+    CHECK(w.document()->state()->settings.units == UnitSystem::Metric);
     w.checkNoWarnings();
 }
 

@@ -171,6 +171,17 @@ FocusScope {
                 text: CamPost.machineName !== "" ? qsTr("Machine: %1").arg(CamPost.machineName)
                                                  : qsTr("The setup has no machine")
             }
+            // The post and the unit it writes, where they cannot be missed (the Units row below changes the unit).
+            Label {
+                objectName: "postDialogOutput"
+                width: parent.width
+                font: Theme.strongFont
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                text: qsTr("%1, writing %2").arg(CamPost.postId !== "" ? CamPost.postId : qsTr("no post"))
+                                            .arg(root.values.units === "inch" ? qsTr("inches (G20)")
+                                                                              : qsTr("millimetres (G21)"))
+            }
         }
 
         // ---- body (scrolls) ----
@@ -411,11 +422,26 @@ FocusScope {
                     FieldLabel {
                         text: qsTr("Folder")
                     }
+                    // At rest the folder shows as its end with "…" in front, under the home folder as "~" (in full in
+                    // the tooltip); being edited, as it is. What is written to is always the folder as it is.
                     TextField {
+                        id: folderField
                         objectName: "postInput.directory"
+                        readonly property string full: root.values.directory !== undefined ? root.values.directory : ""
                         width: root.fieldWidth - browse.width - Theme.spacingS
                         enabled: !CamPost.busy
-                        text: root.values.directory !== undefined ? root.values.directory : ""
+                        text: activeFocus ? full : folderMetrics.elidedText
+                        TextMetrics {
+                            id: folderMetrics
+                            font: folderField.font
+                            text: CamPost.directoryShown
+                            elide: Qt.ElideLeft
+                            elideWidth: Math.max(0, folderField.width - folderField.leftPadding - folderField.rightPadding - 2)
+                        }
+                        HoverToolTip {
+                            target: folderField
+                            text: folderField.full
+                        }
                         placeholderText: qsTr("A local folder or a network share")
                         Accessible.name: qsTr("Output folder")
                         onTextEdited: CamPost.setValue("directory", text)
@@ -506,21 +532,44 @@ FocusScope {
                 }
 
                 // ---- the post's own properties (declared by its script; the machine's values are the defaults) ----
-                Heading {
-                    objectName: "postSection.properties"
-                    visible: CamPost.form.fieldCount > 0
-                    text: qsTr("Post properties")
-                }
-                SchemaForm {
-                    objectName: "postProperties"
-                    form: CamPost.form
-                    labelWidth: root.labelWidth
-                    fieldWidth: root.fieldWidth
-                    enabled: !CamPost.busy
-                    onAccepted: CamPost.post()
-                    onCancelled: CamPost.cancel()
+                // The heading and its rows as one block (they scroll together), and no heading where the post declares
+                // no property that applies.
+                Column {
+                    objectName: "postPropertiesBlock"
+                    readonly property bool any: {
+                        if (!CamPost.form || CamPost.form.revision < 0)
+                            return false
+                        for (const f of CamPost.form.fields) {
+                            if (f.relevant)
+                                return true
+                        }
+                        return false
+                    }
+                    visible: any
+                    spacing: Theme.spacingS
+                    Heading {
+                        objectName: "postSection.properties"
+                        text: qsTr("Post properties")
+                    }
+                    SchemaForm {
+                        objectName: "postProperties"
+                        form: CamPost.form
+                        labelWidth: root.labelWidth
+                        fieldWidth: root.fieldWidth
+                        enabled: !CamPost.busy
+                        onAccepted: CamPost.post()
+                        onCancelled: CamPost.cancel()
+                    }
                 }
             }
+        }
+
+        // The scrolled body's edges at the header and the footer: a row cut there reads as scrolled under them.
+        ScrollEdges {
+            objectName: "postDialogScrollEdges"
+            anchors.fill: flick
+            area: flick
+            bottomLine: false // the footer's own rule is just below
         }
 
         // ---- footer (fixed) ----

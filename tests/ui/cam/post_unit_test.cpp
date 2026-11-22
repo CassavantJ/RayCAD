@@ -7,6 +7,8 @@
 // confirmation; a good setup posts, and posting it again unchanged writes the same bytes.
 #include "cam/operation_form.h"
 #include "cam/post_logic.h"
+#include "cam/post_tool.h"
+#include "cam/setup_tree.h"   // post_tool.h's QPointer members need the whole types
 #include "engine_test_util.h" // the CAM engine tests' test-only operation type and library JSON (tests/unit/cam)
 
 #include <ray/api.h>
@@ -365,6 +367,31 @@ TEST_CASE("post properties become a schema form; the machine's values are the de
 }
 
 // ======================================================================================================== the gate
+TEST_CASE("the output folder is shown under the home folder as ~, and otherwise as it is", "[cam][post][ui]")
+{
+    using ray::ui::PostToolModel;
+#ifdef Q_OS_WIN
+    const QString home = QStringLiteral("C:/Users/someone");
+    CHECK(PostToolModel::homeRelative(QStringLiteral("C:\\Users\\someone\\Documents\\nc"), home) ==
+          QStringLiteral("~\\Documents\\nc"));
+    CHECK(PostToolModel::homeRelative(QStringLiteral("c:\\users\\SOMEONE\\nc"), home) == QStringLiteral("~\\nc"));
+    CHECK(PostToolModel::homeRelative(QStringLiteral("C:\\Users\\someone"), home) == QStringLiteral("~"));
+    // Not under it: as it is (a share, another user, a folder whose name only starts the same).
+    CHECK(PostToolModel::homeRelative(QStringLiteral("\\\\cnc\\programs"), home) ==
+          QStringLiteral("\\\\cnc\\programs"));
+    CHECK(PostToolModel::homeRelative(QStringLiteral("C:\\Users\\someone2\\nc"), home) ==
+          QStringLiteral("C:\\Users\\someone2\\nc"));
+#else
+    const QString home = QStringLiteral("/home/someone");
+    CHECK(PostToolModel::homeRelative(QStringLiteral("/home/someone/nc"), home) == QStringLiteral("~/nc"));
+    CHECK(PostToolModel::homeRelative(QStringLiteral("/home/someone"), home) == QStringLiteral("~"));
+    CHECK(PostToolModel::homeRelative(QStringLiteral("/home/someone2/nc"), home) ==
+          QStringLiteral("/home/someone2/nc"));
+    CHECK(PostToolModel::homeRelative(QStringLiteral("/mnt/cnc"), home) == QStringLiteral("/mnt/cnc"));
+#endif
+    CHECK(PostToolModel::homeRelative(QString(), home).isEmpty());
+}
+
 TEST_CASE("the gate names every blocking state, for each operation", "[cam][post][gate]")
 {
     // A hand-made document: setup 1 with operations 1..6, every status the engine has.

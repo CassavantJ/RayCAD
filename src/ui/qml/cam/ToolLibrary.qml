@@ -39,8 +39,10 @@ Item {
             objectName: "toolLibraryPanel"
             parent: T.Overlay.overlay
             anchors.centerIn: parent
-            width: Math.min(parent.width - 2 * Theme.spacingL, Theme.controlHeight * 50)
-            height: Math.min(parent.height - 2 * Theme.spacingL, Theme.controlHeight * 32)
+            // Large, but a dialog over the shell, not a page in its place: the shell stays in sight all round it.
+            readonly property real inset: Math.max(Theme.controlHeight * 3, Theme.spacingL * 4)
+            width: Math.min(parent.width - 2 * inset, Theme.controlHeight * 50)
+            height: Math.min(parent.height - 2 * inset, Theme.controlHeight * 32)
             padding: 0
             modal: true
             dim: false
@@ -1067,9 +1069,10 @@ Item {
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: Theme.spacingS
-                                visible: popup.editing && !CamTools.readOnly
+                                visible: popup.editing
                                 Button {
                                     objectName: "toolRevert"
+                                    visible: !CamTools.readOnly
                                     text: qsTr("Revert")
                                     enabled: CamTools.dirty && !CamTools.saving
                                     toolTipText: qsTr("Back to what was saved (Esc)")
@@ -1077,11 +1080,24 @@ Item {
                                 }
                                 Button {
                                     objectName: "toolSave"
-                                    primary: true
+                                    visible: !CamTools.readOnly
+                                    primary: !CamTools.choosing
                                     text: qsTr("Save")
                                     enabled: CamTools.canSave
                                     toolTipText: qsTr("Save to %1 (Ctrl+S)").arg(CamTools.whereText)
                                     onClicked: CamTools.save()
+                                }
+                                // Opened from a tool picker: the selected tool goes back to it.
+                                Button {
+                                    objectName: "toolUse"
+                                    visible: CamTools.choosing && CamTools.editorKind === "tool"
+                                    primary: true
+                                    text: qsTr("Use this tool")
+                                    enabled: !CamTools.dirty && (CamTools.selectedOrigin === "library"
+                                                                 || CamTools.selectedOrigin === "document")
+                                    toolTipText: CamTools.dirty ? qsTr("Save or revert the changes first")
+                                                                : qsTr("Choose %1 for the operation and close the library").arg(CamTools.title)
+                                    onClicked: CamTools.useSelected()
                                 }
                             }
                         }

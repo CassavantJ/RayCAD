@@ -73,6 +73,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     compact: true
                     iconName: "plus"
+                    enabled: !CamSetup.active || CamSetup.editing
                     toolTipText: qsTr("New setup") + (Shortcuts.revision >= 0 && Shortcuts.shortcutText("cam.tool.newSetup") !== ""
                                                        ? " (" + Shortcuts.shortcutText("cam.tool.newSetup") + ")" : "")
                     onClicked: Commands.trigger("cam.tool.newSetup")
@@ -225,8 +226,9 @@ Item {
                                     visible: !row.renaming
                                     anchors.left: icon.right
                                     anchors.leftMargin: Theme.spacingXs
-                                    anchors.right: marks.left
-                                    anchors.rightMargin: Theme.spacingXs
+                                    // Clear of the slot and of the warning mark beside it, however wide the badge.
+                                    anchors.right: slot.left
+                                    anchors.rightMargin: Theme.spacingXs + (row.bad ? warning.width + Theme.spacingXs : 0)
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: row.rowName
                                     font.family: Theme.uiFont.family
@@ -355,22 +357,22 @@ Item {
                                     }
                                 }
 
-                                // The warning mark, left of the badge's place: its tooltip says why the row failed.
-                                Row {
+                                // The warning mark, right beside the badge (or beside the row's tools while they are
+                                // in its place), whatever the slot's width: its tooltip says why the row failed.
+                                Item {
                                     id: marks
-                                    anchors.right: slot.left
-                                    anchors.rightMargin: Theme.spacingXs
+                                    objectName: "camRowMarks." + row.index
+                                    x: slot.x + (badge.visible ? badge.x : rowTools.x) - width - Theme.spacingXs
+                                    width: Theme.iconSize
+                                    height: Theme.iconSize
                                     anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.spacingXs
                                     visible: !row.renaming
 
                                     Item {
                                         id: warning
                                         objectName: "camRowWarning." + row.index
                                         visible: row.bad
-                                        width: Theme.iconSize
-                                        height: Theme.iconSize
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.fill: parent
                                         readonly property bool hovered: warnHover.hovered
                                         readonly property bool pressed: false
                                         Icon {
@@ -450,14 +452,16 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             secondary: true
-            text: Session.hasDocument
-                  ? qsTr("No setups yet. Add one, then click the top face of the part and an origin on the stock.")
-                  : qsTr("Open or import a part, then add a setup here.")
+            objectName: "camTreeEmptyText"
+            text: !Session.hasDocument ? qsTr("Open or import a part, then add a setup here.")
+                  : CamSetup.active ? qsTr("The new setup is being made in its panel: click the top face of the part and an origin on the stock, then OK.")
+                  : qsTr("No setups yet. Add one, then click the top face of the part and an origin on the stock.")
         }
+        // Not while the setup panel is making one: the panel is where it goes on.
         Button {
             objectName: "camTreeEmptyNewSetup"
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: Session.hasDocument
+            visible: Session.hasDocument && !CamSetup.active
             primary: true
             iconName: "plus"
             text: qsTr("New setup")

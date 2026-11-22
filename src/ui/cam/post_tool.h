@@ -78,7 +78,10 @@ class PostToolModel : public QObject {
     // Field values by key: programNumber, programComment (text), units ("inch" | "metric"), directory, pattern,
     // overwrite ("ask" | "replace" | "newName" | "refuse"), limitNameLength (bool).
     Q_PROPERTY(QVariantMap values READ values NOTIFY valuesChanged)
-    Q_PROPERTY(QString fileName READ fileName NOTIFY valuesChanged)         // the name the pattern makes, or ""
+    Q_PROPERTY(QString fileName READ fileName NOTIFY valuesChanged) // the name the pattern makes, or ""
+    // The output folder as the dialog shows it at rest: under the user's home folder as "~" and the rest
+    // ("~\Documents\nc"); the folder itself (values.directory) is what is written to, unchanged.
+    Q_PROPERTY(QString directoryShown READ directoryShown NOTIFY valuesChanged)
     Q_PROPERTY(QString fileNameNote READ fileNameNote NOTIFY valuesChanged) // why it differs, or the pattern's error
     Q_PROPERTY(int maxNameLength READ maxNameLength NOTIFY activeChanged)
     // The gate: [{opId, name, reason (key), message, canGenerate}]; checking while it is worked out.
@@ -120,6 +123,9 @@ public:
     QString notice() const;
     QVariantMap values() const { return values_; }
     QString fileName() const { return fileName_; }
+    QString directoryShown() const;
+    // `path` with the home folder `home` shown as "~" (native separators); as it is when it is not under it.
+    static QString homeRelative(const QString& path, const QString& home);
     QString fileNameNote() const { return fileNameNote_; }
     int maxNameLength() const { return maxNameLength_; }
     QVariantList blockers() const;

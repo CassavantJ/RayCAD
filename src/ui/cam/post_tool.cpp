@@ -460,6 +460,31 @@ void PostToolModel::setValue(const QString& key, const QVariant& value)
     emit canPostChanged();
 }
 
+QString PostToolModel::homeRelative(const QString& path, const QString& home)
+{
+    const QString p = QDir::toNativeSeparators(path.trimmed());
+    QString h = QDir::toNativeSeparators(QDir::cleanPath(home));
+    if (p.isEmpty() || h.isEmpty())
+        return p;
+    while (h.endsWith(QDir::separator()))
+        h.chop(1);
+#ifdef Q_OS_WIN
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive; // C:\Users\x and c:\users\x are one folder
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    if (p.compare(h, cs) == 0)
+        return QStringLiteral("~");
+    if (p.startsWith(h + QDir::separator(), cs))
+        return QStringLiteral("~") + p.mid(h.size());
+    return p;
+}
+
+QString PostToolModel::directoryShown() const
+{
+    return homeRelative(values_.value(QStringLiteral("directory")).toString(), QDir::homePath());
+}
+
 void PostToolModel::setFolder(const QVariant& urlOrPath)
 {
     QString path;

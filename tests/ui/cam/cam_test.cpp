@@ -1083,6 +1083,32 @@ TEST_CASE("status badges match the engine and follow model edits, undo and redo"
     w.waitStatus(3, "failed");
     CHECK(w.tree()->get(3).value(QStringLiteral("message")).toString() == QStringLiteral("Test generator failed"));
     CHECK(engineSays(3) == cam::OpStatus::Failed);
+    {
+        // The warning mark sits right beside its badge whatever the slot's width (as wide as the wider of the badge and
+        // the row's tools), and beside the tools while they are in the badge's place, never over the name.
+        w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                    Qt::NoButton);
+        QQuickItem* warning = w.find(QStringLiteral("camRowWarning.3"));
+        QQuickItem* badge = w.find(QStringLiteral("camRowBadge.3"));
+        QQuickItem* slot = w.find(QStringLiteral("camRowSlot.3"));
+        QQuickItem* name = Window::findItem(w.shown(QStringLiteral("operationRow.3")), QStringLiteral("camRowName"));
+        REQUIRE((warning != nullptr && badge != nullptr && slot != nullptr && name != nullptr));
+        REQUIRE(QTest::qWaitFor([&] { return badge->isVisible() && warning->isVisible(); }, 5000));
+        const auto rect = [](QQuickItem* i) {
+            return i->mapRectToScene(QRectF(0, 0, i->width(), i->height()));
+        };
+        const double gap = w.host->theme()->property("spacingXs").toDouble();
+        INFO("warning " << rect(warning).left() << ".." << rect(warning).right() << ", badge from "
+                        << rect(badge).left() << ", slot from " << rect(slot).left());
+        CHECK(std::abs(rect(badge).left() - rect(warning).right() - gap) < 1.0);
+        CHECK(rect(name).right() < rect(warning).left());
+        // Hovered: beside the tools.
+        w.sendMouse(QEvent::MouseMove, w.rowNameAt(QStringLiteral("operationRow.3")), Qt::NoButton, Qt::NoButton);
+        REQUIRE(QTest::qWaitFor([&] { return !badge->isVisible(); }, 5000));
+        QQuickItem* tools = w.find(QStringLiteral("camRowTools.3"));
+        CHECK(std::abs(rect(tools).left() - rect(warning).right() - gap) < 1.0);
+        CHECK(rect(name).right() < rect(warning).left());
+    }
     // Operation 2 waits at its gate: generating, with its progress, until the gate opens.
     ct::Gate::instance().open = false;
     w.clickRow(QStringLiteral("operationRow.2"));

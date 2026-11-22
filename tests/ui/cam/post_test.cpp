@@ -1062,6 +1062,15 @@ TEST_CASE("settings are remembered per setup, overwrite rules, a second post wri
     p->setValue(QStringLiteral("pattern"), QStringLiteral("{setup} {program}"));
     p->setValue(QStringLiteral("overwrite"), QStringLiteral("ask"));
     p->setValue(QStringLiteral("programNumber"), QStringLiteral("2002"));
+    // The output unit, the other way from the document's: shown beside the post, and remembered for the setup.
+    const QString otherUnits =
+        w.document()->state()->settings.units == UnitSystem::Inch ? QStringLiteral("metric") : QStringLiteral("inch");
+    p->setValue(QStringLiteral("units"), otherUnits);
+    CHECK(w.shown(QStringLiteral("postDialogOutput"))
+              ->property("text")
+              .toString()
+              .endsWith(otherUnits == QLatin1String("inch") ? QStringLiteral("inches (G20)")
+                                                            : QStringLiteral("millimetres (G21)")));
     REQUIRE(QTest::qWaitFor([&] { return p->canPost(); }, 5000));
     REQUIRE(p->post());
     w.posted("done");
@@ -1086,6 +1095,7 @@ TEST_CASE("settings are remembered per setup, overwrite rules, a second post wri
     CHECK(p->values().value(QStringLiteral("pattern")).toString() == QStringLiteral("{setup} {program}"));
     CHECK(p->values().value(QStringLiteral("overwrite")).toString() == QStringLiteral("ask"));
     CHECK(p->values().value(QStringLiteral("programNumber")).toString() == QStringLiteral("2002"));
+    CHECK(p->values().value(QStringLiteral("units")).toString() == otherUnits);
 
     // Ask: the file exists, so the dialog asks. Keep both: a numbered name; Replace: the same bytes again (nothing
     // changed: posting is deterministic); Cancel: nothing written.

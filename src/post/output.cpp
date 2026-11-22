@@ -248,7 +248,9 @@ std::string sanitizeFileName(std::string_view stem, bool* changed)
 
 std::string fieldNameText(std::string_view value)
 {
-    const auto space = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; };
+    const auto space = [](char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+    };
     std::size_t first = 0, last = value.size();
     while (first < last && space(value[first])) {
         ++first;

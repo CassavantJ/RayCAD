@@ -16,8 +16,25 @@ Item {
     property real topInset: Scene.bodyCount > 0 ? Theme.controlHeight + 2 * Theme.spacingXs + Theme.panelGap : 0
     readonly property real triadSpace: Theme.controlHeight * 2 + Theme.panelGap
     readonly property real labelWidth: Theme.controlHeight * 3.6
-    readonly property real fieldWidth: Theme.controlHeight * 5.5
+    // The field column grows to show every choice of its lists in full, up to what the view can spare; only past that
+    // a list's text is elided (in full in its tooltip and its open list).
+    readonly property real baseFieldWidth: Theme.controlHeight * 5.5
+    readonly property real maxFieldWidth: Math.max(baseFieldWidth, root.width * 0.6 - labelWidth
+                                                                   - Theme.controlHeightSmall - 2 * Theme.spacingS
+                                                                   - 2 * Theme.spacingM)
+    readonly property real fieldWidth: Math.min(maxFieldWidth, Math.max(baseFieldWidth, comboNeed, schemaForm.comboNeed))
+    property var combos: []
+    readonly property real comboNeed: {
+        let w = 0
+        for (const c of combos) {
+            if (c && c.visible)
+                w = Math.max(w, c.naturalWidth)
+        }
+        return w
+    }
     readonly property real contentWidth: labelWidth + fieldWidth + Theme.controlHeightSmall + 2 * Theme.spacingS
+    // How much of the view the panel covers from the left edge (0 while closed): Fit frames the model beside it.
+    readonly property real coverLeft: panel.visible ? panel.x + panel.width + Theme.panelGap : 0
     readonly property var values: CamOperation.values
     readonly property var fullValues: CamOperation.fullValues
     readonly property var messages: CamOperation.fieldMessages
@@ -116,11 +133,16 @@ Item {
             id: combo
             objectName: "operationCombo." + choiceRow.key
             width: root.fieldWidth
+            widthLimit: root.maxFieldWidth
             model: choiceRow.choices
             textRole: "text"
             valueRole: "value"
             Accessible.name: choiceRow.label
-            Component.onCompleted: choiceRow.sync()
+            Component.onCompleted: {
+                choiceRow.sync()
+                root.combos = root.combos.concat([combo])
+            }
+            Component.onDestruction: root.combos = root.combos.filter(x => x !== combo)
             onActivated: choiceRow.chosen(currentValue)
             Keys.onEscapePressed: CamOperation.cancel()
         }
@@ -291,6 +313,7 @@ Item {
                 CheckBox {
                     objectName: "operationShowAllTools"
                     x: root.labelWidth + Theme.spacingS - Theme.spacingXs
+                    width: Math.min(implicitWidth, root.fieldWidth + Theme.spacingXs)
                     text: qsTr("Show every tool")
                     checked: CamOperation.showAllTools
                     onToggled: CamOperation.showAllTools = checked
@@ -433,9 +456,11 @@ Item {
                     text: qsTr("Parameters")
                 }
                 SchemaForm {
+                    id: schemaForm
                     form: CamOperation.form
                     labelWidth: root.labelWidth
                     fieldWidth: root.fieldWidth
+                    fieldWidthLimit: root.maxFieldWidth
                     onAccepted: CamOperation.commit()
                     onCancelled: CamOperation.cancel()
                 }
@@ -620,6 +645,7 @@ Item {
                     objectName: "operationCheck.clockwise"
                     visible: CamOperation.cutting.indexOf("clockwise") >= 0
                     x: root.labelWidth + Theme.spacingS - Theme.spacingXs
+                    width: Math.min(implicitWidth, root.fieldWidth + Theme.spacingXs)
                     text: qsTr("Spindle clockwise (M3)")
                     checked: root.values["clockwise"] !== false
                     onToggled: CamOperation.setValue("clockwise", checked)
@@ -641,6 +667,13 @@ Item {
                     }
                 }
             }
+        }
+
+        // The scrolled area's edges at the header and the footer: a row cut there reads as scrolled under them.
+        ScrollEdges {
+            objectName: "operationScrollEdges"
+            anchors.fill: flick
+            area: flick
         }
 
         // ---- footer: what blocks OK, the progress, OK and Cancel and the status line, always in view ----
@@ -724,6 +757,9 @@ Item {
         function onActiveChanged() {
             if (CamOperation.active)
                 toolPicker.clearSearch()
+            // The camera stays unless the panel now covers part of the model: then it is framed beside the panel.
+            if (CamOperation.active && root.view)
+                Qt.callLater(() => { if (root.view) root.view.fitIfCovered() })
         }
     }
 
