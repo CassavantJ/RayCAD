@@ -60,7 +60,12 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_naming_s4
     ray_doc_s4
     ray_doc_s4_revolve
-    ray_doc_s4_hole)
+    ray_doc_s4_hole
+    # Release-scale benchmarks with absolute limits, which an MSVC Debug build cannot meet however idle the machine:
+    # 3000 holes with references in under 30 s (41 s in Debug), and a 1,000,000-move post, which runs into the post
+    # sandbox's own time limit in Debug.
+    ray_cam_holes_tests_wallclock
+    ray_post_tests_wallclock)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
