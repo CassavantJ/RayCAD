@@ -32,7 +32,8 @@
 //
 // DETERMINISM. No function depends on thread timing, unordered containers, locale or the clock. Outputs are in
 // canonical form (canonicalize): closed paths start at their lowest vertex (x, then y); regions are sorted by the
-// lower-left corner of their outer path's bounds, then its lowest vertex, then area; holes likewise. The text dump (toText) is the golden-file format.
+// lower-left corner of their outer path's bounds, then its lowest vertex, then area; holes likewise. The text dump
+// (toText) is the golden-file format.
 #pragma once
 #include <ray/cam.h>
 
@@ -48,13 +49,13 @@ using Coord = Nm;
 
 // ---------- Tolerances and thresholds (the rationale of each value is in geom2d.cpp, "TOLERANCES") ----------
 inline constexpr Coord kMaxCoord = 1'000'000'000'000;  // 1 km
-inline constexpr Coord kJoinTolerance = 1'000;          // 1 um: curve ends closer than this are joined (fromLoops)
-inline constexpr Coord kOffsetSag = 100;                // 0.1 um: arc-to-chord sag Clipper2 sees (topology only)
-inline constexpr Coord kFitTolerance = 1'000;           // 1 um: default fitArcs tolerance
-inline constexpr Coord kMinArcChord = 10'000;           // 10 um: no fitted arc is shorter (chord) than this
-inline constexpr Coord kMaxArcRadius = 10'000'000'000;  // 10 m: no fitted arc is larger than this
-inline constexpr double kMaxFitSweep = 3.141592653589793238462643383279502884;   // 180 degrees per fitted arc
-inline constexpr double kMaxMoveSweep = 3.141592653589793238462643383279502884;  // appendMoves splits longer arcs
+inline constexpr Coord kJoinTolerance = 1'000;         // 1 um: curve ends closer than this are joined (fromLoops)
+inline constexpr Coord kOffsetSag = 100;               // 0.1 um: arc-to-chord sag Clipper2 sees (topology only)
+inline constexpr Coord kFitTolerance = 1'000;          // 1 um: default fitArcs tolerance
+inline constexpr Coord kMinArcChord = 10'000;          // 10 um: no fitted arc is shorter (chord) than this
+inline constexpr Coord kMaxArcRadius = 10'000'000'000; // 10 m: no fitted arc is larger than this
+inline constexpr double kMaxFitSweep = 3.141592653589793238462643383279502884;  // 180 degrees per fitted arc
+inline constexpr double kMaxMoveSweep = 3.141592653589793238462643383279502884; // appendMoves splits longer arcs
 
 // ---------- Types ----------
 struct Pt {
@@ -64,21 +65,22 @@ struct Pt {
 enum class SpanKind : std::uint8_t { Line, ArcCCW, ArcCW };
 // One piece of a path. It starts where the previous span ended (or at Path::start) and ends at `end`.
 // Arcs: `centre` and `radius` are exact (an offset arc's radius is the source radius plus the offset, exactly); the
-// endpoints are rounded points and lie within 1 nm of the circle (fitArcs: within its tolerance). An arc whose end equals its start is a whole circle
-// (sweep 360 degrees); every other arc sweeps less than 360 degrees in its direction.
+// endpoints are rounded points and lie within 1 nm of the circle (fitArcs: within its tolerance). An arc whose end
+// equals its start is a whole circle (sweep 360 degrees); every other arc sweeps less than 360 degrees in its
+// direction.
 struct Span {
     SpanKind kind = SpanKind::Line;
     Pt end;
-    Pt centre;           // arcs only; {0, 0} for lines
-    Coord radius = 0;    // arcs only; 0 for lines
+    Pt centre;        // arcs only; {0, 0} for lines
+    Coord radius = 0; // arcs only; 0 for lines
     auto operator<=>(const Span&) const = default;
 };
 struct Path {
     Pt start;
     std::vector<Span> spans;
-    bool closed = false;   // closed: the last span ends at `start`
+    bool closed = false; // closed: the last span ends at `start`
     bool operator==(const Path&) const = default;
-    static Path circle(Pt centre, Coord radius, bool ccw);   // one whole-circle span starting at (cx + r, cy)
+    static Path circle(Pt centre, Coord radius, bool ccw); // one whole-circle span starting at (cx + r, cy)
 };
 // A region of the plane: the outer boundary counter-clockwise, the holes clockwise, the material (the region) on the
 // left of every path. Holes lie inside the outer path and do not cross each other; an island inside a hole is a Region
@@ -97,12 +99,12 @@ struct Bounds {
 };
 
 // ---------- Small helpers ----------
-Coord roundNm(double nm);              // round half to even; saturates at +-kMaxCoord * 4
-Pt toPt(Vec2 mm);                      // toNm of each coordinate
-Vec2 toVec2(Pt);                       // mm
-Coord toCoord(double mm);              // toNm
-Status checkRange(const Path&);        // InvalidArgument if a coordinate or radius is beyond kMaxCoord
-double sweepOf(Pt start, const Span& arc);   // radians in (0, 2 pi], 0 for lines
+Coord roundNm(double nm);                  // round half to even; saturates at +-kMaxCoord * 4
+Pt toPt(Vec2 mm);                          // toNm of each coordinate
+Vec2 toVec2(Pt);                           // mm
+Coord toCoord(double mm);                  // toNm
+Status checkRange(const Path&);            // InvalidArgument if a coordinate or radius is beyond kMaxCoord
+double sweepOf(Pt start, const Span& arc); // radians in (0, 2 pi], 0 for lines
 
 // ---------- Conversion from and to the kernel's profiles ----------
 // A closed ProfileLoop (curves in any order and direction; ends meeting within kJoinTolerance after rounding) as one
@@ -110,7 +112,7 @@ double sweepOf(Pt start, const Span& arc);   // radians in (0, 2 pi], 0 for line
 // refused (InvalidArgument): the kernel never returns them, and a caller with one approximates it first. The round
 // trip toLoop(fromLoop(l)) moves each point by at most 0.5 nm (rounding); fromLoop(toLoop(p)) == p.
 Result<Path> fromLoop(const kernel::ProfileLoop&);
-kernel::ProfileLoop toLoop(const Path&);   // a closed path; one whole-circle span becomes a Circle curve
+kernel::ProfileLoop toLoop(const Path&); // a closed path; one whole-circle span becomes a Circle curve
 // Loops of any orientation and order that do not cross (a slice, a sketch's regions) -> regions by even-odd nesting
 // (nest), every path oriented and canonical. Polls ctx.cancel per loop.
 Result<Regions> regionsFromLoops(std::span<const kernel::ProfileLoop>, JobContext&);
@@ -153,14 +155,14 @@ struct ChainOptions {
 };
 struct Chain {
     Path path;
-    Coord zMin = 0, zMax = 0;             // height range of the edges
-    std::vector<kernel::SubId> edges;     // in path order, extensions included (closed: cyclic, any first edge)
+    Coord zMin = 0, zMax = 0;         // height range of the edges
+    std::vector<kernel::SubId> edges; // in path order, extensions included (closed: cyclic, any first edge)
 };
 Result<std::vector<Chain>> chainEdges(const kernel::Shape&, std::span<const kernel::SubId> edges, const Xform& frame,
                                       const ChainOptions&, JobContext&);
 
 // ---------- Direction and side ----------
-enum class Side : std::uint8_t { Left, Right };   // relative to the direction of travel
+enum class Side : std::uint8_t { Left, Right }; // relative to the direction of travel
 enum class CutMode : std::uint8_t { Climb, Conventional };
 // The side of the path the tool travels on for this cut mode: with the spindle turning clockwise (M3) climb milling
 // keeps the tool on the left of the material edge (G41), conventional on the right; counter-clockwise the reverse.
@@ -172,11 +174,11 @@ Path reverse(const Path&);
 Side insideSide(const Path& closed);
 
 // ---------- Measures ----------
-double area(const Path&);       // signed nm^2, counter-clockwise positive (a closed path; arcs exact)
-double area(const Region&);     // outer minus holes, >= 0
+double area(const Path&);   // signed nm^2, counter-clockwise positive (a closed path; arcs exact)
+double area(const Region&); // outer minus holes, >= 0
 double area(const Regions&);
-double length(const Path&);     // nm
-Bounds bounds(const Path&);     // arcs' extreme points included
+double length(const Path&); // nm
+Bounds bounds(const Path&); // arcs' extreme points included
 Bounds bounds(const Region&);
 enum class Where : std::uint8_t { Outside, Inside, OnBoundary };
 // Where a point is relative to a closed path (the area it encloses, either orientation) or a region. Exact for lines;
@@ -238,10 +240,13 @@ std::size_t literalEdgeCount();
 //   - have a radius of at most maxArcRadius, an integer centre, and sweep at most maxSweep (so a control's R-form
 //     or I/J-form arc is never ambiguous and never a whole circle by accident),
 //   - turn the same way at every point (its direction is never ambiguous).
-// The centre is the integer point near the least-squares centre that minimises the largest deviation (ties: the
-// smallest x, then y); the radius is then rounded. Arcs sampled from a known integer arc come back as one arc with the
-// same endpoints and direction and a centre and radius within a few nanometres (the property test measures it);
-// exact reproduction of known arcs is what offset and the booleans do, through their tags, not this function.
+// The centre is an integer point near the least-squares centre that minimises the largest deviation (geom2d_fit.cpp);
+// the radius is then rounded. Arcs sampled from a known integer arc come back as one arc with the same endpoints and
+// direction, the same centre and radius in about 85% of cases and otherwise as close as the samples' rounding allows
+// (measured: at most 131 nm off on a 10 degree arc of 100 mm radius; always within the tolerance). Exact reproduction
+// of known arcs is what offset and the booleans do, through their tags, not this function.
+// The polyline is taken as the truth: an arc is accepted only within 	olerance of its points AND its edges, so a
+// polyline whose chords are farther than 	olerance from the curve it samples gets lines there.
 struct FitOptions {
     Coord tolerance = kFitTolerance;
     Coord minArcChord = kMinArcChord;
@@ -254,7 +259,7 @@ Path fitArcs(std::span<const Pt> points, bool closed, const FitOptions& = {});
 // The points of a path: every span end, and arcs flattened so no chord is farther than `sag` from its arc; the
 // vertices lie on the arcs (rounded). Starts with path.start; a closed path does not repeat it at the end.
 std::vector<Pt> polygonize(const Path&, Coord sag);
-Pt pointAt(const Path&, double s);       // the point at arc length s (clamped to [0, length]), rounded
+Pt pointAt(const Path&, double s); // the point at arc length s (clamped to [0, length]), rounded
 // The unit tangent at arc length s in the direction of travel (at a corner: of the span that starts there).
 Vec2 tangentAt(const Path&, double s);
 // The part of a path between arc lengths s0 < s1 (for a closed path s may wrap past the length: s1 - s0 <= length).

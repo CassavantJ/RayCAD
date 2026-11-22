@@ -50,8 +50,8 @@ std::vector<ProfileLoop> slice(const Shape& s, double z, const Xform& f = Xform:
 // Block 0..100 x 0..60 x 0..20 with through holes r 5 at (25, 30) and r 8 at (75, 30).
 Shape blockWithHoles()
 {
-    const Profile p = profile(xyPlane(), {rectangle(0, 0, 100, 60, 1, 1), circleLoop({25, 30}, 5, 10, 2),
-                                          circleLoop({75, 30}, 8, 11, 3)});
+    const Profile p = profile(
+        xyPlane(), {rectangle(0, 0, 100, 60, 1, 1), circleLoop({25, 30}, 5, 10, 2), circleLoop({75, 30}, 8, 11, 3)});
     return sweepShape(p, 20);
 }
 
@@ -323,9 +323,10 @@ TEST_CASE("silhouette: the shadow along frame Z", "[slice]")
                      {loopOf({C({0, 0}, 10, true)})}, 1e-9);
         requireLoops(take(silhouette(revolved(profile(xzPlane(), {circleLoop({30, 0}, 5, 1, 1)})), identity(), ctx)),
                      {loopOf({C({0, 0}, 35, true)}), loopOf({C({0, 0}, 25, false)})}, 1e-6);
-        requireLoops(take(silhouette(revolved(profile(xzPlane(), {polygon({{0, 0}, {20, 0}, {10, 30}, {0, 30}}, 1, 1)})),
-                                     identity(), ctx)),
-                     {loopOf({C({0, 0}, 20, true)})}, 1e-9);
+        requireLoops(
+            take(silhouette(revolved(profile(xzPlane(), {polygon({{0, 0}, {20, 0}, {10, 30}, {0, 30}}, 1, 1)})),
+                            identity(), ctx)),
+            {loopOf({C({0, 0}, 20, true)})}, 1e-9);
     }
     SECTION("a cylinder lying across Z casts a rectangle")
     {
@@ -336,8 +337,7 @@ TEST_CASE("silhouette: the shadow along frame Z", "[slice]")
     }
     SECTION("a drafted block's shadow is its base")
     {
-        const Shape part =
-            sweepShape(profile(xyPlane(), {rectangle(0, 0, 40, 20, 1, 1)}), 10, 5.0 * kPi / 180.0);
+        const Shape part = sweepShape(profile(xyPlane(), {rectangle(0, 0, 40, 20, 1, 1)}), 10, 5.0 * kPi / 180.0);
         requireLoops(take(silhouette(part, identity(), ctx)),
                      {loopOf({L({0, 0}, {40, 0}), L({40, 0}, {40, 20}), L({40, 20}, {0, 20}), L({0, 20}, {0, 0})})},
                      1e-7);

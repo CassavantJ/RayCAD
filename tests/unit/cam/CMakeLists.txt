@@ -92,3 +92,23 @@ target_compile_definitions(ray_cam_drill_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_S
     RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_drill_tests)
+# The shared 2D geometry core of the milling operations (task T-050): conversions, measures, nesting, offsets and
+# booleans with exact arcs, arc fitting (property tests, 10,000 seeded cases each), boundaries from kernel-built parts,
+# the integer goldens (tests/golden/geom2d) and, tagged [wallclock], the 500-loop timing and the cancel latency.
+# src/ for the private header (cam/geom2d.h), tests/unit/kernel for the profile builders.
+add_executable(ray_cam_geom2d_tests
+    geom2d_basic_test.cpp
+    geom2d_fit_test.cpp
+    geom2d_golden_test.cpp
+    geom2d_model_test.cpp
+    geom2d_offset_test.cpp
+    geom2d_parts.h
+    geom2d_perf_test.cpp
+    geom2d_test_util.h
+)
+target_link_libraries(ray_cam_geom2d_tests PRIVATE ray_cam ray_kernel ray_lib ray_naming ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_geom2d_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/tests/unit/kernel")
+target_compile_definitions(ray_cam_geom2d_tests PRIVATE RAY_GEOM2D_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/geom2d")
+set_property(TARGET ray_cam_geom2d_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_cam_geom2d_tests COMMAND ray_cam_geom2d_tests "~[wallclock]")
+ray_test_runtime_path(ray_cam_geom2d_tests)

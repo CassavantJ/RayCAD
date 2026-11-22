@@ -5,10 +5,14 @@
 // 2, 4, ... points) and a binary search back from the first failure; the search stops at kMaxRun points. The arc run is
 // tested on its shape (every point and every polyline edge within tolerance, monotone turning, sweep and radius) during
 // the search and on its quality (chord, sagitta) at the end; the longer of the two runs wins, a line on a tie. An arc's
-// circle is the least-squares (Kasa) circle of the run's points, its centre moved to the integer point among the nine
-// around it that gives the smallest largest deviation (ties: smaller x, then smaller y), its radius the rounded middle
-// of the smallest and largest distance. Every test is integer-exact where it decides a direction (crossSign) and plain
-// IEEE double otherwise; nothing depends on the platform.
+// circle starts from the least-squares (Kasa) circle of the run's points; its centre is the integer point with the
+// smallest largest deviation found among the nine round it (ties: smaller x, then smaller y) and then by descent over
+// the eight neighbours at steps of 8, 4, 2 and 1 nm; its radius is the rounded middle of the smallest and largest
+// distance. On short, flat arcs many integer centres fit equally well (the samples' rounding allows it), so the centre
+// of a sampled known arc is found exactly in about 85% of cases and otherwise within the rounding's reach (the
+// property test measures it: at most 131 nm on a 10 degree arc of 100 mm radius), always within the tolerance. Every
+// test is integer-exact where it decides a direction (crossSign) and plain IEEE double otherwise; nothing depends on
+// the platform.
 #include "geom2d_internal.h"
 
 #include <algorithm>
@@ -31,7 +35,10 @@ struct Circle {
 
 class Fitter {
 public:
-    Fitter(const std::vector<Pt>& pts, const FitOptions& opt) : p_(pts), opt_(opt), tol_(static_cast<double>(opt.tolerance)) {}
+    Fitter(const std::vector<Pt>& pts, const FitOptions& opt)
+        : p_(pts), opt_(opt), tol_(static_cast<double>(opt.tolerance))
+    {
+    }
 
     bool lineOk(std::size_t i, std::size_t j) const
     {
@@ -64,26 +71,52 @@ public:
         const auto centre = leastSquaresCentre(i, j);
         if (!centre)
             return std::nullopt;
+        // The integer centre with the smallest largest deviation: the nine points round the least-squares centre,
+        // then a descent over the eight neighbours at steps 8, 4, 2, 1 nm (ties keep the current point, so the
+        // result does not depend on the order neighbours are tried in beyond the fixed order below).
         Circle best;
         double bestDev = std::numeric_limits<double>::infinity();
+        const auto evaluate = [&](Pt c) {
+            double lo = std::numeric_limits<double>::infinity(), hi = 0.0;
+            for (std::size_t k = i; k <= j; ++k) {
+                const double d = distance(d2(p_[k]), d2(c));
+                lo = std::min(lo, d);
+                hi = std::max(hi, d);
+            }
+            const Coord r = roundNm(0.5 * (lo + hi));
+            return std::make_pair(std::max(hi - static_cast<double>(r), static_cast<double>(r) - lo), r);
+        };
         const Pt c0{roundNm(centre->x), roundNm(centre->y)};
         for (Coord dx = -1; dx <= 1; ++dx)
             for (Coord dy = -1; dy <= 1; ++dy) {
                 const Pt c{c0.x + dx, c0.y + dy};
-                double lo = std::numeric_limits<double>::infinity(), hi = 0.0;
-                for (std::size_t k = i; k <= j; ++k) {
-                    const double d = distance(d2(p_[k]), d2(c));
-                    lo = std::min(lo, d);
-                    hi = std::max(hi, d);
-                }
-                const Coord r = roundNm(0.5 * (lo + hi));
-                const double dev = std::max(hi - static_cast<double>(r), static_cast<double>(r) - lo);
+                const auto [dev, r] = evaluate(c);
                 if (dev < bestDev || (dev == bestDev && (c.x < best.c.x || (c.x == best.c.x && c.y < best.c.y)))) {
                     bestDev = dev;
                     best.c = c;
                     best.r = r;
                 }
             }
+        for (Coord step = 8; step >= 1; step /= 2) {
+            for (int moves = 0; moves < 64; ++moves) {
+                bool moved = false;
+                for (Coord dx = -step; dx <= step && !moved; dx += step)
+                    for (Coord dy = -step; dy <= step && !moved; dy += step) {
+                        if (dx == 0 && dy == 0)
+                            continue;
+                        const Pt c{best.c.x + dx, best.c.y + dy};
+                        const auto [dev, r] = evaluate(c);
+                        if (dev < bestDev) {
+                            bestDev = dev;
+                            best.c = c;
+                            best.r = r;
+                            moved = true;
+                        }
+                    }
+                if (!moved)
+                    break;
+            }
+        }
         if (best.r <= 0 || best.r > opt_.maxArcRadius || bestDev > tol_)
             return std::nullopt;
         // Monotone turning about the centre, each step below 90 degrees, all one way.
@@ -158,7 +191,8 @@ private:
         const double m[3][3] = {{sxx, sxy, sx}, {sxy, syy, sy}, {sx, sy, n}};
         const double b[3] = {-sxz, -syz, -sz};
         const auto det3 = [](const double a[3][3]) {
-            return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+            return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+                   a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
                    a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
         };
         const double det = det3(m);
@@ -171,7 +205,8 @@ private:
                 my[r][c] = c == 1 ? b[r] : m[r][c];
             }
         const double dd = det3(mx) / det, ee = det3(my) / det;
-        const D2 centre{-0.5 * dd * scale + o.x, -0.5 * ee * scale + o.y};
+        const double cx = -0.5 * dd, cy = -0.5 * ee;
+        const D2 centre{cx * scale + o.x, cy * scale + o.y};
         if (!std::isfinite(centre.x) || !std::isfinite(centre.y) || std::abs(centre.x) > 4e12 ||
             std::abs(centre.y) > 4e12)
             return std::nullopt;
@@ -239,10 +274,10 @@ Path fitArcs(std::span<const Pt> input, bool closed, const FitOptions& opt)
     const std::size_t last = pts.size() - 1;
     std::size_t i = 0;
     while (i < last) {
-        const std::size_t jl = std::max<std::size_t>(i + 1, longest(i, i + 1, last, [&](std::size_t j) {
-            return fitter.lineOk(i, j);
-        }));
-        const std::size_t ja = longest(i, i + 2, last, [&](std::size_t j) { return fitter.arcShape(i, j).has_value(); });
+        const std::size_t jl =
+            std::max<std::size_t>(i + 1, longest(i, i + 1, last, [&](std::size_t j) { return fitter.lineOk(i, j); }));
+        const std::size_t ja =
+            longest(i, i + 2, last, [&](std::size_t j) { return fitter.arcShape(i, j).has_value(); });
         if (ja > jl) {
             const auto circle = fitter.arcShape(i, ja);
             if (circle && fitter.arcQuality(i, ja, *circle)) {

@@ -18,7 +18,7 @@ inline constexpr double kTwoPi = 2.0 * kPi;
 // ---------- 128-bit products ----------
 struct I128 {
     std::uint64_t lo = 0;
-    std::uint64_t hi = 0;   // two's complement high word
+    std::uint64_t hi = 0; // two's complement high word
 };
 inline I128 mul(std::int64_t a, std::int64_t b)
 {
@@ -30,7 +30,8 @@ inline I128 mul(std::int64_t a, std::int64_t b)
     const std::int64_t low = _mul128(a, b, &high);
     return I128{static_cast<std::uint64_t>(low), static_cast<std::uint64_t>(high)};
 #elif defined(_M_ARM64)
-    return I128{static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b), static_cast<std::uint64_t>(__mulh(a, b))};
+    return I128{static_cast<std::uint64_t>(a) * static_cast<std::uint64_t>(b),
+                static_cast<std::uint64_t>(__mulh(a, b))};
 #else
 #error "geom2d needs a 64 x 64 -> 128 bit multiply"
 #endif

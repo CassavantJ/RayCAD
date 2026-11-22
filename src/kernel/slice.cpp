@@ -64,13 +64,13 @@ namespace {
 using detail::guarded;
 using detail::makeError;
 
-constexpr double kHeightSnap = 1e-6;     // mm: a z this close to a horizontal face is that face's height
-constexpr double kRetryNudge = 1e-6;     // mm: the second try of a failed slice boolean
-constexpr double kOnPlane = 1e-6;        // mm: a result face this close to the cut plane lies on it
-constexpr double kHorizontalSin = 1e-9;  // a normal is along Z when its XY part is at most this
-constexpr double kVerticalCos = 1e-9;    // a plane is parallel to Z when |normal.z| is at most this
-constexpr double kHeightMerge = 1e-6;    // mm: critical heights closer than this are one height
-constexpr int kSilhouetteSamples = 16;   // heights across a face whose outline is not monotone (silhouette)
+constexpr double kHeightSnap = 1e-6;    // mm: a z this close to a horizontal face is that face's height
+constexpr double kRetryNudge = 1e-6;    // mm: the second try of a failed slice boolean
+constexpr double kOnPlane = 1e-6;       // mm: a result face this close to the cut plane lies on it
+constexpr double kHorizontalSin = 1e-9; // a normal is along Z when its XY part is at most this
+constexpr double kVerticalCos = 1e-9;   // a plane is parallel to Z when |normal.z| is at most this
+constexpr double kHeightMerge = 1e-6;   // mm: critical heights closer than this are one height
+constexpr int kSilhouetteSamples = 16;  // heights across a face whose outline is not monotone (silhouette)
 
 enum class From { Above, Below };
 
@@ -151,15 +151,13 @@ Result<std::vector<TopoDS_Face>> sectionFaces(const TopoDS_Shape& moved, const B
         return faces;
     if (from == From::Above ? z < bounds.min.z - kHeightSnap : z > bounds.max.z + kHeightSnap)
         return faces;
-    const double size = std::max({bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y,
-                                  bounds.max.z - bounds.min.z, 1.0});
+    const double size =
+        std::max({bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 1.0});
     const double margin = 1.0 + 0.01 * size;
     for (int attempt = 0; attempt < 2; ++attempt) {
         const double zc = attempt == 0 ? z : (from == From::Above ? z + kRetryNudge : z - kRetryNudge);
-        const gp_Pnt lo(bounds.min.x - margin, bounds.min.y - margin,
-                        from == From::Above ? zc : bounds.min.z - margin);
-        const gp_Pnt hi(bounds.max.x + margin, bounds.max.y + margin,
-                        from == From::Above ? bounds.max.z + margin : zc);
+        const gp_Pnt lo(bounds.min.x - margin, bounds.min.y - margin, from == From::Above ? zc : bounds.min.z - margin);
+        const gp_Pnt hi(bounds.max.x + margin, bounds.max.y + margin, from == From::Above ? bounds.max.z + margin : zc);
         if (!(hi.Z() > lo.Z()))
             return faces;
         const TopoDS_Shape box = BRepPrimAPI_MakeBox(lo, hi).Shape();
@@ -186,8 +184,8 @@ Result<std::vector<TopoDS_Face>> sectionFaces(const TopoDS_Shape& moved, const B
         }
         return faces;
     }
-    return tl::unexpected(makeError(ErrorCode::KernelFailure,
-                                    "The geometry kernel could not cut the part at this height.", where));
+    return tl::unexpected(
+        makeError(ErrorCode::KernelFailure, "The geometry kernel could not cut the part at this height.", where));
 }
 
 // Heights at which a face's outline is extreme (silhouette rule above), in the frame; empty for faces without a
@@ -305,7 +303,7 @@ Result<std::vector<ProfileLoop>> silhouette(const Shape& shape, const Xform& fra
     return guarded(where, [&]() -> Result<std::vector<ProfileLoop>> {
         const TopoDS_Shape moved = detail::topologyCopy(detail::occt(shape)).Moved(TopLoc_Location(*trsf));
         const Box3 bounds = tightBox(moved);
-        std::vector<TopoDS_Face> flat;   // looking up, at z = 0
+        std::vector<TopoDS_Face> flat; // looking up, at z = 0
         std::vector<double> heights;
         int polled = 0;
         for (TopExp_Explorer ex(moved, TopAbs_FACE); ex.More(); ex.Next()) {
@@ -357,9 +355,8 @@ Result<std::vector<ProfileLoop>> silhouette(const Shape& shape, const Xform& fra
             if (ctx.cancel.cancelled() || fuse.HasError(STANDARD_TYPE(BOPAlgo_AlertUserBreak)))
                 return tl::unexpected(detail::cancelledError(where));
             if (!fuse.IsDone() || fuse.HasErrors())
-                return tl::unexpected(
-                    makeError(ErrorCode::KernelFailure, "The geometry kernel could not unite the part's outline.",
-                              where));
+                return tl::unexpected(makeError(ErrorCode::KernelFailure,
+                                                "The geometry kernel could not unite the part's outline.", where));
             ShapeUpgrade_UnifySameDomain unify(fuse.Shape(), true, true, false);
             unify.Build();
             united = unify.Shape();

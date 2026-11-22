@@ -36,11 +36,11 @@ namespace {
 using detail::guarded;
 using detail::makeError;
 
-constexpr double kAxisCos = 1.0 - 1e-9;              // an axis is parallel to the tool axis when |cos| >= this
+constexpr double kAxisCos = 1.0 - 1e-9;                // an axis is parallel to the tool axis when |cos| >= this
 constexpr double kSteepSemiAngle = 0.7853981633974483; // 45 degrees
-constexpr double kWallCos = 0.7071067811865476;       // cos 45: wall normals and steep edges
-constexpr double kTangentSin = 0.008726535498373935;  // sin 0.5 degree
-constexpr double kRecogniseTolerance = 1e-4;          // mm
+constexpr double kWallCos = 0.7071067811865476;        // cos 45: wall normals and steep edges
+constexpr double kTangentSin = 0.008726535498373935;   // sin 0.5 degree
+constexpr double kRecogniseTolerance = 1e-4;           // mm
 
 gp_Vec outwardNormal(const TopoDS_Face& face, gp_Pnt& point)
 {
@@ -140,7 +140,8 @@ Result<double> minInternalCornerRadius(const Shape& shape, Vec3 toolAxis, JobCon
         return tl::unexpected(ok.error());
     const double length = std::sqrt(toolAxis.x * toolAxis.x + toolAxis.y * toolAxis.y + toolAxis.z * toolAxis.z);
     if (!std::isfinite(length) || length <= 1e-12)
-        return tl::unexpected(makeError(ErrorCode::InvalidArgument, "The tool axis must be a non-zero direction.", where));
+        return tl::unexpected(
+            makeError(ErrorCode::InvalidArgument, "The tool axis must be a non-zero direction.", where));
     return guarded(where, [&]() -> Result<double> {
         const gp_Dir axis(toolAxis.x / length, toolAxis.y / length, toolAxis.z / length);
         double best = std::numeric_limits<double>::infinity();

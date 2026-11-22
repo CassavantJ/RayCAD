@@ -23,7 +23,8 @@ Error invalid(std::string message)
 
 Vec3 apply(const Xform& f, const Vec3& p)
 {
-    return Vec3{f.m[0] * p.x + f.m[1] * p.y + f.m[2] * p.z + f.m[3], f.m[4] * p.x + f.m[5] * p.y + f.m[6] * p.z + f.m[7],
+    return Vec3{f.m[0] * p.x + f.m[1] * p.y + f.m[2] * p.z + f.m[3],
+                f.m[4] * p.x + f.m[5] * p.y + f.m[6] * p.z + f.m[7],
                 f.m[8] * p.x + f.m[9] * p.y + f.m[10] * p.z + f.m[11]};
 }
 
@@ -55,8 +56,8 @@ Result<std::optional<Piece>> pieceOf(const kernel::Shape& shape, kernel::SubId e
         if (c.kind == Kind::Line)
             piece.path.spans.push_back(Span{SpanKind::Line, toPt(c.pts[1]), {}, 0});
         else if (c.kind == Kind::Arc)
-            piece.path.spans.push_back(Span{c.ccw ? SpanKind::ArcCCW : SpanKind::ArcCW, toPt(c.pts[1]),
-                                            toPt(c.pts[2]), toCoord(c.radius)});
+            piece.path.spans.push_back(
+                Span{c.ccw ? SpanKind::ArcCCW : SpanKind::ArcCW, toPt(c.pts[1]), toPt(c.pts[2]), toCoord(c.radius)});
         else
             return tl::unexpected(invalid("An edge gave a curve the 2D core cannot read."));
     }

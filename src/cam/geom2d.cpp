@@ -58,8 +58,8 @@ bool inRange(Pt p)
 
 // ---------- y-monotone pieces of an arc (locate, interiorPoint) ----------
 struct ArcPiece {
-    Pt from, to;   // exact: arc endpoints or the circle's top/bottom points
-    bool right;    // on the right half of the circle (x >= cx)
+    Pt from, to; // exact: arc endpoints or the circle's top/bottom points
+    bool right;  // on the right half of the circle (x >= cx)
 };
 // Splits the arc from `start` along `s` at the circle's top and bottom points.
 std::vector<ArcPiece> monotonePieces(Pt start, const Span& s)
@@ -423,8 +423,8 @@ kernel::ProfileLoop toLoop(const Path& p)
         if (!isArc(s))
             loop.curves.push_back(kernel::ProfileCurve{Kind::Line, {toVec2(cur), toVec2(s.end)}, 0.0, false, 0});
         else
-            loop.curves.push_back(kernel::ProfileCurve{Kind::Arc, {toVec2(cur), toVec2(s.end), toVec2(s.centre)},
-                                                       toMm(s.radius), isCcw(s), 0});
+            loop.curves.push_back(kernel::ProfileCurve{
+                Kind::Arc, {toVec2(cur), toVec2(s.end), toVec2(s.centre)}, toMm(s.radius), isCcw(s), 0});
         cur = s.end;
     }
     return loop;
@@ -976,9 +976,10 @@ void appendMoves(const Path& p, Coord z, MoveRole role, std::int32_t feedMicronP
         const double a0 = angleOf(d2(cur), d2(s.centre));
         const double dir = isCcw(s) ? 1.0 : -1.0;
         for (int k = 1; k <= parts; ++k) {
-            const Pt end = k == parts ? s.end
-                                      : roundPt(onCircle(d2(s.centre), static_cast<double>(s.radius),
-                                                         a0 + dir * sweep * k / parts));
+            const Pt end =
+                k == parts
+                    ? s.end
+                    : roundPt(onCircle(d2(s.centre), static_cast<double>(s.radius), a0 + dir * sweep * k / parts));
             Move m{};
             m.kind = isCcw(s) ? MoveKind::ArcCCW : MoveKind::ArcCW;
             m.role = role;
@@ -1005,9 +1006,8 @@ std::string toText(const Path& p)
         if (!isArc(s)) {
             t += "L " + std::to_string(s.end.x) + " " + std::to_string(s.end.y) + "\n";
         } else {
-            t += std::string(isCcw(s) ? "A+ " : "A- ") + std::to_string(s.end.x) + " " + std::to_string(s.end.y) +
-                 " " + std::to_string(s.centre.x) + " " + std::to_string(s.centre.y) + " " +
-                 std::to_string(s.radius) + "\n";
+            t += std::string(isCcw(s) ? "A+ " : "A- ") + std::to_string(s.end.x) + " " + std::to_string(s.end.y) + " " +
+                 std::to_string(s.centre.x) + " " + std::to_string(s.centre.y) + " " + std::to_string(s.radius) + "\n";
         }
     }
     return t;

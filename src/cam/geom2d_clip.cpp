@@ -56,10 +56,10 @@ Error invalid(std::string message)
 
 struct Prim {
     bool arc = false;
-    bool whole = false;      // a whole circle (a == b)
-    D2 a, b;                 // start and end
-    Pt c{};                  // arc centre
-    Coord r = 0;             // arc radius > 0
+    bool whole = false; // a whole circle (a == b)
+    D2 a, b;            // start and end
+    Pt c{};             // arc centre
+    Coord r = 0;        // arc radius > 0
     bool ccw = true;
     int next = -1, prev = -1;
     int group = 0;
@@ -607,25 +607,27 @@ Result<ClipResult> run(const Raw& raw, Clipper2Lib::ClipType type, Clipper2Lib::
     Clipper2Lib::PolyTree64 tree;
     try {
         Clipper2Lib::Clipper64 clipper;
-        clipper.SetZCallback([&engine](const Clipper2Lib::Point64& e1bot, const Clipper2Lib::Point64& e1top,
-                                       const Clipper2Lib::Point64& e2bot, const Clipper2Lib::Point64& e2top,
-                                       Clipper2Lib::Point64& pt) {
-            pt.z = engine.record(e1bot, e1top, e2bot, e2top, pt.z);
-        });
+        clipper.SetZCallback(
+            [&engine](const Clipper2Lib::Point64& e1bot, const Clipper2Lib::Point64& e1top,
+                      const Clipper2Lib::Point64& e2bot, const Clipper2Lib::Point64& e2top,
+                      Clipper2Lib::Point64& pt) { pt.z = engine.record(e1bot, e1top, e2bot, e2top, pt.z); });
         clipper.AddSubject(subjects);
         if (!clips.empty())
             clipper.AddClip(clips);
         if (!clipper.Execute(type, fill, tree))
-            return tl::unexpected(Error{ErrorCode::Internal, "Clipper2 could not compute the 2D result.", {std::string(kWhere)}});
+            return tl::unexpected(
+                Error{ErrorCode::Internal, "Clipper2 could not compute the 2D result.", {std::string(kWhere)}});
     } catch (const std::exception& e) {
-        return tl::unexpected(Error{ErrorCode::Internal, std::string("Clipper2 failed: ") + e.what(), {std::string(kWhere)}});
+        return tl::unexpected(
+            Error{ErrorCode::Internal, std::string("Clipper2 failed: ") + e.what(), {std::string(kWhere)}});
     }
     if (auto st = ctx.cancel.check(); !st)
         return tl::unexpected(st.error());
     ClipResult out;
     std::size_t polled = 0;
     // Level 1: outers; level 2: their holes; level 3: islands (outers again); ...
-    std::function<Status(const Clipper2Lib::PolyPath64&)> visitOuter = [&](const Clipper2Lib::PolyPath64& node) -> Status {
+    std::function<Status(const Clipper2Lib::PolyPath64&)> visitOuter =
+        [&](const Clipper2Lib::PolyPath64& node) -> Status {
         if (auto st = poll(ctx, ++polled, 64); !st)
             return st;
         Rebuilt outer = engine.rebuild(node.Polygon());
@@ -803,9 +805,8 @@ Result<Paths> offsetOpen(const Path& open, Coord d, Side side, JobContext& ctx, 
             runs.push_back(std::move(run));
         }
     }
-    std::stable_sort(runs.begin(), runs.end(), [&](const Run& a, const Run& b) {
-        return side == Side::Right ? a.key < b.key : a.key > b.key;
-    });
+    std::stable_sort(runs.begin(), runs.end(),
+                     [&](const Run& a, const Run& b) { return side == Side::Right ? a.key < b.key : a.key > b.key; });
     Paths out;
     for (Run& r : runs)
         out.push_back(canonicalize(std::move(r.path)));

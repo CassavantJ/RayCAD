@@ -30,13 +30,13 @@
 
 namespace ray::kernel::detail {
 
-inline constexpr double kCurveTolerance = 5e-4;     // mm: approximation of curves that are not lines or arcs (0.5 um)
-inline constexpr double kParallelSin = 1e-9;        // an axis is parallel to Z when |axis x Z| <= this
-inline constexpr int kRecogniseSamples = 64;        // samples when checking whether a curve is a line or an arc
-inline constexpr int kMinPolylineSplits = 2;        // a polyline approximation halves each curve at least this often
-inline constexpr int kMaxPolylineSplits = 24;       // and at most this often (2^24 chords)
-inline constexpr double kMinLoopArea = 1e-8;        // mm^2: loops below this are degenerate and dropped
-inline constexpr double kDegenerateLength = 1e-9;   // mm: a projected curve shorter than this gives nothing
+inline constexpr double kCurveTolerance = 5e-4;   // mm: approximation of curves that are not lines or arcs (0.5 um)
+inline constexpr double kParallelSin = 1e-9;      // an axis is parallel to Z when |axis x Z| <= this
+inline constexpr int kRecogniseSamples = 64;      // samples when checking whether a curve is a line or an arc
+inline constexpr int kMinPolylineSplits = 2;      // a polyline approximation halves each curve at least this often
+inline constexpr int kMaxPolylineSplits = 24;     // and at most this often (2^24 chords)
+inline constexpr double kMinLoopArea = 1e-8;      // mm^2: loops below this are degenerate and dropped
+inline constexpr double kDegenerateLength = 1e-9; // mm: a projected curve shorter than this gives nothing
 
 // The rigid move a frame describes (kernel.h boundsIn rules: finite, orthonormal within 1e-9, not mirrored).
 Result<gp_Trsf> rigidTrsf(const Xform& frame, std::string_view where);
