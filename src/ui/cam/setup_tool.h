@@ -9,7 +9,9 @@
 //                expressions and parameter names, as the feature panels take them; other fields are strings, numbers
 //                and booleans. Part bodies default to every built body; fixture bodies are optional (setBodyRole).
 //                The machine defaults to the last used one (this session's last setup, else the document's last
-//                setup, else the first of the library), the post to the machine's default.
+//                setup, else the first of the library), the post to the machine's default. The stock material
+//                (the operations' feeds are calculated for it) defaults the same way, else none; a library material
+//                is embedded in the same step as the setup (the commands' "library" member, as the machine is).
 //   Picking      pickMode: "face" (the Z face: planar faces only), "edge" (the X edge: straight edges only), "vertex"
 //                (the origin vertex of a model point origin) or "". A click in the view selects as usual (Selection,
 //                with its filter set to the kind picked); the selected element is checked on a worker and taken
@@ -85,9 +87,11 @@ class SetupToolModel : public QObject {
     Q_PROPERTY(bool hasZFace READ hasZFace NOTIFY picksChanged)
     Q_PROPERTY(bool hasXEdge READ hasXEdge NOTIFY picksChanged)
     Q_PROPERTY(bool hasVertex READ hasVertex NOTIFY picksChanged)
-    // [{id, name, role ("part" | "fixture" | "none")}] every built body; [{id, name}] the machines; posts by stem.
+    // [{id, name, role ("part" | "fixture" | "none")}] every built body; [{id, name}] the machines; posts by stem;
+    // [{id, name}] the materials, "" (none) first.
     Q_PROPERTY(QVariantList bodies READ bodies NOTIFY optionsChanged)
     Q_PROPERTY(QVariantList machines READ machines NOTIFY optionsChanged)
+    Q_PROPERTY(QVariantList materials READ materials NOTIFY optionsChanged)
     Q_PROPERTY(QStringList posts READ posts NOTIFY optionsChanged)
     // In-view items, in view coordinates: the origin markers [{key, x, y, current}] and the triad labels
     // [{axis ("X" | "Y" | "Z"), x, y}]. Empty while nothing is previewed.
@@ -122,6 +126,7 @@ public:
     bool hasVertex() const { return !vertex_.isEmpty(); }
     QVariantList bodies() const;
     QVariantList machines() const { return machines_; }
+    QVariantList materials() const { return materials_; }
     QStringList posts() const { return posts_; }
     QVariantList markers() const;
     QVariantList triadLabels() const;
@@ -226,9 +231,11 @@ private:
     bool pickPending_ = false;
 
     // Options.
-    QVariantList machines_;                      // [{id, name}]
-    std::map<QString, std::string> machineJson_; // library machines by id (library file format)
-    std::map<QString, QString> machinePost_;     // default post by machine id
+    QVariantList machines_;                       // [{id, name}]
+    std::map<QString, std::string> machineJson_;  // library machines by id (library file format)
+    std::map<QString, QString> machinePost_;      // default post by machine id
+    QVariantList materials_;                      // [{id, name}], "" first
+    std::map<QString, std::string> materialJson_; // library materials by id (library file format)
     QStringList posts_;
     std::uint64_t postsSerial_ = 0;
 
@@ -243,8 +250,8 @@ private:
     int previewsShown_ = 0;
     int resolvesCancelled_ = 0;
 
-    // This session's last machine (the default of the next new setup).
-    QString lastMachine_;
+    // This session's last machine and material (the defaults of the next new setup).
+    QString lastMachine_, lastMaterial_;
 };
 
 } // namespace ray::ui

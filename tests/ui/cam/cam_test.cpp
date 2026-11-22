@@ -6,6 +6,7 @@
 //   - the preview (stock and WCS triad) is there before the first pick and follows every change; a curved face is
 //     refused with the reason; flip X turns the frame; editing a setup from the tree; Esc and leaving the workspace
 //     change nothing; undo and redo; closing the document while a preview runs
+//   - the stock material chosen in the panel, a library one embedded in the same step; editing it; undo and redo
 //   - each status badge (up to date, stale, generating with progress, failed, broken reference, suppressed) against
 //     the engine with the CAM engine tests' test-only operation type (and one here that reports progress while it
 //     waits), following a model edit in the Model workspace and undo
@@ -17,8 +18,11 @@
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
+#include "cam/operation_tool.h"
+#include "cam/operation_view.h"
 #include "cam/setup_tool.h"
 #include "cam/setup_tree.h"
+#include "cam/tools_model.h"
 #include "engine_test_util.h" // the CAM engine tests' test-only operation type and library JSON (tests/unit/cam)
 #include "files.h"
 #include "palette_commands.h"
@@ -833,6 +837,104 @@ TEST_CASE("the live preview, picks, flips, editing, Esc, workspaces, undo and re
         CHECK(w.tool()->triadLines().count() == 0);
         w.shown(QStringLiteral("camTreeEmpty"));
     }
+    w.checkNoWarnings();
+}
+
+// Steps the focused combo box `objectName` with the arrow key until `done` holds, as the user does.
+void stepCombo(const Window& w, const QString& objectName, Qt::Key key, const std::function<bool()>& done)
+{
+    QQuickItem* combo = w.shown(objectName);
+    combo->forceActiveFocus();
+    for (int i = 0; i < 40 && !done(); ++i) {
+        QTest::keyClick(w.window(), key);
+        QTest::qWait(20);
+    }
+    REQUIRE(QTest::qWaitFor(done, 5000));
+}
+
+TEST_CASE("the setup's stock material: chosen in the panel, embedded from the library, undo and redo", "[cam][e2e]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate);
+    w.toWorkspace(ui::kCamWorkspace);
+    const QString al6061 = QStringLiteral("b72c5171-c258-44d2-91ae-ee049b636621"); // resources/library: 6061-T6
+    const std::size_t undo0 = w.undoCount();
+
+    // A new setup: no material yet (none in the document, none chosen this session); the library's are offered.
+    REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tool.newSetup")));
+    w.previewed();
+    CHECK(w.tool()->values().value(QStringLiteral("material")).toString().isEmpty());
+    CHECK(w.shown(QStringLiteral("setupCombo.material"))->property("displayText").toString() == QStringLiteral("None"));
+    const auto offered = [&](const QString& id) {
+        for (const QVariant& m : w.tool()->materials()) {
+            if (m.toMap().value(QStringLiteral("id")).toString() == id)
+                return true;
+        }
+        return false;
+    };
+    REQUIRE(offered(al6061));
+    w.host->selection()->applyClick(
+        render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, topFace(w).index, topFace(w).at, 0},
+        Qt::NoModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.tool()->hasZFace(); }, kTimeoutMs));
+    // 6061-T6 from the list, by the keyboard.
+    stepCombo(w, QStringLiteral("setupCombo.material"), Qt::Key_Down,
+              [&] { return w.tool()->values().value(QStringLiteral("material")).toString() == al6061; });
+    CHECK(w.find(QStringLiteral("setupCombo.material"))->property("displayText").toString() ==
+          QStringLiteral("6061-T6"));
+    w.previewed();
+    w.shotsBothThemes("t044_setup_material");
+    w.click("setupOk");
+    REQUIRE(QTest::qWaitFor([&] { return !w.tool()->active() && w.undoCount() == undo0 + 1; }, kTimeoutMs));
+    w.settle();
+    // One step: the setup names the material, and the document has its copy.
+    REQUIRE(w.setup() != nullptr);
+    const MaterialId mid{Uuid::fromString(al6061.toStdString())};
+    CHECK(w.setup()->material == mid);
+    CHECK(w.document()->state()->cam->materials.count(mid) == 1);
+    const std::string added = w.stateHash();
+    // The operation panel calculates feeds for it.
+    auto* op = w.singleton<ui::OperationToolModel>("CamOperation");
+    REQUIRE(op->startFor(QString::fromStdString(w.setup()->id.value.toString())));
+    CHECK(op->materialSource() == QStringLiteral("setup"));
+    CHECK(op->materialId() == al6061);
+    op->cancel();
+
+    // Undo takes the setup and the copy away; redo brings both back.
+    w.undo();
+    CHECK(w.setup() == nullptr);
+    {
+        const doc::DocStatePtr s = w.document()->state();
+        CHECK((!s->cam || s->cam->materials.count(mid) == 0));
+    }
+    w.undo(true);
+    REQUIRE(w.setup() != nullptr);
+    CHECK(w.setup()->material == mid);
+    CHECK(w.stateHash() == added);
+
+    // Edited: the panel shows the material; None takes it off the setup (the copy stays in the document).
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() == 1; }, 5000));
+    REQUIRE(w.tool()->edit(QString::fromStdString(w.setup()->id.value.toString())));
+    w.previewed();
+    CHECK(w.tool()->values().value(QStringLiteral("material")).toString() == al6061);
+    CHECK(w.shown(QStringLiteral("setupCombo.material"))->property("displayText").toString() ==
+          QStringLiteral("6061-T6"));
+    stepCombo(w, QStringLiteral("setupCombo.material"), Qt::Key_Up,
+              [&] { return w.tool()->values().value(QStringLiteral("material")).toString().isEmpty(); });
+    w.previewed();
+    w.click("setupOk");
+    REQUIRE(QTest::qWaitFor([&] { return !w.tool()->active() && w.undoCount() == undo0 + 2; }, kTimeoutMs));
+    w.settle();
+    CHECK(w.setup()->material == MaterialId{});
+    w.undo();
+    CHECK(w.setup()->material == mid);
+    // The next new setup starts with the material this session used last.
+    REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tool.newSetup")));
+    w.previewed();
+    CHECK(w.tool()->values().value(QStringLiteral("material")).toString() == al6061);
+    w.tool()->cancel();
+    CHECK(w.confirms == 0);
     w.checkNoWarnings();
 }
 

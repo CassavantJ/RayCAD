@@ -232,6 +232,11 @@ void OperationToolModel::setCommands(CommandCatalog* commands)
     commands_->setUiHandler(QStringLiteral("cam.operation.add"), handler);
 }
 
+void OperationToolModel::setTools(ToolLibraryModel* tools)
+{
+    tools_ = tools;
+}
+
 void OperationToolModel::setUnits(UnitsObject* units)
 {
     units_ = units;

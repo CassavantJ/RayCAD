@@ -137,7 +137,7 @@ public:
     void setTree(SetupTreeModel* tree);
     void setSetupTool(SetupToolModel* tool) { setupTool_ = tool; }
     void setDisplay(ToolpathDisplay* display) { display_ = display; }
-    void setTools(ToolLibraryModel* tools) { tools_ = tools; }
+    void setTools(ToolLibraryModel* tools);
 
     bool active() const { return id_.has_value(); }
     bool editing() const { return editing_; }

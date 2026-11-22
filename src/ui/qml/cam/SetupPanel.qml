@@ -506,6 +506,12 @@ Item {
                         return out
                     }
                 }
+                // The stock's material: the operations calculate their feeds for it.
+                ChoiceRow {
+                    key: "material"
+                    label: qsTr("Material")
+                    choices: CamSetup.active ? root.listChoices(CamSetup.materials, "id", "name") : []
+                }
 
                 // The message about the values that names no field.
                 Label {

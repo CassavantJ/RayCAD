@@ -273,6 +273,24 @@ TEST_CASE("the setup arguments: picks, flips, stock kinds, units and the reasons
         REQUIRE(machines.size() == 1);
         CHECK(machines.at(0).toObject().value(QStringLiteral("id")).toString() == in.machine);
     }
+    SECTION("the stock material, a library one embedded in the same step as the machine")
+    {
+        SetupInput in = blockInput();
+        CHECK_FALSE(setupArgs(in, length, true).args.contains(QStringLiteral("material")));  // none: not given
+        CHECK(setupArgs(in, length, false).args.value(QStringLiteral("material")).isNull()); // an edit clears it
+        in.material = QStringLiteral("b72c5171-c258-44d2-91ae-ee049b636621");
+        CHECK(setupArgs(in, length, true).args.value(QStringLiteral("material")).toString() == in.material);
+        CHECK_FALSE(setupArgs(in, length, true).args.contains(QStringLiteral("library"))); // embedded already
+        in.libraryMaterial =
+            QJsonObject{{QStringLiteral("id"), in.material}, {QStringLiteral("name"), QStringLiteral("6061-T6")}};
+        in.libraryMachine =
+            QJsonObject{{QStringLiteral("id"), in.machine}, {QStringLiteral("name"), QStringLiteral("Mill")}};
+        const QJsonObject library = setupArgs(in, length, false).args.value(QStringLiteral("library")).toObject();
+        REQUIRE(library.value(QStringLiteral("materials")).toArray().size() == 1);
+        CHECK(library.value(QStringLiteral("materials")).toArray().at(0).toObject().value(QStringLiteral("id")) ==
+              in.material);
+        CHECK(library.value(QStringLiteral("machines")).toArray().size() == 1);
+    }
     SECTION("the name, the bodies and the program number")
     {
         SetupInput in = blockInput();

@@ -11,6 +11,7 @@
 #include "../viewport_item.h"
 #include "../viewport_navigation.h"
 
+#include <ray_api/cam_operation.h>
 #include <ray_api/feature_edit.h>
 #include <ray_api/viewer.h>
 
@@ -443,13 +444,15 @@ void SetupToolModel::defaults(const doc::DocState& state)
     // A name not used yet: "Setup N".
     std::set<std::string> names;
     int programNumber = 1000;
-    QString machine;
+    QString machine, material;
     if (state.cam) {
         for (const cam::Setup& s : state.cam->setups) {
             names.insert(s.name);
             programNumber = std::max(programNumber, s.programNumber);
             if (s.machine.value != Uuid{})
                 machine = idText(s.machine.value); // the document's last setup's machine
+            if (s.material.value != Uuid{})
+                material = idText(s.material.value); // and material
         }
     }
     int n = static_cast<int>(state.cam ? state.cam->setups.size() : 0) + 1;
@@ -491,6 +494,14 @@ void SetupToolModel::defaults(const doc::DocState& state)
         machine = machines_.isEmpty() ? QString() : machines_.front().toMap().value(QStringLiteral("id")).toString();
     values_[QStringLiteral("machine")] = machine;
     values_[QStringLiteral("post")] = machinePost_.count(machine) ? machinePost_.at(machine) : QString();
+    // The material: this session's last, else the document's last setup's, else none.
+    const auto knownMaterial = [&](const QString& id) {
+        return std::any_of(materials_.begin(), materials_.end(),
+                           [&](const QVariant& m) { return m.toMap().value(QStringLiteral("id")).toString() == id; });
+    };
+    if (!lastMaterial_.isEmpty() && knownMaterial(lastMaterial_))
+        material = lastMaterial_;
+    values_[QStringLiteral("material")] = knownMaterial(material) ? material : QString();
 }
 
 void SetupToolModel::loadSetup(const doc::DocState& state, const cam::Setup& s)
@@ -543,6 +554,7 @@ void SetupToolModel::loadSetup(const doc::DocState& state, const cam::Setup& s)
     values_[QStringLiteral("flipZ")] = s.wcs.flipZ;
     values_[QStringLiteral("machine")] = s.machine.value == Uuid{} ? QString() : idText(s.machine.value);
     values_[QStringLiteral("post")] = qs(s.postId);
+    values_[QStringLiteral("material")] = s.material.value == Uuid{} ? QString() : idText(s.material.value);
     if (s.wcs.zFace) {
         zFace_ = jsonObject(api::cam_setup::referenceJson(*s.wcs.zFace));
         zFaceBody_ = idText(s.wcs.zFace->body.value);
@@ -557,13 +569,16 @@ void SetupToolModel::loadSetup(const doc::DocState& state, const cam::Setup& s)
     }
 }
 
-// The machines the panel offers (the document's embedded ones and the library's, by id) and the posts.
+// The machines and materials the panel offers (the document's embedded ones and the library's, by id) and the posts.
 void SetupToolModel::loadOptions()
 {
     machines_.clear();
     machineJson_.clear();
     machinePost_.clear();
-    std::set<QString> seen;
+    materials_.clear();
+    materialJson_.clear();
+    materials_.push_back(QVariantMap{{QStringLiteral("id"), QString()}, {QStringLiteral("name"), trs("None")}});
+    std::set<QString> seen, seenMaterials;
     doc::Document* d = liveDoc();
     const doc::DocStatePtr state = d ? d->state() : nullptr;
     if (state && state->cam) {
@@ -572,6 +587,11 @@ void SetupToolModel::loadOptions()
             machines_.push_back(QVariantMap{{QStringLiteral("id"), key}, {QStringLiteral("name"), qs(m.item.name)}});
             machinePost_[key] = qs(m.item.defaultPost);
             seen.insert(key);
+        }
+        for (const auto& [id, m] : state->cam->materials) {
+            const QString key = idText(id.value);
+            materials_.push_back(QVariantMap{{QStringLiteral("id"), key}, {QStringLiteral("name"), qs(m.item.name)}});
+            seenMaterials.insert(key);
         }
     }
     api::IApp* a = app();
@@ -586,6 +606,21 @@ void SetupToolModel::loadOptions()
                 machinePost_[key] = qs(m.defaultPost);
             }
         }
+        for (const lib::Material& m : stack->materials()) {
+            const QString key = idText(m.id.value);
+            materialJson_[key] = api::cam_operation::materialJson(m);
+            if (seenMaterials.insert(key).second)
+                materials_.push_back(QVariantMap{{QStringLiteral("id"), key}, {QStringLiteral("name"), qs(m.name)}});
+        }
+        // By name after "None" (ties by id), as the tool library lists them.
+        std::stable_sort(materials_.begin() + 1, materials_.end(), [](const QVariant& a, const QVariant& b) {
+            const QVariantMap ma = a.toMap(), mb = b.toMap();
+            const int c = ma.value(QStringLiteral("name"))
+                              .toString()
+                              .compare(mb.value(QStringLiteral("name")).toString(), Qt::CaseInsensitive);
+            return c != 0 ? c < 0
+                          : ma.value(QStringLiteral("id")).toString() < mb.value(QStringLiteral("id")).toString();
+        });
         for (const lib::LibraryStack::RootInfo& r : stack->roots())
             roots.push_back(r.dir);
     }
@@ -797,6 +832,14 @@ camui::SetupInput SetupToolModel::input() const
         const bool embedded = state->cam && state->cam->machines.count(mid) != 0;
         if (!embedded && machineJson_.count(in.machine))
             in.libraryMachine = jsonObject(machineJson_.at(in.machine));
+    }
+    // So is a library material.
+    in.material = values_.value(QStringLiteral("material")).toString();
+    if (!in.material.isEmpty() && state) {
+        const MaterialId mid{Uuid::fromString(in.material.toStdString())};
+        const bool embedded = state->cam && state->cam->materials.count(mid) != 0;
+        if (!embedded && materialJson_.count(in.material))
+            in.libraryMaterial = jsonObject(materialJson_.at(in.material));
     }
     return in;
 }
@@ -1150,8 +1193,9 @@ bool SetupToolModel::commit()
     }
     const QString id = idText(id_->value);
     const QString machine = values_.value(QStringLiteral("machine")).toString();
+    const QString material = values_.value(QStringLiteral("material")).toString();
     QPointer<SetupToolModel> self(this);
-    job.then([self, id, machine](Result<api::ActionResult> r) {
+    job.then([self, id, machine, material](Result<api::ActionResult> r) {
         if (!self)
             return;
         self->committing_ = false;
@@ -1162,6 +1206,8 @@ bool SetupToolModel::commit()
         }
         if (!machine.isEmpty())
             self->lastMachine_ = machine;
+        if (!material.isEmpty())
+            self->lastMaterial_ = material;
         self->close();
         emit self->committed(id);
     });

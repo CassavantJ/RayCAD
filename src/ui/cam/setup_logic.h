@@ -71,7 +71,9 @@ struct SetupInput {
     bool flipX = false, flipZ = false;
     QString machine; // id, empty for none
     QString post;
-    QJsonObject libraryMachine; // the machine to embed in the same step (library file format), empty if embedded
+    QJsonObject libraryMachine;  // the machine to embed in the same step (library file format), empty if embedded
+    QString material;            // the stock material's id, empty for none
+    QJsonObject libraryMaterial; // the material to embed in the same step, as the machine
 };
 // A field's text to millimetres, or nullopt with the reason in *error.
 using LengthFn = std::function<std::optional<double>(const QString& text, QString* error)>;

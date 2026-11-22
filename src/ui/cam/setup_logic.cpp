@@ -294,8 +294,17 @@ ArgsResult setupArgs(const SetupInput& in, const LengthFn& length, bool adding)
     a.insert(QStringLiteral("machine"), in.machine.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(in.machine));
     if (!in.post.isEmpty() || !adding)
         a.insert(QStringLiteral("post"), in.post);
+    // The stock material: given when there is one, and as null when an edit takes it away.
+    if (!in.material.isEmpty() || !adding)
+        a.insert(QStringLiteral("material"),
+                 in.material.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(in.material));
+    QJsonObject library;
     if (!in.libraryMachine.isEmpty())
-        a.insert(QStringLiteral("library"), QJsonObject{{QStringLiteral("machines"), QJsonArray{in.libraryMachine}}});
+        library.insert(QStringLiteral("machines"), QJsonArray{in.libraryMachine});
+    if (!in.libraryMaterial.isEmpty())
+        library.insert(QStringLiteral("materials"), QJsonArray{in.libraryMaterial});
+    if (!library.isEmpty())
+        a.insert(QStringLiteral("library"), library);
     out.args = a;
     out.error.clear();
     out.field.clear();
