@@ -15,6 +15,7 @@
 // part of Move is decided (cycleTop, cycleClearance, cycleReturn, cyclePeckClearance, cycleLeftHand; what each cycle
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
+// Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -418,12 +419,85 @@ struct RecognizedHole { naming::TopoRef axisFace; Vec3 top, axis; std::vector<Ho
 Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId, Vec3 setupZ, JobContext&);
 std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);   // deterministic nearest-neighbour + 2-opt
 
-// ---------- Feeds and speeds ----------
-struct FeedsInput { const lib::Tool& tool; const lib::Material& material; const lib::MachineDef& machine;
-                    double radialEngagementMm, axialDepthMm; std::string_view opType; };
-struct FeedsResult { double rpm, feedMmMin, chipLoadMm, effectiveChipLoadMm, mrrCm3Min, powerKw, torqueNm;
-                     bool limitedByRpm, limitedByPower, limitedByFeed; };
-FeedsResult computeFeeds(const FeedsInput&);   // includes radial chip thinning
+// ---------- Feeds and speeds (task T-048, src/cam/feeds.cpp) ----------
+// Amended by T-048: computeFeeds returns Result (errors are values); FeedsInput can name the preset and replace its
+// surface speed or chip load; FeedsResult says everything the feeds panel shows (what was asked for, every limit and
+// what it did, the formulas' intermediate values, notes), so nothing is recomputed outside this function.
+//
+// Spindle speed and feed from the tool's cutting data for the material (a lib::ToolPreset: surface speed and chip
+// load per flute), corrected for radial chip thinning and for the diameter in contact of ball, corner-radius,
+// chamfer, engraving and spot tools at shallow depth, then held inside the machine's limits. A pure, deterministic
+// function: it computes and never writes into an operation. "Use calculated" copies rpm and feed into
+// Operation::cutting by a command; the panel compares them with what the operation holds. feeds.cpp states each
+// formula with its public source, each assumption as a named constant, and the order in which limits apply.
+//
+// Units: mm, m/min (surface speed), mm/min, rpm, cm3/min, kW, N m. A machine value of 0 is "not known": that limit is
+// skipped and reported Unknown (with a note), never read as a limit of zero.
+// Modes, from the tool type: Tapping (taps): feed = pitch x rpm exactly. Drilling (drills, spot drills, reamers,
+// boring bars, and any non-tap tool when opType is "drill"): feed = rpm x chip load x flutes, no chip thinning.
+// Milling (every other tool): feed = rpm x chip load x flutes x chip thinning factor.
+struct FeedsInput {
+    const lib::Tool& tool; const lib::Material& material; const lib::MachineDef& machine;
+    // Milling: width (ae) and depth (ap) of cut, mm; 0 = the preset's maxRadialFraction / maxAxialFraction of the
+    // diameter. Chamfer, engraving and spot tools: ap is the depth from the tool tip to the top of the cut. Drilling:
+    // ae is the radial stock per side when opening an existing hole (reaming, boring); 0 or at least the radius means
+    // solid drilling; ap is not used.
+    double radialEngagementMm, axialDepthMm;
+    std::string_view opType;                       // Operation::type
+    std::string_view opClass = {};                 // the preset's opClass; empty: chosen from the tool type and opType
+    std::optional<double> surfaceSpeedMMin = {};   // replaces the preset's surface speed, m/min
+    std::optional<double> chipLoadMm = {};         // replaces the preset's chip load per flute, mm (not for taps)
+};
+
+enum class FeedsMode : std::uint8_t { Milling, Drilling, Tapping };
+// How power and torque were estimated. lib::Material has no chip-thickness exponent mc, so every model uses kc1.1
+// flat, which reads low for chips thinner than 1 mm (feeds.cpp, kc model).
+enum class PowerModel : std::uint8_t {
+    Unknown,        // the material's kc1.1 is 0 (not known): power and torque are 0, their limits Unknown
+    MillingKc11,    // P = ae ap vf kc1.1
+    DrillingKc11,   // P = MRR kc1.1 (equal to vc f D kc / 240000 for solid drilling; an annulus when opening a hole)
+    TappingKc11     // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+};
+// One machine limit: the machine's value (0 = not known), what the cutting data asked for before this limit, and
+// what happened. Exceeded: the limit could not be met by changing rpm or feed (a tap's torque, a tap feed held up by
+// the minimum rpm); the result is still the best available and says so in a note.
+enum class LimitState : std::uint8_t { Unknown, NotReached, Applied, Exceeded };
+struct FeedsLimit { LimitState state = LimitState::Unknown; double machine = 0; double requested = 0; };
+
+struct FeedsResult {
+    // What to program: rpm is a whole number, feedMmMin is exactly feedMicronPerMin / 1000 (the toolpath feed).
+    double rpm = 0, feedMmMin = 0;
+    double chipLoadMm = 0;            // programmed feed per flute, feed / (rpm x flutes); 0 for taps
+    double effectiveChipLoadMm = 0;   // largest chip thickness that feed cuts: chipLoadMm / chipThinningFactor
+    double mrrCm3Min = 0;             // material removal rate (milling: ae ap vf, an upper bound for round tools)
+    double powerKw = 0;               // at the motor (tool wear factor and spindle efficiency included); 0 if unknown
+    double torqueNm = 0;              // at the spindle (tool wear factor included); 0 if unknown
+    bool limitedByRpm = false, limitedByPower = false, limitedByFeed = false;   // that limit lowered rpm or feed
+    // Added by T-048.
+    bool limitedByTorque = false, limitedByMinRpm = false;   // limitedByMinRpm: rpm raised to the machine minimum
+    std::int32_t feedMicronPerMin = 0;
+    FeedsMode mode = FeedsMode::Milling;
+    std::string opClass;              // the preset found; empty when there is none (the overrides gave the values)
+    double surfaceSpeedMMin = 0;      // asked for (preset or override)
+    double targetChipLoadMm = 0;      // asked for, per flute (preset or override); 0 for taps
+    double effectiveDiameterMm = 0;   // diameter in contact, which sets the rpm
+    double radialEngagementMm = 0, axialDepthMm = 0;   // as used (after the preset defaults for 0)
+    double radialThinningFactor = 1, leadThinningFactor = 1;   // fz / hex of each effect
+    double chipThinningFactor = 1;    // their product, at most feeds.cpp kMaxChipThinningFactor
+    bool thinningCapped = false;      // the product was larger and was capped
+    double actualSurfaceSpeedMMin = 0;   // at effectiveDiameterMm and the programmed rpm
+    double feedPerRevMm = 0;          // feed / rpm (taps: the pitch)
+    double cuttingPowerKw = 0;        // at the cutting edges (tool wear factor in), before spindle efficiency
+    PowerModel powerModel = PowerModel::Unknown;
+    bool tapFeedExact = true;         // taps: feedMicronPerMin x 1000 == pitch in nm x rpm, no rounding
+    struct Limits { FeedsLimit maxRpm, minRpm, maxFeed, power, torque; } limits;
+    std::vector<std::string> notes;   // user-presentable English, in a fixed order: defaults used, unknown limits, ...
+};
+// Errors: InvalidArgument for a tool without a positive diameter, flutes (not taps) or pitch (taps), an engagement
+// that is negative or not finite, a surface speed or chip load that is not positive, a machine whose minimum rpm is
+// above its maximum, or cutting data that give less than 1 rpm or a feed outside 1 um/min..2^31-1 um/min; NotFound
+// when the tool has no preset for the material and opClass and the overrides do not replace it.
+Result<FeedsResult> computeFeeds(const FeedsInput&);
 
 // ---------- Cycle time ----------
 struct CycleTime { double cutSec, rapidSec, toolChangeSec, totalSec; };

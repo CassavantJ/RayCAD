@@ -3,6 +3,7 @@ add_library(ray_cam STATIC
     cam_module.cpp
     engine.cpp   # ICamEngine, makeCamEngine (task T-032)
     setup.cpp    # resolveSetup, resolveSetupGeometry (task T-033)
+    feeds.cpp    # computeFeeds (task T-048)
     state.cpp    # OperationRegistry, operationInputHash (task T-032)
     state.h
     toolpath.cpp # Toolpath::serialize, deserialize, hash: the RCTP format

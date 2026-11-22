@@ -39,3 +39,9 @@ add_executable(ray_cam_toolpath_tests
 )
 target_link_libraries(ray_cam_toolpath_tests PRIVATE ray_cam ray_core Catch2::Catch2WithMain)
 ray_add_test(ray_cam_toolpath_tests)
+# Feeds and speeds (task T-048): computeFeeds on hand-made tools and machines, and on the shipped library
+# (resources/library, read through ILibrary).
+add_executable(ray_cam_feeds_tests feeds_test.cpp)
+target_link_libraries(ray_cam_feeds_tests PRIVATE ray_cam ray_lib ray_core Catch2::Catch2WithMain)
+target_compile_definitions(ray_cam_feeds_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+ray_add_test(ray_cam_feeds_tests)
