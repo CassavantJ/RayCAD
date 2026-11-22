@@ -222,6 +222,29 @@ struct Window {
         QTest::mouseDClick(window(), Qt::LeftButton, Qt::NoModifier, c.toPoint());
         QCoreApplication::processEvents();
     }
+    // A CAM tree row is clicked on its name, where a user clicks to select it: its tool buttons are at its right end
+    // (CamTree.qml), and a click at the row's centre could fall on one.
+    QPointF rowNameAt(const QString& rowObjectName) const
+    {
+        QQuickItem* row = shown(rowObjectName);
+        QQuickItem* name = findItem(row, QStringLiteral("camRowName"));
+        REQUIRE(name != nullptr);
+        const double w = std::min(name->width(), name->property("contentWidth").toDouble());
+        return name->mapToScene(QPointF(w / 2, name->height() / 2));
+    }
+    void clickRow(const QString& rowObjectName) const
+    {
+        grab();
+        clickScene(rowNameAt(rowObjectName));
+    }
+    void doubleClickRow(const QString& rowObjectName) const
+    {
+        grab();
+        const QPointF c = rowNameAt(rowObjectName);
+        sendMouse(QEvent::MouseMove, c, Qt::NoButton, Qt::NoButton);
+        QTest::mouseDClick(window(), Qt::LeftButton, Qt::NoModifier, c.toPoint());
+        QCoreApplication::processEvents();
+    }
     void typeInto(const QString& key, const QString& text) const
     {
         QQuickItem* field = shown(QStringLiteral("setupInput.") + key);
@@ -743,7 +766,7 @@ TEST_CASE("the live preview, picks, flips, editing, Esc, workspaces, undo and re
 
         // Edit it from the tree: double-click its row; the panel holds what the setup has.
         REQUIRE(QTest::qWaitFor([&] { return w.tree()->count() >= 1; }, 5000));
-        w.doubleClick(w.shown(QStringLiteral("setupRow.0")));
+        w.doubleClickRow(QStringLiteral("setupRow.0"));
         REQUIRE(QTest::qWaitFor([&] { return w.tool()->active() && w.tool()->editing(); }, 5000));
         CHECK(w.tool()->values().value(QStringLiteral("flipX")).toBool());
         CHECK(w.find(QStringLiteral("setupOk"))->property("text").toString() == QStringLiteral("Apply"));
@@ -832,8 +855,11 @@ TEST_CASE("the live preview, picks, flips, editing, Esc, workspaces, undo and re
     SECTION("closing the document while a preview is being made")
     {
         REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tool.newSetup")));
-        w.typeInto(QStringLiteral("zPos"), QStringLiteral("4"));
-        CHECK(w.tool()->previewBusy());
+        // A change whose preview is surely on its way when the document closes: set in the panel's model, which
+        // schedules the preview before anything else runs. (Typed keys left that to timing: the first preview could
+        // be done, or the keys lost to another program's window, by the time of the check.)
+        w.tool()->setValue(QStringLiteral("zPos"), QStringLiteral("4 mm"));
+        REQUIRE(w.tool()->previewBusy());
         api::OpenDocument* od = w.host->app()->active();
         REQUIRE(od != nullptr);
         REQUIRE(w.host->app()->close(*od));
@@ -1001,6 +1027,40 @@ TEST_CASE("status badges match the engine and follow model edits, undo and redo"
     w.waitStatus(0, "broken"); // the setup shows its worst operation
     CHECK(!w.tree()->get(4).value(QStringLiteral("message")).toString().isEmpty());
     CHECK(w.find(QStringLiteral("camRowDetails.4"))->isVisible()); // the reason under the row
+    // A row's tool buttons come up in its badge's place, at fixed places from its right end, while the pointer is on
+    // the row: the name keeps its place and its width, and no button lands on it, so the click the user aimed at the
+    // name selects the row (the setup, an operation, the suppressed one).
+    for (const char* rowName : {"setupRow.0", "operationRow.1", "operationRow.5"}) {
+        INFO("row " << rowName);
+        QQuickItem* row = w.shown(QLatin1String(rowName));
+        QQuickItem* name = Window::findItem(row, QStringLiteral("camRowName"));
+        const QString index = QString::fromLatin1(rowName).section(QLatin1Char('.'), 1);
+        QQuickItem* badge = w.find(QStringLiteral("camRowBadge.") + index);
+        QQuickItem* tools = w.find(QStringLiteral("camRowTools.") + index);
+        REQUIRE((name != nullptr && badge != nullptr && tools != nullptr));
+        const auto rect = [](QQuickItem* i) {
+            return i->mapRectToScene(QRectF(0, 0, i->width(), i->height()));
+        };
+        w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                    Qt::NoButton);
+        REQUIRE(QTest::qWaitFor([&] { return !row->property("hovered").toBool(); }, 5000));
+        CHECK(badge->isVisible());
+        const QRectF nameAway = rect(name), toolsAway = rect(tools);
+        CHECK_FALSE(rect(tools).intersects(nameAway));
+        const QPointF aim = w.rowNameAt(QLatin1String(rowName));
+        w.sendMouse(QEvent::MouseMove, aim, Qt::NoButton, Qt::NoButton);
+        REQUIRE(QTest::qWaitFor([&] { return row->property("hovered").toBool(); }, 5000));
+        CHECK(rect(name) == nameAway);
+        CHECK(rect(tools) == toolsAway);
+        CHECK_FALSE(badge->isVisible()); // the tools are in its place
+        for (QQuickItem* b : tools->childItems()) {
+            if (!b->isVisible() || b->opacity() == 0)
+                continue;
+            INFO("button " << b->objectName().toStdString());
+            CHECK_FALSE(rect(b).intersects(rect(name)));
+            CHECK_FALSE(rect(b).contains(aim));
+        }
+    }
     // Every badge is what the engine says.
     const auto engineSays = [&](std::uint64_t n) {
         const auto all = w.host->app()->cam()->status(w.document()->state(), w.document()->build());
@@ -1010,20 +1070,20 @@ TEST_CASE("status badges match the engine and follow model edits, undo and redo"
     CHECK(engineSays(5) == cam::OpStatus::Suppressed);
 
     // Generate operation 1 (the command on the current row): up to date.
-    w.click(w.shown(QStringLiteral("operationRow.1")));
+    w.clickRow(QStringLiteral("operationRow.1"));
     REQUIRE(w.tree()->currentIndex() == 1);
     REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tree.generate")));
     w.waitStatus(1, "upToDate");
     CHECK(engineSays(1) == cam::OpStatus::UpToDate);
     // Operation 3 fails, with the generator's message.
-    w.click(w.shown(QStringLiteral("operationRow.3")));
+    w.clickRow(QStringLiteral("operationRow.3"));
     REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tree.generate")));
     w.waitStatus(3, "failed");
     CHECK(w.tree()->get(3).value(QStringLiteral("message")).toString() == QStringLiteral("Test generator failed"));
     CHECK(engineSays(3) == cam::OpStatus::Failed);
     // Operation 2 waits at its gate: generating, with its progress, until the gate opens.
     ct::Gate::instance().open = false;
-    w.click(w.shown(QStringLiteral("operationRow.2")));
+    w.clickRow(QStringLiteral("operationRow.2"));
     REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tree.generate")));
     w.waitStatus(2, "generating");
     CHECK(engineSays(2) == cam::OpStatus::Generating);

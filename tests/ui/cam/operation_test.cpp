@@ -311,6 +311,29 @@ struct Window {
         QTest::mouseDClick(window(), Qt::LeftButton, Qt::NoModifier, c.toPoint());
         QCoreApplication::processEvents();
     }
+    // A CAM tree row is clicked on its name, where a user clicks to select it: its tool buttons are at its right end
+    // (CamTree.qml), and a click at the row's centre could fall on one.
+    QPointF rowNameAt(const QString& rowObjectName) const
+    {
+        QQuickItem* row = shown(rowObjectName);
+        QQuickItem* name = findItem(row, QStringLiteral("camRowName"));
+        REQUIRE(name != nullptr);
+        const double w = std::min(name->width(), name->property("contentWidth").toDouble());
+        return name->mapToScene(QPointF(w / 2, name->height() / 2));
+    }
+    void clickRow(const QString& rowObjectName) const
+    {
+        grab();
+        clickScene(rowNameAt(rowObjectName));
+    }
+    void doubleClickRow(const QString& rowObjectName) const
+    {
+        grab();
+        const QPointF c = rowNameAt(rowObjectName);
+        sendMouse(QEvent::MouseMove, c, Qt::NoButton, Qt::NoButton);
+        QTest::mouseDClick(window(), Qt::LeftButton, Qt::NoModifier, c.toPoint());
+        QCoreApplication::processEvents();
+    }
     void typeInto(const QString& objectName, const QString& text) const
     {
         QQuickItem* field = shown(objectName);
@@ -502,7 +525,7 @@ QString statusLine(const Window& w)
 // Opens the panel for a new operation from the setup's row in the tree, as the user does.
 void newOperation(const Window& w, int setupRow = 0)
 {
-    w.click(w.shown(QStringLiteral("setupRow.%1").arg(setupRow)));
+    w.clickRow(QStringLiteral("setupRow.%1").arg(setupRow));
     REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == setupRow; }, 5000));
     w.click(w.shown(QStringLiteral("camRowNewOperation.%1").arg(setupRow)));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, 5000));
@@ -1130,7 +1153,7 @@ TEST_CASE("editing an operation: the preview follows a parameter, relevance, Esc
     const std::size_t undoBefore = w.undoCount();
 
     // Double-click: the panel edits it, with its values.
-    w.doubleClick(w.shown(QStringLiteral("operationRow.%1").arg(row)));
+    w.doubleClickRow(QStringLiteral("operationRow.%1").arg(row));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active() && w.op()->editing(); }, 5000));
     CHECK(w.op()->title() == QStringLiteral("Edit Drill 1"));
     CHECK(w.find(QStringLiteral("operationChoice.type"))->isVisible() == false); // the type stays

@@ -22,6 +22,16 @@ Item {
         }
     }
 
+    // A row's tool button: in its place whether shown or not (`shown` only fades it in and lets it take clicks).
+    component RowTool: ToolButton {
+        property bool shown: true
+        anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+        compact: true
+        opacity: shown ? 1 : 0
+        enabled: shown
+        Accessible.ignored: !shown
+    }
+
     // The badge's colour: a dot beside the status text.
     function badgeColor(status) {
         return status === "upToDate" ? Theme.success
@@ -131,7 +141,9 @@ Item {
                             readonly property bool isSetup: rowKind === "setup"
                             readonly property bool current: CamTreeModel.currentIndex === index
                             readonly property bool bad: status === "failed" || status === "broken"
-                            readonly property bool hovered: mouse.containsMouse
+                            // Anywhere on the row, its tool buttons included (a passive handler, unlike the
+                            // MouseArea's own hover, which a button under the pointer takes).
+                            readonly property bool hovered: rowHover.hovered
                             property bool renaming: false
 
                             function startRename() {
@@ -170,6 +182,9 @@ Item {
                                 }
                             }
 
+                            HoverHandler {
+                                id: rowHover
+                            }
                             MouseArea {
                                 id: mouse
                                 anchors.fill: parent
@@ -250,63 +265,105 @@ Item {
                                     onActiveFocusChanged: if (!activeFocus && row.renaming) row.endRename()
                                 }
 
-                                Row {
-                                    id: marks
+                                // The right end of the row: the status badge, and in its place while the pointer is
+                                // on the row the row's tools (a new operation and Post for setups, T-045 and T-047;
+                                // move up and down; suppress for operations), each at a fixed place from the right
+                                // edge, kept while hidden (only its opacity changes). The slot is as wide as the wider
+                                // of the two whether or not the pointer is there, so the name never moves or shortens
+                                // when the tools appear, and no tool ever comes up under a name the pointer is on.
+                                Item {
+                                    id: slot
+                                    objectName: "camRowSlot." + row.index
                                     anchors.right: parent.right
                                     anchors.rightMargin: Theme.spacingS
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: Math.max(badge.implicitWidth, rowTools.implicitWidth)
+                                    height: Math.max(badge.implicitHeight, rowTools.implicitHeight)
+                                    visible: !row.renaming
+
+                                    // The badge: a dot in the status colour and the status.
+                                    Row {
+                                        id: badge
+                                        objectName: "camRowBadge." + row.index
+                                        visible: row.status !== "" && !row.hovered
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Theme.spacingXs
+                                        Rectangle {
+                                            width: Theme.spacingS
+                                            height: width
+                                            radius: width / 2
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: root.badgeColor(row.status)
+                                            Accessible.ignored: true
+                                        }
+                                        Text {
+                                            objectName: "camRowStatus"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: row.statusText
+                                            font: Theme.smallFont
+                                            color: row.bad ? Theme.error : Theme.textSecondary
+                                            textFormat: Text.PlainText
+                                        }
+                                    }
+                                    Row {
+                                        id: rowTools
+                                        objectName: "camRowTools." + row.index
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Theme.spacingXs
+
+                                        RowTool {
+                                            objectName: "camRowNewOperation." + row.index
+                                            visible: row.isSetup
+                                            shown: row.hovered
+                                            iconName: "plus"
+                                            toolTipText: qsTr("New operation in this setup (Shift+O)")
+                                            onClicked: CamOperation.startFor(row.rowId)
+                                        }
+                                        RowTool {
+                                            objectName: "camRowPost." + row.index
+                                            visible: row.isSetup
+                                            shown: row.hovered
+                                            iconName: "post"
+                                            toolTipText: qsTr("Post this setup (Ctrl+P)")
+                                            onClicked: CamPost.open(row.rowId)
+                                        }
+                                        RowTool {
+                                            objectName: "camRowUp." + row.index
+                                            shown: row.hovered && row.canMoveUp
+                                            iconName: "chevron-up"
+                                            toolTipText: qsTr("Move up")
+                                            onClicked: CamTreeModel.moveUp(row.index)
+                                        }
+                                        RowTool {
+                                            objectName: "camRowDown." + row.index
+                                            shown: row.hovered && row.canMoveDown
+                                            iconName: "chevron-down"
+                                            toolTipText: qsTr("Move down")
+                                            onClicked: CamTreeModel.moveDown(row.index)
+                                        }
+                                        RowTool {
+                                            objectName: "camRowSuppress." + row.index
+                                            visible: !row.isSetup
+                                            shown: row.hovered
+                                            iconName: "suppress"
+                                            checked: row.suppressed
+                                            toolTipText: row.suppressed ? qsTr("Unsuppress") : qsTr("Suppress (switch off)")
+                                            onClicked: CamTreeModel.setSuppressed(row.index, !row.suppressed)
+                                        }
+                                    }
+                                }
+
+                                // The warning mark, left of the badge's place: its tooltip says why the row failed.
+                                Row {
+                                    id: marks
+                                    anchors.right: slot.left
+                                    anchors.rightMargin: Theme.spacingXs
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: Theme.spacingXs
                                     visible: !row.renaming
 
-                                    // The row's tools while it is hovered: a new operation (setups, T-045), move up
-                                    // and down, delete.
-                                    ToolButton {
-                                        objectName: "camRowNewOperation." + row.index
-                                        visible: row.isSetup && (row.hovered || row.current)
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        compact: true
-                                        iconName: "plus"
-                                        toolTipText: qsTr("New operation in this setup")
-                                        onClicked: CamOperation.startFor(row.rowId)
-                                    }
-                                    // T-047: post the setup.
-                                    ToolButton {
-                                        objectName: "camRowPost." + row.index
-                                        visible: row.isSetup && (row.hovered || row.current)
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        compact: true
-                                        iconName: "post"
-                                        toolTipText: qsTr("Post this setup (Ctrl+P)")
-                                        onClicked: CamPost.open(row.rowId)
-                                    }
-                                    ToolButton {
-                                        objectName: "camRowUp." + row.index
-                                        visible: row.hovered && row.canMoveUp
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        compact: true
-                                        iconName: "chevron-up"
-                                        toolTipText: qsTr("Move up")
-                                        onClicked: CamTreeModel.moveUp(row.index)
-                                    }
-                                    ToolButton {
-                                        objectName: "camRowDown." + row.index
-                                        visible: row.hovered && row.canMoveDown
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        compact: true
-                                        iconName: "chevron-down"
-                                        toolTipText: qsTr("Move down")
-                                        onClicked: CamTreeModel.moveDown(row.index)
-                                    }
-                                    ToolButton {
-                                        objectName: "camRowSuppress." + row.index
-                                        visible: !row.isSetup && (row.hovered || row.suppressed)
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        compact: true
-                                        iconName: "suppress"
-                                        checked: row.suppressed
-                                        toolTipText: row.suppressed ? qsTr("Unsuppress") : qsTr("Suppress (switch off)")
-                                        onClicked: CamTreeModel.setSuppressed(row.index, !row.suppressed)
-                                    }
                                     Item {
                                         id: warning
                                         objectName: "camRowWarning." + row.index
@@ -327,29 +384,6 @@ Item {
                                         HoverToolTip {
                                             target: warning
                                             text: row.message !== "" ? row.message : row.statusText
-                                        }
-                                    }
-                                    // The badge: a dot in the status colour and the status.
-                                    Row {
-                                        objectName: "camRowBadge." + row.index
-                                        visible: row.status !== ""
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        spacing: Theme.spacingXs
-                                        Rectangle {
-                                            width: Theme.spacingS
-                                            height: width
-                                            radius: width / 2
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            color: root.badgeColor(row.status)
-                                            Accessible.ignored: true
-                                        }
-                                        Text {
-                                            objectName: "camRowStatus"
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: row.statusText
-                                            font: Theme.smallFont
-                                            color: row.bad ? Theme.error : Theme.textSecondary
-                                            textFormat: Text.PlainText
                                         }
                                     }
                                 }
