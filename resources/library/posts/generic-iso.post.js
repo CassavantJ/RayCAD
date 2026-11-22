@@ -29,7 +29,7 @@
 //  - Program end: Z to machine zero first, spindle and coolant off, optional XY return, M30 [N 3.6.1].
 //
 // G AND M WORDS THIS POST CAN WRITE (for the independent G-code reader, T-043)
-//  G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G53 G54..G59 G59.1 G59.2 G59.3 G80 G81 G82 G83 G84 G85
+//  G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G49 G53 G54..G59 G59.1 G59.2 G59.3 G80 G81 G82 G83 G84 G85
 //  G89 G90 G91 G94 G98 G99; M1 M3 M4 M5 M6 M30 and the coolant codes of property coolantCodes (default M7 M8 M9).
 //  Other words: N O T S F H D X Y Z I J K R Q P, comments in ( ), "%" at start and end.
 
@@ -144,6 +144,10 @@ definePost({
     toolChangeRetract: { type: "enum", title: "Retract before tool change", default: "G53", values: ["G53", "G28", "none"],
       group: "Tool change", description: "G0 G53 Z0. (machine zero, Z only [N 3.5.12]), G91 G28 Z0. then G90 (home " +
         "position by way of the current point [N 3.5.8]; on some controls G28 homes every axis), or nothing." },
+    m6LeavesZRetracted: { type: "bool", title: "M6 leaves Z retracted (allows retract none)", default: false,
+      group: "Tool change", description: "Set this only if the machine's tool change always ends with Z at the "
+        + "tool-change height. With toolChangeRetract none the post moves X/Y right after M6 at whatever height M6 "
+        + "left the spindle; without this assurance it refuses none." },
     endRetract: { type: "enum", title: "Retract at program end", default: "G53", values: ["G53", "G28"],
       group: "Program end" },
     endPosition: { type: "enum", title: "After the Z retract", default: "zOnly", values: ["zOnly", "zThenY", "zThenXY"],
@@ -166,6 +170,13 @@ definePost({
     this.arcFormat = p.arcFormat;
     this.dwellUnits = p.dwellUnits;
     this.wcs = this.wcsCode(ctx.workOffset, out);
+    // toolChangeRetract none is accepted only when the user asserts that M6 leaves Z retracted: otherwise the first X/Y
+    // move after a tool change would run at an unknown height (RS274/NGC's M6 leaves the axes where they are [N 3.6.3]).
+    if (p.toolChangeRetract === "none" && !p.m6LeavesZRetracted) {
+      out.fail("post property toolChangeRetract is none, but nothing says the machine's M6 leaves Z retracted: the "
+        + "first X/Y move after a tool change would run at an unknown height. Choose a retract, or set the post "
+        + "property m6LeavesZRetracted if the machine's tool change always ends with Z up");
+    }
     this.toolLoaded = false;
     this.spindle = null;
     this.rpm = 0;
@@ -489,8 +500,19 @@ definePost({
       this.needSpindle("drilling cycle", out);
     }
     const words = { Z: out.word("Z", c.bottom), R: out.word("R", c.retract), Q: peckWord, P: dwellWord };
-    if (this.cycleActive && c.first && !sameCycleShape(this.cycle, code, words)) {
-      // Another cycle code inside a run: G80, back up to the initial level, then the new cycle.
+    // A G98 hole after G99 holes of the same run: RS274/NGC's G98 returns to the Z "just before the canned cycle
+    // started" [N 3.5.20], which one reading (the example of N 3.5.16.2) takes per block: that would be the previous
+    // hole's R plane, not the clearance the toolpath asks for. So the run is ended, Z goes up to the clearance, and
+    // the cycle starts again there; both readings then return to the clearance.
+    // G84, G85 and G89 feed all the way out to the clear level [N 3.5.16.5, 3.5.16.6, 3.5.16.10], so with G98 they
+    // would feed up to the clearance where the toolpath feeds out to R and rapids on. These holes are posted with G99
+    // and followed by G80 and a rapid up to the clearance (the toolpath's motion exactly), and no G98 is written.
+    const feedOut = code === "G84" || code === "G85" || code === "G89";
+    const upAfter = feedOut && c.returnLevel === "clearance";
+    const retWord = c.returnLevel === "clearance" && !feedOut ? "G98" : "G99";
+    const lowG98 = this.cycleActive && retWord === "G98" && !near(this.pos.z, c.clearance);
+    if (this.cycleActive && (lowG98 || (c.first && !sameCycleShape(this.cycle, code, words)))) {
+      // Another cycle code inside a run, or the G98 case above: G80, back up to the initial level, then the cycle.
       out.block(out.modal("cycle", "G80"));
       out.resetModal("motion", "Z");
       if (!near(this.pos.z, c.clearance)) out.block(out.modal("motion", "G0"), out.axis("Z", c.clearance));
@@ -500,17 +522,24 @@ definePost({
     if (!this.cycleActive) {
       out.resetModal("cycle", "return", "feed");
       // G98 back to the initial level, G99 to the R plane, per hole [N 3.5.20]; X and Y always.
-      out.block(out.modal("plane", "G17"), out.modal("return", c.returnLevel === "clearance" ? "G98" : "G99"),
-        out.modal("cycle", code), out.axis("X", c.x) || out.word("X", c.x), out.axis("Y", c.y) || out.word("Y", c.y),
-        words.Z, words.R, words.Q, words.P, feed());
+      out.block(out.modal("plane", "G17"), out.modal("return", retWord), out.modal("cycle", code),
+        out.axis("X", c.x) || out.word("X", c.x), out.axis("Y", c.y) || out.word("Y", c.y), words.Z, words.R, words.Q,
+        words.P, feed());
       this.cycleActive = true;
     } else {
-      // Later holes: the position and the words that changed; Z and R are sticky, the others stay in force [N 3.5.16].
+      // Later holes: the position, Z and R when they change (only R and Z are sticky [N 3.5.16]), and Q and P on
+      // every block (required items of G83, G82 and G89 [N 3.5, 3.5.16.3-4, 3.5.16.10]).
       let x = out.axis("X", c.x);
       let y = out.axis("Y", c.y);
       if (x === null && y === null) { x = out.word("X", c.x); y = out.word("Y", c.y); }
-      out.block(out.modal("return", c.returnLevel === "clearance" ? "G98" : "G99"), x, y,
-        ...changedCycleWords(this.cycle, words), feed());
+      const changed = changedCycleWords(this.cycle, { Z: words.Z, R: words.R });
+      out.block(out.modal("return", retWord), x, y, ...changed, words.Q, words.P, feed());
+    }
+    if (upAfter) {
+      out.block(out.modal("cycle", "G80"));
+      out.resetModal("motion", "Z", "feed", "return");
+      out.block(out.modal("motion", "G0"), out.axis("Z", c.clearance));
+      this.cycleActive = false;
     }
     this.cycle = { code: code, words: words };
     this.pos = { x: c.x, y: c.y, z: c.returnLevel === "clearance" ? c.clearance : c.retract };

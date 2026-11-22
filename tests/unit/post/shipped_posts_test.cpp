@@ -420,6 +420,13 @@ TEST_CASE("shipped posts: refusals and warnings name their cause", "[post][shipp
          "-hand tap",
          false},
         {"peck clearance in the IR", [](Program&) {}, {}, "peck clearance", true}, // drill_chipbreak has 0.3 mm
+        // FANUC and generic: no retract before M6 only with the user's assertion that M6 leaves Z retracted (the Haas
+        // posts accept none: Haas M06 retracts Z itself [H1 p.19]).
+        {"retract none, M6 not asserted",
+         [](Program&) {},
+         {{"toolChangeRetract", "none"}},
+         "m6LeavesZRetracted",
+         false},
     };
     for (const char* id : kPosts) {
         for (const Case& c : cases) {
@@ -444,8 +451,22 @@ TEST_CASE("shipped posts: refusals and warnings name their cause", "[post][shipp
                 CHECK(out.error().message.find("left-hand") != std::string::npos);
                 continue;
             }
+            if (std::string(c.what) == "retract none, M6 not asserted" && std::string(id).rfind("haas", 0) == 0) {
+                REQUIRE(out.has_value());
+                continue;
+            }
             REQUIRE_FALSE(out.has_value());
             CHECK(out.error().message.find(c.message) != std::string::npos);
         }
+    }
+    // With the assertion, FANUC and generic post the program without a retract before M6.
+    for (const char* id : {"fanuc", "generic-iso"}) {
+        INFO(id);
+        Program p = realistic();
+        p.machine = machineFor(id);
+        p.properties = {{"toolChangeRetract", "none"}, {"m6LeavesZRetracted", "true"}};
+        const auto out = postRun(id, p);
+        REQUIRE(out.has_value());
+        CHECK(out->text.find("T1 M6") != std::string::npos);
     }
 }

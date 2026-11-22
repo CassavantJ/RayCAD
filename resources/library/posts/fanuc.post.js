@@ -34,7 +34,7 @@
 //  - Program end: Z to the reference position first, spindle and coolant off, then the optional XY return, M30.
 //
 // G AND M WORDS THIS POST CAN WRITE (for the independent G-code reader, T-043)
-//  G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G53 G54..G59 G54.1 G73 G74 G80 G81 G82 G83 G84 G85 G89
+//  G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G49 G53 G54..G59 G54.1 G73 G74 G80 G81 G82 G83 G84 G85 G89
 //  G90 G91 G94 G98 G99; M3 M4 M5 M6 M29 M30 and the coolant codes of property coolantCodes (default M7 M8 M9),
 //  M1 with optionalStop. Other words: N O T S F H D X Y Z I J K R Q P, comments in ( ), "%" at start and end.
 
@@ -160,6 +160,10 @@ definePost({
     toolChangeRetract: { type: "enum", title: "Retract before tool change", default: "G28", values: ["G28", "G53", "none"],
       group: "Tool change", description: "G91 G28 Z0. (reference position, then G90), G0 G53 Z0. (machine zero), or " +
         "nothing when the builder's M6 macro retracts Z itself." },
+    m6LeavesZRetracted: { type: "bool", title: "M6 leaves Z retracted (allows retract none)", default: false,
+      group: "Tool change", description: "Set this only if the machine's tool change always ends with Z at the "
+        + "tool-change height. With toolChangeRetract none the post moves X/Y right after M6 at whatever height M6 "
+        + "left the spindle; without this assurance it refuses none." },
     endRetract: { type: "enum", title: "Retract at program end", default: "G28", values: ["G28", "G53"],
       group: "Program end" },
     endPosition: { type: "enum", title: "After the Z retract", default: "zOnly", values: ["zOnly", "zThenY", "zThenXY"],
@@ -192,6 +196,13 @@ definePost({
     this.arcFormat = p.arcFormat;
     this.dwellUnits = p.dwellUnits;
     this.wcs = this.wcsCode(ctx.workOffset, out);
+    // toolChangeRetract none is accepted only when the user asserts that M6 leaves Z retracted: otherwise the first X/Y
+    // move after a tool change would run at an unknown height (the builder's M6 macro decides [F1, unverified]).
+    if (p.toolChangeRetract === "none" && !p.m6LeavesZRetracted) {
+      out.fail("post property toolChangeRetract is none, but nothing says the machine's M6 leaves Z retracted: the "
+        + "first X/Y move after a tool change would run at an unknown height. Choose a retract, or set the post "
+        + "property m6LeavesZRetracted if the machine's tool change always ends with Z up");
+    }
     this.toolLoaded = false;
     this.spindle = null;          // "M3" | "M4" while turning
     this.rpm = 0;
@@ -546,9 +557,14 @@ definePost({
       this.needSpindle("drilling cycle", out);
     }
     const words = { Z: out.word("Z", c.bottom), R: out.word("R", c.retract), Q: peckWord, P: dwellWord };
-    if (this.cycleActive && c.first && !sameCycleShape(this.cycle, code, words)) {
-      // Another cycle code (or a word dropped) inside a run: cancel, and go back up to the initial level first, so
-      // that the control's initial level is the clearance again when the new cycle starts.
+    // A G98 hole after G99 holes of the same run. FANUC's G98 returns to the initial level, the Z where the cycle
+    // started [F1, unverified]; as the manual could not be read, the post does not rely on it: the run is ended, Z
+    // goes up to the clearance and the cycle starts again there, which gives the clearance on any reading of G98
+    // (RS274/NGC's text can be read per block [N 3.5.20, 3.5.16.2]).
+    const lowG98 = this.cycleActive && c.returnLevel === "clearance" && !near(this.pos.z, c.clearance);
+    if (this.cycleActive && (lowG98 || (c.first && !sameCycleShape(this.cycle, code, words)))) {
+      // Another cycle code (or a word dropped) inside a run, or the G98 case above: cancel, and go back up to the
+      // initial level first, so that the control's initial level is the clearance again when the cycle restarts.
       out.block(out.modal("cycle", "G80"));
       out.resetModal("motion", "Z");
       if (!near(this.pos.z, c.clearance)) out.block(out.modal("motion", "G0"), out.axis("Z", c.clearance));

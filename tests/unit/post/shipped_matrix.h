@@ -159,7 +159,7 @@ inline Program helical()
     m.push_back(arc(false, mm(20), mm(25), -3'500'000, mm(20), mm(20), 0, f)); // flat full circle at the bottom
     m.push_back(dwell(500));                                                   // half a second there (G4)
     m.push_back(linear(mm(20), mm(20), -3'500'000, f));                        // to the centre
-    m.push_back(rapid(mm(20), mm(25), mm(5)));
+    m.push_back(rapid(mm(20), mm(20), mm(5))); // straight up out of the bore, as an operation retracts
     m.push_back(rapid(mm(40), mm(30), mm(5)));
     m.push_back(linear(mm(40), mm(30), 0, mmPerMin(200), MoveRole::Plunge));
     // XZ helix: a half circle in X and Z about (45, -, 0) while Y moves 2 mm.
@@ -534,7 +534,8 @@ inline std::vector<Extra> extras()
          },
          {{"peckReduction", "true"}}},
         {"haas-ngc", "32-arcs-r", arcsXY, {{"arcFormat", "R"}}},
-        {"haas-classic", "30-g187-smoothing", realistic, {{"smoothing", "finish"}}},
+        // The classic control documents G187 with E only: E is written, the level is warned about and not posted.
+        {"haas-classic", "30-g187-smoothing", realistic, {{"smoothing", "finish"}, {"smoothingCorner", "0.05"}}},
         {"haas-classic",
          "31-peck-ijk",
          [] {
@@ -692,7 +693,16 @@ inline std::vector<std::map<std::string, std::string>> pairwiseCombinations(cons
             values = {"0.25", "0.5"};
         }
     }
-    return pairwise(params);
+    auto combos = pairwise(params);
+    // toolChangeRetract = none is refused unless m6LeavesZRetracted asserts that the machine's M6 leaves Z up (FANUC,
+    // generic): such combinations carry the assertion. The refusal itself is a case of the refusal test.
+    for (auto& c : combos) {
+        const auto retract = c.find("toolChangeRetract");
+        if (retract != c.end() && retract->second == "none" && c.count("m6LeavesZRetracted") == 1) {
+            c["m6LeavesZRetracted"] = "true";
+        }
+    }
+    return combos;
 }
 
 } // namespace ray::post::test::shipped

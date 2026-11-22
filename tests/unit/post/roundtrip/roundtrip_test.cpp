@@ -225,33 +225,6 @@ struct Known {
 
 const std::vector<Known>& knownFindings()
 {
-    // F1: the generic post's G98 on a hole after a G99 hole of the same run.
-    static const char* const kG98 =
-        "RS274/NGC G98 returns to the Z the axis was at just before the canned cycle started, if above R [N 3.5.20; "
-        "N 3.5.16 'clear Z'; the example of N 3.5.16.2 takes old Z as the Z before the block]. After a G99 hole that "
-        "Z is the previous R plane, so the G98 hole goes back to R, not to the initial level cam.h's cycleReturn = "
-        "Initial asks for, and the tool travels to the next hole (or into G28) at R where the toolpath travels at the "
-        "clearance. FANUC and Haas return to the initial level. The NIST text can be read per run instead; a control "
-        "reading it per block (as its example does) runs this program lower than the toolpath.";
-    // F2: the generic post's repeated cycle blocks without Q or P.
-    static const char* const kSticky =
-        "RS274/NGC names only R and Z as sticky in canned cycles [N 3.5.16]; Q (G83) and P (G82, G89) are required "
-        "items of every cycle block [N 3.5: 'Any items in the command prototypes not explicitly described as "
-        "optional are required']. The generic post leaves them off repeated blocks (docs/post_review/generic-iso.md "
-        "note 6 itself cites only Z and R as sticky). A strict RS274/NGC control alarms on these blocks.";
-    // F3: the matrix's helical program.
-    static const char* const kHelix =
-        "The rapid leaves the bore at the centre of a helix diagonally (X/Y and Z together, from Z-3.5 up to Z5). "
-        "The post copies the toolpath's rapid faithfully (tests/unit/post/shipped_matrix.h helical(): rapid(20, 25, "
-        "5) right after the line to the centre); the hazard is in the hand-built toolpath, and on a FANUC with "
-        "non-linear rapid positioning [F1, unverified] Y may arrive before Z has left the bore. No gouge in this "
-        "geometry (the 8 mm tool's edge reaches the line of the 18 mm bore's wall only above the part); a post or "
-        "the host could split a rising diagonal rapid into Z first.";
-    // F4: G187 P on the classic control.
-    static const char* const kG187 =
-        "The Haas classic post writes G187 P3; H1 p.17 lists G187 for the classic control with E only "
-        "(docs/post_review/haas-classic.md marks P unverified). The interpreter, configured from that citation, "
-        "does not know P on G187 for this control.";
     // F5: FANUC with toolChangeRetract = none, at the first tool change.
     static const char* const kNoRetract =
         "With toolChangeRetract = none the FANUC and generic posts write no retract before the first M6, so the first "
@@ -263,37 +236,8 @@ const std::vector<Known>& knownFindings()
     static const std::vector<Known> k = {
         {"fanuc", "pairwise", "rt-unsafe-rapid", "at Z unknown", kNoRetract},
         {"fanuc", "pairwise", "safety-xy-rapid-z-unknown", "G17 X0", kNoRetract},
-        {"generic-iso", "09-spot-drill", "rt-cycle-return", "", kG98},
-        {"generic-iso", "09-spot-drill", "rt-unsafe-rapid", "moves X/Y at Z 2", kG98},
-        {"generic-iso", "10-drill-dwell", "rt-cycle-return", "", kG98},
-        {"generic-iso", "10-drill-dwell", "rt-unsafe-rapid", "moves X/Y at Z 2", kG98},
-        {"generic-iso", "11-peck", "rt-cycle-return", "", kG98},
-        {"generic-iso", "13-bore", "rt-cycle-return", "", kG98},
-        {"generic-iso", "14-ream", "rt-cycle-return", "", kG98},
-        {"generic-iso", "15-tap", "rt-cycle-return", "", kG98},
-        {"generic-iso", "20-realistic", "rt-cycle-return", "", kG98},
-        {"generic-iso", "20-realistic", "rt-unsafe-rapid", "moves X/Y at Z 2", kG98},
-        {"generic-iso", "31-dwell-ms-g28", "rt-cycle-return", "", kG98},
-        {"generic-iso", "31-dwell-ms-g28", "rt-unsafe-rapid", "G28", kG98},
-        {"generic-iso", "pairwise", "rt-cycle-return", "", kG98},
-        {"generic-iso", "pairwise", "rt-unsafe-rapid", "moves X/Y at Z 2", kG98},
         {"generic-iso", "pairwise", "rt-unsafe-rapid", "at Z unknown", kNoRetract},
         {"generic-iso", "pairwise", "safety-xy-rapid-z-unknown", "G17 X0", kNoRetract},
-        {"generic-iso", "10-drill-dwell", "cycle-sticky", "", kSticky},
-        {"generic-iso", "11-peck", "cycle-sticky", "", kSticky},
-        {"generic-iso", "13-bore", "cycle-sticky", "", kSticky},
-        {"generic-iso", "16-cycle-change", "cycle-sticky", "", kSticky},
-        {"generic-iso", "20-realistic", "cycle-sticky", "", kSticky},
-        {"generic-iso", "31-dwell-ms-g28", "cycle-sticky", "", kSticky},
-        {"generic-iso", "pairwise", "cycle-sticky", "", kSticky},
-        {"generic-iso", "03-helical", "safety-xy-rapid-in-cut", "", kHelix},
-        {"generic-iso", "32-helical-dwell-ms", "safety-xy-rapid-in-cut", "", kHelix},
-        {"fanuc", "03-helical", "safety-xy-rapid-in-cut", "", kHelix},
-        {"fanuc", "32-g53-dwell-x-style-one", "safety-xy-rapid-in-cut", "", kHelix},
-        {"haas-ngc", "03-helical", "safety-xy-rapid-in-cut", "", kHelix},
-        {"haas-classic", "03-helical", "safety-xy-rapid-in-cut", "", kHelix},
-        {"haas-classic", "30-g187-smoothing", "word-context", "G187 P", kG187},
-        {"haas-classic", "pairwise", "word-context", "G187 P", kG187},
     };
     return k;
 }

@@ -53,8 +53,8 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | 06-coolant | the coolant modes | through/air codes set by the golden's properties (examples only) |
 | 07-names | sanitising | `O0042`, characters replaced by spaces, upper case |
 | 08-sequence-numbers | N on every block | |
-| 09-spot-drill .. 14-ream | G81, G82, G83, G73 expanded, G89, G85 | 12: no G73, plain G0/G1 moves with 0.3 mm back-offs (the IR's value) |
-| 15-tap | right-hand G84 only | M3 before G84; F = pitch x rpm |
+| 09-spot-drill .. 14-ream | G81, G82, G83, G73 expanded, G89, G85 | 12: no G73, plain G0/G1 moves with 0.3 mm back-offs (the IR's value); a G98 hole after G99 holes: G80, `G0 Z35.`, the cycle again with G98; Q and P on every block; G89/G85 holes that return to the clearance: G99, then G80 and `G0 Z35.` |
+| 15-tap | right-hand G84 only | M3 before G84; F = pitch x rpm; the last hole G99 then G80 and `G0 Z35.` |
 | 16-cycle-change | G81, G82, G82 deeper with another R, G81 in one run | the code changes restart from the clearance |
 | 20-realistic | the whole program | chip break expanded |
 | 30-arcs-r | R format | |
@@ -86,16 +86,36 @@ Each file exists as `_mm.nc` and `_inch.nc`.
    time differs.
 4. G84 and G83 have no dwell word in RS274/NGC: a dwell there is warned about and not posted.
 5. Coolant codes for through-spindle and air are not standard.
-6. Canned cycles inside one run: later holes write X/Y and only the cycle words that changed (Z and R are "sticky",
-   N 3.5.16); a change of the cycle G code inside a run is written as G80, a rapid back up to the clearance, and the
-   new cycle, so that the initial level (G98) is never lowered.
+6. Canned cycles inside one run (changed after the T-043 round trip, findings F1 and F2):
+   - Later holes write X/Y, Z and R only when they change (the only "sticky" numbers, N 3.5.16), and Q and P on every
+     block (required items of G83, G82 and G89, N 3.5).
+   - G98 is written only where its meaning cannot be in doubt. N 3.5.20 returns to the Z "just before the canned cycle
+     started"; read per block (as the example of N 3.5.16.2 does), a G98 hole after G99 holes would return only to the
+     previous R plane. So a hole that needs the initial level after a lower one ends the run: G80, `G0 Z<clearance>`,
+     and the cycle starts again there.
+   - G84, G85 and G89 feed out all the way to the clear level (N 3.5.16.5, .6, .10), which with G98 would mean feeding up
+     to the clearance. Those holes are posted with G99 and followed by G80 and `G0 Z<clearance>`: the toolpath's motion
+     exactly. No G98 is written for them.
+   - A change of the cycle G code inside a run is written as G80, a rapid back up to the clearance and the new cycle.
+7. Tool change without a retract (toolChangeRetract = none) is refused unless the property m6LeavesZRetracted states
+   that the machine's M6 leaves Z at the tool-change height: RS274/NGC's M6 leaves the axes where they are (N 3.6.3), so
+   the first X/Y move after it would otherwise run at an unknown height (T-043 finding F5). With the assertion the
+   program is posted; the round trip still reports the X/Y move at an unknown Z, as it cannot know what M6 does.
 
 ## G and M words this post can write (for T-043)
 
-G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G53 G54 G55 G56 G57 G58 G59 G59.1 G59.2 G59.3 G80 G81 G82
+G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G49 G53 G54 G55 G56 G57 G58 G59 G59.1 G59.2 G59.3 G80 G81 G82
 G83 G84 G85 G89 G90 G91 G94 G98 G99; M1 M3 M4 M5 M6 M30 and the codes of coolantCodes (default M7 M8 M9). Other
 words: N O T S F H D X Y Z I J K R Q P, comments, `%`. Forms: `G0 G53 Z0.` (machine coordinates), `G91 G28 Z0.`
 (home through the current point), `G4 P<seconds>` or `P<integer ms>`, G82/G89 P in the same unit.
+
+## Round-trip findings (T-043)
+
+The independent interpreter (tests/unit/post/roundtrip) reported, and the post now answers: F1 G98 after G99 in one
+run, and G98 on feed-out cycles (note 6); F2 Q and P left off repeated blocks (note 6); F5 retract none (note 7, the
+pairwise cases with the assertion stay listed in the round trip's known findings). F4, the diagonal rapid out of the
+helix bore, was the hand-built test toolpath's own move; `helical()` in tests/unit/post/shipped_matrix.h now retracts
+straight up.
 
 ## Questions for the owner
 

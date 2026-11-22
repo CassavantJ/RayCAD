@@ -64,7 +64,7 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | 06-coolant | flood, mist, through, air, off on one tool, then a new tool | the codes come from coolantCodes set to `through=M88/M89 air=M83/M84` for this golden: those two are examples, not FANUC codes |
 | 07-names | program 42 with characters no control accepts | `O0042`; parentheses, `;`, `%`, `[ ]`, non-ASCII turned into spaces; upper case |
 | 08-sequence-numbers | N numbers on every block | N10, N20...; `%`, O line and comments without N |
-| 09-spot-drill | G81 over eight holes with different depths; R changes on a step | the first hole a full block (G98/G99, X, Y, Z, R, F); later holes only X/Y and the words that change (Z, R); G98 on the hole before the step and on the last hole; G80 at the end |
+| 09-spot-drill | G81 over eight holes with different depths; R changes on a step | the first hole a full block (G98/G99, X, Y, Z, R, F); later holes only X/Y and the words that change (Z, R); the G98 holes (before the step, the last) after G99 holes: G80, `G0 Z35.`, a full G81 block with G98 (note 10); G80 at the end |
 | 10-drill-dwell | G82 with 0.3 s | `P300` (milliseconds) |
 | 11-peck | G83, Q3 | Q in program units; G98 on the last hole |
 | 12-chip-break | G73, Q1.5; the IR's 0.3 mm back-off | a warning (parameter 5114), no word for it |
@@ -115,10 +115,18 @@ Each file exists as `_mm.nc` and `_inch.nc`.
    (G98) is where the cycle started, the clearance. When the cycle G code itself changes inside a run (G81 to G82,
    say), the post writes G80, rapids back up to the clearance and starts the new cycle there, so that the initial
    level is never lowered to an R plane.
+10. G98 after G99 holes in one run (T-043 finding F1, raised for the generic post): FANUC returns to the initial level
+    of the cycle, but as the manual could not be read the post does not rely on it. A hole that needs the initial level
+    after a lower hole ends the run (G80), rapids to the clearance and starts the cycle again, which is right on any
+    reading of G98. (The Haas posts do not do this: the Haas workbook documents the return to the Z "when the canned
+    cycle was first defined" with exactly this G99-then-G98 example, H1 p.74.)
+11. toolChangeRetract = none is refused unless the property m6LeavesZRetracted states that the builder's M6 leaves Z at
+    the tool-change height (T-043 finding F5): otherwise the first X/Y move after the tool change would run at an
+    unknown height. With the assertion the round trip still reports that move (it cannot know what M6 does).
 
 ## G and M words this post can write (for T-043)
 
-G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G53 G54 G55 G56 G57 G58 G59 G54.1 G73 G74 G80 G81 G82 G83
+G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G49 G53 G54 G55 G56 G57 G58 G59 G54.1 G73 G74 G80 G81 G82 G83
 G84 G85 G89 G90 G91 G94 G98 G99; M1 M3 M4 M5 M6 M29 M30 and the codes of coolantCodes (default M7 M8 M9).
 Other words: N O T S F H D X Y Z I J K R Q P, comments in parentheses, `%` lines. Forms: `G91 G28 Z0.` and
 `G91 G28 Y0.` / `X0. Y0.` (reference return through the current point; not a move to work zero), `G0 G53 Z0.`

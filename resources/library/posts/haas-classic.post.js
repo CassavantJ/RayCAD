@@ -12,8 +12,8 @@
 //       rough/medium/finish smoothness, E = maximum corner rounding (overrides Setting 85), G187 alone returns to
 //       Setting 191's default, M30 or reset cancels the E value. Treat G187 as [H2, partly verified]. On the
 //       classic control the workbook lists G187 with E only ("Accuracy Control for High Speed Machining (E)"
-//       [H1 p.17]); the P smoothness levels need a later classic software version: UNVERIFIED for this control,
-//       so smoothing is off by default and the property says so.
+//       [H1 p.17], E range 0.0001-0.25 [H1 p.25]). So this post writes G187 with E only (property
+//       smoothingCorner) and never the P levels; a smoothing level asked for is not posted, with a warning.
 //  [N]  T. Kramer et al., "The NIST RS274NGC Interpreter - Version 3", NISTIR 6556, NIST, 2000, for the common
 //       meaning of words Haas shares with RS-274.
 //
@@ -110,6 +110,9 @@ function arcPieces(m, start, n) {
 }
 
 const CONTROL = "Haas classic control";
+// Whether the control takes G187 P1/P2/P3 smoothness levels [H2] (the classic post sets this false: its workbook
+// documents G187 with E only [H1 p.17]).
+const G187_LEVELS = false;
 
 definePost({
   title: "Haas mill, classic control (pre-NGC)",
@@ -155,8 +158,8 @@ definePost({
         "(option), M83/M84 auto air jet (option) [H1 p.20-21]. The code list has no mist code: set one if the machine " +
         "has it." },
     smoothing: { type: "enum", title: "G187 smoothing", default: "off", values: ["off", "rough", "medium", "finish"],
-      group: "Motion", description: "G187 P1/P2/P3 at the start of the program; off leaves the control alone. The classic " +
-        "control documents G187 E [H1 p.17]; the P levels need a later software version [unverified]." },
+      group: "Motion", description: "Not posted on this control: it documents G187 with E only [H1 p.17] (use smoothingCorner " +
+        "for G187 E, or Setting 191). A level other than off gives a warning." },
     smoothingCorner: { type: "number", title: "G187 corner rounding (mm)", default: 0, min: 0, max: 6.35, group: "Motion",
       description: "G187 E, the maximum corner rounding, in mm (written in the program's units; the E range is 0.0001 " +
         "to 0.25 in [H1 p.25]). 0 = no E word." },
@@ -231,12 +234,23 @@ definePost({
     }
     out.block(out.modal("units", this.units));
     out.block(out.modal("plane", "G17"), "G40", "G49", "G80", out.modal("distance", "G90"), "G94");
-    if (this.smoothing !== "off") {
-      const level = { rough: "P1", medium: "P2", finish: "P3" }[this.smoothing];
-      const corner = p.smoothingCorner > 0
-        ? out.word("E", this.inch ? p.smoothingCorner / 25.4 : p.smoothingCorner, { decimals: this.inch ? 4 : 3 })
-        : null;
-      out.block("G187", level, corner);
+    const corner = p.smoothingCorner > 0
+      ? out.word("E", this.inch ? p.smoothingCorner / 25.4 : p.smoothingCorner, { decimals: this.inch ? 4 : 3 })
+      : null;
+    this.g187Written = false;
+    if (G187_LEVELS) {
+      if (this.smoothing !== "off") {
+        out.block("G187", { rough: "P1", medium: "P2", finish: "P3" }[this.smoothing], corner);
+        this.g187Written = true;
+      }
+    } else {
+      // This control documents G187 with E only [H1 p.17, p.25]: the smoothness level is not posted.
+      if (this.smoothing !== "off") {
+        out.warn("post property smoothing = " + this.smoothing + " is not posted: the " + CONTROL + " documents G187 " +
+          "with E (corner rounding) only [H1 p.17], not the P1/P2/P3 levels; set smoothingCorner for G187 E, or " +
+          "Setting 191 on the control");
+      }
+      if (corner !== null) out.block("G187", corner);
     }
   },
 
@@ -380,7 +394,7 @@ definePost({
     if (this.cycleActive) out.block("G80");
     if (this.spindle !== null) out.block("M05");
     this.coolantOff(out);
-    if (this.smoothing !== "off") out.block("G187"); // back to Setting 191 [H2]
+    if (this.g187Written) out.block("G187"); // back to Setting 191 [H2]
     out.block("M30"); // end and reset [H1 p.43]
     out.raw("%");
   },
