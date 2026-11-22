@@ -42,6 +42,7 @@ add_subdirectory(unit/render)
 add_subdirectory(unit/core_jobs)
 add_subdirectory(unit/sim)
 add_subdirectory(unit/post) # T-039
+add_subdirectory(unit/cycles) # canned cycles: backplot and post host agree
 add_subdirectory(lint)
 add_subdirectory(apps)
 add_subdirectory(ui/controls)

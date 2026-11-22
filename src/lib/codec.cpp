@@ -253,6 +253,16 @@ Value toValue(const MachineDef& m)
         // A value that is not JSON text is kept as a string, so nothing a caller put there is lost.
         properties.push_back({key, parsed ? std::move(*parsed) : str(text)});
     }
+    json::Value::Object control = {
+        {"dialect", str(m.controlDialect)},
+        {"defaultPost", str(m.defaultPost)},
+        {"rigidTapping", boolean(m.rigidTapping)},
+        {"maxBlockNumber", num(m.maxBlockNumber)},
+        {"maxProgramNameLength", num(m.maxProgramNameLength)},
+    };
+    if (m.peckClearance != 0) { // optional: written only when known
+        control.push_back({"peckClearance", num(m.peckClearance)});
+    }
     return Value::object({
         {"schema", num(kFormatVersion)},
         {"id", uuid(m.id.value)},
@@ -272,13 +282,7 @@ Value toValue(const MachineDef& m)
                             {"capacity", num(m.toolCapacity)},
                             {"changeSeconds", num(m.toolChangeSec)},
                         })},
-        {"control", Value::object({
-                        {"dialect", str(m.controlDialect)},
-                        {"defaultPost", str(m.defaultPost)},
-                        {"rigidTapping", boolean(m.rigidTapping)},
-                        {"maxBlockNumber", num(m.maxBlockNumber)},
-                        {"maxProgramNameLength", num(m.maxProgramNameLength)},
-                    })},
+        {"control", Value::object(std::move(control))},
         {"options", Value::object({
                         {"throughSpindleCoolant", boolean(m.throughSpindleCoolant)},
                         {"probe", boolean(m.hasProbe)},
@@ -497,6 +501,7 @@ Result<MachineDef> decodeMachine(const Value& v)
     m.rigidTapping = boolOr(control, "rigidTapping");
     m.maxBlockNumber = intOr(control, "maxBlockNumber");
     m.maxProgramNameLength = intOr(control, "maxProgramNameLength");
+    m.peckClearance = numberOr(control, "peckClearance");
     const Value& options = objectOr(v, "options");
     m.throughSpindleCoolant = boolOr(options, "throughSpindleCoolant");
     m.hasProbe = boolOr(options, "probe");

@@ -37,7 +37,7 @@ cam::Toolpath pathFrom(Nm x, Nm y, Nm z, std::vector<cam::Move> moves)
 std::vector<MotionEvent> expand(const cam::Toolpath& p, const MotionCaps& caps)
 {
     Collect c;
-    const auto r = expandSection(p, 0, caps, c);
+    const auto r = expandSection(p, nullptr, caps, c);
     REQUIRE(r.has_value());
     REQUIRE(*r);
     return c.events;
@@ -192,15 +192,21 @@ TEST_CASE("declared cycles run modally and end with CycleEnd", "[post][motion]")
     MotionCaps caps;
     caps.cycles[static_cast<std::size_t>(CycleKind::Drill)] = true;
     caps.cycles[static_cast<std::size_t>(CycleKind::Peck)] = true;
-    const auto p = pathFrom(0, 0, mm(25),
-                            {rapid(0, 0, mm(10)),                                                          // 0
-                             cycle(cam::MoveKind::CycleDrill, mm(5), mm(5), -mm(3), mm(2), 200000),        // 1 first
-                             cycle(cam::MoveKind::CycleDrill, mm(10), mm(5), -mm(3), mm(2), 200000),       // 2
-                             cycle(cam::MoveKind::CycleDrill, mm(15), mm(5), -mm(4), mm(2), 200000),       // 3 deeper
-                             cycle(cam::MoveKind::CyclePeck, mm(20), mm(5), -mm(9), mm(2), 150000, mm(2)), // 4 kind
-                             cycleCancel(),                                                                // 5
-                             cycle(cam::MoveKind::CycleDrill, mm(5), mm(10), -mm(3), mm(2), 200000),       // 6
-                             rapid(0, 0, mm(25))});                                                        // 7
+    // Top 0, clearance 10 mm (where the tool is), G99 except before a new run.
+    const auto at10 = [](cam::Move m, cam::CycleReturn ret = cam::CycleReturn::RPlane) {
+        return levels(m, 0, mm(10), ret);
+    };
+    const auto g98 = cam::CycleReturn::Initial;
+    const auto p =
+        pathFrom(0, 0, mm(25),
+                 {rapid(0, 0, mm(10)),                                                                     // 0
+                  at10(cycle(cam::MoveKind::CycleDrill, mm(5), mm(5), -mm(3), mm(2), 200000)),             // 1 first
+                  at10(cycle(cam::MoveKind::CycleDrill, mm(10), mm(5), -mm(3), mm(2), 200000)),            // 2
+                  at10(cycle(cam::MoveKind::CycleDrill, mm(15), mm(5), -mm(4), mm(2), 200000), g98),       // 3 deeper
+                  at10(cycle(cam::MoveKind::CyclePeck, mm(20), mm(5), -mm(9), mm(2), 150000, mm(2)), g98), // 4 kind
+                  cycleCancel(),                                                                           // 5
+                  at10(cycle(cam::MoveKind::CycleDrill, mm(5), mm(10), -mm(3), mm(2), 200000)),            // 6
+                  rapid(0, 0, mm(25))});                                                                   // 7
     const auto ev = expand(p, caps);
     std::vector<std::pair<EventKind, std::uint32_t>> seq;
     for (const auto& e : ev) {
@@ -217,11 +223,81 @@ TEST_CASE("declared cycles run modally and end with CycleEnd", "[post][motion]")
     CHECK(ev[5].first);
     CHECK(ev[5].cycle == CycleKind::Peck);
     CHECK(ev[5].peck == mm(2));
-    CHECK(ev[5].clearance == mm(2));  // G99: the drill run left the tool at its R plane
-    CHECK(ev[1].clearance == mm(10)); // the Z before the run
+    CHECK(ev[5].clearance == mm(10)); // the IR's initial level
+    CHECK(ev[1].clearance == mm(10));
     CHECK(ev[1].retract == mm(2));
+    CHECK(ev[1].top == 0);
     CHECK(ev[1].z == -mm(3));
+    CHECK(ev[1].returnLevel == cam::CycleReturn::RPlane);
+    CHECK(ev[3].returnLevel == cam::CycleReturn::Initial);
+    CHECK(ev[4].x == mm(15)); // CycleEnd: the tool at the last hole's return level, the clearance (G98)
+    CHECK(ev[4].z == mm(10));
     CHECK(ev[7].first);
+}
+
+TEST_CASE("declared cycles: return levels, the IR's values, runs and the approach to the clearance", "[post][motion]")
+{
+    MotionCaps caps;
+    for (std::size_t k = 0; k < kCycleKindCount; ++k) {
+        caps.cycles[k] = true;
+    }
+    using K = EventKind;
+    SECTION("the return level is per hole and does not make a hole `first`")
+    {
+        const auto p = pathFrom(0, 0, mm(10),
+                                {levels(cycle(cam::MoveKind::CycleDrill, mm(5), 0, -mm(3), mm(2), 1000), 0, mm(10)),
+                                 levels(cycle(cam::MoveKind::CycleDrill, mm(9), 0, -mm(3), mm(2), 1000), 0, mm(10),
+                                        cam::CycleReturn::Initial),
+                                 dwell(10)});
+        const auto ev = expand(p, caps);
+        REQUIRE(ev.size() == 4);
+        CHECK(ev[0].first);
+        CHECK_FALSE(ev[1].first);
+        CHECK(ev[1].returnLevel == cam::CycleReturn::Initial);
+        CHECK(ev[2].kind == K::CycleEnd);
+        CHECK(ev[3].kind == K::Dwell); // the dwell happens where the last hole left the tool: (9, 0, clearance)
+        CHECK((ev[3].x == mm(9) && ev[3].y == 0 && ev[3].z == mm(10)));
+    }
+    SECTION("above the clearance, rapids over the hole and down to it come first")
+    {
+        cam::Move tap = levels(cycle(cam::MoveKind::CycleTap, mm(5), mm(6), -mm(8), mm(3), 625000, 0, 0, 1250000), 0,
+                               mm(5), cam::CycleReturn::Initial);
+        tap.cycleLeftHand = 1;
+        tap.cyclePeckClearance = um(200);
+        const auto ev = expand(pathFrom(0, 0, mm(30), {tap}), caps);
+        REQUIRE(ev.size() == 4);
+        CHECK((ev[0].kind == K::Rapid && ev[0].x == mm(5) && ev[0].y == mm(6) && ev[0].z == mm(30)));
+        CHECK((ev[1].kind == K::Rapid && ev[1].x == mm(5) && ev[1].y == mm(6) && ev[1].z == mm(5)));
+        CHECK(ev[0].move == 0);
+        REQUIRE(ev[2].kind == K::Cycle);
+        CHECK(ev[2].leftHand);
+        CHECK(ev[2].pitchNm == 1250000);
+        CHECK(ev[2].peckClearance == um(200)); // as in the IR; 0 would leave it to the control
+        CHECK(ev[2].clearance == mm(5));
+        CHECK(ev[3].kind == K::CycleEnd);
+        CHECK(ev[3].z == mm(5)); // G98
+    }
+    SECTION("a new left-hand flag or clearance starts a new run")
+    {
+        cam::Move right = levels(cycle(cam::MoveKind::CycleTap, mm(5), 0, -mm(8), mm(3), 625000, 0, 0, 1250000), 0,
+                                 mm(5), cam::CycleReturn::Initial);
+        cam::Move left = right;
+        left.x = mm(15);
+        left.cycleLeftHand = 1;
+        cam::Move lower = left;
+        lower.x = mm(25);
+        lower.cycleClearance = mm(4);
+        const auto ev = expand(pathFrom(mm(5), 0, mm(5), {right, left, lower}), caps);
+        std::vector<K> kinds;
+        for (const auto& e : ev) {
+            kinds.push_back(e.kind);
+        }
+        // The third run starts above its clearance (at 5, the second's G98 level): a rapid over it and one down.
+        const std::vector<K> want = {K::Cycle, K::CycleEnd, K::Cycle, K::CycleEnd,
+                                     K::Rapid, K::Rapid,    K::Cycle, K::CycleEnd};
+        CHECK(kinds == want);
+        CHECK(ev[5].z == mm(4));
+    }
 }
 
 TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
@@ -235,7 +311,7 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         return out;
     };
     using K = EventKind;
-    // cycle_conventions: G99, the tool ends each hole at the R plane.
+    // cam.h: G99 here (the tool ends each hole at the R plane); the clearance is the R plane unless set.
     SECTION("drill with dwell")
     {
         const auto ev = expand(
@@ -253,7 +329,7 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         const auto ev = expand(
             pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CyclePeck, mm(5), 0, -mm(5), mm(1), 100000, mm(2))}),
             caps);
-        const Nm re = kPeckReentryNm;
+        const Nm re = cam::kDefaultPeckClearanceNm; // neither the move nor a machine says
         const std::vector<std::pair<K, Nm>> want = {{K::Rapid, mm(1)},       {K::Linear, -mm(1)}, {K::Rapid, mm(1)},
                                                     {K::Rapid, -mm(1) + re}, {K::Linear, -mm(3)}, {K::Rapid, mm(1)},
                                                     {K::Rapid, -mm(3) + re}, {K::Linear, -mm(5)}, {K::Rapid, mm(1)}};
@@ -264,10 +340,47 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         const auto ev = expand(
             pathFrom(mm(5), 0, mm(10), {cycle(cam::MoveKind::CycleChipBreak, mm(5), 0, -mm(3), mm(1), 100000, mm(2))}),
             caps);
-        const Nm back = kChipBreakBackoffNm;
+        const Nm back = cam::kDefaultPeckClearanceNm;
         const std::vector<std::pair<K, Nm>> want = {
             {K::Rapid, mm(1)}, {K::Linear, -mm(1)}, {K::Rapid, -mm(1) + back}, {K::Linear, -mm(3)}, {K::Rapid, mm(1)}};
         CHECK(kinds(ev) == want);
+    }
+    SECTION("the peck clearance: the move's, else the machine's, else 0.5 mm")
+    {
+        lib::MachineDef machine = makeMachine();
+        machine.peckClearance = 0.25;
+        cam::Move m = cycle(cam::MoveKind::CycleChipBreak, mm(5), 0, -mm(3), mm(1), 100000, mm(2));
+        const auto path = pathFrom(mm(5), 0, mm(10), {m});
+        const auto backOff = [&](const cam::Toolpath& p, const lib::MachineDef* def) {
+            Collect c;
+            REQUIRE(expandSection(p, def, caps, c).value_or(false));
+            REQUIRE(c.events.size() == 5);
+            return c.events[2].z - c.events[1].z;
+        };
+        CHECK(backOff(path, nullptr) == cam::kDefaultPeckClearanceNm);
+        CHECK(backOff(path, &machine) == um(250));
+        m.cyclePeckClearance = um(100);
+        CHECK(backOff(pathFrom(mm(5), 0, mm(10), {m}), &machine) == um(100));
+    }
+    SECTION("G98: out to the clearance; a run that starts above it comes down to it first")
+    {
+        const Nm c = mm(6);
+        const auto g98 = cam::CycleReturn::Initial;
+        const auto drill = expand(
+            pathFrom(0, 0, mm(20),
+                     {levels(cycle(cam::MoveKind::CycleDrill, mm(5), 0, -mm(3), mm(1), 100000), -mm(1), c, g98)}),
+            caps);
+        const std::vector<std::pair<K, Nm>> want = {
+            {K::Rapid, mm(20)}, {K::Rapid, c}, {K::Rapid, mm(1)}, {K::Linear, -mm(3)}, {K::Rapid, c}};
+        CHECK(kinds(drill) == want);
+        // Bore: feed out to R, then rapid to the clearance.
+        const auto bore =
+            expand(pathFrom(mm(5), 0, c,
+                            {levels(cycle(cam::MoveKind::CycleBore, mm(5), 0, -mm(3), mm(1), 100000), -mm(1), c, g98)}),
+                   caps);
+        const std::vector<std::pair<K, Nm>> wantBore = {
+            {K::Rapid, mm(1)}, {K::Linear, -mm(3)}, {K::Linear, mm(1)}, {K::Rapid, c}};
+        CHECK(kinds(bore) == wantBore);
     }
     SECTION("bore and ream feed out")
     {
@@ -292,23 +405,50 @@ TEST_CASE("toolpaths the post cannot take are refused", "[post][motion]")
     Collect c;
     auto tap =
         pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleTap, 0, 0, -mm(10), mm(2), 1250 * 1000, 0, 0, 1250000)});
-    auto r = expandSection(tap, 0, caps, c);
+    auto r = expandSection(tap, nullptr, caps, c);
     REQUIRE_FALSE(r.has_value());
     CHECK(r.error().code == ErrorCode::PostFailed);
     CHECK(r.error().message.find("tapping") != std::string::npos);
 
     auto comp = pathFrom(0, 0, 0, {linear(mm(1), 0, 0, 1000, cam::MoveRole::LeadIn, 1)});
-    r = expandSection(comp, 0, caps, c);
+    r = expandSection(comp, nullptr, caps, c);
     REQUIRE_FALSE(r.has_value());
     CHECK(r.error().message.find("cutter compensation") != std::string::npos);
     caps.cutterComp = true;
-    CHECK(expandSection(comp, 0, caps, c).has_value());
+    CHECK(expandSection(comp, nullptr, caps, c).has_value());
 
     auto noFeed = pathFrom(0, 0, 0, {linear(mm(1), 0, 0, 0)});
-    CHECK_FALSE(expandSection(noFeed, 0, caps, c).has_value());
+    CHECK_FALSE(expandSection(noFeed, nullptr, caps, c).has_value());
 
     auto upside = pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleDrill, 0, 0, mm(3), mm(2), 1000)});
-    CHECK_FALSE(expandSection(upside, 0, caps, c).has_value());
+    CHECK_FALSE(expandSection(upside, nullptr, caps, c).has_value());
+
+    // cam.h's level order and run rule, declared or expanded.
+    for (const bool declared : {false, true}) {
+        INFO("declared " << declared);
+        MotionCaps cycles;
+        cycles.cycles[static_cast<std::size_t>(CycleKind::Drill)] = declared;
+        const cam::Move ok = levels(cycle(cam::MoveKind::CycleDrill, 0, 0, -mm(3), mm(2), 1000), 0, mm(5));
+        CHECK(expandSection(pathFrom(0, 0, mm(5), {ok}), nullptr, cycles, c).has_value());
+        cam::Move topAboveR = ok;
+        topAboveR.cycleTop = mm(3);
+        auto bad = expandSection(pathFrom(0, 0, mm(5), {topAboveR}), nullptr, cycles, c);
+        REQUIRE_FALSE(bad.has_value());
+        CHECK(bad.error().message.find("out of order") != std::string::npos);
+        cam::Move rAboveClearance = ok;
+        rAboveClearance.cycleRetract = mm(6);
+        CHECK_FALSE(expandSection(pathFrom(0, 0, mm(9), {rAboveClearance}), nullptr, cycles, c).has_value());
+        // The run starts with the tool below its clearance; and a second run after a G99 hole does too.
+        bad = expandSection(pathFrom(0, 0, mm(4), {ok}), nullptr, cycles, c);
+        REQUIRE_FALSE(bad.has_value());
+        CHECK(bad.error().message.find("move 0 starts a cycle run with the tool below") != std::string::npos);
+        cam::Move other = ok;
+        other.cycleClearance = mm(4);
+        bad = expandSection(pathFrom(0, 0, mm(5), {ok, other}), nullptr, cycles, c);
+        REQUIRE_FALSE(bad.has_value());
+        CHECK(bad.error().message.find("move 1 starts") != std::string::npos);
+        CHECK(expandSection(pathFrom(0, 0, mm(5), {ok, ok}), nullptr, cycles, c).has_value()); // one run: fine
+    }
 }
 
 TEST_CASE("a sink that stops ends the expansion", "[post][motion]")
@@ -318,7 +458,7 @@ TEST_CASE("a sink that stops ends the expansion", "[post][motion]")
         bool onEvent(const MotionEvent&) override { return --left > 0; }
     } sink;
     auto p = pathFrom(0, 0, 0, {rapid(1, 0, 0), rapid(2, 0, 0), rapid(3, 0, 0)});
-    const auto r = expandSection(p, 0, MotionCaps{}, sink);
+    const auto r = expandSection(p, nullptr, MotionCaps{}, sink);
     REQUIRE(r.has_value());
     CHECK_FALSE(*r);
     CHECK(sink.left == 0);

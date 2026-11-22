@@ -29,7 +29,8 @@
 //   Holder    {"gaugeLength","id","name","schema":1,"segments":[{"height","lowerDiameter","upperDiameter"}],"vendor"}
 //   Material  {"density","group","hardnessHb","id","name","schema":1,"specificCuttingForce"}
 //   Machine   {"axes":[{"accel","letter":"X","max","maxFeed","min","rapid"}],"control":{"defaultPost","dialect",
-//              "maxBlockNumber","maxProgramNameLength","rigidTapping"},"id","kind":"mill3"|"mill4"|"mill5"|"lathe",
+//              "maxBlockNumber","maxProgramNameLength","peckClearance" (only when not 0),"rigidTapping"},"id",
+//              "kind":"mill3"|"mill4"|"mill5"|"lathe",
 //              "model","name","options":{"probe","throughSpindleCoolant","toolSetter"},"postProperties":{...},
 //              "schema":1,"spindle":{"maxRpm","minRpm","powerKw","torqueNm"},"toolChanger":{"capacity",
 //              "changeSeconds"},"vendor"}

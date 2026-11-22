@@ -1059,14 +1059,21 @@ Result<cam::Embedded<lib::MachineDef>> readMachine(const Value& value, const Sou
     m.rigidTapping = false;
     m.maxBlockNumber = 0;
     m.maxProgramNameLength = 0;
+    m.peckClearance = 0;
     if (*control) {
         const Obj& c = **control;
-        RAY_CAMJSON_CHECK(c.only({"defaultPost", "dialect", "maxBlockNumber", "maxProgramNameLength", "rigidTapping"}));
+        RAY_CAMJSON_CHECK(c.only(
+            {"defaultPost", "dialect", "maxBlockNumber", "maxProgramNameLength", "peckClearance", "rigidTapping"}));
         RAY_CAMJSON_TRY(dialect, c.string("dialect", std::string()));
         RAY_CAMJSON_TRY(post, c.string("defaultPost", std::string()));
         RAY_CAMJSON_TRY(rigid, c.boolean("rigidTapping", false));
         RAY_CAMJSON_TRY(maxBlock, c.integer("maxBlockNumber", 0, 0, 1 << 30));
         RAY_CAMJSON_TRY(maxName, c.integer("maxProgramNameLength", 0, 0, 1 << 20));
+        RAY_CAMJSON_TRY(peckClearance, c.number("peckClearance", 0.0));
+        if (!(*peckClearance >= 0.0 && *peckClearance <= 1000.0)) {
+            return c.error("peckClearance", "must be from 0 to 1000 (mm)");
+        }
+        m.peckClearance = *peckClearance;
         m.controlDialect = std::move(*dialect);
         m.defaultPost = std::move(*post);
         m.rigidTapping = *rigid;
@@ -1130,13 +1137,17 @@ Value toJson(const cam::Embedded<lib::MachineDef>& e)
         }
         props.push_back({key, std::move(value)});
     }
+    Value::Object control = {{"defaultPost", text(m.defaultPost)},
+                             {"dialect", text(m.controlDialect)},
+                             {"maxBlockNumber", Value::number(m.maxBlockNumber)},
+                             {"maxProgramNameLength", Value::number(m.maxProgramNameLength)},
+                             {"rigidTapping", Value::boolean(m.rigidTapping)}};
+    if (m.peckClearance != 0) { // optional: written only when known
+        control.insert(control.begin() + 4, {"peckClearance", Value::number(m.peckClearance)});
+    }
     Value known =
         Value::object({{"axes", Value::array(std::move(axes))},
-                       {"control", Value::object({{"defaultPost", text(m.defaultPost)},
-                                                  {"dialect", text(m.controlDialect)},
-                                                  {"maxBlockNumber", Value::number(m.maxBlockNumber)},
-                                                  {"maxProgramNameLength", Value::number(m.maxProgramNameLength)},
-                                                  {"rigidTapping", Value::boolean(m.rigidTapping)}})},
+                       {"control", Value::object(std::move(control))},
                        {"id", idValue(m.id.value)},
                        {"kind", text(nameOf(m.kind, kMachineKinds))},
                        {"model", text(m.model)},

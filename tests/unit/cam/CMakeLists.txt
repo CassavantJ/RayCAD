@@ -16,3 +16,13 @@ target_include_directories(ray_cam_engine_tests PRIVATE "${CMAKE_SOURCE_DIR}/src
 target_compile_definitions(ray_cam_engine_tests PRIVATE RAY_DOC_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/unit/doc/golden"
     RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas" RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_engine_tests)
+
+# The toolpath IR: the RCTP format (Toolpath::serialize) and the canned-cycle rules of the toolpath invariant checker
+# (invariants/, where T-058 adds the rest of the checker).
+add_executable(ray_cam_toolpath_tests
+    toolpath_format_test.cpp
+    invariants/cycle_invariants.h
+    invariants/cycle_invariants_test.cpp
+)
+target_link_libraries(ray_cam_toolpath_tests PRIVATE ray_cam ray_core Catch2::Catch2WithMain)
+ray_add_test(ray_cam_toolpath_tests)

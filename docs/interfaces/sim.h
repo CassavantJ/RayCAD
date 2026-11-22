@@ -35,7 +35,10 @@ struct Backplot { std::vector<BackplotVertex> lineVertices; std::vector<std::uin
 // Arcs are flattened to `chordTol` (mm, clamped to at least 1e-4) for DISPLAY only: no chord is farther than chordTol
 // from its arc (before float rounding of the vertices). Deterministic: identical bytes on every platform.
 // Budget: 1 M moves in under 150 ms on the Low reference CPU.
-Backplot buildBackplot(const cam::Toolpath&, const Xform& modelFromWcs, double chordTol);
+// Cycles move as cam.h "Canned cycles" says. `machine` (may be null) gives the peck clearance of the cycles whose move
+// leaves it to the control (cam::peckClearanceNm); added by the canned-cycle settlement.
+Backplot buildBackplot(const cam::Toolpath&, const Xform& modelFromWcs, double chordTol,
+                       const lib::MachineDef* machine = nullptr);
 
 // ---------- Stock model ----------
 // From the tier preset: Low 0.2, Medium 0.1, High 0.05 (PLAN.md 6.2). An UPPER BOUND: the model snaps the cell

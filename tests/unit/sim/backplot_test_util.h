@@ -61,15 +61,26 @@ inline Move arc(bool ccw, ArcPlane plane, double x, double y, double z, double i
     return m;
 }
 
+// A cycle move (cam.h "Canned cycles"); the hole top and the clearance default to the R plane, G99. levels() sets
+// them and the return level.
 inline Move cycle(MoveKind kind, double x, double y, double bottom, double retract, double peck = 0.0,
                   double feedMmMin = 200.0, std::int32_t dwellMs = 0)
 {
     Move m = blankMove(kind, MoveRole::Plunge);
     m.x = nm(x), m.y = nm(y), m.z = nm(bottom);
     m.cycleRetract = nm(retract);
+    m.cycleTop = nm(retract);
+    m.cycleClearance = nm(retract);
     m.cyclePeck = nm(peck);
     m.cycleDwellMs = dwellMs;
     m.feedMicronPerMin = static_cast<std::int32_t>(std::llround(feedMmMin * 1000.0));
+    return m;
+}
+inline Move levels(Move m, double top, double clearance, cam::CycleReturn ret = cam::CycleReturn::RPlane)
+{
+    m.cycleTop = nm(top);
+    m.cycleClearance = nm(clearance);
+    m.cycleReturn = ret;
     return m;
 }
 

@@ -56,7 +56,8 @@
         "defaultPost": { "type": "string", "minLength": 1, "description": "File stem of the post in posts/." },
         "rigidTapping": { "type": "boolean" },
         "maxBlockNumber": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "Largest N number (0: no limit known)." },
-        "maxProgramNameLength": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "0: no limit known." }
+        "maxProgramNameLength": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "0: no limit known." },
+        "peckClearance": { "type": "number", "minimum": 0, "maximum": 1000, "description": "Optional. The G83 re-entry clearance and G73 chip-break back-off the control is set to, mm (0 or absent: not known). Used only when RayCAD expands a canned cycle into plain moves (cam.h)." }
       }
     },
     "options": {
