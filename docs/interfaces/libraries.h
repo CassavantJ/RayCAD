@@ -37,6 +37,8 @@
 //    comes from), merged lists of every kind, remerge, and one watch over every root with listeners (the tool
 //    library UI, T-046).
 // Changed by the canned-cycle settlement (cam.h): MachineDef::peckClearance, optional, the expansion fallback.
+// Changed for the feeds power model: Material::mc, optional, the chip thickness exponent of kc (kc1.1 alone reads about
+// half the power at typical chip thicknesses).
 #pragma once
 #include "core.h"
 #include <map>
@@ -84,6 +86,9 @@ struct Holder {
 struct Material {
     MaterialId id; std::string name, group;    // "6061-T6", "Aluminium"
     double hardnessHb = 0, specificCuttingForceNmm2 = 0, densityGcm3 = 0;
+    // Chip thickness exponent: kc = kc1.1 h^-mc, h the mean chip thickness in mm (cam.h computeFeeds); 0 = not known
+    // (kc1.1 is used flat). Optional (JSON "mc", written only when not 0); feeds round it to a multiple of 1/256.
+    double mc = 0;
     std::string comment;        // as Tool::comment
     std::string extraJson;      // as Tool::extraJson
 };

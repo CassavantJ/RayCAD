@@ -16,6 +16,8 @@
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
+// Amended for the chip-thickness exponent (lib::Material::mc): PowerModel MillingKcMc and DrillingKcMc, and
+// FeedsResult::meanChipThicknessMm and specificCuttingForceNmm2.
 // Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
 //  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
 //    an item embedded from a library keeps them;
@@ -489,13 +491,16 @@ struct FeedsInput {
 };
 
 enum class FeedsMode : std::uint8_t { Milling, Drilling, Tapping };
-// How power and torque were estimated. lib::Material has no chip-thickness exponent mc, so every model uses kc1.1
-// flat, which reads low for chips thinner than 1 mm (feeds.cpp, kc model).
+// How power and torque were estimated (feeds.cpp, kc model). With the material's chip-thickness exponent mc
+// (lib::Material::mc), milling and drilling take kc = kc1.1 hm^-mc at the mean chip thickness hm of the cut; without
+// it kc1.1 flat, which reads low for chips thinner than 1 mm. Taps always use kc1.1 flat.
 enum class PowerModel : std::uint8_t {
     Unknown,        // the material's kc1.1 is 0 (not known): power and torque are 0, their limits Unknown
     MillingKc11,    // P = ae ap vf kc1.1
     DrillingKc11,   // P = MRR kc1.1 (equal to vc f D kc / 240000 for solid drilling; an annulus when opening a hole)
-    TappingKc11     // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+    TappingKc11,    // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+    MillingKcMc,    // P = ae ap vf kc, kc = kc1.1 hm^-mc
+    DrillingKcMc    // P = MRR kc, kc = kc1.1 hm^-mc
 };
 // One machine limit: the machine's value (0 = not known), what the cutting data asked for before this limit, and
 // what happened. Exceeded: the limit could not be met by changing rpm or feed (a tap's torque, a tap feed held up by
@@ -528,6 +533,8 @@ struct FeedsResult {
     double feedPerRevMm = 0;          // feed / rpm (taps: the pitch)
     double cuttingPowerKw = 0;        // at the cutting edges (tool wear factor in), before spindle efficiency
     PowerModel powerModel = PowerModel::Unknown;
+    double meanChipThicknessMm = 0;   // hm of the programmed feed (KcMc models; 0 otherwise)
+    double specificCuttingForceNmm2 = 0;   // the kc power and torque use (kc1.1 for the Kc11 models; 0 if unknown)
     bool tapFeedExact = true;         // taps: feedMicronPerMin x 1000 == pitch in nm x rpm, no rounding
     struct Limits { FeedsLimit maxRpm, minRpm, maxFeed, power, torque; } limits;
     std::vector<std::string> notes;   // user-presentable English, in a fixed order: defaults used, unknown limits, ...

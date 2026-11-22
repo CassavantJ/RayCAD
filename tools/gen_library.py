@@ -53,6 +53,13 @@ CUTTING_SOURCE = (
 )
 
 # ---------- materials ----------
+# mc, the chip thickness exponent of kc = kc1.1 h^-mc: the typical value of the material's row in the material group
+# table "according to DIN / ISO 513 and VDI 3323" (kc1 and mc per ISO group and condition) that tool makers publish,
+# here as printed in ISCAR's catalogue page "Material Groups". Approximate, for power and torque estimates only; kc1.1
+# is this file's own approximate value above, not that table's (which is lower for steels, higher for titanium).
+MC_SOURCE = ("mc %s: approximate, the typical value of row %s, in the material group table 'according to DIN / ISO 513 "
+             "and VDI 3323' (ISCAR catalogue page 'Material Groups').")
+
 # Per-material factors for the cutting data (all chosen here, conservatively):
 #   em      carbide end mill surface speed, m/min (rough)
 #   drill   HSS-Co drill surface speed, m/min
@@ -66,7 +73,7 @@ CUTTING_SOURCE = (
 MATERIALS = [
     {
         "key": "material.6061-t6", "name": "6061-T6", "group": "Aluminium", "hardnessHb": 95,
-        "specificCuttingForce": 700, "density": 2.7,
+        "specificCuttingForce": 700, "density": 2.7, "mc": 0.25, "mcRow": "22, aluminium wrought alloy, hardenable",
         "comment": "6061 aluminium alloy, T6 temper. Density 2.70 g/cm3: Wikipedia '6061 aluminium alloy' (infobox). "
         "Hardness 95 HB: typical value of public 6061-T6 datasheets (ASM International / MatWeb), not re-checked here. "
         "kc1.1 700 N/mm2: approximate value for force estimates, of the order published for wrought aluminium "
@@ -76,7 +83,7 @@ MATERIALS = [
     },
     {
         "key": "material.7075-t6", "name": "7075-T6", "group": "Aluminium", "hardnessHb": 150,
-        "specificCuttingForce": 800, "density": 2.81,
+        "specificCuttingForce": 800, "density": 2.81, "mc": 0.25, "mcRow": "22, aluminium wrought alloy, hardenable",
         "comment": "7075 aluminium alloy, T6 temper. Density 2.81 g/cm3: Wikipedia '7075 aluminium alloy' (infobox). "
         "Hardness 150 HB: typical value of public 7075-T6 datasheets (ASM International / MatWeb; Wikipedia gives "
         "87 HRB), not re-checked here. kc1.1 800 N/mm2: approximate, ISO 513 group N order of magnitude.",
@@ -85,7 +92,7 @@ MATERIALS = [
     },
     {
         "key": "material.1018", "name": "1018 (cold drawn)", "group": "Steel", "hardnessHb": 126,
-        "specificCuttingForce": 1700, "density": 7.85,
+        "specificCuttingForce": 1700, "density": 7.85, "mc": 0.21, "mcRow": "1, non-alloy steel below 0.25 % C",
         "comment": "AISI/SAE 1018 low-carbon steel, cold drawn. Density 7.85 g/cm3: Wikipedia 'Carbon steel' (mild "
         "steel, approximately 7.85 g/cm3). Hardness 126 HB: typical value of public cold-drawn 1018 datasheets "
         "(MatWeb), not re-checked here. kc1.1 1700 N/mm2: approximate, ISO 513 group P (low-carbon steel) order of "
@@ -95,7 +102,7 @@ MATERIALS = [
     },
     {
         "key": "material.4140-annealed", "name": "4140 (annealed)", "group": "Steel", "hardnessHb": 197,
-        "specificCuttingForce": 2000, "density": 7.85,
+        "specificCuttingForce": 2000, "density": 7.85, "mc": 0.24, "mcRow": "6, low alloy steel, annealed",
         "comment": "AISI 4140 chromium-molybdenum steel, annealed (Wikipedia '41xx steel'). Density 7.85 g/cm3 as for "
         "carbon steel (Wikipedia 'Carbon steel'); hardness 197 HB: typical value of public annealed 4140 datasheets "
         "(MatWeb), not re-checked here. kc1.1 2000 N/mm2: approximate, ISO 513 group P (alloy steel).",
@@ -104,7 +111,7 @@ MATERIALS = [
     },
     {
         "key": "material.4140ph", "name": "4140PH (pre-hardened, 28-32 HRC)", "group": "Steel", "hardnessHb": 286,
-        "specificCuttingForce": 2400, "density": 7.85,
+        "specificCuttingForce": 2400, "density": 7.85, "mc": 0.24, "mcRow": "8, low alloy steel, quenched and tempered",
         "comment": "AISI 4140 bought quenched and tempered ('pre-hard'), commonly sold at 28-32 HRC. Hardness 286 HB: "
         "30 HRC converted with the ASTM E140 hardness conversion tables. Density as 4140. kc1.1 2400 N/mm2: "
         "approximate, ISO 513 group P (hardened alloy steel).",
@@ -113,7 +120,7 @@ MATERIALS = [
     },
     {
         "key": "material.304-annealed", "name": "304 (annealed)", "group": "Stainless steel", "hardnessHb": 201,
-        "specificCuttingForce": 2300, "density": 7.9,
+        "specificCuttingForce": 2300, "density": 7.9, "mc": 0.2, "mcRow": "14, stainless steel, austenitic",
         "comment": "AISI 304 austenitic stainless steel, annealed. Density 7.90 g/cm3: Wikipedia 'SAE 304 stainless "
         "steel' (7,900 kg/m3). Hardness 201 HB: the maximum ASTM A240 allows for annealed 304 plate, a public "
         "specification limit (real stock is often softer). kc1.1 2300 N/mm2: approximate, ISO 513 group M.",
@@ -122,7 +129,7 @@ MATERIALS = [
     },
     {
         "key": "material.17-4ph-h900", "name": "17-4 PH (H900)", "group": "Stainless steel", "hardnessHb": 409,
-        "specificCuttingForce": 2700, "density": 7.8,
+        "specificCuttingForce": 2700, "density": 7.8, "mc": 0.21, "mcRow": "13, stainless steel, martensitic",
         "comment": "17-4 PH precipitation-hardening stainless steel (SAE type 630), aged to about 44 HRC: Wikipedia "
         "'17-4 stainless steel' (density 7,800 to 7,900 kg/m3; 'approximately 44 Rc' after heat treatment). "
         "Hardness 409 HB: 44 HRC converted with the ASTM E140 tables. For condition A or H1150 stock the data here "
@@ -132,7 +139,7 @@ MATERIALS = [
     },
     {
         "key": "material.ti-6al-4v", "name": "Ti-6Al-4V (annealed)", "group": "Titanium", "hardnessHb": 336,
-        "specificCuttingForce": 1500, "density": 4.43,
+        "specificCuttingForce": 1500, "density": 4.43, "mc": 0.22, "mcRow": "37, titanium alloys, alpha+beta",
         "comment": "Ti-6Al-4V titanium alloy (grade 5). Density 4.43 g/cm3: Wikipedia 'Ti-6Al-4V' (4.429 to 4.512 "
         "g/cm3). Hardness 336 HB: the typical 36 HRC that page gives, converted with the ASTM E140 tables. kc1.1 "
         "1500 N/mm2: approximate, ISO 513 group S (titanium alloys).",
@@ -627,8 +634,9 @@ def all_items():
     tools = (end_mills() + spot_drills() + drills(table, [t["threadSpec"] for t in tap_list]) + tap_list
              + chamfer_mills() + face_mills() + reamers() + thread_mills(table))
     materials = [{"schema": 1, "id": m["key"], "name": m["name"], "group": m["group"], "hardnessHb": m["hardnessHb"],
-                  "specificCuttingForce": m["specificCuttingForce"], "density": m["density"],
-                  "comment": m["comment"] + " Cutting data for this material are in the tools' presets."}
+                  "specificCuttingForce": m["specificCuttingForce"], "density": m["density"], "mc": m["mc"],
+                  "comment": m["comment"] + " " + MC_SOURCE % (m["mc"], m["mcRow"])
+                  + " Cutting data for this material are in the tools' presets."}
                  for m in MATERIALS]
     return {"tools": tools, "holders": holders(), "materials": materials, "machines": machines()}
 

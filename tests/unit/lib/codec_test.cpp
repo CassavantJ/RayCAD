@@ -63,6 +63,29 @@ TEST_CASE("a machine's peck clearance is optional", "[lib][codec]")
     CHECK_FALSE(ray::lib::machineFromJson(ray::lib::toJson(m))); // the schema's minimum
 }
 
+TEST_CASE("a material's chip-thickness exponent mc is optional", "[lib][codec]")
+{
+    // 0 (not known) is not written, so files without it read and write back unchanged.
+    const std::string plain = ray::lib::toJson(sampleMaterial(3));
+    CHECK(plain.find("\"mc\"") == std::string::npos);
+    auto m = sampleMaterial(3);
+    m.mc = 0.25;
+    const std::string text = ray::lib::toJson(m);
+    CHECK(text.find("\"mc\":0.25") != std::string::npos);
+    auto back = ray::lib::materialFromJson(text);
+    REQUIRE(back);
+    CHECK(back->mc == 0.25);
+    CHECK(back->extraJson.empty());
+    CHECK(ray::lib::toJson(*back) == text);
+    auto none = ray::lib::materialFromJson(plain);
+    REQUIRE(none);
+    CHECK(none->mc == 0);
+    for (const double bad : {-0.1, 1.0}) { // the schema: 0 <= mc < 1
+        m.mc = bad;
+        CHECK_FALSE(ray::lib::materialFromJson(ray::lib::toJson(m)));
+    }
+}
+
 TEST_CASE("toJson is canonical JSON", "[lib][codec]")
 {
     const std::string text = ray::lib::toJson(sampleMaterial(3));
