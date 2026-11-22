@@ -193,6 +193,7 @@ private:
     int engineListener_ = 0;
     int notices_ = 0;
     QString pendingSelect_;
+    bool selectFirst_ = false; // a document was opened: its first setup becomes current once its rows are there
 };
 
 } // namespace ray::ui

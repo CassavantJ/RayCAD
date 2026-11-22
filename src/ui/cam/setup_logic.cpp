@@ -90,6 +90,26 @@ QString statusText(cam::OpStatus status, double progress)
     return {};
 }
 
+Badge badgeOf(const cam::OpState& state)
+{
+    Badge b{state.status, QString::fromStdString(state.message)};
+    if (state.status == cam::OpStatus::Stale && !state.toolpath) {
+        b.notGenerated = true;
+        b.message = tr("Toolpaths are not saved with the document: generate this one to see and post it");
+    }
+    return b;
+}
+
+QString statusKey(const Badge& badge)
+{
+    return badge.notGenerated ? QStringLiteral("notGenerated") : statusKey(badge.status);
+}
+
+QString statusText(const Badge& badge, double progress)
+{
+    return badge.notGenerated ? tr("Not generated") : statusText(badge.status, progress);
+}
+
 std::optional<Badge> setupBadge(const std::optional<Status>& own, const std::vector<const cam::OpState*>& operations)
 {
     if (own && !*own) {
@@ -104,8 +124,10 @@ std::optional<Badge> setupBadge(const std::optional<Status>& own, const std::vec
             continue;
         if (op->status != cam::OpStatus::Suppressed)
             allSuppressed = false;
-        if (!worst || severity(op->status) > severity(worst->status))
-            worst = Badge{op->status, QString::fromStdString(op->message)};
+        const Badge b = badgeOf(*op);
+        if (!worst || severity(b.status) > severity(worst->status) ||
+            (b.status == worst->status && worst->notGenerated && !b.notGenerated))
+            worst = b;
     }
     if (allSuppressed)
         return Badge{cam::OpStatus::Suppressed, {}};

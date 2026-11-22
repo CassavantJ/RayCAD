@@ -85,6 +85,8 @@ SetupTreeModel::SetupTreeModel(SceneController* scene, Session* session, AppCont
                 return;
             if (session_->documentId().toStdString() != docId_) {
                 subscribe();
+                // A document opened with setups shows its first one (its toolpaths and WCS in the view).
+                selectFirst_ = true;
                 sync();
             }
         });
@@ -140,6 +142,7 @@ SetupTreeModel* SetupTreeModel::create(QQmlEngine* qml, QJSEngine*)
     model->setCommands(commands);
     model->setSetupTool(tool);
     model->subscribe();
+    model->selectFirst_ = true;
     model->sync();
     return model; // owned by the engine
 }
@@ -280,6 +283,11 @@ void SetupTreeModel::sync()
             pendingSelect_.clear();
             setCurrentIndex(row);
         }
+    }
+    if (selectFirst_ && state) {
+        selectFirst_ = false;
+        if (current_ < 0 && setups > 0)
+            setCurrentIndex(0);
     }
     emit changed();
     scheduleRefresh();
@@ -424,7 +432,7 @@ QVariant SetupTreeModel::data(const QModelIndex& index, int role) const
         const auto own = statuses_.setups.find(r->setupId);
         badge = camui::setupBadge(own == statuses_.setups.end() ? std::optional<Status>() : own->second, ops);
     } else if (const auto it = statuses_.ops.find(r->opId); it != statuses_.ops.end()) {
-        badge = camui::Badge{it->second.status, qs(it->second.message)};
+        badge = camui::badgeOf(it->second);
         if (it->second.status == cam::OpStatus::Generating) {
             // A generation the tree started reports through its job; any other's progress is in the status (T-045).
             const auto p = progress_.find(r->opId);
@@ -443,9 +451,9 @@ QVariant SetupTreeModel::data(const QModelIndex& index, int role) const
     case DetailRole:
         return r->detail;
     case StatusRole:
-        return badge ? camui::statusKey(badge->status) : QString();
+        return badge ? camui::statusKey(*badge) : QString();
     case StatusTextRole:
-        return badge ? camui::statusText(badge->status, progress) : QString();
+        return badge ? camui::statusText(*badge, progress) : QString();
     case MessageRole:
         return badge && (badge->status == cam::OpStatus::Failed || badge->status == cam::OpStatus::ReferenceBroken)
                    ? badge->message

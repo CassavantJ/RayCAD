@@ -1018,10 +1018,12 @@ TEST_CASE("status badges match the engine and follow model edits, undo and redo"
     w.toWorkspace(ui::kCamWorkspace);
     REQUIRE(QTest::qWaitFor([&] { return w.tree()->count() == 6; }, 10000)); // the setup and its five operations
 
-    // Before anything is generated.
-    w.waitStatus(1, "stale");
-    w.waitStatus(2, "stale");
-    w.waitStatus(3, "stale");
+    // Before anything is generated: not "stale" (nothing changed since a generation), "Not generated", as every
+    // operation of a document opened in a new session is (toolpaths are not saved with the document).
+    w.waitStatus(1, "notGenerated");
+    w.waitStatus(2, "notGenerated");
+    w.waitStatus(3, "notGenerated");
+    CHECK(w.tree()->get(1).value(QStringLiteral("statusText")).toString() == QStringLiteral("Not generated"));
     w.waitStatus(4, "broken");
     w.waitStatus(5, "suppressed");
     w.waitStatus(0, "broken"); // the setup shows its worst operation

@@ -1,7 +1,7 @@
 // The CAM tree (task T-044; CamTreeModel, cam/setup_tree.h): the left panel's content in the CAM workspace. One row per
 // setup, in program order, and under each its operations, in order: name, type and a status badge (up to date, stale,
 // generating with its progress, failed or broken reference with the reason under the row and in the warning mark's
-// tooltip, suppressed). Click makes a row current; double-click (or Enter) edits it: a setup opens the setup panel,
+// tooltip, suppressed, not generated: toolpaths are not saved, so a document opened anew starts so). Click makes a row current; double-click (or Enter) edits it: a setup opens the setup panel,
 // an operation goes to the operation panel (T-045). F2 renames, Delete deletes, the arrows on a hovered row move it,
 // the switch suppresses an operation. While there is no setup the tree says how to start.
 import QtQuick
@@ -35,7 +35,7 @@ Item {
     // The badge's colour: a dot beside the status text.
     function badgeColor(status) {
         return status === "upToDate" ? Theme.success
-             : status === "stale" ? Theme.warning
+             : status === "stale" || status === "notGenerated" ? Theme.warning
              : status === "generating" ? Theme.accent
              : status === "failed" || status === "broken" ? Theme.error
              : Theme.textDisabled

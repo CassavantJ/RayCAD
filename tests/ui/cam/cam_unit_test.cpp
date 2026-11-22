@@ -82,6 +82,29 @@ TEST_CASE("status badges: every engine status has a key and a plain text", "[cam
     CHECK(statusText(cam::OpStatus::Generating, 1.0) == QStringLiteral("Generating 100%"));
 }
 
+TEST_CASE("status badges: stale with no toolpath at all is 'Not generated', not out of date", "[cam][ui]")
+{
+    // Toolpaths are not saved with the document: an operation of a document opened in a new session has none, and the
+    // engine calls it Stale. Nothing changed since a generation, so the tree says it was not generated.
+    const cam::OpState never{cam::OpStatus::Stale, "The toolpath is out of date", nullptr};
+    const Badge b = badgeOf(never);
+    CHECK(b.notGenerated);
+    CHECK(statusKey(b) == QStringLiteral("notGenerated"));
+    CHECK(statusText(b) == QStringLiteral("Not generated"));
+    CHECK_FALSE(b.message.contains(QStringLiteral("out of date")));
+    // With the toolpath of other inputs still held, it is out of date.
+    cam::OpState changed = never;
+    changed.toolpath = std::make_shared<const cam::Toolpath>();
+    CHECK_FALSE(badgeOf(changed).notGenerated);
+    CHECK(statusKey(badgeOf(changed)) == QStringLiteral("stale"));
+    // A setup shows "Stale" before "Not generated" (both block posting).
+    CHECK(setupBadge(Status{}, {&never})->notGenerated);
+    CHECK_FALSE(setupBadge(Status{}, {&never, &changed})->notGenerated);
+    CHECK_FALSE(setupBadge(Status{}, {&changed, &never})->notGenerated);
+    const cam::OpState up{cam::OpStatus::UpToDate, "", nullptr};
+    CHECK(statusKey(badgeOf(up)) == QStringLiteral("upToDate"));
+}
+
 TEST_CASE("a setup's badge: its own resolution first, then the worst of its operations", "[cam][ui]")
 {
     const cam::OpState up{cam::OpStatus::UpToDate, "", nullptr};
