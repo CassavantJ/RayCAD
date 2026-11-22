@@ -546,7 +546,21 @@ FocusScope {
                 to: 1
                 value: Math.max(0, CamPost.progress)
             }
-            // The folder of the file just written, its middle elided (the whole path in the tooltip).
+            Label {
+                objectName: "postStatus"
+                width: parent.width
+                visible: text !== ""
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                maximumLineCount: 3
+                font: Theme.smallFont
+                color: root.state === "failed" ? Theme.error
+                     : root.state === "done" ? Theme.success
+                     : root.state === "asking" ? Theme.warning : Theme.textSecondary
+                text: CamPost.statusText !== "" ? CamPost.statusText
+                    : !CamPost.canPost ? CamPost.postBlockedReason : qsTr("Ready to post")
+            }
+            // Under it, the whole path of the file just written, cut in the middle when long (in full in the tooltip).
             Label {
                 id: pathLabel
                 objectName: "postResultPath"
@@ -565,20 +579,6 @@ FocusScope {
                     target: pathLabel
                     text: CamPost.resultPath
                 }
-            }
-            Label {
-                objectName: "postStatus"
-                width: parent.width
-                visible: text !== ""
-                wrapMode: Text.Wrap
-                elide: Text.ElideNone
-                maximumLineCount: 3
-                font: Theme.smallFont
-                color: root.state === "failed" ? Theme.error
-                     : root.state === "done" ? Theme.success
-                     : root.state === "asking" ? Theme.warning : Theme.textSecondary
-                text: CamPost.statusText !== "" ? CamPost.statusText
-                    : !CamPost.canPost ? CamPost.postBlockedReason : qsTr("Ready to post")
             }
             Row {
                 id: buttonRow
