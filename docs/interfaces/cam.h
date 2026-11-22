@@ -11,6 +11,10 @@
 // Amended by T-033 (setup resolution): resolveSetup and ResolvedSetup (the frame, both directions of it, and the stock
 // solid, without an operation: for the setup preview and the simulator), resolveSetupGeometry in place of the
 // stand-in resolveGeometryBasic, and ResolvedGeometry's comment says which frame each member is in.
+// Amended by the canned-cycle settlement (after T-037 and T-039, which had each written down assumptions): the cycle
+// part of Move is decided (cycleTop, cycleClearance, cycleReturn, cyclePeckClearance, cycleLeftHand; what each cycle
+// kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
+// peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -117,20 +121,106 @@ enum class MoveKind : std::uint8_t { Rapid, Linear, ArcCW, ArcCCW, Dwell, CycleD
                                      CycleTap, CycleBore, CycleReam, CycleCancel };
 enum class MoveRole : std::uint8_t { Cut, Plunge, Ramp, LeadIn, LeadOut, Link, Retract, Approach };
 enum class ArcPlane : std::uint8_t { XY, XZ, YZ };
+enum class CycleReturn : std::uint8_t { RPlane, Initial };   // where a cycle leaves the tool: G99, G98
 
+// ---------- Canned cycles ----------
+// One cycle move is one hole, run as a Fanuc/Haas control runs its canned cycle. Every height is an absolute WCS Z in
+// nanometres, like x, y and z, and they are ordered  z < cycleTop <= cycleRetract <= cycleClearance:
+//   x, y                 the hole
+//   z                    the hole bottom
+//   cycleTop             the hole top (the post API's CycleMove.top)
+//   cycleRetract         the R plane: rapid down to it, feed from it
+//   cycleClearance       the initial level (G98 returns here)
+//   cycleReturn          the level the tool goes to after this hole: RPlane = cycleRetract (G99) or Initial =
+//                        cycleClearance (G98). Chosen per move by the generator from what sits between this hole and
+//                        the next: the tool travels to the next hole at that level
+//   cyclePeck            the peck depth Q, a positive increment, the first peck measured from the R plane (the
+//                        Fanuc/Haas G83 and G73 meaning of Q); 0 = no pecking: the hole is drilled in one feed
+//   cyclePeckClearance   c, the G83 re-entry clearance and the G73 chip-break back-off; 0 = the control's own parameter,
+//                        and a post that emits the native cycle writes nothing for it. Only an expansion into plain
+//                        moves (the post host for a control without the cycle, the backplot, simulation) needs a
+//                        number: peckClearanceNm() below, the move's value, else the machine's, else 0.5 mm
+//   cycleDwellMs         dwell at the bottom, >= 0. CycleDrill (G82) and CycleBore / CycleReam (G89) take it on every
+//                        control; CyclePeck, CycleChipBreak and CycleTap only where the control's G83, G73 or G84 has a
+//                        P word (Fanuc's G84 does, its G83 and G73 do not). A post for a control without it warns or
+//                        fails; it never drops a dwell silently. An expansion dwells at the bottom for every kind
+//   threadPitchNm        CycleTap: the thread pitch (> 0); 0 for the other kinds
+//   cycleLeftHand        CycleTap: 1 = left-hand thread (G74 instead of G84); 0 otherwise
+//   feedMicronPerMin     the feed into the hole (and out of it for tap, bore and ream), per minute. For CycleTap it is
+//                        pitch times rpm: feedMicronPerMin = threadPitchNm * rpm / 1000 with the operation's whole-number
+//                        spindle speed, exact whenever that is a whole number of um/min (always for a pitch that is a
+//                        whole number of micrometres: every metric pitch, some inch ones), otherwise rounded half to even.
+//                        Rigid versus floating tapping is the machine's and the post's business
+//                        (MachineDef::rigidTapping, capabilities.rigidTap), not the IR's
+// The motion of one cycle move, from the tool's position P (the end of the previous move, or the toolpath start):
+//   1. rapid in X and Y at P's Z to the hole;
+//   2. if P is above cycleClearance, rapid down to it (this happens only at the start of a run, see below);
+//   3. rapid to the R plane;
+//   4. by kind, with Q = cyclePeck and c the peck clearance:
+//      CycleDrill (G81; G82 with a dwell; spot drilling too)   feed to z, dwell, rapid out to the return level
+//      CyclePeck (G83)       feed to R - Q; then, until z: rapid to R, rapid to c above the last depth, feed Q deeper
+//                            than the last depth (the last peck stops at z); dwell, rapid out to the return level
+//      CycleChipBreak (G73)  feed to R - Q; then, until z: rapid up by c, feed Q deeper than the last depth (the last
+//                            peck stops at z); dwell, rapid out to the return level
+//      CycleTap (G84; G74 when left-hand)   feed to z, dwell, spindle reversal, feed out to R at the same feed; with
+//                            Initial, then rapid to cycleClearance
+//      CycleBore, CycleReam (G85; G89 with a dwell)   feed to z, dwell, feed out to R at the same feed; with Initial,
+//                            then rapid to cycleClearance
+//      A re-entry or back-off never goes above R. Spindle-stop rapid-out boring (G86), fine boring with an oriented
+//      stop and shift (G76) and back boring (G87) are future move kinds; they are not part of this format.
+// After the move the tool is at (x, y, return level), and the next move starts there. CycleCancel (G80) ends a run
+// and does not move the tool; nor does Dwell.
+// Runs: consecutive cycle moves with the same kind, cycleLeftHand and cycleClearance form a run; any other move
+// (CycleCancel and Dwell included), or a change of one of those three, ends it. RULE: at the first move of a run the
+// tool must be at or above that move's cycleClearance (P.z >= cycleClearance), either already over the hole or
+// approaching it by step 1, a rapid at P's Z that the generator must have made safe. So a native cycle always starts
+// at its initial level: when P is above cycleClearance, the post host emits steps 1 and 2 as rapids before the cycle
+// block. Later moves of a run start at the previous move's return level, which is at most the clearance. The toolpath
+// invariant checker (tests/unit/cam/invariants) enforces this and the level order; the post host refuses a toolpath
+// that breaks either.
+inline constexpr Nm kDefaultPeckClearanceNm = 500'000;   // 0.5 mm: the expansion fallback when nothing else is known
+
+// ---------- Move: the RCTP record ----------
+// Fixed size, 112 bytes, no implicit padding. The member order is the byte layout of the record in Toolpath::serialize
+// (every field little-endian, the pads written as 0):
+//    0 kind u8          1 role u8           2 plane u8           3 compensation u8
+//    4 cycleReturn u8   5 cycleLeftHand u8  6 pad0 u16
+//    8 feedMicronPerMin i32                 12 cycleDwellMs i32
+//   16 threadPitchNm i32                    20 pad1 u32
+//   24 x   32 y   40 z   48 i   56 j   64 k                                  (i64 each)
+//   72 cycleRetract   80 cycleTop   88 cycleClearance   96 cyclePeck   104 cyclePeckClearance   (i64 each)
+// Moves are built value-initialised (Move m{}) and set by name; the order is not an aggregate-initialisation order.
 struct Move {
     MoveKind kind;
     MoveRole role;
-    Nm x, y, z;                 // end point
-    Nm i, j, k;                 // arc centre (absolute); helical when z changes
     ArcPlane plane;
-    std::int32_t feedMicronPerMin;   // 0 for rapids
-    // Cycles: (x,y) hole position, z = bottom; fields below
-    Nm cycleRetract, cyclePeck;
-    std::int32_t cycleDwellMs;
-    std::int32_t threadPitchNm;      // tapping
     std::uint8_t compensation;       // 0 off, 1 left (G41), 2 right (G42) for "in control" cutter comp
+    CycleReturn cycleReturn;         // cycles: see above
+    std::uint8_t cycleLeftHand;      // CycleTap: 1 left-hand (G74)
+    std::uint16_t pad0;              // 0
+    std::int32_t feedMicronPerMin;   // 0 for rapids
+    std::int32_t cycleDwellMs;       // cycles, and the Dwell move's duration
+    std::int32_t threadPitchNm;      // CycleTap
+    std::uint32_t pad1;              // 0
+    Nm x, y, z;                      // end point; for a cycle the hole (x, y) and its bottom z
+    Nm i, j, k;                      // arc centre (absolute); helical when z changes
+    Nm cycleRetract, cycleTop, cycleClearance, cyclePeck, cyclePeckClearance;   // cycles: see above
 };
+static_assert(sizeof(Move) == 112, "Move is the 112-byte RCTP record; see the layout above");
+inline constexpr std::uint32_t kToolpathFormatVersion = 2;   // RCTP version (1: the plan draft's record, never written)
+
+// The peck clearance an expansion into plain moves uses for `m`: its own value, else the machine definition's
+// (lib::MachineDef::peckClearance, mm), else kDefaultPeckClearanceNm. `machine` may be null.
+inline Nm peckClearanceNm(const Move& m, const lib::MachineDef* machine)
+{
+    if (m.cyclePeckClearance > 0) {
+        return m.cyclePeckClearance;
+    }
+    if (machine != nullptr && machine->peckClearance > 0 && machine->peckClearance <= 1000.0) {
+        return toNm(machine->peckClearance);
+    }
+    return kDefaultPeckClearanceNm;
+}
 
 struct Toolpath {
     OperationId operation;
@@ -140,7 +230,13 @@ struct Toolpath {
     // maxEngagementDeg alone is a short spike (S5); p99 and air-cut length are what describe an adaptive path.
     struct Stats { double cutLengthMm, rapidLengthMm; double minZ, maxZ; double maxEngagementDeg, p99EngagementDeg, airCutLengthMm; } stats;
     std::vector<std::string> warnings;   // includes generator failure flags: start point not found, uncleared area remains, lead failed
-    std::vector<std::byte> serialize() const;        // canonical little-endian; the golden-file format
+    // The RCTP format, canonical little-endian, the golden-file format (PLAN.md 3.6): "RCTP", u32 version
+    // (kToolpathFormatVersion), operation id (16 bytes), inputHash (32 bytes), u64 move count, startX, startY, startZ
+    // (i64), then the 112-byte Move records. 88 + 112 n bytes; stats and warnings are not stored. deserialize refuses
+    // a wrong magic, size or pad, a value outside its enum (compensation above 2, cycleLeftHand above 1), version 1
+    // (FormatError) and a later version (FormatTooNew); its stats are zero and it has no warnings. hash() is BLAKE3 of
+    // serialize().
+    std::vector<std::byte> serialize() const;
     static Result<Toolpath> deserialize(std::span<const std::byte>);
     Hash256 hash() const;
 };

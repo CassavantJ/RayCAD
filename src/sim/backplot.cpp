@@ -14,28 +14,32 @@
 //                   segment.
 //   Dwell,          no motion (x, y, z of the move are ignored): one zero-length vertex at the current position with
 //   CycleCancel     the move's own kind and role.
-//   Cycles          the motion the control makes (Fanuc/Haas G81-G89 with G99, return to the R plane). cam.h: (x, y)
-//                   is the hole, z the bottom, cycleRetract the R plane (absolute WCS Z), cyclePeck the peck depth Q,
-//                   measured from the R plane. Sub-motions get kind Rapid or Linear (the motion) and these roles:
+//   Cycles          the motion the control makes, as cam.h "Canned cycles" defines it (G81-G89, G98 or G99 per move).
+//                   R = cycleRetract, C = cycleClearance, Q = cyclePeck, c = the peck clearance (cam::peckClearanceNm
+//                   with the machine given), the return level = R (RPlane, G99) or C (Initial, G98). Sub-motions get
+//                   kind Rapid or Linear (the motion) and these roles:
 //                     1. rapid in X and Y at the current Z to the hole                   Rapid  Link
-//                     2. rapid down (or up) to R                                         Rapid  Approach
-//                     3. by cycle:
-//                        CycleDrill (G81, G82 with a dwell)  feed to the bottom          Linear Plunge
-//                                                            rapid to R                  Rapid  Retract
+//                     2. if above C: rapid down to C                                     Rapid  Approach
+//                     3. rapid down (or up) to R                                         Rapid  Approach
+//                     4. by cycle:
+//                        CycleDrill (G81, G82)  feed to the bottom                       Linear Plunge
+//                                               rapid to the return level                Rapid  Retract
 //                        CyclePeck (G83)   feed to R - Q; then per peck: rapid to R      Rapid  Retract
-//                                          rapid to 0.5 mm above the last depth          Rapid  Approach
+//                                          rapid to c above the last depth               Rapid  Approach
 //                                          feed Q deeper (the last peck to the bottom)   Linear Plunge
-//                                          rapid to R                                    Rapid  Retract
-//                        CycleChipBreak (G73) feed to R - Q; then per peck: rapid up 0.5 mm Rapid Retract
+//                                          rapid to the return level                     Rapid  Retract
+//                        CycleChipBreak (G73) feed to R - Q; then per peck: rapid up c   Rapid  Retract
 //                                          feed Q deeper (the last peck to the bottom)   Linear Plunge
-//                                          rapid to R                                    Rapid  Retract
-//                        CycleTap (G84), CycleBore and CycleReam (G85, G89 with a dwell)
+//                                          rapid to the return level                     Rapid  Retract
+//                        CycleTap (G84, G74), CycleBore and CycleReam (G85, G89)
 //                                          feed to the bottom, feed back to R at the
 //                                          same feed                                    Linear Plunge, then Retract
-//                   A peck cycle with Q <= 0 or a bottom at or above R is drilled in one feed. Dwells draw nothing.
-//                   Sub-motions of zero length are left out. The tool ends the move at (x, y, R), where the next move
-//                   starts. Every assumption about cycles, among them the 0.5 mm distances the IR does not carry,
-//                   is in one place: CycleAssumptions in backplot.h.
+//                                          with G98, rapid to C                          Rapid  Retract
+//                   Re-entries and back-offs stop at R. A peck cycle with Q <= 0 or a bottom at or above R is drilled
+//                   in one feed. Dwells and the spindle reversal draw nothing. Sub-motions of zero length are left
+//                   out. The tool ends the move at (x, y, return level), where the next move starts. The backplot
+//                   draws what the control would do even for a cycle that breaks cam.h's rules (levels out of order,
+//                   a run started below C); the invariant checker and the post host refuse those.
 //
 // Determinism: plain IEEE-754 double arithmetic in a fixed order (the module is built with strict floating point and
 // no contraction), trigonometry only through ray::dmath, and float conversion by round-to-nearest. Intermediate arc
@@ -44,8 +48,9 @@
 //
 // Speed: two passes over the moves. The first counts vertices and plans each arc (sweep and chord count, 16 bytes per
 // arc, the only temporary); the second writes the vertex array, allocated once at its exact size. Nothing is allocated
-// per move. Measured (T-037 report) the time goes mostly to memory: reading the 96-byte moves twice and first-touching
-// the 24-byte vertices; the one dmath::atan2 per arc is the largest computing cost.
+// per move. Measured (T-037 report, with the 96-byte moves of then; they are 112 bytes now) the time goes mostly to
+// memory: reading the moves twice and first-touching the 24-byte vertices; the one dmath::atan2 per arc is the largest
+// computing cost.
 #include "backplot.h"
 
 #include <algorithm>
@@ -158,9 +163,9 @@ struct ArcPlan {
 template <bool kEmit>
 class Walker {
 public:
-    Walker(const cam::Toolpath& tp, const Xform& xf, double tolMm, bool coarse, std::vector<ArcPlan>& arcs,
-           Backplot* out)
-        : tp_(tp), xf_(xf), tolNm_(tolMm * kNmPerMm), coarse_(coarse), arcs_(arcs), out_(out)
+    Walker(const cam::Toolpath& tp, const lib::MachineDef* machine, const Xform& xf, double tolMm, bool coarse,
+           std::vector<ArcPlan>& arcs, Backplot* out)
+        : tp_(tp), machine_(machine), xf_(xf), tolNm_(tolMm * kNmPerMm), coarse_(coarse), arcs_(arcs), out_(out)
     {
         if constexpr (!kEmit) {
             arcs_.clear();
@@ -320,8 +325,14 @@ private:
         const Nm x = mv.x, y = mv.y;
         const Nm bottom = clampNm(mv.z);
         const Nm r = clampNm(mv.cycleRetract);
+        const Nm clearance = clampNm(mv.cycleClearance);
+        const Nm back = clampNm(cam::peckClearanceNm(mv, machine_));
+        const Nm out = mv.cycleReturn == cam::CycleReturn::Initial ? clearance : r; // the return level
         const std::int32_t feed = mv.feedMicronPerMin;
         to({x, y, cur_.z}, MoveKind::Rapid, MoveRole::Link, 0);
+        if (cur_.z > clearance) {
+            to({x, y, clearance}, MoveKind::Rapid, MoveRole::Approach, 0);
+        }
         to({x, y, r}, MoveKind::Rapid, MoveRole::Approach, 0);
         const bool peck = mv.kind == MoveKind::CyclePeck || mv.kind == MoveKind::CycleChipBreak;
         const Nm q = clampNm(mv.cyclePeck);
@@ -329,20 +340,19 @@ private:
             const bool fullRetract = mv.kind == MoveKind::CyclePeck;
             Nm depth = r;
             for (std::uint32_t k = 1;; ++k) {
-                const Nm next = (depth - bottom <= q || k >= detail::CycleAssumptions::maxPecks) ? bottom : depth - q;
+                const Nm next = (depth - bottom <= q || k >= detail::kMaxPecksDrawn) ? bottom : depth - q;
                 if (fullRetract && k > 1) {
-                    to({x, y, std::min(r, depth + detail::CycleAssumptions::peckReentryClearanceNm)}, MoveKind::Rapid,
-                       MoveRole::Approach, 0);
+                    to({x, y, std::min(r, depth + back)}, MoveKind::Rapid, MoveRole::Approach, 0);
                 }
                 to({x, y, next}, MoveKind::Linear, MoveRole::Plunge, feed);
                 if (next == bottom) {
                     break;
                 }
-                const Nm up = fullRetract ? r : std::min(r, next + detail::CycleAssumptions::chipBreakRetractNm);
+                const Nm up = fullRetract ? r : std::min(r, next + back);
                 to({x, y, up}, MoveKind::Rapid, MoveRole::Retract, 0);
                 depth = next;
             }
-            to({x, y, r}, MoveKind::Rapid, MoveRole::Retract, 0);
+            to({x, y, out}, MoveKind::Rapid, MoveRole::Retract, 0);
             return;
         }
         to({x, y, bottom}, MoveKind::Linear, MoveRole::Plunge, feed);
@@ -350,12 +360,12 @@ private:
             mv.kind == MoveKind::CycleTap || mv.kind == MoveKind::CycleBore || mv.kind == MoveKind::CycleReam;
         if (feedOut) {
             to({x, y, r}, MoveKind::Linear, MoveRole::Retract, feed);
-        } else {
-            to({x, y, r}, MoveKind::Rapid, MoveRole::Retract, 0);
         }
+        to({x, y, out}, MoveKind::Rapid, MoveRole::Retract, 0);
     }
 
     const cam::Toolpath& tp_;
+    const lib::MachineDef* machine_;
     const Xform& xf_;
     double tolNm_; // chord tolerance in nanometres, as arcs are measured
     bool coarse_;
@@ -382,18 +392,18 @@ double clampTolerance(double chordTol)
 namespace detail {
 
 Backplot buildBackplotLimited(const cam::Toolpath& tp, const Xform& modelFromWcs, double chordTol,
-                              std::uint64_t maxVertices, bool* coarseOut)
+                              const lib::MachineDef* machine, std::uint64_t maxVertices, bool* coarseOut)
 {
     double tol = clampTolerance(chordTol);
     bool coarse = false;
     std::vector<ArcPlan> arcs;
-    std::uint64_t count = Walker<false>(tp, modelFromWcs, tol, false, arcs, nullptr).run();
+    std::uint64_t count = Walker<false>(tp, machine, modelFromWcs, tol, false, arcs, nullptr).run();
     if (count > maxVertices) {
         // Only an absurd toolpath gets here (billions of chords or pecks). Every arc at quarter-turn chords and every
-        // peck cycle as one plunge: at most four vertices per move.
+        // peck cycle as one plunge: at most six vertices per move.
         coarse = true;
         tol = std::numeric_limits<double>::infinity();
-        count = Walker<false>(tp, modelFromWcs, tol, true, arcs, nullptr).run();
+        count = Walker<false>(tp, machine, modelFromWcs, tol, true, arcs, nullptr).run();
     }
     if (coarseOut != nullptr) {
         *coarseOut = coarse;
@@ -401,15 +411,17 @@ Backplot buildBackplotLimited(const cam::Toolpath& tp, const Xform& modelFromWcs
     Backplot out;
     out.moveFirstVertex.resize(tp.moves.size() + 1);
     out.lineVertices.reserve(static_cast<std::size_t>(count));
-    Walker<true>(tp, modelFromWcs, tol, coarse, arcs, &out).run();
+    Walker<true>(tp, machine, modelFromWcs, tol, coarse, arcs, &out).run();
     return out;
 }
 
 } // namespace detail
 
-Backplot buildBackplot(const cam::Toolpath& tp, const Xform& modelFromWcs, double chordTol)
+Backplot buildBackplot(const cam::Toolpath& tp, const Xform& modelFromWcs, double chordTol,
+                       const lib::MachineDef* machine)
 {
-    return detail::buildBackplotLimited(tp, modelFromWcs, chordTol, std::numeric_limits<std::uint32_t>::max(), nullptr);
+    return detail::buildBackplotLimited(tp, modelFromWcs, chordTol, machine, std::numeric_limits<std::uint32_t>::max(),
+                                        nullptr);
 }
 
 } // namespace ray::sim

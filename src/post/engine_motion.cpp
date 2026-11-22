@@ -134,8 +134,8 @@ Point arcPoint(const ArcFrame& f, const Point& start, const Point& end, std::int
 
 class Expander {
 public:
-    Expander(const cam::Toolpath& path, Nm topZ, const MotionCaps& caps, MotionSink& sink)
-        : path_(path), topZ_(topZ), caps_(caps), sink_(sink)
+    Expander(const cam::Toolpath& path, const lib::MachineDef* machine, const MotionCaps& caps, MotionSink& sink)
+        : path_(path), machine_(machine), caps_(caps), sink_(sink)
     {
         pos_ = Point{{path.startX, path.startY, path.startZ}};
     }
@@ -148,17 +148,30 @@ public:
             const auto moveIndex = static_cast<std::uint32_t>(index);
             const std::optional<CycleKind> cycle = cycleKindOfMove(m.kind);
             if (m.kind == MoveKind::CycleCancel) {
+                previousRun_.reset();
                 if (runActive_ && !endRun(moveIndex)) {
                     return false;
                 }
                 continue;
             }
-            if (cycle && caps_.cycles[static_cast<std::size_t>(*cycle)]) {
-                auto r = cannedCycle(m, *cycle, moveIndex);
-                if (!r || !*r) {
-                    return r;
+            if (cycle) {
+                // A run (cam.h): consecutive cycle moves of one kind, left-hand flag and clearance.
+                const RunKey key{*cycle, m.cycleLeftHand, m.cycleClearance};
+                const bool runStart = !previousRun_ || !(*previousRun_ == key);
+                previousRun_ = key;
+                auto ok = checkCycle(m, runStart, moveIndex);
+                if (!ok) {
+                    return ok;
                 }
-                continue;
+                if (caps_.cycles[static_cast<std::size_t>(*cycle)]) {
+                    auto r = cannedCycle(m, *cycle, runStart, moveIndex);
+                    if (!r || !*r) {
+                        return r;
+                    }
+                    continue;
+                }
+            } else {
+                previousRun_.reset();
             }
             if (runActive_ && !endRun(lastCycleMove_)) {
                 return false;
@@ -340,50 +353,78 @@ private:
         return true;
     }
 
+    struct RunKey {
+        CycleKind kind;
+        std::uint8_t leftHand;
+        Nm clearance;
+        bool operator==(const RunKey&) const = default;
+    };
+
+    // What makes a declared cycle's hole `first` when it changes (the return level is a modal word of its own).
     struct CycleParams {
         CycleKind kind;
-        Nm bottom, retract, peck;
+        Nm bottom, top, retract, clearance, peck, peckClearance;
         std::int32_t dwell, pitch, feed;
+        std::uint8_t leftHand;
         bool operator==(const CycleParams&) const = default;
     };
 
     static CycleParams paramsOf(const Move& m, CycleKind kind)
     {
-        return CycleParams{kind, m.z, m.cycleRetract, m.cyclePeck, m.cycleDwellMs, m.threadPitchNm, m.feedMicronPerMin};
+        return CycleParams{kind,
+                           m.z,
+                           m.cycleTop,
+                           m.cycleRetract,
+                           m.cycleClearance,
+                           m.cyclePeck,
+                           m.cyclePeckClearance,
+                           m.cycleDwellMs,
+                           m.threadPitchNm,
+                           m.feedMicronPerMin,
+                           m.cycleLeftHand};
     }
 
-    Result<bool> checkCycle(const Move& m, std::uint32_t index) const
+    static Nm returnLevel(const Move& m)
+    {
+        return m.cycleReturn == cam::CycleReturn::Initial ? m.cycleClearance : m.cycleRetract;
+    }
+
+    Result<bool> checkCycle(const Move& m, bool runStart, std::uint32_t index) const
     {
         if (m.feedMicronPerMin <= 0) {
             return tl::unexpected(failure(moveLabel(index) + " is a cycle without a feed"));
         }
-        if (m.z >= m.cycleRetract) {
-            return tl::unexpected(
-                failure(moveLabel(index) + " is a cycle whose bottom is not below its retract plane"));
+        if (!(m.z < m.cycleTop && m.cycleTop <= m.cycleRetract && m.cycleRetract <= m.cycleClearance)) {
+            return tl::unexpected(failure(moveLabel(index) +
+                                          " is a cycle whose heights are out of order (cam.h needs bottom < top <= "
+                                          "R plane <= clearance)"));
+        }
+        if (runStart && pos_[2] < m.cycleClearance) {
+            return tl::unexpected(failure(moveLabel(index) +
+                                          " starts a cycle run with the tool below the run's clearance (initial "
+                                          "level); cam.h needs it at or above"));
         }
         return true;
     }
 
-    Result<bool> cannedCycle(const Move& m, CycleKind kind, std::uint32_t index)
+    Result<bool> cannedCycle(const Move& m, CycleKind kind, bool runStart, std::uint32_t index)
     {
-        auto ok = checkCycle(m, index);
-        if (!ok) {
-            return ok;
-        }
         const CycleParams params = paramsOf(m, kind);
-        if (runActive_ && runParams_.kind != kind) {
-            if (!endRun(lastCycleMove_)) {
-                return false;
+        if (runActive_ && runStart && !endRun(lastCycleMove_)) {
+            return false;
+        }
+        if (runStart && pos_[2] > m.cycleClearance) {
+            // cam.h steps 1 and 2 as plain rapids, so that the control's initial level is the clearance.
+            Result<bool> r = emitRapid(Point{{m.x, m.y, pos_[2]}}, index, false);
+            if (r && *r) {
+                r = emitRapid(Point{{m.x, m.y, m.cycleClearance}}, index, false);
+            }
+            if (!r || !*r) {
+                return r;
             }
         }
-        bool first = false;
-        if (!runActive_) {
-            runActive_ = true;
-            runClearance_ = std::max(pos_[2], m.cycleRetract);
-            first = true;
-        } else {
-            first = !(params == runParams_);
-        }
+        const bool first = !runActive_ || !(params == runParams_);
+        runActive_ = true;
         runParams_ = params;
         lastCycleMove_ = index;
         MotionEvent e;
@@ -394,14 +435,18 @@ private:
         e.y = m.y;
         e.z = m.z;
         e.feed = m.feedMicronPerMin;
-        e.top = topZ_;
+        e.top = m.cycleTop;
         e.retract = m.cycleRetract;
-        e.clearance = runClearance_;
+        e.clearance = m.cycleClearance;
+        e.returnLevel =
+            m.cycleReturn == cam::CycleReturn::Initial ? cam::CycleReturn::Initial : cam::CycleReturn::RPlane;
         e.peck = m.cyclePeck;
+        e.peckClearance = m.cyclePeckClearance;
         e.dwellMs = m.cycleDwellMs;
         e.pitchNm = m.threadPitchNm;
+        e.leftHand = m.cycleLeftHand != 0;
         e.first = first;
-        pos_ = Point{{m.x, m.y, cycle_conventions::kReturnToRetractPlane ? m.cycleRetract : runClearance_}};
+        pos_ = Point{{m.x, m.y, returnLevel(m)}};
         return send(e);
     }
 
@@ -425,13 +470,10 @@ private:
                                           "(capabilities.cannedCycles); tapping needs spindle reversal and is never "
                                           "expanded into plain moves"));
         }
-        auto ok = checkCycle(m, index);
-        if (!ok) {
-            return ok;
-        }
-        const Nm clearance = std::max(pos_[2], m.cycleRetract);
+        const Nm clearance = m.cycleClearance;
         const Nm retract = m.cycleRetract;
         const Nm bottom = m.z;
+        const Nm back = cam::peckClearanceNm(m, machine_);
         const std::int32_t feed = m.feedMicronPerMin;
         auto at = [&](Nm z) {
             return Point{{m.x, m.y, z}};
@@ -444,16 +486,10 @@ private:
             steps.emplace_back(false, at(z));
         };
 
-        Result<bool> r = true;
-        if (pos_[2] < clearance) {
-            r = emitRapid(Point{{pos_[0], pos_[1], clearance}}, index, false);
-            if (!r || !*r) {
-                return r;
-            }
-        }
-        r = emitRapid(at(clearance), index, false);
-        if (!r || !*r) {
-            return r;
+        // cam.h motion steps 1 to 3: over the hole at the tool's Z, down to the clearance if above it, to the R plane.
+        rapid(pos_[2]);
+        if (pos_[2] > clearance) {
+            rapid(clearance);
         }
         rapid(retract);
         const Nm peck = m.cyclePeck;
@@ -466,20 +502,21 @@ private:
             while (depth > bottom) {
                 const Nm target = std::max(depth - peck, bottom);
                 if (kind == CycleKind::Peck && !firstStep) {
-                    rapid(std::min(depth + kPeckReentryNm, retract));
+                    rapid(std::min(depth + back, retract)); // G83 re-entry
                 }
                 feedTo(target);
                 if (target > bottom) {
                     if (kind == CycleKind::Peck) {
                         rapid(retract);
                     } else {
-                        rapid(std::min(target + kChipBreakBackoffNm, retract));
+                        rapid(std::min(target + back, retract)); // G73 back-off
                     }
                 }
                 depth = target;
                 firstStep = false;
             }
         }
+        Result<bool> r = true;
         for (const auto& [isRapid, to] : steps) {
             r = isRapid ? emitRapid(to, index, false) : emitLinear(to, feed, MoveRole::Plunge, 0, index);
             if (!r || !*r) {
@@ -494,23 +531,21 @@ private:
         }
         if (kind == CycleKind::Bore || kind == CycleKind::Ream) {
             r = emitLinear(at(retract), feed, MoveRole::Retract, 0, index); // G85 / G89: feed out
-        } else {
-            r = emitRapid(at(retract), index, false);
+            if (!r || !*r) {
+                return r;
+            }
         }
-        if (!r || !*r || cycle_conventions::kReturnToRetractPlane) {
-            return r; // G99: the tool stays at (x, y, R)
-        }
-        return emitRapid(at(clearance), index, false);
+        return emitRapid(at(returnLevel(m)), index, false); // G99: R, G98: the clearance
     }
 
     const cam::Toolpath& path_;
-    Nm topZ_;
+    const lib::MachineDef* machine_;
     const MotionCaps& caps_;
     MotionSink& sink_;
     Point pos_;
-    bool runActive_ = false;
+    std::optional<RunKey> previousRun_; // the run of the previous move, when it was a cycle move
+    bool runActive_ = false;            // a run of declared cycles has had Cycle events and no CycleEnd yet
     CycleParams runParams_{};
-    Nm runClearance_ = 0;
     std::uint32_t lastCycleMove_ = 0;
 };
 
@@ -566,9 +601,10 @@ std::optional<CycleKind> cycleKindOfMove(cam::MoveKind kind)
     }
 }
 
-Result<bool> expandSection(const cam::Toolpath& path, Nm topZ, const MotionCaps& caps, MotionSink& sink)
+Result<bool> expandSection(const cam::Toolpath& path, const lib::MachineDef* machine, const MotionCaps& caps,
+                           MotionSink& sink)
 {
-    Expander expander(path, topZ, caps, sink);
+    Expander expander(path, machine, caps, sink);
     return expander.run();
 }
 
@@ -619,7 +655,7 @@ SectionStats sectionStats(const cam::Toolpath& path, double rapidMmPerMin)
         case MoveKind::CycleCancel:
             continue;
         default: // a cycle: in and out between the retract plane and the bottom
-            s.maxZ = std::max(s.maxZ, m.cycleRetract);
+            s.maxZ = std::max({s.maxZ, m.cycleRetract, m.cycleClearance});
             feedLength = 2.0 * static_cast<double>(m.cycleRetract - m.z);
             s.seconds += static_cast<double>(m.cycleDwellMs) / 1000.0;
             break;
@@ -628,7 +664,10 @@ SectionStats sectionStats(const cam::Toolpath& path, double rapidMmPerMin)
         if (m.feedMicronPerMin > 0) {
             s.seconds += feedLength / (static_cast<double>(m.feedMicronPerMin) * 1000.0) * 60.0;
         }
-        if (!cycleKindOfMove(m.kind)) {
+        if (cycleKindOfMove(m.kind)) {
+            // cam.h: the tool ends a cycle at its return level, over the hole.
+            pos = Point{{m.x, m.y, m.cycleReturn == cam::CycleReturn::Initial ? m.cycleClearance : m.cycleRetract}};
+        } else {
             pos = end;
         }
     }

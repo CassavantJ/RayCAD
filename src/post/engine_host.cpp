@@ -260,6 +260,7 @@ Session::Session(std::string scriptName, const EngineLimits& limits, double cpuL
     roles_.fill(JS_UNDEFINED);
     planes_.fill(JS_UNDEFINED);
     cycles_.fill(JS_UNDEFINED);
+    returnLevels_.fill(JS_UNDEFINED);
     atoms_.fill(JS_ATOM_NULL);
     rt_ = JS_NewRuntime2(&kAllocator, &alloc_);
     JS_SetMemoryLimit(rt_, limits_.heapBytes);
@@ -299,6 +300,10 @@ void Session::freeValues()
     }
     for (JSValue& v : cycles_) {
         JS_FreeValue(ctx_, v);
+    }
+    for (JSValue& v : returnLevels_) {
+        JS_FreeValue(ctx_, v);
+        v = JS_UNDEFINED;
     }
     for (JSAtom a : atoms_) {
         if (a != JS_ATOM_NULL) {
@@ -856,12 +861,16 @@ void Session::installOut()
 void Session::makeInternedValues()
 {
     static constexpr std::array<const char*, kAtomCount> kAtomNames = {
-        "x",    "y",   "z",      "feed",    "role",      "comp", "cw",           "plane",
-        "cx",   "cy",  "cz",     "i",       "j",         "k",    "radius",       "sweepDegrees",
-        "kind", "top", "bottom", "retract", "clearance", "peck", "dwellSeconds", "pitch",
+        "x",      "y",       "z",         "feed",        "role", "comp",          "cw",           "plane", "cx",
+        "cy",     "cz",      "i",         "j",           "k",    "radius",        "sweepDegrees", "kind",  "top",
+        "bottom", "retract", "clearance", "returnLevel", "peck", "peckClearance", "dwellSeconds", "pitch", "leftHand",
         "first"};
     for (std::size_t i = 0; i < kAtomCount; ++i) {
         atoms_[i] = JS_NewAtom(ctx_, kAtomNames[i]);
+    }
+    static constexpr std::array<const char*, 2> kReturnLevels = {"retract", "clearance"}; // CycleReturn order
+    for (std::size_t i = 0; i < returnLevels_.size(); ++i) {
+        returnLevels_[i] = JS_NewString(ctx_, kReturnLevels[i]);
     }
     static constexpr std::array<const char*, 8> kRoles = {"cut",     "plunge", "ramp",    "leadIn",
                                                           "leadOut", "link",   "retract", "approach"};
@@ -891,6 +900,10 @@ JSValue Session::planeString(cam::ArcPlane plane) const
 JSValue Session::cycleString(CycleKind kind) const
 {
     return JS_DupValue(ctx_, cycles_[static_cast<std::size_t>(kind)]);
+}
+JSValue Session::returnLevelString(cam::CycleReturn level) const
+{
+    return JS_DupValue(ctx_, returnLevels_[level == cam::CycleReturn::Initial ? 1 : 0]);
 }
 
 bool Session::hasHandler(Handler h) const

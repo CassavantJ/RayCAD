@@ -60,6 +60,8 @@ inline cam::Move arc(bool cw, Nm x, Nm y, Nm z, Nm i, Nm j, Nm k, std::int32_t f
     m.plane = plane;
     return m;
 }
+// A cycle move (cam.h "Canned cycles"). The hole top and the clearance default to the R plane, the lowest levels
+// cam.h allows; levels() sets them, and the return level, for a real hole.
 inline cam::Move cycle(cam::MoveKind kind, Nm x, Nm y, Nm bottom, Nm retract, std::int32_t feed, Nm peck = 0,
                        std::int32_t dwellMs = 0, std::int32_t pitchNm = 0)
 {
@@ -68,9 +70,18 @@ inline cam::Move cycle(cam::MoveKind kind, Nm x, Nm y, Nm bottom, Nm retract, st
     m.role = cam::MoveRole::Plunge;
     m.feedMicronPerMin = feed;
     m.cycleRetract = retract;
+    m.cycleTop = retract;
+    m.cycleClearance = retract;
     m.cyclePeck = peck;
     m.cycleDwellMs = dwellMs;
     m.threadPitchNm = pitchNm;
+    return m;
+}
+inline cam::Move levels(cam::Move m, Nm top, Nm clearance, cam::CycleReturn ret = cam::CycleReturn::RPlane)
+{
+    m.cycleTop = top;
+    m.cycleClearance = clearance;
+    m.cycleReturn = ret;
     return m;
 }
 inline cam::Move dwell(std::int32_t ms)

@@ -267,7 +267,11 @@ TEST_CASE("moveFirstVertex maps every move of random toolpaths", "[sim][backplot
             }
             m.i = coord(), m.j = coord(), m.k = coord();
             m.cycleRetract = coord();
+            m.cycleTop = coord();
+            m.cycleClearance = coord();
+            m.cycleReturn = static_cast<cam::CycleReturn>(rng() % 3); // and one outside the enum
             m.cyclePeck = static_cast<Nm>(rng() % 300'000) - 50'000;
+            m.cyclePeckClearance = static_cast<Nm>(rng() % 300'000) - 50'000;
             m.feedMicronPerMin = static_cast<std::int32_t>(rng() % 5'000'000);
             moves.push_back(m);
         }

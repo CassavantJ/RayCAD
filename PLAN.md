@@ -348,7 +348,7 @@ Stock types: `box` (offsets from the part bounding box), `cylinder`, `solid` (a 
 
 Each operation type publishes a JSON Schema with defaults (`IOperationType::paramsSchemaJson`); the UI builds the form from it, and the API validates against it.
 
-**Toolpath** (binary, canonical little-endian, the golden-file format): header (`RCTP`, version, operation id, input hash, move count, start point), then fixed-size `Move` records exactly as in `cam.h`. Coordinates are integer nanometres; feeds are integer micrometres per minute. No floating point is stored.
+**Toolpath** (binary, canonical little-endian, the golden-file format, version 2): an 88-byte header (`RCTP`, u32 version, 16-byte operation id, 32-byte input hash, u64 move count, start point as three i64), then fixed-size 112-byte `Move` records exactly as laid out in `cam.h` (the byte offset of every field is listed there; the two pad fields are written as zero). Coordinates are integer nanometres; feeds are integer micrometres per minute. No floating point is stored; neither are the stats or the warnings. Version 1 was the draft record of 96 bytes with implicit padding, never written; version 2 settles canned cycles (`cam.h`, "Canned cycles": hole top, R plane, initial level, G98/G99 return per move, peck depth and peck clearance, dwell, left-hand tapping).
 
 **Tool** (`tools/<uuid>.tool.json`):
 
@@ -369,10 +369,13 @@ Each operation type publishes a JSON Schema with defaults (`IOperationType::para
   "axes": [ { "letter": "X", "min": 0, "max": 762, "rapid": 25400, "maxFeed": 16500, "accel": 5000 } ],
   "spindle": { "maxRpm": 8100, "minRpm": 0, "powerKw": 22.4, "torqueNm": 122 },
   "toolChanger": { "capacity": 20, "changeSeconds": 4.2 },
-  "control": { "dialect": "haas-ngc", "defaultPost": "haas-ngc", "rigidTapping": true, "maxProgramNameLength": 8 },
+  "control": { "dialect": "haas-ngc", "defaultPost": "haas-ngc", "rigidTapping": true, "maxProgramNameLength": 8,
+               "peckClearance": 0.5 },
   "options": { "throughSpindleCoolant": false, "probe": false, "toolSetter": false },
   "postProperties": { "useG187": true } }
 ```
+
+`control.peckClearance` (optional, mm, 0 or absent when not known) is the G83 re-entry clearance and G73 back-off the control is set to; it is read only when a canned cycle is expanded into plain moves (`cam.h`, `peckClearanceNm`).
 
 Shipped definitions use published catalogue values and are marked `"verified": false` until Jake checks them against the real machines.
 

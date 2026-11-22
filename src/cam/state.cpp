@@ -388,7 +388,7 @@ void putMachine(Hasher& h, const Embedded<lib::MachineDef>& e)
     putFlag(h, m.throughSpindleCoolant);
     putFlag(h, m.hasProbe);
     putFlag(h, m.hasToolSetter);
-    h.i64(m.maxBlockNumber).i64(m.maxProgramNameLength);
+    h.i64(m.maxBlockNumber).i64(m.maxProgramNameLength).f64(m.peckClearance);
     h.i64(static_cast<std::int64_t>(m.postPropertyOverrides.size()));
     for (const auto& [key, value] : m.postPropertyOverrides) {
         h.str(key).str(value);

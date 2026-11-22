@@ -383,8 +383,62 @@ TEST_CASE("canned cycles expand to the motion of the control", "[sim][backplot][
         const std::uint32_t n = bp.moveFirstVertex[1] - bp.moveFirstVertex[0];
         // Each peck is a feed and a rapid back to R; the re-entry stops 0.5 mm above a depth less than 0.5 mm below R,
         // so it is above R and left out.
-        CHECK(n == 2 * bd::CycleAssumptions::maxPecks);
+        CHECK(n == 2 * bd::kMaxPecksDrawn);
         CHECK(samePos(bp.lineVertices[bp.lineVertices.size() - 2], 20, 10, -10));
+    }
+    SECTION("G98: out to the clearance; from above the clearance, down to it before the R plane")
+    {
+        const auto g98 = cam::CycleReturn::Initial;
+        const cam::Toolpath tp = toolpath(0, 0, 50,
+                                          {levels(cycle(MoveKind::CycleDrill, 20, 10, -10, 2), 0, 8, g98),
+                                           levels(cycle(MoveKind::CyclePeck, 30, 10, -10, 2, 8), 0, 8, g98),
+                                           levels(cycle(MoveKind::CycleBore, 40, 10, -10, 2, 0, 125), 0, 8, g98),
+                                           levels(cycle(MoveKind::CycleTap, 50, 10, -10, 2, 0, 125), 0, 8)});
+        const Backplot bp = buildBackplot(tp, Xform::identity(), 0.01);
+        checkLayout(tp, bp);
+        checkSubs(bp, 0,
+                  {{20, 10, 50, R, MoveRole::Link, 0},
+                   {20, 10, 8, R, MoveRole::Approach, 0},
+                   {20, 10, 2, R, MoveRole::Approach, 0},
+                   {20, 10, -10, L, MoveRole::Plunge, F},
+                   {20, 10, 8, R, MoveRole::Retract, 0}});
+        // Pecks retract to R between pecks and to the clearance at the end.
+        checkSubs(bp, 1,
+                  {{30, 10, 8, R, MoveRole::Link, 0},
+                   {30, 10, 2, R, MoveRole::Approach, 0},
+                   {30, 10, -6, L, MoveRole::Plunge, F},
+                   {30, 10, 2, R, MoveRole::Retract, 0},
+                   {30, 10, -5.5, R, MoveRole::Approach, 0},
+                   {30, 10, -10, L, MoveRole::Plunge, F},
+                   {30, 10, 8, R, MoveRole::Retract, 0}});
+        checkSubs(bp, 2,
+                  {{40, 10, 8, R, MoveRole::Link, 0},
+                   {40, 10, 2, R, MoveRole::Approach, 0},
+                   {40, 10, -10, L, MoveRole::Plunge, 125.0f},
+                   {40, 10, 2, L, MoveRole::Retract, 125.0f},
+                   {40, 10, 8, R, MoveRole::Retract, 0}});
+        // G99: the tap feeds out to R and stays there.
+        checkSubs(bp, 3,
+                  {{50, 10, 8, R, MoveRole::Link, 0},
+                   {50, 10, 2, R, MoveRole::Approach, 0},
+                   {50, 10, -10, L, MoveRole::Plunge, 125.0f},
+                   {50, 10, 2, L, MoveRole::Retract, 125.0f}});
+    }
+    SECTION("the peck clearance: the move's, else the machine's, else cam::kDefaultPeckClearanceNm")
+    {
+        Move m = cycle(MoveKind::CycleChipBreak, 20, 10, -10, 2, 5);
+        const auto backOff = [&](const Move& mv, const lib::MachineDef* machine) {
+            const Backplot bp = buildBackplot(toolpath(20, 10, 2, {mv}), Xform::identity(), 0.01, machine);
+            const std::uint32_t a = bp.moveFirstVertex[0];
+            return static_cast<double>(bp.lineVertices[a + 1].z) - static_cast<double>(bp.lineVertices[a].z);
+        };
+        lib::MachineDef machine{};
+        CHECK(std::abs(backOff(m, nullptr) - 0.5) < 1e-6);
+        CHECK(std::abs(backOff(m, &machine) - 0.5) < 1e-6); // the machine does not know its value
+        machine.peckClearance = 0.2;
+        CHECK(std::abs(backOff(m, &machine) - 0.2) < 1e-6);
+        m.cyclePeckClearance = nm(1.25);
+        CHECK(std::abs(backOff(m, &machine) - 1.25) < 1e-6);
     }
     SECTION("the tool ends a cycle at the R plane: the next move starts there")
     {
@@ -407,10 +461,10 @@ TEST_CASE("over the vertex limit the backplot is built coarse", "[sim][backplot]
     const cam::Toolpath tp =
         toolpath(10, 0, 2, {arc(true, ArcPlane::XY, 10, 0, 2, 0, 0, 2), cycle(MoveKind::CyclePeck, 10, 0, -10, 2, 1)});
     bool coarse = true;
-    const Backplot fine = bd::buildBackplotLimited(tp, Xform::identity(), 0.001, 1u << 20, &coarse);
+    const Backplot fine = bd::buildBackplotLimited(tp, Xform::identity(), 0.001, nullptr, 1u << 20, &coarse);
     CHECK_FALSE(coarse);
     checkLayout(tp, fine);
-    const Backplot rough = bd::buildBackplotLimited(tp, Xform::identity(), 0.001, 100, &coarse);
+    const Backplot rough = bd::buildBackplotLimited(tp, Xform::identity(), 0.001, nullptr, 100, &coarse);
     CHECK(coarse);
     checkLayout(tp, rough);
     CHECK(rough.moveFirstVertex[1] - rough.moveFirstVertex[0] == 4); // quarter-turn chords

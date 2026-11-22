@@ -197,6 +197,12 @@ TEST_CASE("an operation's input hash changes with its params, tool, cutting data
     differs(exec(exec(f.state, command("cam.library.embed", library({}, {}, machineJson(2)))),
                  setupEdit(R"("machine":")" + id('9', 2) + "\"")),
             f.build, "machine");
+    {
+        std::string peck = machineJson(1);
+        peck.insert(peck.find("\"rigidTapping\""), "\"peckClearance\":0.3,");
+        differs(exec(f.state, command("cam.library.embed", library({}, {}, peck))), f.build,
+                "the embedded machine's peck clearance");
+    }
     // The part itself (here: the part is a different box; its top face is then gone, see the Broken test, so the op
     // without geometry shows the part's content counts).
     {

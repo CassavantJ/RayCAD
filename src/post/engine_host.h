@@ -130,17 +130,21 @@ public:
         aBottom,
         aRetract,
         aClearance,
+        aReturnLevel,
         aPeck,
+        aPeckClearance,
         aDwell,
         aPitch,
+        aLeftHand,
         aFirst,
         kAtomCount
     };
     JSAtom atom(Atom a) const { return atoms_[a]; }
-    // Interned strings: move roles, arc planes and cycle kinds.
+    // Interned strings: move roles, arc planes, cycle kinds and cycle return levels.
     JSValue roleString(cam::MoveRole role) const;
     JSValue planeString(cam::ArcPlane plane) const;
     JSValue cycleString(CycleKind kind) const;
+    JSValue returnLevelString(cam::CycleReturn level) const;
 
 private:
     static int interruptHandler(JSContext* ctx, void* opaque);
@@ -174,6 +178,7 @@ private:
     std::array<JSValue, 8> roles_{};
     std::array<JSValue, 3> planes_{};
     std::array<JSValue, kCycleKindCount> cycles_{};
+    std::array<JSValue, 2> returnLevels_{}; // "retract", "clearance"
     std::optional<Writer> writer_;
 
     friend JSValue jsDefinePost(JSContext*, JSValueConst, int, JSValueConst*);
