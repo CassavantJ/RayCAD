@@ -472,8 +472,13 @@ Value toJson(const cam::StockDef& stock)
 Result<cam::Wcs> readWcs(const Value& value, const Source& source, std::string_view field)
 {
     RAY_CAMJSON_TRY(o, Obj::of(value, source, std::string(field)));
-    RAY_CAMJSON_CHECK(o->only({"origin", "originVertex", "workOffset", "xEdge", "zFace"}));
+    RAY_CAMJSON_CHECK(o->only({"flipX", "flipZ", "origin", "originVertex", "workOffset", "xEdge", "zFace"}));
     cam::Wcs wcs{};
+    // T-044: absent (every document written before them) means not flipped.
+    RAY_CAMJSON_TRY(flipX, o->boolean("flipX", false));
+    RAY_CAMJSON_TRY(flipZ, o->boolean("flipZ", false));
+    wcs.flipX = *flipX;
+    wcs.flipZ = *flipZ;
     wcs.originMode = cam::Wcs::OriginMode::StockCorner;
     if (o->get("origin") != nullptr) {
         RAY_CAMJSON_TRY(origin, o->child("origin"));
@@ -536,6 +541,13 @@ Value toJson(const cam::Wcs& wcs)
                                         {"corner", Value::number(wcs.stockCornerIndex)}})
                        : Value::object({{"mode", text(nameOf(wcs.originMode, kOrigins))}});
     Value::Object members{{"origin", std::move(origin)}, {"workOffset", Value::number(wcs.workOffset)}};
+    // Written only when set, so a setup without flips is stored (and hashed) as before T-044.
+    if (wcs.flipX) {
+        members.push_back({"flipX", Value::boolean(true)});
+    }
+    if (wcs.flipZ) {
+        members.push_back({"flipZ", Value::boolean(true)});
+    }
     if (wcs.zFace) {
         members.push_back({"zFace", refToJson(*wcs.zFace)});
     }

@@ -3,13 +3,14 @@
 //
 // cam.h states the rules (frame, stock, corner numbering, rounding); this file follows them in this order:
 //   1. the WCS axes (rows of R) from the Z face, the X edge or the model axes: directions rounded to 2^-40 per
-//      component, then IEEE arithmetic and dmath::sqrt only, so the same model gives the same bits everywhere;
+//      component, then IEEE arithmetic and dmath::sqrt only, so the same model gives the same bits everywhere; the
+//      flips (Wcs::flipZ before X is chosen, Wcs::flipX after) are exact negations;
 //   2. the part box in the WCS orientation ("O": p -> R p, no translation): taken from the model box exactly when R
 //      only permutes and negates axes (the usual case, and cheap), else measured on the body rotated into O;
 //   3. everything after that in integer nanometres in O: part box, stock box, origin; the WCS is O shifted by the
 //      origin, so stockBounds and partBounds are whole nanometres in the WCS.
 // What it reads is what operationInputHash covers (state.cpp putSetup): the part and stock bodies by content, the
-// stock definition, the origin mode and corner, and the WCS references through the geometry of what they resolve to
+// stock definition, the origin mode and corner, the flips, and the WCS references through the geometry of what they resolve to
 // (surface normal and orientation, curve direction, vertex point). Nothing else of the setup is read.
 #include "state.h"
 
@@ -262,6 +263,9 @@ Result<Axes> frameAxes(const CamSnapshot& snapshot, const Setup& setup, const na
         }
         z = snapped(*u);
     }
+    if (wcs.flipZ) {
+        z = mul(z, -1.0); // exact; X is chosen below for the reversed Z
+    }
 
     Vec3 x{};
     if (wcs.xEdge) {
@@ -299,6 +303,9 @@ Result<Axes> frameAxes(const CamSnapshot& snapshot, const Setup& setup, const na
         const Vec3 q = sub(axis(2), mul(z, z.z));
         const Vec3 y = snappedSquareTo(unit(q).value_or(axis(2)), z);
         x = cross(y, z);
+    }
+    if (wcs.flipX) {
+        x = mul(x, -1.0); // exact
     }
     // Y = Z x X, then X again from Y and Z, so the three are orthonormal to rounding (exact for axis-aligned frames).
     const Vec3 y = unit(cross(z, x)).value_or(Vec3{});

@@ -426,6 +426,12 @@ Status putSetup(Hasher& h, const CamSnapshot& snapshot, const naming::IResolver&
     h.str("wcs");
     h.i64(static_cast<std::int64_t>(setup.wcs.originMode));
     h.i64(setup.wcs.originMode == Wcs::OriginMode::StockCorner ? setup.wcs.stockCornerIndex : 0);
+    // The flips (T-044), only when one is set: a setup without them keeps the hash it had before they existed.
+    if (setup.wcs.flipX || setup.wcs.flipZ) {
+        h.str("flip");
+        h.i64(setup.wcs.flipX ? 1 : 0);
+        h.i64(setup.wcs.flipZ ? 1 : 0);
+    }
     const std::pair<const std::optional<naming::TopoRef>*, const char*> refs[] = {
         {&setup.wcs.zFace, "The Z face"}, {&setup.wcs.xEdge, "The X edge"}, {&setup.wcs.originVertex, "The origin"}};
     for (const auto& [ref, what] : refs) {

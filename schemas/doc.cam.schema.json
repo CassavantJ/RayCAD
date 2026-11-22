@@ -44,6 +44,8 @@
                 }
               },
               "workOffset": { "type": "integer", "minimum": 1, "description": "1 is G54." },
+              "flipX": { "type": "boolean", "description": "X (and Y) reversed. Written only when true; absent is false." },
+              "flipZ": { "type": "boolean", "description": "Z reversed, into the material. Written only when true; absent is false." },
               "zFace": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef (naming.h); Z is the face's outward normal." },
               "xEdge": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef; X runs along the edge." },
               "originVertex": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef; the origin for mode modelPoint." }
