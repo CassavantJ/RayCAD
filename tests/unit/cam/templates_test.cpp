@@ -119,7 +119,9 @@ struct Fixture {
             }
         }
         REQUIRE(aluminium);
-        ctx.queryTools = [this](std::string_view q) { return stack.queryTools(q, {}); };
+        ctx.queryTools = [this](std::string_view q) {
+            return stack.queryTools(q, {});
+        };
         ctx.evaluate = docEvaluator();
         ctx.types = types.get();
         ctx.material = &*aluminium;
@@ -275,21 +277,20 @@ TEST_CASE("expressions evaluate with the document's evaluator and units", "[cam]
                                   tpl::FieldKind::Length, eval) == Approx(0.153162).epsilon(1e-9));
         CHECK(*tpl::evaluateField(t, "params.x", "$feature.diameter + chamferExtra", vars, tpl::FieldKind::Length,
                                   eval) == Approx(5.3554));
-        CHECK(*tpl::evaluateField(t, "params.x", "floor($feature.depthRatio)", vars, tpl::FieldKind::Unitless,
-                                  eval) == 3);
+        CHECK(*tpl::evaluateField(t, "params.x", "floor($feature.depthRatio)", vars, tpl::FieldKind::Unitless, eval) ==
+              3);
         CHECK(*tpl::evaluateField(t, "params.x", "0.5 * $tool.diameter", vars, tpl::FieldKind::Length, eval) ==
               Approx(2.5527));
     }
     SECTION("a unit mismatch names the template, the field and the expression")
     {
-        auto r = tpl::evaluateField(t, "params.spotDiameter", "$feature.diameter + 0.2", vars, tpl::FieldKind::Length,
-                                    eval);
+        auto r =
+            tpl::evaluateField(t, "params.spotDiameter", "$feature.diameter + 0.2", vars, tpl::FieldKind::Length, eval);
         REQUIRE_FALSE(r);
         CHECK(r.error().code == ErrorCode::InvalidArgument);
-        CHECK_THAT(r.error().message, ContainsSubstring("Template 'Spot it'") &&
-                                          ContainsSubstring("params.spotDiameter") &&
-                                          ContainsSubstring("'$feature.diameter + 0.2'") &&
-                                          ContainsSubstring("unit mismatch"));
+        CHECK_THAT(r.error().message,
+                   ContainsSubstring("Template 'Spot it'") && ContainsSubstring("params.spotDiameter") &&
+                       ContainsSubstring("'$feature.diameter + 0.2'") && ContainsSubstring("unit mismatch"));
         auto plain = tpl::evaluateField(t, "params.dwell", "$feature.diameter", vars, tpl::FieldKind::Unitless, eval);
         REQUIRE_FALSE(plain);
         CHECK_THAT(plain.error().message, ContainsSubstring("expected a plain number"));
@@ -300,10 +301,11 @@ TEST_CASE("expressions evaluate with the document's evaluator and units", "[cam]
         REQUIRE_FALSE(unknown);
         CHECK_THAT(unknown.error().message,
                    ContainsSubstring("params.peck") && ContainsSubstring("there is no variable tool.diametr"));
-        auto missing = tpl::evaluateField(t, "params.x", "$feature.counterboreDiameter", vars, tpl::FieldKind::Length,
-                                          eval);
+        auto missing =
+            tpl::evaluateField(t, "params.x", "$feature.counterboreDiameter", vars, tpl::FieldKind::Length, eval);
         REQUIRE_FALSE(missing);
-        CHECK_THAT(missing.error().message, ContainsSubstring("feature.counterboreDiameter is not known for this hole"));
+        CHECK_THAT(missing.error().message,
+                   ContainsSubstring("feature.counterboreDiameter is not known for this hole"));
         auto text = tpl::evaluateField(t, "params.x", "$feature.threadSpec * 2", vars, tpl::FieldKind::Length, eval);
         REQUIRE_FALSE(text);
         CHECK_THAT(text.error().message, ContainsSubstring("feature.threadSpec is a text"));
@@ -320,7 +322,8 @@ TEST_CASE("expressions evaluate with the document's evaluator and units", "[cam]
 TEST_CASE("a template's rules are read, refused with the key named, and written back", "[cam][templates]")
 {
     lib::OpTemplate t = makeTemplate(
-        "Peck", "hole.plain", R"({"type":"drill","prefer":{"diameter":"$feature.diameter"},"id":"0a6183fa-f4f6-4315-b5ff-b39742bcaee8"})",
+        "Peck", "hole.plain",
+        R"({"type":"drill","prefer":{"diameter":"$feature.diameter"},"id":"0a6183fa-f4f6-4315-b5ff-b39742bcaee8"})",
         "{}",
         R"({"set":"Drilled holes","sequence":20,"when":{"feature.depthRatio":{"above":3,"max":5},"$feature.through":true},)"
         R"("feeds":{"mode":"fixed","rpm":"1000","feedCut":250,"coolant":"mist"},"heights":{"clearance":"0.6 in"},"other":1})");
@@ -352,13 +355,12 @@ TEST_CASE("a template's rules are read, refused with the key named, and written 
     CHECK(r2->feeds.fixed == r->feeds.fixed);
     CHECK(r2->heights == r->heights);
 
-    for (const auto& [extra, key] :
-         {std::pair<std::string, std::string>{R"({"sequence":1.5})", "sequence"},
-          {R"({"when":{"width":2}})", "when.width"},
-          {R"({"when":{"feature.depth":{"atLeast":2}}})", "when.feature.depth.atLeast"},
-          {R"({"feeds":{"mode":"fast"}})", "feeds.mode"},
-          {R"({"feeds":{"mode":"fixed","rpm":100}})", "feeds"},
-          {R"({"heights":{"safe":1}})", "heights.safe"}}) {
+    for (const auto& [extra, key] : {std::pair<std::string, std::string>{R"({"sequence":1.5})", "sequence"},
+                                     {R"({"when":{"width":2}})", "when.width"},
+                                     {R"({"when":{"feature.depth":{"atLeast":2}}})", "when.feature.depth.atLeast"},
+                                     {R"({"feeds":{"mode":"fast"}})", "feeds.mode"},
+                                     {R"({"feeds":{"mode":"fixed","rpm":100}})", "feeds"},
+                                     {R"({"heights":{"safe":1}})", "heights.safe"}}) {
         lib::OpTemplate bad = t;
         bad.extraJson = extra;
         auto refused = tpl::rulesOf(bad);
@@ -457,7 +459,8 @@ TEST_CASE("a missing tool is listed with its rule and holes, and nothing else fa
     const std::string message = tpl::missingToolsMessage(*plan, tappedSet, holes);
     INFO(message);
     CHECK_THAT(message, ContainsSubstring("No tool in the libraries for 'Spot drill'"));
-    CHECK_THAT(message, ContainsSubstring("'Tap' (tap, thread M20x2.5) for 2 holes (M20x2.5 at X 5 Y 5, M20x2.5 at X 45 Y 5)"));
+    CHECK_THAT(message,
+               ContainsSubstring("'Tap' (tap, thread M20x2.5) for 2 holes (M20x2.5 at X 5 Y 5, M20x2.5 at X 45 Y 5)"));
     CHECK_THAT(message, ContainsSubstring("'Tap drill' (drill, diameter 17.47 to 17.53 mm"));
     CHECK_THAT(message, ContainsSubstring("'Spot drill' (spotDrill, diameter at least 20 mm"));
 }
@@ -522,9 +525,8 @@ TEST_CASE("prefer, exact tools, fixed feeds and heights rules", "[cam][templates
             }
         }
         REQUIRE(six != nullptr);
-        const lib::OpTemplate t = makeTemplate("Exactly", "hole", R"({"type":"drill","id":")" +
-                                                                      six->id.value.toString() + "\"}",
-                                               R"({"cycle":"drill"})");
+        const lib::OpTemplate t = makeTemplate(
+            "Exactly", "hole", R"({"type":"drill","id":")" + six->id.value.toString() + "\"}", R"({"cycle":"drill"})");
         auto plan = tpl::planTemplates(std::vector<lib::OpTemplate>{t}, holes, f.ctx);
         REQUIRE(plan);
         REQUIRE(plan->operations.size() == 1);
@@ -538,18 +540,18 @@ TEST_CASE("prefer, exact tools, fixed feeds and heights rules", "[cam][templates
         REQUIRE_FALSE(plan);
         CHECK_THAT(plan.error().message, ContainsSubstring("Template 'Bad', params.peck: '$feature.depth + 2'") &&
                                              ContainsSubstring("unit mismatch"));
-        const lib::OpTemplate badKey = makeTemplate("Typo", "hole", R"({"type":"drill","diameter":6.6})",
-                                                    R"({"cycel":"drill"})");
+        const lib::OpTemplate badKey =
+            makeTemplate("Typo", "hole", R"({"type":"drill","diameter":6.6})", R"({"cycel":"drill"})");
         plan = tpl::planTemplates(std::vector<lib::OpTemplate>{badKey}, holes, f.ctx);
         REQUIRE_FALSE(plan);
         CHECK_THAT(plan.error().message, ContainsSubstring("Template 'Typo', params.cycel"));
-        const lib::OpTemplate badValue = makeTemplate("Range", "hole", R"({"type":"drill","diameter":6.6})",
-                                                      R"({"cycle":"peck","peck":"-1 mm"})");
+        const lib::OpTemplate badValue =
+            makeTemplate("Range", "hole", R"({"type":"drill","diameter":6.6})", R"({"cycle":"peck","peck":"-1 mm"})");
         plan = tpl::planTemplates(std::vector<lib::OpTemplate>{badValue}, holes, f.ctx);
         REQUIRE_FALSE(plan);
         CHECK_THAT(plan.error().message, ContainsSubstring("Template 'Range', params"));
-        const lib::OpTemplate badQuery = makeTemplate("Query", "hole", R"({"type":"drill","diameter":"$tool.diameter"})",
-                                                      R"({"cycle":"drill"})");
+        const lib::OpTemplate badQuery =
+            makeTemplate("Query", "hole", R"({"type":"drill","diameter":"$tool.diameter"})", R"({"cycle":"drill"})");
         plan = tpl::planTemplates(std::vector<lib::OpTemplate>{badQuery}, holes, f.ctx);
         REQUIRE_FALSE(plan);
         CHECK_THAT(plan.error().message,
@@ -563,16 +565,17 @@ TEST_CASE("prefer, exact tools, fixed feeds and heights rules", "[cam][templates
     SECTION("calculated feeds need a material")
     {
         f.ctx.material = nullptr;
-        const lib::OpTemplate t = makeTemplate("Calc", "hole", R"({"type":"drill","diameter":6.6})",
-                                               R"({"cycle":"drill"})");
+        const lib::OpTemplate t =
+            makeTemplate("Calc", "hole", R"({"type":"drill","diameter":6.6})", R"({"cycle":"drill"})");
         auto plan = tpl::planTemplates(std::vector<lib::OpTemplate>{t}, holes, f.ctx);
         REQUIRE_FALSE(plan);
         CHECK_THAT(plan.error().message, ContainsSubstring("setup has no stock material"));
     }
 }
 
-TEST_CASE("the shipped starter templates: three sets for each of the eight materials, sourced and in the library's form",
-          "[cam][templates][shipped]")
+TEST_CASE(
+    "the shipped starter templates: three sets for each of the eight materials, sourced and in the library's form",
+    "[cam][templates][shipped]")
 {
     auto library = lib::ILibrary::open(kLibrary);
     REQUIRE(library);
@@ -656,13 +659,14 @@ TEST_CASE("every starter set plans common metric and inch holes with the shipped
             taps += op.tool.type == lib::ToolType::Tap ? static_cast<int>(op.holes.size()) : 0;
         }
         CHECK(taps == static_cast<int>(threads.size()));
-        const std::vector<tpl::PlanHole> plain = {{throughHole(6.6, 12, 0, 0), {}}, {throughHole(6.7564, 19.05, 20, 0), {}},
+        const std::vector<tpl::PlanHole> plain = {{throughHole(6.6, 12, 0, 0), {}},
+                                                  {throughHole(6.7564, 19.05, 20, 0), {}},
                                                   {throughHole(10, 30, 40, 0), {}}};
         plan = tpl::planTemplates(drilledSet, plain, f.ctx);
         REQUIRE(plan);
         CHECK(plan->missing.empty());
-        const std::vector<tpl::PlanHole> reamed = {{throughHole(6, 12, 0, 0), {}}, {throughHole(10, 12, 20, 0), {}},
-                                                   {throughHole(6.35, 12, 40, 0), {}}};
+        const std::vector<tpl::PlanHole> reamed = {
+            {throughHole(6, 12, 0, 0), {}}, {throughHole(10, 12, 20, 0), {}}, {throughHole(6.35, 12, 40, 0), {}}};
         plan = tpl::planTemplates(reamedSet, reamed, f.ctx);
         REQUIRE(plan);
         INFO(tpl::missingToolsMessage(*plan, reamedSet, reamed));

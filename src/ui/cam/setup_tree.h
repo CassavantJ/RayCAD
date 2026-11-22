@@ -145,9 +145,10 @@ private:
         QString name, type, detail;
         bool suppressed = false;
         int operations = 0;
-        std::string templateId; // T-057: Operation::templateId
         int index = 0;    // within its list (setups, or the setup's operations)
         int siblings = 0; // the list's length
+        // T-057: Operation::templateId.
+        std::string templateId;
     };
     struct Statuses {
         std::map<OperationId, cam::OpState> ops;

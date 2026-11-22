@@ -115,7 +115,10 @@ Hash256 hashFromHex(std::string_view text)
 {
     Hash256 h;
     const auto nibble = [](char c) -> int {
-        return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        return c >= '0' && c <= '9'   ? c - '0'
+               : c >= 'a' && c <= 'f' ? c - 'a' + 10
+               : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                      : -1;
     };
     if (text.size() != 64) {
         return h;
@@ -152,9 +155,9 @@ Result<std::shared_ptr<BusyGuard>> claimOnUi(AppImpl& app, std::string id, JobCo
 // ---------- cam.batch ----------
 
 constexpr std::string_view kBatch = "cam.batch";
-constexpr std::string_view kBatchable[] = {"cam.operation.add",      "cam.operation.edit", "cam.operation.remove",
-                                           "cam.operation.reorder",  "cam.operation.suppress",
-                                           "cam.library.embed",      "cam.setup.edit"};
+constexpr std::string_view kBatchable[] = {"cam.operation.add",     "cam.operation.edit",     "cam.operation.remove",
+                                           "cam.operation.reorder", "cam.operation.suppress", "cam.library.embed",
+                                           "cam.setup.edit"};
 
 class CamBatch final : public doc::ICommandHandler {
 public:
@@ -427,8 +430,8 @@ Result<std::vector<std::size_t>> targetsOf(const SetupHoles& sh, const Request& 
         for (std::size_t i = 0; i < rq.geometry.size(); ++i) {
             const naming::Resolved r = resolver.resolve(rq.geometry[i]);
             if (!r.usable()) {
-                return fail(ErrorCode::ReferenceBroken, "/geometry/" + std::to_string(i) +
-                                                            " does not resolve: " + r.reason);
+                return fail(ErrorCode::ReferenceBroken,
+                            "/geometry/" + std::to_string(i) + " does not resolve: " + r.reason);
             }
             bool found = false;
             for (std::size_t h = 0; h < sh.holes.size(); ++h) {
@@ -511,12 +514,12 @@ Result<std::vector<lib::OpTemplate>> templatesOf(const lib::LibraryStack& stack,
 struct Planned {
     tpl::Plan plan;
     std::vector<lib::OpTemplate> templates;
-    std::vector<tpl::PlanHole> holes;      // the targets
-    std::vector<std::size_t> targets;      // their indices in the setup's holes
-    std::vector<int> numbers;              // tool number of each planned operation
-    std::string message;                   // missing tools, or why nothing would be made
-    std::optional<doc::Command> command;   // the cam.batch, when makeCommand and the plan is good
-    std::vector<OperationId> ids;          // of the operations it adds
+    std::vector<tpl::PlanHole> holes;    // the targets
+    std::vector<std::size_t> targets;    // their indices in the setup's holes
+    std::vector<int> numbers;            // tool number of each planned operation
+    std::string message;                 // missing tools, or why nothing would be made
+    std::optional<doc::Command> command; // the cam.batch, when makeCommand and the plan is good
+    std::vector<OperationId> ids;        // of the operations it adds
 };
 
 // The tool numbers the document gives its tools now (the first operation in program order that uses each).
@@ -643,7 +646,9 @@ Result<Planned> planOnUi(AppImpl& app, const doc::DocState& state, const SetupHo
         }
     }
     tpl::PlanContext ctx;
-    ctx.queryTools = [stack](std::string_view query) { return stack->queryTools(query, {}); };
+    ctx.queryTools = [stack](std::string_view query) {
+        return stack->queryTools(query, {});
+    };
     ctx.evaluate = evaluatorFor(state);
     ctx.types = app.operationTypes();
     ctx.material = material;
@@ -739,8 +744,7 @@ Result<Planned> planOnUi(AppImpl& app, const doc::DocState& state, const SetupHo
         if (!completed) {
             return tl::unexpected(completed.error());
         }
-        commands.push(
-            Value::object({{"name", Value::string("cam.operation.add")}, {"args", std::move(*completed)}}));
+        commands.push(Value::object({{"name", Value::string("cam.operation.add")}, {"args", std::move(*completed)}}));
     }
     std::string label = "Apply Templates";
     if (!rq.set.empty()) {
@@ -748,8 +752,8 @@ Result<Planned> planOnUi(AppImpl& app, const doc::DocState& state, const SetupHo
     } else if (p.templates.size() == 1) {
         label = "Apply Template " + p.templates.front().name;
     }
-    p.command = doc::Command{std::string(kBatch), json::canonical(Value::object({{"commands", std::move(commands)}})),
-                             label};
+    p.command =
+        doc::Command{std::string(kBatch), json::canonical(Value::object({{"commands", std::move(commands)}})), label};
     return p;
 }
 
@@ -1089,8 +1093,8 @@ Value toolRule(const lib::Tool& tool, std::string_view cycle, const cam::Recogni
     }
     const double delta = tool.diameter - d;
     const std::string offset = std::fabs(delta) < 1e-9 ? std::string()
-                               : delta > 0               ? " + " + mmText(delta) + " mm"
-                                                         : " - " + mmText(delta) + " mm";
+                               : delta > 0             ? " + " + mmText(delta) + " mm"
+                                                       : " - " + mmText(delta) + " mm";
     const double window = std::fabs(delta) <= 0.03 ? 0.03 : 0.05;
     const std::string target = "$feature.diameter" + offset;
     q.set("diameter", Value::object({{"min", Value::string(target + " - " + mmText(window) + " mm")},
@@ -1150,12 +1154,10 @@ Result<ActionResult> saveFromAction(AppImpl& app, std::string_view argsJson, Job
     if (const Value* kind = args->find("featureKind")) {
         t.featureKind = kind->asString();
     } else if (!opHoles.empty()) {
-        const bool allTapped = std::all_of(opHoles.begin(), opHoles.end(), [](const auto& h) {
-            return !h.threadSpec.empty();
-        });
-        const bool nonTapped = std::none_of(opHoles.begin(), opHoles.end(), [](const auto& h) {
-            return !h.threadSpec.empty();
-        });
+        const bool allTapped =
+            std::all_of(opHoles.begin(), opHoles.end(), [](const auto& h) { return !h.threadSpec.empty(); });
+        const bool nonTapped =
+            std::none_of(opHoles.begin(), opHoles.end(), [](const auto& h) { return !h.threadSpec.empty(); });
         t.featureKind = allTapped ? "hole.tapped" : nonTapped ? "hole.plain" : "hole";
     }
     // Material: the setup's unless the arguments say otherwise (null: any material).
@@ -1416,9 +1418,9 @@ Status registerCamTemplateActions(AppImpl& app)
                            "their tools and hole counts, or which tools are missing; changes nothing";
         info.argsSchemaJson = schemaOf(requestProperties(), {"setup"});
         app.runOnWorker(info.id);
-        if (auto st = app.actions().add(std::move(info), [&app](std::string_view a, Caller, JobContext& ctx) {
-                return applyAction(app, a, false, ctx);
-            });
+        if (auto st =
+                app.actions().add(std::move(info), [&app](std::string_view a, Caller,
+                                                          JobContext& ctx) { return applyAction(app, a, false, ctx); });
             !st) {
             return st;
         }
@@ -1428,17 +1430,18 @@ Status registerCamTemplateActions(AppImpl& app)
         info.id = "cam.template.apply";
         info.title = "Apply Templates";
         info.category = "CAM";
-        info.description = "Applies operation templates (a set such as 'Tapped holes', or templates by id) to the "
-                           "setup's recognised holes, a kind of them or the holes picked: ordinary operations, one undo "
-                           "step; refused, naming what is missing, when a tool is not in the libraries";
+        info.description =
+            "Applies operation templates (a set such as 'Tapped holes', or templates by id) to the "
+            "setup's recognised holes, a kind of them or the holes picked: ordinary operations, one undo "
+            "step; refused, naming what is missing, when a tool is not in the libraries";
         info.argsSchemaJson = schemaOf(requestProperties(), {"setup"});
         info.changesDocument = true;
         info.changesToolpathsOrGcode = true;
         app.runOnWorker(info.id);
         app.setOrder(info.id, ActionOrder::Ordered);
-        if (auto st = app.actions().add(std::move(info), [&app](std::string_view a, Caller, JobContext& ctx) {
-                return applyAction(app, a, true, ctx);
-            });
+        if (auto st =
+                app.actions().add(std::move(info), [&app](std::string_view a, Caller,
+                                                          JobContext& ctx) { return applyAction(app, a, true, ctx); });
             !st) {
             return st;
         }
@@ -1458,9 +1461,9 @@ Status registerCamTemplateActions(AppImpl& app)
         info.changesToolpathsOrGcode = true;
         app.runOnWorker(info.id);
         app.setOrder(info.id, ActionOrder::Ordered);
-        if (auto st = app.actions().add(std::move(info), [&app](std::string_view a, Caller, JobContext& ctx) {
-                return reapplyAction(app, a, ctx);
-            });
+        if (auto st =
+                app.actions().add(std::move(info), [&app](std::string_view a, Caller,
+                                                          JobContext& ctx) { return reapplyAction(app, a, ctx); });
             !st) {
             return st;
         }
@@ -1506,9 +1509,9 @@ Status registerCamTemplateActions(AppImpl& app)
                            {"library", std::move(library)}}),
             {"operation"});
         app.runOnWorker(info.id);
-        if (auto st = app.actions().add(std::move(info), [&app](std::string_view a, Caller, JobContext& ctx) {
-                return saveFromAction(app, a, ctx);
-            });
+        if (auto st =
+                app.actions().add(std::move(info), [&app](std::string_view a, Caller,
+                                                          JobContext& ctx) { return saveFromAction(app, a, ctx); });
             !st) {
             return st;
         }
@@ -1531,9 +1534,10 @@ Status registerCamTemplateActions(AppImpl& app)
         }
         info.argsSchemaJson = schemaOf(std::move(props), std::move(required));
         app.runOnWorker(info.id);
-        if (auto st = app.actions().add(std::move(info), [&app, remove](std::string_view a, Caller, JobContext& ctx) {
-                return editTemplateAction(app, a, remove, ctx);
-            });
+        if (auto st = app.actions().add(std::move(info),
+                                        [&app, remove](std::string_view a, Caller, JobContext& ctx) {
+                                            return editTemplateAction(app, a, remove, ctx);
+                                        });
             !st) {
             return st;
         }

@@ -103,14 +103,14 @@ bool kindMatches(std::string_view templateKind, const RecognizedHole& hole);
 // Holes alike enough to take the same operations: the same kind (tapped or plain), thread spec (tapped) or bore
 // diameter (plain), through or blind, and counterbore / countersink sizes. Groups in the order of their first hole.
 struct HoleGroup {
-    std::string key;   // stable text, e.g. "tapped|1/4-20 UNC|through" or "plain|6.6|through|cb11:6.5"
-    std::string kind;  // "hole.tapped" | "hole.plain"
+    std::string key;  // stable text, e.g. "tapped|1/4-20 UNC|through" or "plain|6.6|through|cb11:6.5"
+    std::string kind; // "hole.tapped" | "hole.plain"
     std::string threadSpec;
     double diameter = 0; // the bore, mm
     double depth = 0;    // the full-diameter depth, mm (the first hole's)
     bool through = false;
     double counterboreDiameter = 0, counterboreDepth = 0, countersinkDiameter = 0; // 0: none
-    std::string label;   // "4 x 1/4-20 UNC tapped, through" style text in mm (the UI makes its own in its units)
+    std::string label; // "4 x 1/4-20 UNC tapped, through" style text in mm (the UI makes its own in its units)
     std::vector<std::size_t> holes; // indices into the holes given
 };
 std::vector<HoleGroup> groupHoles(std::span<const RecognizedHole> holes);
@@ -125,19 +125,19 @@ struct Condition {
 };
 struct FeedsRule {
     bool calculated = true;
-    std::string opClass;                           // calculated: the preset's class; "" lets computeFeeds choose
-    std::map<std::string, std::string> fixed;      // fixed: rpm, feedCut, feedPlunge, feedRamp as JSON text
-    std::optional<CuttingData::Coolant> coolant;   // absent: flood
-    std::optional<bool> clockwise;                 // absent: true
+    std::string opClass;                         // calculated: the preset's class; "" lets computeFeeds choose
+    std::map<std::string, std::string> fixed;    // fixed: rpm, feedCut, feedPlunge, feedRamp as JSON text
+    std::optional<CuttingData::Coolant> coolant; // absent: flood
+    std::optional<bool> clockwise;               // absent: true
 };
 struct TemplateRules {
     std::string set;
     int sequence = 0;
     std::vector<Condition> when;
     FeedsRule feeds;
-    std::map<std::string, std::string> heights;    // key -> JSON text of a number or an expression string
-    std::string toolQueryJson;                     // the queryTools part (canonical JSON, "prefer" and "id" removed)
-    std::map<std::string, std::string> prefer;     // field -> JSON text
+    std::map<std::string, std::string> heights; // key -> JSON text of a number or an expression string
+    std::string toolQueryJson;                  // the queryTools part (canonical JSON, "prefer" and "id" removed)
+    std::map<std::string, std::string> prefer;  // field -> JSON text
     std::optional<ToolId> exactTool;
 };
 // The rules of a template (its extraJson and toolQuery read). FormatError naming the template and the key.
@@ -162,14 +162,14 @@ struct PlanContext {
     Heights defaultHeights;                   // for the heights a template does not give
 };
 struct PlannedOperation {
-    std::size_t templateIndex = 0; // into the templates given
-    Operation op;                  // id empty; tool.tool set, the rest of ToolRef for the caller to fill
-    lib::Tool tool;                // the library's tool
+    std::size_t templateIndex = 0;  // into the templates given
+    Operation op;                   // id empty; tool.tool set, the rest of ToolRef for the caller to fill
+    lib::Tool tool;                 // the library's tool
     std::vector<std::size_t> holes; // into the holes given, in their order
 };
 struct MissingTool {
     std::size_t templateIndex = 0;
-    std::string rule;               // the query as evaluated, in words: "drill, diameter 5.06 to 5.16 mm"
+    std::string rule; // the query as evaluated, in words: "drill, diameter 5.06 to 5.16 mm"
     std::vector<std::size_t> holes;
 };
 struct Plan {

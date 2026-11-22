@@ -126,8 +126,8 @@ QString whenText(const QJsonObject& when)
         if (v.isObject()) {
             QStringList bounds;
             const QJsonObject o = v.toObject();
-            const std::pair<const char*, const char*> ops[] = {{"above", ">"}, {"min", "\u2265"}, {"below", "<"},
-                                                               {"max", "\u2264"}};
+            const std::pair<const char*, const char*> ops[] = {
+                {"above", ">"}, {"min", "\u2265"}, {"below", "<"}, {"max", "\u2264"}};
             for (const auto& [key, op] : ops) {
                 if (o.contains(QLatin1String(key)))
                     bounds << QStringLiteral("%1 %2").arg(QString::fromUtf8(op), compact(o.value(QLatin1String(key))));
@@ -206,10 +206,9 @@ void TemplatesModel::setCommands(CommandCatalog* commands)
     QPointer<TemplatesModel> self(this);
     commands_->setUiHandler(
         QStringLiteral("cam.templates."),
-        CommandCatalog::UiHandler{[self](const QString& id) {
-                                      return self ? self->commandReason(id) : trt("Templates are not available");
-                                  },
-                                  [self](const QString& id) { return self && self->runCommand(id); }});
+        CommandCatalog::UiHandler{
+            [self](const QString& id) { return self ? self->commandReason(id) : trt("Templates are not available"); },
+            [self](const QString& id) { return self && self->runCommand(id); }});
 }
 
 void TemplatesModel::setSelection(SelectionModel* selection)
@@ -303,8 +302,8 @@ QVariantList TemplatesModel::kinds() const
 {
     QVariantList out;
     for (const KindText& k : kKinds)
-        out.push_back(QVariantMap{{QStringLiteral("value"), QLatin1String(k.value)},
-                                  {QStringLiteral("text"), trt(k.text)}});
+        out.push_back(
+            QVariantMap{{QStringLiteral("value"), QLatin1String(k.value)}, {QStringLiteral("text"), trt(k.text)}});
     return out;
 }
 
@@ -364,11 +363,13 @@ void TemplatesModel::rebuildCatalog()
     // The material choices.
     materials_.clear();
     const QString setupMaterial = materialOfSetup();
-    materials_.push_back(QVariantMap{
-        {QStringLiteral("value"), QStringLiteral("setup")},
-        {QStringLiteral("text"), setupMaterial.isEmpty() ? trt("The setup's material (none: every material)")
-                                                         : trt("The setup's material (%1)").arg(materialName(setupMaterial))}});
-    materials_.push_back(QVariantMap{{QStringLiteral("value"), QString()}, {QStringLiteral("text"), trt("Any material")}});
+    materials_.push_back(
+        QVariantMap{{QStringLiteral("value"), QStringLiteral("setup")},
+                    {QStringLiteral("text"), setupMaterial.isEmpty()
+                                                 ? trt("The setup's material (none: every material)")
+                                                 : trt("The setup's material (%1)").arg(materialName(setupMaterial))}});
+    materials_.push_back(
+        QVariantMap{{QStringLiteral("value"), QString()}, {QStringLiteral("text"), trt("Any material")}});
     if (s != nullptr) {
         std::vector<lib::Material> list = s->materials();
         std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
@@ -434,14 +435,14 @@ void TemplatesModel::rebuildCatalog()
         std::stable_sort(g.members.begin(), g.members.end(), [](const Template* a, const Template* b) {
             return a->sequence != b->sequence ? a->sequence < b->sequence : a->item.name < b->item.name;
         });
-        const bool readOnly = std::all_of(g.members.begin(), g.members.end(), [](const Template* t) { return t->readOnly; });
+        const bool readOnly =
+            std::all_of(g.members.begin(), g.members.end(), [](const Template* t) { return t->readOnly; });
         rows_.push_back(QVariantMap{
             {QStringLiteral("rowKind"), QStringLiteral("set")},
             {QStringLiteral("key"), setKey(g.set, g.material)},
             {QStringLiteral("title"), g.set},
-            {QStringLiteral("detail"),
-             g.materialName + QStringLiteral(" · ") +
-                 counted(static_cast<int>(g.members.size()), "%1 template", "%1 templates")},
+            {QStringLiteral("detail"), g.materialName + QStringLiteral(" · ") +
+                                           counted(static_cast<int>(g.members.size()), "%1 template", "%1 templates")},
             {QStringLiteral("readOnly"), readOnly},
             {QStringLiteral("library"), g.members.front()->library},
             {QStringLiteral("depth"), 0}});
@@ -647,9 +648,9 @@ QVariantList TemplatesModel::targets() const
         out.push_back(QVariantMap{{QStringLiteral("value"), m.value(QStringLiteral("key"))},
                                   {QStringLiteral("text"), m.value(QStringLiteral("label"))}});
     }
-    out.push_back(QVariantMap{{QStringLiteral("value"), QStringLiteral("selection")},
-                              {QStringLiteral("text"), trt("The holes of the faces selected in the view (%1)")
-                                                           .arg(selectedFaces())}});
+    out.push_back(QVariantMap{
+        {QStringLiteral("value"), QStringLiteral("selection")},
+        {QStringLiteral("text"), trt("The holes of the faces selected in the view (%1)").arg(selectedFaces())}});
     return out;
 }
 
@@ -771,12 +772,12 @@ void TemplatesModel::runPreview()
         for (const QJsonValue& v : o.value(QStringLiteral("operations")).toArray()) {
             const QJsonObject op = v.toObject();
             holes = std::max(holes, op.value(QStringLiteral("holes")).toInt());
-            self->previewOps_.push_back(QVariantMap{
-                {QStringLiteral("name"), op.value(QStringLiteral("name")).toString()},
-                {QStringLiteral("tool"), op.value(QStringLiteral("toolName")).toString()},
-                {QStringLiteral("toolNumber"), op.value(QStringLiteral("toolNumber")).toInt()},
-                {QStringLiteral("holes"), op.value(QStringLiteral("holes")).toInt()},
-                {QStringLiteral("template"), op.value(QStringLiteral("templateName")).toString()}});
+            self->previewOps_.push_back(
+                QVariantMap{{QStringLiteral("name"), op.value(QStringLiteral("name")).toString()},
+                            {QStringLiteral("tool"), op.value(QStringLiteral("toolName")).toString()},
+                            {QStringLiteral("toolNumber"), op.value(QStringLiteral("toolNumber")).toInt()},
+                            {QStringLiteral("holes"), op.value(QStringLiteral("holes")).toInt()},
+                            {QStringLiteral("template"), op.value(QStringLiteral("templateName")).toString()}});
         }
         const bool ok = o.value(QStringLiteral("ok")).toBool();
         self->previewState_ = ok ? QStringLiteral("ok") : QStringLiteral("refused");
@@ -788,9 +789,8 @@ void TemplatesModel::runPreview()
                 counted(static_cast<int>(self->previewOps_.size()), "%1 operation", "%1 operations") +
                 QStringLiteral(", ") + counted(targets, "on %1 hole named", "on the %1 holes named");
             if (untouched > 0)
-                self->previewSummary_ += QStringLiteral(", ") +
-                                         counted(untouched, "%1 left alone (another kind)",
-                                                 "%1 left alone (another kind)");
+                self->previewSummary_ += QStringLiteral(", ") + counted(untouched, "%1 left alone (another kind)",
+                                                                        "%1 left alone (another kind)");
         }
         emit self->previewChanged();
     });
@@ -897,15 +897,15 @@ bool TemplatesModel::openSave(const QString& operationId)
     const cam::Operation& op = it->second;
     saveOp_ = operationId;
     saveOpName_ = qs(op.name);
-    saveValues_ = QVariantMap{{QStringLiteral("name"), qs(op.name)},
-                              {QStringLiteral("set"), QString()},
-                              {QStringLiteral("sequence"), QStringLiteral("0")},
-                              {QStringLiteral("featureKind"), QStringLiteral("auto")},
-                              {QStringLiteral("material"), QStringLiteral("setup")},
-                              {QStringLiteral("tool"), QStringLiteral("rule")},
-                              {QStringLiteral("feeds"), op.calculated ? QStringLiteral("calculated")
-                                                                      : QStringLiteral("fixed")},
-                              {QStringLiteral("heights"), QStringLiteral("operation")}};
+    saveValues_ =
+        QVariantMap{{QStringLiteral("name"), qs(op.name)},
+                    {QStringLiteral("set"), QString()},
+                    {QStringLiteral("sequence"), QStringLiteral("0")},
+                    {QStringLiteral("featureKind"), QStringLiteral("auto")},
+                    {QStringLiteral("material"), QStringLiteral("setup")},
+                    {QStringLiteral("tool"), QStringLiteral("rule")},
+                    {QStringLiteral("feeds"), op.calculated ? QStringLiteral("calculated") : QStringLiteral("fixed")},
+                    {QStringLiteral("heights"), QStringLiteral("operation")}};
     for (const cam::Setup& s : state->cam->setups) {
         if (std::find(s.operations.begin(), s.operations.end(), op.id) != s.operations.end())
             setup_ = s.id;
@@ -974,7 +974,8 @@ bool TemplatesModel::save()
             // On to browsing, with the new template selected: the search and kind cleared, the material kept when
             // the template is for it.
             self->mode_ = QStringLiteral("apply");
-            const QJsonValue material = o.value(QStringLiteral("template")).toObject().value(QStringLiteral("material"));
+            const QJsonValue material =
+                o.value(QStringLiteral("template")).toObject().value(QStringLiteral("material"));
             if (self->materialFilter_ != QLatin1String("setup") ||
                 (!material.isNull() && material.toString() != self->materialOfSetup()))
                 self->materialFilter_ = QString();
@@ -1005,9 +1006,8 @@ bool TemplatesModel::rename(const QString& templateId, const QString& name)
                                  [&](const Template& t) { return idText(t.item.id) == templateId; });
     if (it == templates_.end() || trimmed.isEmpty() || trimmed == qs(it->item.name) || it->readOnly)
         return false;
-    const QJsonObject args{{QStringLiteral("id"), templateId},
-                           {QStringLiteral("name"), trimmed},
-                           {QStringLiteral("base"), it->hash}};
+    const QJsonObject args{
+        {QStringLiteral("id"), templateId}, {QStringLiteral("name"), trimmed}, {QStringLiteral("base"), it->hash}};
     QPointer<TemplatesModel> self(this);
     return invoke(
         "cam.template.rename", jsonText(args),
@@ -1030,8 +1030,8 @@ void TemplatesModel::cancelDelete()
 bool TemplatesModel::confirmDelete()
 {
     const QString id = deleteAsked_;
-    const auto it = std::find_if(templates_.begin(), templates_.end(),
-                                 [&](const Template& t) { return idText(t.item.id) == id; });
+    const auto it =
+        std::find_if(templates_.begin(), templates_.end(), [&](const Template& t) { return idText(t.item.id) == id; });
     deleteAsked_.clear();
     emit statusChanged();
     if (it == templates_.end() || it->readOnly)
@@ -1041,8 +1041,7 @@ bool TemplatesModel::confirmDelete()
     QPointer<TemplatesModel> self(this);
     return invoke(
         "cam.template.remove", jsonText(args),
-        [self, name](const QJsonObject&) { self->setStatus(trt("Deleted '%1'").arg(name), false); },
-        trt("Delete"));
+        [self, name](const QJsonObject&) { self->setStatus(trt("Deleted '%1'").arg(name), false); }, trt("Delete"));
 }
 
 bool TemplatesModel::reapply(const QString& operationId)
@@ -1054,8 +1053,9 @@ bool TemplatesModel::reapply(const QString& operationId)
         [self](const QJsonObject& o) {
             const QJsonArray ops = o.value(QStringLiteral("operations")).toArray();
             self->setStatus(trt("Re-applied '%1'")
-                                .arg(ops.isEmpty() ? QString()
-                                                   : ops.first().toObject().value(QStringLiteral("templateName")).toString()),
+                                .arg(ops.isEmpty()
+                                         ? QString()
+                                         : ops.first().toObject().value(QStringLiteral("templateName")).toString()),
                             false);
         },
         trt("Re-apply template"));

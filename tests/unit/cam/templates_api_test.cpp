@@ -102,18 +102,19 @@ std::string onTop()
 void buildPlate(api::HeadlessApp& app)
 {
     const double L = 6 * kIn, W = 4 * kIn, T = 0.75 * kIn;
-    run(app, dt::addFeature("sketch", 2, dt::sketchProps(R"({"principal":"xy"})", dt::SketchJson().rect(1, 0, 0, L, W))));
+    run(app,
+        dt::addFeature("sketch", 2, dt::sketchProps(R"({"principal":"xy"})", dt::SketchJson().rect(1, 0, 0, L, W))));
     run(app, dt::addFeature("extrude", 3, dt::extrudeProps(2, mm(T), "new", 'b')));
     run(app, dt::addFeature("datum_plane", 4, R"({"base":{"principal":"xy"},"offset":)" + mm(T) + "}"));
     // Two closed pockets 0.375 in deep, where the corpus generator puts them.
     const double pd = 0.375 * kIn;
     run(app, dt::addFeature("sketch", 5,
                             dt::sketchProps(onTop(), dt::SketchJson().rect(1, L * 0.3 - L * 0.125, W * 0.5 - W * 0.225,
-                                                                          L * 0.3 + L * 0.125, W * 0.5 + W * 0.225))));
+                                                                           L * 0.3 + L * 0.125, W * 0.5 + W * 0.225))));
     run(app, dt::addFeature("extrude", 6, dt::extrudeProps(5, mm(pd), "cut", 'b', R"(,"direction":"reverse")")));
     run(app, dt::addFeature("sketch", 7,
                             dt::sketchProps(onTop(), dt::SketchJson().rect(1, L * 0.7 - L * 0.1, W * 0.5 - W * 0.175,
-                                                                          L * 0.7 + L * 0.1, W * 0.5 + W * 0.175))));
+                                                                           L * 0.7 + L * 0.1, W * 0.5 + W * 0.175))));
     run(app, dt::addFeature("extrude", 8, dt::extrudeProps(7, mm(pd), "cut", 'b', R"(,"direction":"reverse")")));
     // Four 1/4-20 UNC tapped through holes, drilled #7 (0.201 in) as the thread table gives it.
     run(app, dt::addFeature("sketch", 9,
@@ -170,9 +171,9 @@ void addSetup(api::HeadlessApp& app)
     REQUIRE_FALSE(material.empty());
     REQUIRE_FALSE(machine.empty());
     invoke(app, "cam.setup.add",
-           R"({"id":")" + kSetup + R"(","name":"Op 1 - top","partBodies":[")" + dt::uuid('b', 1) +
-               R"("],"machine":")" + machineId + R"(","material":")" + materialId + R"(","library":{"machines":[)" +
-               machine + R"(],"materials":[)" + material + "]}}");
+           R"({"id":")" + kSetup + R"(","name":"Op 1 - top","partBodies":[")" + dt::uuid('b', 1) + R"("],"machine":")" +
+               machineId + R"(","material":")" + materialId + R"(","library":{"machines":[)" + machine +
+               R"(],"materials":[)" + material + "]}}");
 }
 
 // A small reader of the action results.
@@ -351,9 +352,9 @@ TEST_CASE("picked holes and hole filters choose the targets", "[cam][templates][
                           R"({"setup":")" + kSetup + R"(","set":"Tapped holes","geometry":[)" + ref + "]}")};
     CHECK(one.number("targets") == "1");
     CHECK(one.number("holes", one.text.find("\"operations\"")) == "1");
-    const Json filtered{invoke(*app, "cam.template.preview",
-                               R"({"setup":")" + kSetup +
-                                   R"(","set":"Drilled holes","holes":{"diameter":6.7564,"through":true}})")};
+    const Json filtered{
+        invoke(*app, "cam.template.preview",
+               R"({"setup":")" + kSetup + R"(","set":"Drilled holes","holes":{"diameter":6.7564,"through":true}})")};
     CHECK(filtered.number("targets") == "4");
     const Json none{invoke(*app, "cam.template.preview",
                            R"({"setup":")" + kSetup + R"(","set":"Tapped holes","holes":{"threadSpec":"M6x1"}})")};
@@ -420,7 +421,8 @@ TEST_CASE("applying templates is a CAM change: automation needs the user's confi
         CHECK(byId[id].changesDocument);
         CHECK(byId[id].category == "CAM");
     }
-    for (const char* id : {"cam.template.preview", "cam.template.saveFrom", "cam.template.rename", "cam.template.remove"}) {
+    for (const char* id :
+         {"cam.template.preview", "cam.template.saveFrom", "cam.template.rename", "cam.template.remove"}) {
         INFO(id);
         REQUIRE(byId.count(id) == 1);
         CHECK_FALSE(byId[id].changesToolpathsOrGcode);
@@ -483,9 +485,9 @@ TEST_CASE("an operation saved as a template applies elsewhere, has no hidden lin
                                   (tapTemplate.toString() + ".optemplate.json")));
 
     // The drill, fixed feeds, its exact tool.
-    const Json savedDrill{invoke(*app, "cam.template.saveFrom",
-                                 R"({"operation":")" + drillOp +
-                                     R"(","name":"Shop drill","feeds":"fixed","tool":"exact"})")};
+    const Json savedDrill{
+        invoke(*app, "cam.template.saveFrom",
+               R"({"operation":")" + drillOp + R"(","name":"Shop drill","feeds":"fixed","tool":"exact"})")};
     const Uuid drillTemplate = Uuid::fromString(savedDrill.str("id"));
     REQUIRE(stack->opTemplate(drillTemplate) != nullptr);
     const lib::OpTemplate shopDrill = *stack->opTemplate(drillTemplate); // a copy: a later save remerges the stack
@@ -567,11 +569,10 @@ TEST_CASE("cam.batch applies several CAM commands as one and refuses as a whole"
     api::OpenDocument* od = app->active();
     const Hash256 before = od->document->state()->stateHash();
     // The second command names a setup that does not exist: nothing changes, and the message names it.
-    auto refused = tryInvoke(
-        *app, "cam.batch",
-        R"({"commands":[{"name":"cam.setup.edit","args":{"id":")" + kSetup +
-            R"(","name":"Renamed"}},{"name":"cam.setup.edit","args":{"id":")" + ray::cam::test::id('a', 9) +
-            R"(","name":"Nope"}}]})");
+    auto refused = tryInvoke(*app, "cam.batch",
+                             R"({"commands":[{"name":"cam.setup.edit","args":{"id":")" + kSetup +
+                                 R"(","name":"Renamed"}},{"name":"cam.setup.edit","args":{"id":")" +
+                                 ray::cam::test::id('a', 9) + R"(","name":"Nope"}}]})");
     REQUIRE_FALSE(refused);
     CHECK_THAT(refused.error().message, ContainsSubstring("commands[1] (cam.setup.edit)"));
     CHECK(od->document->state()->stateHash() == before);

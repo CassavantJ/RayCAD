@@ -15,10 +15,10 @@
 #include "app_options.h"
 #include "cam/setup_tree.h"
 #include "cam/templates_model.h"
-#include "ui_commands.h"
 #include "files.h"
 #include "scene_controller.h"
 #include "session.h"
+#include "ui_commands.h"
 #include "viewport_item.h"
 
 #include <QtCore/QDir>
@@ -285,24 +285,30 @@ void prepare(Window& w)
     Sketch base;
     base.rect(0, 0, L, W);
     feature("sketch", 2, R"({"plane":{"principal":"xy"},"sketch":)" + base.json() + "}");
-    feature("extrude", 3, R"({"sketch":")" + uuid('f', 2) + R"(","distance":)" + num(T) +
-                              R"(,"operation":"new","target":")" + body + R"("})");
+    feature("extrude", 3,
+            R"({"sketch":")" + uuid('f', 2) + R"(","distance":)" + num(T) + R"(,"operation":"new","target":")" + body +
+                R"("})");
     feature("datum_plane", 4, R"({"base":{"principal":"xy"},"offset":)" + num(T) + "}");
     const std::string onTop = R"({"datum":")" + uuid('f', 4) + R"("})";
     Sketch tapped;
     for (const auto& [x, y] : {std::pair{0.46, 0.1}, std::pair{0.54, 0.1}, std::pair{0.46, 0.9}, std::pair{0.54, 0.9}})
         tapped.point(L * x, W * y);
     feature("sketch", 5, R"({"plane":)" + onTop + R"(,"sketch":)" + tapped.json() + "}");
-    feature("hole", 6, R"({"sketch":")" + uuid('f', 5) + R"(","target":")" + body +
-                           R"(","kind":"tapped","end":"through","thread":{"designation":"1/4-20 UNC","standard":"unc",)"
-                           R"("nominalDiameter":6.35,"tpi":20,"tapDrill":5.1054}})");
+    feature("hole", 6,
+            R"({"sketch":")" + uuid('f', 5) + R"(","target":")" + body +
+                R"(","kind":"tapped","end":"through","thread":{"designation":"1/4-20 UNC","standard":"unc",)"
+                R"("nominalDiameter":6.35,"tpi":20,"tapDrill":5.1054}})");
     Sketch cb;
-    for (const auto& [x, y] : {std::pair{0.08, 0.12}, std::pair{0.92, 0.12}, std::pair{0.08, 0.88}, std::pair{0.92, 0.88}})
+    for (const auto& [x, y] :
+         {std::pair{0.08, 0.12}, std::pair{0.92, 0.12}, std::pair{0.08, 0.88}, std::pair{0.92, 0.88}})
         cb.point(L * x, W * y);
     feature("sketch", 7, R"({"plane":)" + onTop + R"(,"sketch":)" + cb.json() + "}");
-    feature("hole", 8, R"({"sketch":")" + uuid('f', 7) + R"(","target":")" + body + R"(","kind":"counterbore",)"
-                           R"("diameter":)" + num(0.266 * kIn) + R"(,"end":"through","counterbore":{"diameter":)" +
-                           num(0.44 * kIn) + R"(,"depth":)" + num(0.26 * kIn) + "}}");
+    feature("hole", 8,
+            R"({"sketch":")" + uuid('f', 7) + R"(","target":")" + body +
+                R"(","kind":"counterbore",)"
+                R"("diameter":)" +
+                num(0.266 * kIn) + R"(,"end":"through","counterbore":{"diameter":)" + num(0.44 * kIn) + R"(,"depth":)" +
+                num(0.26 * kIn) + "}}");
     REQUIRE(QTest::qWaitFor([&] { return w.settled(); }, kTimeoutMs));
     // Setup 1: the shipped 6061-T6 and the Haas machine.
     lib::LibraryStack* stack = w.host->app()->libraries();
@@ -385,9 +391,12 @@ TEST_CASE("operation templates in the window: browse, preview, apply, refuse, sa
     const QVariantList ops = w.templates()->previewOps();
     REQUIRE(ops.size() == 3);
     CHECK(ops[0].toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Spot drill"));
-    CHECK(ops[0].toMap().value(QStringLiteral("tool")).toString() == QStringLiteral("1/4 in 90 deg carbide spot drill"));
-    CHECK(ops[1].toMap().value(QStringLiteral("tool")).toString() == QStringLiteral("#7 (0.201 in) HSS-Co jobber drill"));
-    CHECK(ops[2].toMap().value(QStringLiteral("tool")).toString() == QStringLiteral("1/4-20 UNC HSS-E spiral point tap"));
+    CHECK(ops[0].toMap().value(QStringLiteral("tool")).toString() ==
+          QStringLiteral("1/4 in 90 deg carbide spot drill"));
+    CHECK(ops[1].toMap().value(QStringLiteral("tool")).toString() ==
+          QStringLiteral("#7 (0.201 in) HSS-Co jobber drill"));
+    CHECK(ops[2].toMap().value(QStringLiteral("tool")).toString() ==
+          QStringLiteral("1/4-20 UNC HSS-E spiral point tap"));
     for (const QVariant& op : ops)
         CHECK(op.toMap().value(QStringLiteral("holes")).toInt() == 4);
     CHECK(w.operations().empty()); // nothing applied yet
@@ -456,7 +465,8 @@ TEST_CASE("operation templates in the window: browse, preview, apply, refuse, sa
     w.type(QStringLiteral("Shop tap"));
     CHECK(w.templates()->saveValues().value(QStringLiteral("name")).toString() == QStringLiteral("Shop tap"));
     CHECK(w.templates()->saveValues().value(QStringLiteral("feeds")).toString() == QStringLiteral("calculated"));
-    CHECK(checkIconButtons(w.shown(QStringLiteral("templatesFooter"))->parentItem(), QStringLiteral("templates, saving")) >= 1);
+    CHECK(checkIconButtons(w.shown(QStringLiteral("templatesFooter"))->parentItem(),
+                           QStringLiteral("templates, saving")) >= 1);
     w.shot("save");
     w.click(QStringLiteral("templatesSave"));
     REQUIRE(QTest::qWaitFor([&] { return w.templates()->mode() == "apply" && !w.templates()->busy(); }, kTimeoutMs));
@@ -473,7 +483,8 @@ TEST_CASE("operation templates in the window: browse, preview, apply, refuse, sa
     REQUIRE(QTest::qWaitFor([&] { return list->hasActiveFocus(); }, 5000));
     INFO("the focus: " << (w.window()->activeFocusItem() ? w.window()->activeFocusItem()->objectName().toStdString()
                                                          : std::string("none"))
-                       << ", can rename: " << w.templates()->selectedInfo().value(QStringLiteral("canRename")).toBool());
+                       << ", can rename: "
+                       << w.templates()->selectedInfo().value(QStringLiteral("canRename")).toBool());
     w.key(Qt::Key_F2);
     QQuickItem* rename = w.shown(QStringLiteral("templatesRenameField"));
     REQUIRE(QTest::qWaitFor([&] { return rename->hasActiveFocus(); }, 5000));
@@ -504,9 +515,12 @@ TEST_CASE("operation templates in the window: browse, preview, apply, refuse, sa
     w.clickRowTool(QStringLiteral("operationRow.2"), QStringLiteral("camRowReapply.2"));
     REQUIRE(QTest::qWaitFor([&] { return w.operations()[1]->cutting.spindleRpm != 1000; }, kTimeoutMs));
     CHECK(w.document()->undoCommand()->label.rfind("Re-apply Template", 0) == 0);
-    REQUIRE(QTest::qWaitFor([&] { return w.find(QStringLiteral("camTreeTemplatesMessage")) != nullptr &&
-                                         w.find(QStringLiteral("camTreeTemplatesMessage"))->isVisible(); },
-                            5000));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return w.find(QStringLiteral("camTreeTemplatesMessage")) != nullptr &&
+                   w.find(QStringLiteral("camTreeTemplatesMessage"))->isVisible();
+        },
+        5000));
     w.shot("reapplied");
     for (const QString& warning : w.host->warnings())
         UNSCOPED_INFO(warning.toStdString());

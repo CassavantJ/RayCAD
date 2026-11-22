@@ -61,7 +61,7 @@ class TemplatesModel : public QObject {
     Q_PROPERTY(QString kindFilter READ kindFilter WRITE setKindFilter NOTIFY filterChanged)
     // "setup" (the setup's material, the default), "" (any) or a material id.
     Q_PROPERTY(QString materialFilter READ materialFilter WRITE setMaterialFilter NOTIFY filterChanged)
-    Q_PROPERTY(QVariantList kinds READ kinds CONSTANT)                    // [{value, text}]
+    Q_PROPERTY(QVariantList kinds READ kinds CONSTANT)                      // [{value, text}]
     Q_PROPERTY(QVariantList materials READ materials NOTIFY catalogChanged) // [{value, text}]
     // [{rowKind ("set" | "template"), key, title, detail, readOnly, library, depth}]
     Q_PROPERTY(QVariantList rows READ rows NOTIFY catalogChanged)
@@ -232,7 +232,7 @@ private:
     std::optional<SetupId> setup_;
     QString target_ = QStringLiteral("all");
     QVariantList groups_; // the setup's hole groups, from the last preview
-    QString groupsSetup_;  // the setup they are of
+    QString groupsSetup_; // the setup they are of
     QTimer previewTimer_;
     std::uint64_t previewSerial_ = 0;
     int previews_ = 0;

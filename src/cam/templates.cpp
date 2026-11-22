@@ -85,11 +85,13 @@ std::string lower(std::string_view s)
 // ---------- Variable tables ----------
 
 constexpr VarInfo kFeatureVars[] = {
-    {"feature.diameter", VarUnit::Length, true, "The bore's diameter: the lowest cylinder of the hole, the drilled size "
-                                                "(a tapped hole of the hole feature is modelled at its tap drill)."},
+    {"feature.diameter", VarUnit::Length, true,
+     "The bore's diameter: the lowest cylinder of the hole, the drilled size "
+     "(a tapped hole of the hole feature is modelled at its tap drill)."},
     {"feature.depth", VarUnit::Length, true,
      "From the hole's top to the bottom of its full-diameter bore (a through hole: to where it breaks out)."},
-    {"feature.totalDepth", VarUnit::Length, true, "From the hole's top to its lowest point (the tip of a drill point)."},
+    {"feature.totalDepth", VarUnit::Length, true,
+     "From the hole's top to its lowest point (the tip of a drill point)."},
     {"feature.depthRatio", VarUnit::Plain, true, "feature.depth / feature.diameter."},
     {"feature.through", VarUnit::Plain, true, "1 for a through hole, else 0."},
     {"feature.blind", VarUnit::Plain, true, "1 for a blind hole, else 0."},
@@ -125,7 +127,8 @@ constexpr VarInfo kToolVars[] = {
     {"tool.overallLength", VarUnit::Length, true, "The overall length."},
     {"tool.cornerRadius", VarUnit::Length, true, "The corner radius."},
     {"tool.tipDiameter", VarUnit::Length, true, "The tip diameter (chamfer and spot tools)."},
-    {"tool.pointAngle", VarUnit::Angle, true, "The included point angle (drills, spot drills, chamfer mills); 0 if none."},
+    {"tool.pointAngle", VarUnit::Angle, true,
+     "The included point angle (drills, spot drills, chamfer mills); 0 if none."},
     {"tool.pointLength", VarUnit::Length, true,
      "The length of the point: half of (diameter - tip diameter), divided by the tangent of half the point angle; 0 "
      "without a point angle."},
@@ -354,8 +357,7 @@ Result<EvaluatedQuery> evaluateQuery(const lib::OpTemplate& t, const TemplateRul
             words.push_back(m.key + " " + shortNumber(*x) + unit);
             continue;
         }
-        if (std::find(std::begin(kTextKeys), std::end(kTextKeys), m.key) != std::end(kTextKeys) &&
-            m.value.isString()) {
+        if (std::find(std::begin(kTextKeys), std::end(kTextKeys), m.key) != std::end(kTextKeys) && m.value.isString()) {
             auto text = textValue(t, field, m.value.asString(), vars);
             if (!text) {
                 return tl::unexpected(text.error());
@@ -662,10 +664,10 @@ Result<std::string> substitute(std::string_view text, const Vars& vars)
         }
         const auto it = vars.find(name);
         if (it == vars.end()) {
-            const bool known =
-                std::any_of(std::begin(kFeatureVars), std::end(kFeatureVars),
-                            [&](const VarInfo& v) { return v.name == name; }) ||
-                std::any_of(std::begin(kToolVars), std::end(kToolVars), [&](const VarInfo& v) { return v.name == name; });
+            const bool known = std::any_of(std::begin(kFeatureVars), std::end(kFeatureVars),
+                                           [&](const VarInfo& v) { return v.name == name; }) ||
+                               std::any_of(std::begin(kToolVars), std::end(kToolVars),
+                                           [&](const VarInfo& v) { return v.name == name; });
             if (!known) {
                 return failure(ErrorCode::InvalidArgument, "there is no variable " + std::string(name) +
                                                                " (docs/template_expressions.md lists them)");
@@ -679,9 +681,9 @@ Result<std::string> substitute(std::string_view text, const Vars& vars)
         }
         const Var& v = it->second;
         if (v.unit == VarUnit::Text) {
-            return failure(ErrorCode::InvalidArgument,
-                           std::string(name) + " is a text (\"" + v.text +
-                               "\"); it can only be the whole value of a text key, as \"$" + std::string(name) + "\"");
+            return failure(ErrorCode::InvalidArgument, std::string(name) + " is a text (\"" + v.text +
+                                                           "\"); it can only be the whole value of a text key, as \"$" +
+                                                           std::string(name) + "\"");
         }
         out += "(" + detail::formatDouble(v.number) +
                (v.unit == VarUnit::Length  ? " mm"
@@ -821,7 +823,8 @@ Result<TemplateRules> rulesOf(const lib::OpTemplate& t)
             r.set = set->asString();
         }
         if (const Value* seq = member(*extra, "sequence")) {
-            if (!seq->isNumber() || seq->asNumber() != std::floor(seq->asNumber()) || std::fabs(seq->asNumber()) > 1e9) {
+            if (!seq->isNumber() || seq->asNumber() != std::floor(seq->asNumber()) ||
+                std::fabs(seq->asNumber()) > 1e9) {
                 return bad("sequence", "must be a whole number");
             }
             r.sequence = static_cast<int>(seq->asNumber());
@@ -932,7 +935,8 @@ Result<TemplateRules> rulesOf(const lib::OpTemplate& t)
             }
             for (const Member& m : prefer->asObject()) {
                 if (numericKey(m.key) == nullptr || (!m.value.isNumber() && !m.value.isString())) {
-                    return bad("toolQuery.prefer." + m.key, "must name a numeric tool field with a number or expression");
+                    return bad("toolQuery.prefer." + m.key,
+                               "must name a numeric tool field with a number or expression");
                 }
                 r.prefer[m.key] = textOf(m.value);
             }
@@ -1190,8 +1194,8 @@ Result<Plan> planTemplates(std::span<const lib::OpTemplate> templates, std::span
                 for (const auto& [key, text] : r.heights) {
                     auto v = json::parse(text);
                     if (!v) {
-                        return failure(ErrorCode::FormatError, "Template " + inQuotes(t.name) + ": heights." + key +
-                                                                   " is not valid JSON");
+                        return failure(ErrorCode::FormatError,
+                                       "Template " + inQuotes(t.name) + ": heights." + key + " is not valid JSON");
                     }
                     auto x = numericValue(t, "heights." + key, *v, vars, FieldKind::Length, ctx.evaluate);
                     if (!x) {
@@ -1219,8 +1223,8 @@ Result<Plan> planTemplates(std::span<const lib::OpTemplate> templates, std::span
                     if (!feeds) {
                         return failure(ErrorCode::InvalidArgument,
                                        "Template " + inQuotes(t.name) + ": the feeds of tool " + inQuotes(tool.name) +
-                                           " in " + ctx.material->name + " cannot be calculated: " +
-                                           feeds.error().message);
+                                           " in " + ctx.material->name +
+                                           " cannot be calculated: " + feeds.error().message);
                     }
                     op.cutting.spindleRpm = feeds->rpm;
                     op.cutting.feedCut = feeds->feedMmMin;
@@ -1265,13 +1269,14 @@ Result<Plan> planTemplates(std::span<const lib::OpTemplate> templates, std::span
                     }
                     op.cutting.feedLeadIn = op.cutting.feedLeadOut = op.cutting.feedCut;
                 }
-                b.key = tool.id.value.toString() + "|" + op.paramsJson + "|" + detail::formatDouble(op.heights.clearance) +
-                        "," + detail::formatDouble(op.heights.retract) + "," +
-                        detail::formatDouble(op.heights.feedPlane) + "," + detail::formatDouble(op.heights.top) + "," +
-                        detail::formatDouble(op.heights.bottom) + "|" + detail::formatDouble(op.cutting.spindleRpm) +
-                        "," + detail::formatDouble(op.cutting.feedCut) + "," +
-                        detail::formatDouble(op.cutting.feedPlunge);
-                const auto same = std::find_if(built.begin(), built.end(), [&](const Built& x) { return x.key == b.key; });
+                b.key = tool.id.value.toString() + "|" + op.paramsJson + "|" +
+                        detail::formatDouble(op.heights.clearance) + "," + detail::formatDouble(op.heights.retract) +
+                        "," + detail::formatDouble(op.heights.feedPlane) + "," + detail::formatDouble(op.heights.top) +
+                        "," + detail::formatDouble(op.heights.bottom) + "|" +
+                        detail::formatDouble(op.cutting.spindleRpm) + "," + detail::formatDouble(op.cutting.feedCut) +
+                        "," + detail::formatDouble(op.cutting.feedPlunge);
+                const auto same =
+                    std::find_if(built.begin(), built.end(), [&](const Built& x) { return x.key == b.key; });
                 if (same != built.end()) {
                     same->op.geometry.push_back(holes[h].ref);
                     plan.operations[plan.operations.size() - built.size() +
