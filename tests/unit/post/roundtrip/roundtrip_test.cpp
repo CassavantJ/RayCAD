@@ -227,8 +227,9 @@ const std::vector<Known>& knownFindings()
 {
     // F5: FANUC with toolChangeRetract = none, at the first tool change.
     static const char* const kNoRetract =
-        "With toolChangeRetract = none the FANUC and generic posts write no retract before the first M6, so the first "
-        "X/Y move "
+        "With toolChangeRetract = none (which the FANUC and generic posts now refuse unless the property "
+        "m6LeavesZRetracted asserts that the machine's M6 retracts; the pairwise set asserts it) the posts write no "
+        "retract before the first M6, so the first X/Y move "
         "('G0 G90 G54 G17 X.. Y..') runs at the Z the machine happened to be at when the program started. Whether "
         "M6 retracts is the builder's macro [F1, unverified; docs/post_review/fanuc.md question 2]; RS274/NGC's M6 "
         "leaves the axes where they are [N 3.6.3]. (Haas M06 retracts Z itself [H1 p.19], so the Haas posts are "
