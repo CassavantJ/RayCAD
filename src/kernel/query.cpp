@@ -1,5 +1,6 @@
 // Geometry queries on a Shape (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds,
-// massProps, minDistance. Every query reads the exact geometry, never a mesh, and runs single-threaded.
+// massProps, minDistance; faceSample (task T-034). Every query reads the exact geometry, never a mesh, and runs
+// single-threaded.
 #include "shape_impl.h"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -7,6 +8,7 @@
 #include <BRepBndLib.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
+#include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
@@ -153,6 +155,39 @@ Result<SurfaceInfo> surfaceInfo(const Shape& shape, SubId face)
         info.bounds = tightBounds(topoFace);
         info.reversed = topoFace.Orientation() == TopAbs_REVERSED;
         return info;
+    });
+}
+
+// ---------- faceSample (task T-034) ----------
+// The surface at the middle of the face's UV bounds, with the location applied (BRepAdaptor_Surface with
+// restriction). The normal is D1U ^ D1V, the side OCCT's face orientation refers to: FORWARD means the material lies
+// behind it, so it is reversed for a REVERSED face.
+Result<FaceSample> faceSample(const Shape& shape, SubId face)
+{
+    constexpr std::string_view where = "kernel::faceSample";
+    return guarded(where, [&]() -> Result<FaceSample> {
+        auto sub = resolveKind(shape, face, SubKind::Face, "a face", where);
+        if (!sub)
+            return tl::unexpected(sub.error());
+        const TopoDS_Face& topoFace = TopoDS::Face(*sub);
+        FaceSample out{};
+        BRepTools::UVBounds(topoFace, out.uMin, out.uMax, out.vMin, out.vMax);
+        const BRepAdaptor_Surface surface(topoFace, true);
+        gp_Pnt p;
+        gp_Vec du;
+        gp_Vec dv;
+        surface.D1(0.5 * (out.uMin + out.uMax), 0.5 * (out.vMin + out.vMax), p, du, dv);
+        gp_Vec n = du.Crossed(dv);
+        const double length = n.Magnitude();
+        if (!(length > 1e-300) || !std::isfinite(length))
+            return tl::unexpected(
+                makeError(ErrorCode::KernelFailure, "The face has no normal at the middle of its parameters.", where));
+        n.Divide(length);
+        if (topoFace.Orientation() == TopAbs_REVERSED)
+            n.Reverse();
+        out.point = toVec3(p);
+        out.normal = Vec3{n.X(), n.Y(), n.Z()};
+        return out;
     });
 }
 
