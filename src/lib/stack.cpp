@@ -76,11 +76,11 @@ struct LibraryStack::Impl {
     // weakly finds it gone.
     struct Roots {
         std::vector<std::string> dirs;
-        std::size_t readOnly = 0;                         // the first `readOnly` roots
+        std::size_t readOnly = 0; // the first `readOnly` roots
         // Parallel to dirs; null for a root that did not open. Shared so that a worker can keep one past a setRoots
         // (sharedLibrary, refreshInBackground); a slot is set at most once (null to a library) in a Roots' life.
         std::vector<std::shared_ptr<ILibrary>> libraries;
-        std::vector<LibraryIssue> rootIssues;             // parallel to dirs: why it did not open
+        std::vector<LibraryIssue> rootIssues; // parallel to dirs: why it did not open
         template <class Id, class T>
         using Merged = std::map<Id, std::pair<T, std::size_t>>; // the item and the root it comes from
         Merged<ToolId, Tool> tools;
@@ -372,26 +372,25 @@ void LibraryStack::refreshInBackground(IJobSystem& jobs, std::function<void(bool
             work->missing.emplace_back(i, roots->dirs[i]);
         }
     }
-    JobHandle<bool> job =
-        jobs.submit<bool>(JobInfo{"Rescanning the libraries", JobPriority::Background, false},
-                          [work](JobContext& ctx) -> Result<bool> {
-                              bool changed = false;
-                              for (const auto& [dir, library] : work->open) {
-                                  runReadHook(dir, ctx.cancel);
-                                  if (auto st = ctx.cancel.check(); !st) {
-                                      return tl::unexpected(st.error());
-                                  }
-                                  changed = library->refresh() || changed;
-                              }
-                              for (const auto& [i, dir] : work->missing) {
-                                  runReadHook(dir, ctx.cancel);
-                                  if (auto st = ctx.cancel.check(); !st) {
-                                      return tl::unexpected(st.error());
-                                  }
-                                  work->opened.emplace_back(i, ILibrary::open(dir));
-                              }
-                              return changed;
-                          });
+    JobHandle<bool> job = jobs.submit<bool>(JobInfo{"Rescanning the libraries", JobPriority::Background, false},
+                                            [work](JobContext& ctx) -> Result<bool> {
+                                                bool changed = false;
+                                                for (const auto& [dir, library] : work->open) {
+                                                    runReadHook(dir, ctx.cancel);
+                                                    if (auto st = ctx.cancel.check(); !st) {
+                                                        return tl::unexpected(st.error());
+                                                    }
+                                                    changed = library->refresh() || changed;
+                                                }
+                                                for (const auto& [i, dir] : work->missing) {
+                                                    runReadHook(dir, ctx.cancel);
+                                                    if (auto st = ctx.cancel.check(); !st) {
+                                                        return tl::unexpected(st.error());
+                                                    }
+                                                    work->opened.emplace_back(i, ILibrary::open(dir));
+                                                }
+                                                return changed;
+                                            });
     std::erase_if(roots->reads, [](const JobHandle<bool>& j) { return j.done(); });
     roots->reads.push_back(job);
     std::weak_ptr<Impl::Roots> weak = roots;

@@ -17,9 +17,9 @@ namespace ray::ui::toolsui {
 namespace {
 
 constexpr double kPi = std::numbers::pi;
-constexpr int kArcSteps = 16;          // points per quarter circle
+constexpr int kArcSteps = 16;           // points per quarter circle
 constexpr double kThreadDepth = 0.6134; // depth of an external 60 degree thread, in pitches (ISO 68-1 basic profile)
-constexpr int kMaxTeeth = 200;         // thread teeth drawn at most (finer ones are drawn as a plain cylinder)
+constexpr int kMaxTeeth = 200;          // thread teeth drawn at most (finer ones are drawn as a plain cylinder)
 
 double positive(double v, double fallback)
 {
@@ -197,7 +197,7 @@ std::vector<Vec2> holderHalf(const lib::Holder& h, double face)
         total += std::max(0.0, s.height);
     const double gauge = std::max(positive(h.gaugeLength, total), total);
     double y = face + gauge; // the gauge line
-    std::vector<Vec2> top; // from the gauge line down
+    std::vector<Vec2> top;   // from the gauge line down
     for (const lib::HolderSegment& s : h.segments) {
         const double height = std::max(0.0, s.height);
         top.push_back({std::max(0.0, s.upperDiameter) / 2, y});
@@ -235,7 +235,11 @@ QString num(double v, int digits = 10)
 }
 
 // ---------- fields ----------
-#define RAY_F(key, label, kind) Field{key, QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", label), kind}
+#define RAY_F(key, label, kind)                                                                                        \
+    Field                                                                                                              \
+    {                                                                                                                  \
+        key, QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", label), kind                                               \
+    }
 
 const std::vector<Field>& allToolFields()
 {
@@ -643,15 +647,18 @@ std::optional<double> parseValue(const char* kind, const QString& raw, const Uni
     if (k == QLatin1String("length")) {
         const double mm = units.parseLength ? units.parseLength(text) : std::nan("");
         if (!std::isfinite(mm))
-            return fail(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "Not a length: give a number, e.g. 6 mm or 0.25 in"));
+            return fail(
+                QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "Not a length: give a number, e.g. 6 mm or 0.25 in"));
         return mm;
     }
     if (k == QLatin1String("speed")) {
-        static const QRegularExpression re(QStringLiteral("^([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\\s*(m/min|sfm|ft/min)?$"),
-                                           QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression re(
+            QStringLiteral("^([-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\\s*(m/min|sfm|ft/min)?$"),
+            QRegularExpression::CaseInsensitiveOption);
         const auto m = re.match(text);
         if (!m.hasMatch())
-            return fail(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "Not a speed: give a number, e.g. 120 m/min or 400 ft/min"));
+            return fail(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel",
+                                          "Not a speed: give a number, e.g. 120 m/min or 400 ft/min"));
         const double v = QLocale::c().toDouble(m.captured(1));
         const QString unit = m.captured(2).toLower();
         const bool feet = unit.isEmpty() ? units.inch : unit != QLatin1String("m/min");
@@ -794,8 +801,8 @@ Checked check(const Values& values, const QJsonObject& base, const Units& units,
     for (std::size_t i = 0; i < values.rows.size(); ++i) {
         const Row& row = values.rows[i];
         QJsonObject o = row.base;
-        apply(row.fields, row.shown, rowTable, o, units,
-              QStringLiteral("%1.%2.").arg(QLatin1String(rowsKey)).arg(i), out.problems);
+        apply(row.fields, row.shown, rowTable, o, units, QStringLiteral("%1.%2.").arg(QLatin1String(rowsKey)).arg(i),
+              out.problems);
         rows.append(o);
         fallbackRows.append(row.base);
     }

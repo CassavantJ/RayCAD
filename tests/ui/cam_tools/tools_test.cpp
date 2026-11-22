@@ -9,7 +9,8 @@
 //   - filter by words, type, diameter range and material: the rows are exactly those an independent filter over the
 //     stack finds, in (diameter, name, id) order, the same every time
 //   - create, duplicate, edit and delete tools, holders and cutting presets through the editor; problems beside their
-//     fields in the schema's words; lengths in the display unit; built-in items read-only with "Duplicate to my library"
+//     fields in the schema's words; lengths in the display unit; built-in items read-only with "Duplicate to my
+//     library"
 //   - the side view: to scale, in a holder when one is chosen, remade when and only when the geometry changes
 //   - a shared library changed underneath (a second LibraryStack on the same folder) or with its file held open by
 //     another program: the conflict message, and retry, a copy to my library and discard, with no data lost
@@ -167,7 +168,8 @@ struct Window {
     QQuickWindow* window() const { return host->window(); }
     ToolLibraryModel* tools() const
     {
-        return host->engine()->singletonInstance<ToolLibraryModel*>(QStringLiteral("RayCad.Ui"), QStringLiteral("CamTools"));
+        return host->engine()->singletonInstance<ToolLibraryModel*>(QStringLiteral("RayCad.Ui"),
+                                                                    QStringLiteral("CamTools"));
     }
     lib::LibraryStack* stack() const { return host->app()->libraries(); }
     QImage grab() const { return host->window()->grabWindow(); }
@@ -200,7 +202,8 @@ struct Window {
     {
         std::function<ToolListModel*(QQuickItem*)> walk = [&](QQuickItem* item) -> ToolListModel* {
             for (QObject* child : item->children()) {
-                if (auto* l = qobject_cast<ToolListModel*>(child); l && l->objectName() == QLatin1String("toolLibraryList"))
+                if (auto* l = qobject_cast<ToolListModel*>(child);
+                    l && l->objectName() == QLatin1String("toolLibraryList"))
                     return l;
             }
             for (QQuickItem* child : item->childItems()) {
@@ -250,6 +253,9 @@ struct Window {
         if (text.isEmpty())
             key(Qt::Key_Delete);
         type(text);
+        // Every key arrived (a person using the desktop can take the focus from the test window).
+        INFO("typed into " << objectName.toStdString());
+        CHECK(field->property("text").toString() == text);
     }
     void open() const
     {
@@ -296,10 +302,10 @@ struct Window {
         };
         const bool ok = QTest::qWaitFor(ready, kTimeoutMs);
         api::OpenDocument* od = host->app()->active();
-        INFO("document " << (od != nullptr) << ", rebuild pending " << (od && od->document && od->document->rebuildPending())
-                         << ", scene ready " << host->scene()->ready() << ", bodies " << host->scene()->bodyCount()
-                         << ", files busy " << host->files()->busy() << ", message "
-                         << host->context()->message().toStdString());
+        INFO("document " << (od != nullptr) << ", rebuild pending "
+                         << (od && od->document && od->document->rebuildPending()) << ", scene ready "
+                         << host->scene()->ready() << ", bodies " << host->scene()->bodyCount() << ", files busy "
+                         << host->files()->busy() << ", message " << host->context()->message().toStdString());
         REQUIRE(ok);
     }
     doc::DocStatePtr state() const
@@ -327,8 +333,8 @@ struct Window {
         QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 1 /* ListView.Center */));
         QCoreApplication::processEvents();
         QQuickItem* item = nullptr;
-        REQUIRE(QTest::qWaitFor([&] { return (item = find(QStringLiteral("toolRow.%1").arg(row))) && item->isVisible(); },
-                                10000));
+        REQUIRE(QTest::qWaitFor(
+            [&] { return (item = find(QStringLiteral("toolRow.%1").arg(row))) && item->isVisible(); }, 10000));
         click(item);
         REQUIRE(QTest::qWaitFor([&] { return tools()->selectedId() == id; }, 5000));
         idle();
@@ -369,7 +375,7 @@ std::vector<lib::Tool> writeTools(const QString& root, int count, const std::vec
     QDir().mkpath(root + QStringLiteral("/tools"));
     std::vector<lib::Tool> out;
     const lib::ToolType types[] = {lib::ToolType::FlatEndMill, lib::ToolType::BallEndMill, lib::ToolType::Drill,
-                                   lib::ToolType::Tap, lib::ToolType::SpotDrill, lib::ToolType::ChamferMill};
+                                   lib::ToolType::Tap,         lib::ToolType::SpotDrill,   lib::ToolType::ChamferMill};
     for (int i = 0; i < count; ++i) {
         lib::Tool t;
         t.id = ToolId{Uuid::generate()};
@@ -384,7 +390,8 @@ std::vector<lib::Tool> writeTools(const QString& root, int count, const std::vec
         t.flutes = 2 + i % 3;
         if (t.type == lib::ToolType::BallEndMill)
             t.cornerRadius = t.diameter / 2;
-        if (t.type == lib::ToolType::Drill || t.type == lib::ToolType::SpotDrill || t.type == lib::ToolType::ChamferMill)
+        if (t.type == lib::ToolType::Drill || t.type == lib::ToolType::SpotDrill ||
+            t.type == lib::ToolType::ChamferMill)
             t.tipAngleDeg = t.type == lib::ToolType::Drill ? 135 : 90;
         if (t.type == lib::ToolType::Tap)
             t.threadPitch = 0.5;
@@ -477,7 +484,8 @@ TEST_CASE("the manager lists every library root and which items are read-only", 
     int builtin = 0, shared = 0;
     for (int row = 0; row < l->count(); ++row) {
         const QVariantMap r = l->get(row);
-        const auto root = w.stack()->rootOf(lib::ItemKind::Tool, Uuid::fromString(r.value(QStringLiteral("itemId")).toString().toStdString()));
+        const auto root = w.stack()->rootOf(
+            lib::ItemKind::Tool, Uuid::fromString(r.value(QStringLiteral("itemId")).toString().toStdString()));
         REQUIRE(root);
         CHECK(r.value(QStringLiteral("rootName")).toString() == m->rootLabel(static_cast<int>(*root)));
         CHECK(r.value(QStringLiteral("readOnly")).toBool() == (*root == 0));
@@ -548,8 +556,9 @@ TEST_CASE("filters give exactly the matching tools in a stable order", "[cam][to
         const QString text = (qs(t.name) + QLatin1Char(' ') + qs(t.comment)).toLower();
         if (!text.contains(QStringLiteral("jobber")))
             continue;
-        const bool hasMaterial = std::any_of(t.presets.begin(), t.presets.end(),
-                                             [&](const lib::ToolPreset& p) { return qs(p.material.value.toString()) == material; });
+        const bool hasMaterial = std::any_of(t.presets.begin(), t.presets.end(), [&](const lib::ToolPreset& p) {
+            return qs(p.material.value.toString()) == material;
+        });
         if (hasMaterial)
             expected.push_back(&t);
     }
@@ -571,7 +580,8 @@ TEST_CASE("filters give exactly the matching tools in a stable order", "[cam][to
         first.push_back(l->get(row).value(QStringLiteral("itemId")).toString());
         CHECK(first.back() == qs(expected[static_cast<std::size_t>(row)]->id.value.toString()));
     }
-    CHECK(w.shown(QStringLiteral("toolLibraryCount"))->property("text").toString().contains(QString::number(l->count())));
+    CHECK(
+        w.shown(QStringLiteral("toolLibraryCount"))->property("text").toString().contains(QString::number(l->count())));
     // The same again after the stack is merged anew (and the catalog made again).
     const int builds = m->catalogBuilds();
     w.stack()->remerge();
@@ -634,6 +644,9 @@ TEST_CASE("tools, holders and presets are made, copied, edited and deleted throu
     CHECK_FALSE(m->canSave());
     w.typeInto(QStringLiteral("toolInput.diameter"), QStringLiteral("abc"));
     CHECK(w.problem(QStringLiteral("diameter")).startsWith(QStringLiteral("Not a length")));
+    w.typeInto(QStringLiteral("toolInput.diameter"), QStringLiteral("-2"));
+    CHECK(w.field("diameter") == QStringLiteral("-2"));
+    CHECK(w.shown(QStringLiteral("toolInput.diameter"))->property("text").toString() == QStringLiteral("-2"));
     w.typeInto(QStringLiteral("toolInput.diameter"), QStringLiteral("0.5 in"));
     CHECK(w.problem(QStringLiteral("diameter")).isEmpty());
     CHECK_FALSE(w.visible(QStringLiteral("toolProblem.diameter")));
@@ -660,7 +673,8 @@ TEST_CASE("tools, holders and presets are made, copied, edited and deleted throu
     CHECK(saved.name == "My half inch");
     CHECK(saved.diameter == 12.7);
     REQUIRE(saved.presets.size() == builtin.presets.size() + 1);
-    CHECK(std::count_if(saved.presets.begin(), saved.presets.end(), [](const lib::ToolPreset& p) { return p.chipLoadMm == 0.0317; }) == 1);
+    CHECK(std::count_if(saved.presets.begin(), saved.presets.end(),
+                        [](const lib::ToolPreset& p) { return p.chipLoadMm == 0.0317; }) == 1);
     // The rest as the built-in tool had it.
     CHECK(saved.overallLength == builtin.overallLength);
     CHECK(saved.presets.front().surfaceSpeedMMin == builtin.presets.front().surfaceSpeedMMin);
@@ -691,7 +705,8 @@ TEST_CASE("tools, holders and presets are made, copied, edited and deleted throu
     w.key(Qt::Key_S, Qt::ControlModifier); // the panel's Save key, from a field
     w.idle();
     INFO("after Ctrl+S: origin " << m->selectedOrigin().toStdString() << ", status " << m->status().toStdString()
-                                 << ", conflict " << m->conflict().value(QStringLiteral("detail")).toString().toStdString());
+                                 << ", conflict "
+                                 << m->conflict().value(QStringLiteral("detail")).toString().toStdString());
     CHECK(m->selectedOrigin() == QStringLiteral("library"));
     const QString drillId = m->selectedId();
     CHECK(fileTool(user + QStringLiteral("/tools/") + drillId + QStringLiteral(".tool.json")).diameter == 5);
@@ -712,7 +727,8 @@ TEST_CASE("tools, holders and presets are made, copied, edited and deleted throu
     REQUIRE(m->editorKind() == QStringLiteral("holder"));
     w.typeInto(QStringLiteral("toolInput.name"), QStringLiteral("ER32 short"));
     CHECK_FALSE(w.visible(QStringLiteral("toolInput.segments.1.height"))); // the cards are closed: a summary each
-    CHECK(w.shown(QStringLiteral("toolRowSummary.1"))->property("text").toString().startsWith(QStringLiteral("Height")));
+    CHECK(
+        w.shown(QStringLiteral("toolRowSummary.1"))->property("text").toString().startsWith(QStringLiteral("Height")));
     w.click("toolRowToggle.1");
     w.typeInto(QStringLiteral("toolInput.segments.1.height"), QStringLiteral("0"));
     CHECK(w.problem(QStringLiteral("segments.1.height")) == QStringLiteral("must be greater than 0 mm"));
@@ -826,7 +842,8 @@ TEST_CASE("a shared library changed underneath or held open gives a clear confli
     CHECK(w.visible(QStringLiteral("toolConflictRetry")));
     CHECK(w.visible(QStringLiteral("toolConflictCopy")));
     CHECK(w.visible(QStringLiteral("toolConflictDiscard")));
-    CHECK(w.find(QStringLiteral("toolConflictFile"))->property("text").toString().contains(QStringLiteral(".tool.json")));
+    CHECK(
+        w.find(QStringLiteral("toolConflictFile"))->property("text").toString().contains(QStringLiteral(".tool.json")));
     // Nothing lost: their version on disk, mine still in the editor.
     CHECK(fileTool(file).diameter == 8);
     CHECK(w.field("diameter") == QStringLiteral("7 mm"));
@@ -853,7 +870,8 @@ TEST_CASE("a shared library changed underneath or held open gives a clear confli
     CHECK(fileTool(file).diameter == 9); // theirs, untouched
     const QString copyId = m->selectedId();
     CHECK(copyId != qs(shop[0].id.value.toString()));
-    const lib::Tool copy = fileTool(w.userLibrary() + QStringLiteral("/tools/") + copyId + QStringLiteral(".tool.json"));
+    const lib::Tool copy =
+        fileTool(w.userLibrary() + QStringLiteral("/tools/") + copyId + QStringLiteral(".tool.json"));
     CHECK(copy.diameter == 6.5); // mine, in my library
     CHECK(m->whereText() == QStringLiteral("My library"));
 
@@ -906,8 +924,8 @@ TEST_CASE("a shared library changed underneath or held open gives a clear confli
     CHECK(c.value(QStringLiteral("message")).toString().contains(m->rootLabel(1)));
     w.click("toolConflictCopy");
     w.idle();
-    CHECK(fileTool(w.userLibrary() + QStringLiteral("/tools/") + m->selectedId() + QStringLiteral(".tool.json")).diameter ==
-          3.5);
+    CHECK(fileTool(w.userLibrary() + QStringLiteral("/tools/") + m->selectedId() + QStringLiteral(".tool.json"))
+              .diameter == 3.5);
     w.checkNoWarnings();
 }
 
@@ -933,15 +951,17 @@ TEST_CASE("picking a library tool for an operation embeds it; the document's too
     {
         doc::Command add = ct::opAdd(1, 1, 1);
         QJsonObject args = QJsonDocument::fromJson(QByteArray::fromStdString(add.argsJson)).object();
-        args[QStringLiteral("library")] = QJsonDocument::fromJson(QByteArray::fromStdString(ct::library(ct::toolJson(1)))).object();
+        args[QStringLiteral("library")] =
+            QJsonDocument::fromJson(QByteArray::fromStdString(ct::library(ct::toolJson(1)))).object();
         REQUIRE(w.invoke("cam.operation.add", QJsonDocument(args).toJson(QJsonDocument::Compact).toStdString()));
     }
     w.toCam();
     w.open();
     // The document's copy first, in its own group, read-only.
     ToolListModel* l = w.list();
-    REQUIRE(QTest::qWaitFor([&] { return l->count() > 0 && l->get(0).value(QStringLiteral("origin")) == QStringLiteral("document"); },
-                            10000));
+    REQUIRE(QTest::qWaitFor(
+        [&] { return l->count() > 0 && l->get(0).value(QStringLiteral("origin")) == QStringLiteral("document"); },
+        10000));
     CHECK(l->get(0).value(QStringLiteral("group")).toString() == QStringLiteral("In this document"));
     CHECK(l->get(0).value(QStringLiteral("itemId")).toString() == qs(ct::id('d', 1)));
     CHECK_FALSE(l->get(0).value(QStringLiteral("libraryChanged")).toBool());
@@ -989,7 +1009,9 @@ TEST_CASE("picking a library tool for an operation embeds it; the document's too
     w.click(update);
     REQUIRE(QTest::qWaitFor([&] { return w.state()->cam->tools.at(mine.id).item.diameter == 6.5; }, kTimeoutMs));
     w.idle();
-    CHECK_FALSE(l->get(l->rowOf(QStringLiteral("document"), qs(ct::id('d', 1)))).value(QStringLiteral("libraryChanged")).toBool());
+    CHECK_FALSE(l->get(l->rowOf(QStringLiteral("document"), qs(ct::id('d', 1))))
+                    .value(QStringLiteral("libraryChanged"))
+                    .toBool());
     CHECK_FALSE(m->libraryChanged());
     // A name-only change of the original is no shape change: no mark, but the copy can still be updated.
     lib::Tool renamed = changed;
@@ -997,7 +1019,9 @@ TEST_CASE("picking a library tool for an operation embeds it; the document's too
     REQUIRE(w.stack()->library(1)->save(renamed));
     w.stack()->remerge();
     w.idle();
-    CHECK_FALSE(l->get(l->rowOf(QStringLiteral("document"), qs(ct::id('d', 1)))).value(QStringLiteral("libraryChanged")).toBool());
+    CHECK_FALSE(l->get(l->rowOf(QStringLiteral("document"), qs(ct::id('d', 1))))
+                    .value(QStringLiteral("libraryChanged"))
+                    .toBool());
     w.selectRow(QStringLiteral("library"), drillId);
     w.selectRow(QStringLiteral("document"), qs(ct::id('d', 1)));
     CHECK(m->canUpdateFromLibrary());
@@ -1010,7 +1034,9 @@ TEST_CASE("the manager works from the keyboard alone, and with no document open"
     ToolLibraryModel* m = w.tools();
     // No document: the command runs.
     CHECK_FALSE(w.host->session()->hasDocument());
-    CHECK(w.host->commands()->disabledReason(*w.host->commands()->find(QStringLiteral("cam.toolLibrary.open"))).isEmpty());
+    CHECK(w.host->commands()
+              ->disabledReason(*w.host->commands()->find(QStringLiteral("cam.toolLibrary.open")))
+              .isEmpty());
     // Shift+T in the CAM workspace.
     w.toCam();
     w.window()->contentItem()->forceActiveFocus();
@@ -1028,10 +1054,12 @@ TEST_CASE("the manager works from the keyboard alone, and with no document open"
         order.push_back(f ? f->objectName() : QString());
     }
     INFO("tab order: " << order[0].toStdString() << ", " << order[1].toStdString() << ", " << order[2].toStdString()
-                       << ", " << order[3].toStdString() << ", " << order[4].toStdString() << ", " << order[5].toStdString());
-    const std::vector<QString> wanted = {QStringLiteral("toolLibraryTypeFilter"), QStringLiteral("toolLibraryMaterialFilter"),
-                                         QStringLiteral("toolLibraryMinDiameter"), QStringLiteral("toolLibraryMaxDiameter"),
-                                         QStringLiteral("toolLibrarySort"), QStringLiteral("toolLibraryView")};
+                       << ", " << order[3].toStdString() << ", " << order[4].toStdString() << ", "
+                       << order[5].toStdString());
+    const std::vector<QString> wanted = {
+        QStringLiteral("toolLibraryTypeFilter"),  QStringLiteral("toolLibraryMaterialFilter"),
+        QStringLiteral("toolLibraryMinDiameter"), QStringLiteral("toolLibraryMaxDiameter"),
+        QStringLiteral("toolLibrarySort"),        QStringLiteral("toolLibraryView")};
     CHECK(order == wanted);
     // Back to the search; type, Down into the list: the first match is selected; Down again moves.
     search->forceActiveFocus();
@@ -1040,10 +1068,12 @@ TEST_CASE("the manager works from the keyboard alone, and with no document open"
     ToolListModel* l = w.list();
     REQUIRE(l->count() >= 3);
     w.key(Qt::Key_Down);
-    REQUIRE(QTest::qWaitFor([&] { return m->selectedId() == l->get(0).value(QStringLiteral("itemId")).toString(); }, 5000));
+    REQUIRE(
+        QTest::qWaitFor([&] { return m->selectedId() == l->get(0).value(QStringLiteral("itemId")).toString(); }, 5000));
     QQuickItem* focused = w.window()->activeFocusItem();
-    INFO("focus after Down: " << (focused ? focused->objectName().toStdString() + " " + focused->metaObject()->className()
-                                          : std::string("none")));
+    INFO("focus after Down: " << (focused
+                                      ? focused->objectName().toStdString() + " " + focused->metaObject()->className()
+                                      : std::string("none")));
     CHECK(w.find(QStringLiteral("toolLibraryView"))->hasActiveFocus());
     w.key(Qt::Key_Down);
     CHECK(m->selectedId() == l->get(1).value(QStringLiteral("itemId")).toString());
@@ -1062,7 +1092,8 @@ TEST_CASE("the manager works from the keyboard alone, and with no document open"
     w.idle();
     CHECK(m->selectedOrigin() == QStringLiteral("library"));
     const QString id = m->selectedId();
-    CHECK(fileTool(w.userLibrary() + QStringLiteral("/tools/") + id + QStringLiteral(".tool.json")).name == "Keyboard tool");
+    CHECK(fileTool(w.userLibrary() + QStringLiteral("/tools/") + id + QStringLiteral(".tool.json")).name ==
+          "Keyboard tool");
     // From the list, Enter opens its fields; Esc reverts an edit, then closes the manager.
     QQuickItem* view = w.shown(QStringLiteral("toolLibraryView"));
     view->forceActiveFocus();
@@ -1169,23 +1200,26 @@ TEST_CASE("5,000 tools: the list stays responsive and only visible rows exist", 
     w.click("toolLibraryRefresh");
     CHECK(m->refreshing());
     REQUIRE(QTest::qWaitFor(
-        [&] { return !m->refreshing() && w.stack()->tool(shop[17].id) && w.stack()->tool(shop[17].id)->name == shop[17].name; },
+        [&] {
+            return !m->refreshing() && w.stack()->tool(shop[17].id) &&
+                   w.stack()->tool(shop[17].id)->name == shop[17].name;
+        },
         kTimeoutMs));
     const qint64 rescanMs = rescan.elapsed();
     w.idle();
     const qint64 rescanGap = dog.worst;
-    CHECK(l->get(l->rowOf(QStringLiteral("library"), qs(shop[17].id.value.toString()))).value(QStringLiteral("name")).toString() ==
-          qs(shop[17].name));
+    CHECK(l->get(l->rowOf(QStringLiteral("library"), qs(shop[17].id.value.toString())))
+              .value(QStringLiteral("name"))
+              .toString() == qs(shop[17].name));
     const double catalogAfterMs = m->lastCatalogMs();
 
-    WARN("5,000 tools in a shared folder (" << l->count() << " rows): open " << openMs << " ms (catalog " << catalogMs
-                                           << " ms, worst UI-thread gap " << openGap << " ms); " << created
-                                           << " row items exist; filter per keystroke median "
-                                           << filterMs[filterMs.size() / 2] << " ms, worst " << filterMs.back()
-                                           << " ms (worst UI-thread gap while typing " << typeGap
-                                           << " ms); scrolling worst gap " << scrollGap << " ms; rescan of 5,000 rewritten files "
-                                           << rescanMs << " ms on a worker, catalog " << catalogAfterMs
-                                           << " ms, worst UI-thread gap " << rescanGap << " ms");
+    WARN("5,000 tools in a shared folder ("
+         << l->count() << " rows): open " << openMs << " ms (catalog " << catalogMs << " ms, worst UI-thread gap "
+         << openGap << " ms); " << created << " row items exist; filter per keystroke median "
+         << filterMs[filterMs.size() / 2] << " ms, worst " << filterMs.back()
+         << " ms (worst UI-thread gap while typing " << typeGap << " ms); scrolling worst gap " << scrollGap
+         << " ms; rescan of 5,000 rewritten files " << rescanMs << " ms on a worker, catalog " << catalogAfterMs
+         << " ms, worst UI-thread gap " << rescanGap << " ms");
     CHECK(openGap < ray::test::uiBudgetMs(50));
     CHECK(typeGap < ray::test::uiBudgetMs(50));
     CHECK(scrollGap < ray::test::uiBudgetMs(50));
@@ -1221,6 +1255,7 @@ TEST_CASE("screenshots of the manager", "[cam][tools][shots]")
     m->setPreviewHolder(QString());
     m->duplicate();
     w.typeInto(QStringLiteral("toolInput.fluteLength"), QStringLiteral("-2"));
+    CHECK(w.field("fluteLength") == QStringLiteral("-2"));
     w.idle();
     w.shotsBothThemes("t046_editor");
     m->revert();

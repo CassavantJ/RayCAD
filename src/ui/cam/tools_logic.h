@@ -46,23 +46,23 @@ Profile holderProfile(const lib::Holder& holder);
 enum class SortKey { Diameter, Name, Type };
 
 struct Entry {
-    bool document = false; // embedded in the open document (else from the library)
-    bool holder = false;   // a holder (else a tool)
+    bool document = false;  // embedded in the open document (else from the library)
+    bool holder = false;    // a holder (else a tool)
     QString id, name, type; // type: the file format's name ("flatEndMill"); "" for a holder
     double diameter = 0;    // mm: a tool's cutting diameter, a holder's largest
     int flutes = 0;
-    int root = -1;          // library root it comes from (-1: the document's copy)
-    bool readOnly = false;  // a built-in library item, or the document's copy
+    int root = -1;               // library root it comes from (-1: the document's copy)
+    bool readOnly = false;       // a built-in library item, or the document's copy
     bool libraryChanged = false; // document copy: the library's original has another shape (geometryHash)
     bool libraryDiffers = false; // document copy: the library's original differs in anything
     bool hasLibraryCopy = false;
-    QString search;               // lower-case words searched by the text filter
+    QString search;                 // lower-case words searched by the text filter
     std::vector<QString> materials; // ids of the materials it has a preset for (sorted)
 };
 
 struct Filter {
-    QString text;     // words, all must match (case-insensitive)
-    QString type;     // "" any, else the file format's type name
+    QString text;            // words, all must match (case-insensitive)
+    QString type;            // "" any, else the file format's type name
     double minDiameter = -1; // mm; < 0: no bound
     double maxDiameter = -1;
     QString material; // "" any, else a material id

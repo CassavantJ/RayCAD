@@ -8,6 +8,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Templates as T
 import RayCad.Ui
 
 Column {
@@ -50,12 +51,21 @@ Column {
             readonly property string problem: form.problems[fullKey] !== undefined ? form.problems[fullKey] : ""
             readonly property bool isChoice: kind === "choice"
             readonly property bool longText: kind === "multiline" && form.readOnly
+            // A choice's text as shown.
+            readonly property string choiceText: {
+                const list = form.choices[key]
+                if (isChoice && list !== undefined) {
+                    for (const c of list) {
+                        if (c.value === value)
+                            return c.text
+                    }
+                }
+                return value
+            }
 
             function focusControl() {
-                if (isChoice)
-                    combo.forceActiveFocus()
-                else
-                    field.forceActiveFocus()
+                if (control.item)
+                    control.item.forceActiveFocus()
             }
 
             objectName: form.objectPrefix + fullKey
@@ -71,12 +81,20 @@ Column {
                     elide: Text.ElideRight
                     text: fieldRow.modelData.label
                 }
-                TextField {
-                    id: field
-                    objectName: "toolInput." + fieldRow.fullKey
-                    visible: !fieldRow.isChoice && !fieldRow.longText
+                // The control: a field or a choice to edit; text where the item is read-only (only one is made).
+                Loader {
+                    id: control
                     width: form.fieldWidth
-                    readOnly: form.readOnly
+                    sourceComponent: form.readOnly ? readText
+                                     : fieldRow.isChoice ? choice
+                                     : fieldRow.kind === "multiline" ? area : field
+                }
+            }
+            Component {
+                id: field
+                TextField {
+                    objectName: "toolInput." + fieldRow.fullKey
+                    width: form.fieldWidth
                     text: fieldRow.value
                     invalid: fieldRow.problem !== ""
                     Accessible.name: fieldRow.modelData.label
@@ -91,15 +109,55 @@ Column {
                         }
                     }
                 }
+            }
+            Component {
+                id: area
+                // A comment: several lines, wrapped; Ctrl+S saves, Enter is a new line.
+                T.TextArea {
+                    id: areaControl
+                    objectName: "toolInput." + fieldRow.fullKey
+                    width: form.fieldWidth
+                    height: Math.max(Theme.controlHeight * 2.5, Math.min(implicitHeight, Theme.controlHeight * 6))
+                    text: fieldRow.value
+                    wrapMode: TextEdit.Wrap
+                    font: Theme.uiFont
+                    color: Theme.textPrimary
+                    selectionColor: Theme.selectionFill
+                    selectedTextColor: Theme.textPrimary
+                    selectByMouse: true
+                    hoverEnabled: true
+                    leftPadding: Theme.spacingM
+                    rightPadding: Theme.spacingM
+                    topPadding: Theme.spacingXs
+                    bottomPadding: Theme.spacingXs
+                    clip: true
+                    Accessible.name: fieldRow.modelData.label
+                    onTextChanged: if (activeFocus && text !== fieldRow.value) form.edited(fieldRow.key, text)
+                    Keys.onPressed: event => {
+                        if (event.matches(StandardKey.Save)) {
+                            form.commitRequested()
+                            event.accepted = true
+                        }
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.fieldBg
+                        border.width: areaControl.activeFocus ? Theme.focusRingWidth : Theme.borderWidth
+                        border.color: fieldRow.problem !== "" ? Theme.error
+                                      : areaControl.activeFocus ? Theme.focusRing
+                                      : areaControl.hovered ? Theme.controlBorder : Theme.panelBorder
+                    }
+                }
+            }
+            Component {
+                id: choice
                 ComboBox {
                     id: combo
                     objectName: "toolChoice." + fieldRow.fullKey
-                    visible: fieldRow.isChoice
                     width: form.fieldWidth
-                    enabled: !form.readOnly
                     textRole: "text"
                     valueRole: "value"
-                    model: fieldRow.isChoice && form.choices[fieldRow.key] !== undefined ? form.choices[fieldRow.key] : []
+                    model: form.choices[fieldRow.key] !== undefined ? form.choices[fieldRow.key] : []
                     Accessible.name: fieldRow.modelData.label
                     function sync() {
                         const i = indexOfValue(fieldRow.value)
@@ -116,15 +174,21 @@ Column {
                     }
                     onActivated: form.edited(fieldRow.key, currentValue)
                 }
-                // A long comment of a read-only item, in full.
+            }
+            Component {
+                id: readText
+                // In full, on as many lines as it needs (a long comment).
                 Label {
                     objectName: "toolText." + fieldRow.fullKey
-                    visible: fieldRow.longText
                     width: form.fieldWidth
-                    wrapMode: Text.Wrap
-                    elide: Text.ElideNone
-                    font: Theme.smallFont
-                    text: fieldRow.value
+                    topPadding: fieldRow.longText ? (Theme.controlHeight - Theme.fontUiPx * 1.3) / 2 : 0
+                    height: fieldRow.longText ? implicitHeight : Theme.controlHeight
+                    verticalAlignment: fieldRow.longText ? Text.AlignTop : Text.AlignVCenter
+                    wrapMode: fieldRow.longText ? Text.Wrap : Text.NoWrap
+                    elide: fieldRow.longText ? Text.ElideNone : Text.ElideRight
+                    font: fieldRow.longText ? Theme.smallFont : Theme.uiFont
+                    secondary: fieldRow.value === ""
+                    text: fieldRow.value === "" ? "—" : fieldRow.isChoice ? fieldRow.choiceText : fieldRow.value
                 }
             }
             // The problem, beside the field it is about.

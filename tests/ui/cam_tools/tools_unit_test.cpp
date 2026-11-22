@@ -379,7 +379,12 @@ TEST_CASE("the editor's values are checked against the tool schema, every proble
     v.rows[0].fields[QStringLiteral("surfaceSpeed")] = QStringLiteral("100 m/min");
     v.fields[QStringLiteral("flutes")] = QStringLiteral("2.5");
     c = toolsui::checkTool(v, json, in);
-    CHECK(c.json.value(QStringLiteral("presets")).toArray().at(0).toObject().value(QStringLiteral("surfaceSpeed")).toDouble() == 100);
+    CHECK(c.json.value(QStringLiteral("presets"))
+              .toArray()
+              .at(0)
+              .toObject()
+              .value(QStringLiteral("surfaceSpeed"))
+              .toDouble() == 100);
     CHECK(problem(c, "flutes") == QStringLiteral("Give a whole number"));
 }
 
@@ -388,8 +393,7 @@ TEST_CASE("holder values are checked against the holder schema", "[tools][fields
     const auto holders = starterHolders();
     REQUIRE(!holders.empty());
     const lib::Holder h = holders.front();
-    const QJsonObject json =
-        QJsonDocument::fromJson(QByteArray::fromStdString(api::cam_tools::holderJson(h))).object();
+    const QJsonObject json = QJsonDocument::fromJson(QByteArray::fromStdString(api::cam_tools::holderJson(h))).object();
     const toolsui::Units mm = unitsOf(false);
     toolsui::Values v = toolsui::holderValues(h, mm);
     CHECK(toolsui::checkHolder(v, json, mm).ok());

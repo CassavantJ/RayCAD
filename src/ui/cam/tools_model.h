@@ -66,11 +66,11 @@ class ToolLibraryModel : public QObject {
     Q_PROPERTY(int revision READ revision NOTIFY catalogChanged)
     // [{index, name, dir, kind ("builtin" | "shared" | "user"), writable, open, loading}] lowest first.
     Q_PROPERTY(QVariantList roots READ roots NOTIFY catalogChanged)
-    Q_PROPERTY(QString myLibrary READ myLibraryName NOTIFY catalogChanged) // "" when there is no writable root
-    Q_PROPERTY(QVariantList materials READ materials NOTIFY catalogChanged) // [{id, name}] by name
+    Q_PROPERTY(QString myLibrary READ myLibraryName NOTIFY catalogChanged)    // "" when there is no writable root
+    Q_PROPERTY(QVariantList materials READ materials NOTIFY catalogChanged)   // [{id, name}] by name
     Q_PROPERTY(QVariantList holders READ holderChoices NOTIFY catalogChanged) // [{id, name}] the preview's choices
-    Q_PROPERTY(QVariantList toolTypes READ toolTypes CONSTANT)               // [{value, text}]
-    Q_PROPERTY(QVariantList opClasses READ opClasses CONSTANT)               // [{value, text}]
+    Q_PROPERTY(QVariantList toolTypes READ toolTypes CONSTANT)                // [{value, text}]
+    Q_PROPERTY(QVariantList opClasses READ opClasses CONSTANT)                // [{value, text}]
     Q_PROPERTY(int issueCount READ issueCount NOTIFY catalogChanged)
     Q_PROPERTY(bool refreshing READ refreshing NOTIFY refreshingChanged)
     Q_PROPERTY(bool hasDocument READ hasDocument NOTIFY catalogChanged)
@@ -89,10 +89,11 @@ class ToolLibraryModel : public QObject {
     Q_PROPERTY(bool saving READ saving NOTIFY statusChanged)
     Q_PROPERTY(bool canSave READ canSave NOTIFY valuesChanged)
     Q_PROPERTY(QVariantMap values READ values NOTIFY valuesChanged)
-    Q_PROPERTY(QVariantList rows READ rows NOTIFY valuesChanged)         // presets or segments
-    Q_PROPERTY(QVariantMap problems READ problems NOTIFY valuesChanged)  // field key -> message
-    Q_PROPERTY(QVariantList fields READ fields NOTIFY editorChanged)     // [{key, label, kind}]
-    Q_PROPERTY(QVariantList rowFields READ rowFields NOTIFY editorChanged)
+    Q_PROPERTY(QVariantList rows READ rows NOTIFY valuesChanged)        // presets or segments
+    Q_PROPERTY(QVariantMap problems READ problems NOTIFY valuesChanged) // field key -> message
+    // [{key, label, kind}]; announced only when the list itself changes (a form is not made again for nothing).
+    Q_PROPERTY(QVariantList fields READ fields NOTIFY fieldsChanged)
+    Q_PROPERTY(QVariantList rowFields READ rowFields NOTIFY fieldsChanged)
     // The last result ("Saved to My library") or why the selection did not move; "" when none.
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(bool statusIsError READ statusIsError NOTIFY statusChanged)
@@ -143,8 +144,8 @@ public:
     QVariantMap values() const;
     QVariantList rows() const;
     QVariantMap problems() const;
-    QVariantList fields() const;
-    QVariantList rowFields() const;
+    QVariantList fields() const { return fields_; }
+    QVariantList rowFields() const { return rowFields_; }
     QString status() const { return status_; }
     bool statusIsError() const { return statusIsError_; }
     QVariantMap conflict() const { return conflict_; }
@@ -211,6 +212,7 @@ signals:
     void catalogChanged();
     void refreshingChanged();
     void editorChanged();
+    void fieldsChanged();
     void valuesChanged();
     void statusChanged();
     void profileChanged();
@@ -222,12 +224,12 @@ private:
         bool holder = false;
         QString origin; // "library", "document", "new"
         QString id;
-        int root = -1;                  // where it is saved (-1: nowhere: read-only)
-        std::optional<Hash256> base;    // as opened (library); nullopt: a new item
-        QJsonObject baseJson;           // the file format as opened
+        int root = -1;               // where it is saved (-1: nowhere: read-only)
+        std::optional<Hash256> base; // as opened (library); nullopt: a new item
+        QJsonObject baseJson;        // the file format as opened
         toolsui::Values values;
         bool readOnly = false;
-        int sourceRoot = -1;            // the root it came from (library items)
+        int sourceRoot = -1; // the root it came from (library items)
     };
     api::IApp* app() const;
     lib::LibraryStack* stack() const;
@@ -243,6 +245,7 @@ private:
     void open(Draft draft);
     void clearEditor();
     void recheck();
+    void updateFields();
     void updateProfile();
     void setStatus(const QString& text, bool error = false);
     void setConflict(const Error& error, const QString& action);
@@ -280,6 +283,7 @@ private:
 
     std::optional<Draft> draft_;
     toolsui::Checked checked_;
+    QVariantList fields_, rowFields_;
     QString status_;
     bool statusIsError_ = false;
     QVariantMap conflict_;
@@ -316,11 +320,11 @@ class ToolListModel : public QAbstractListModel, public QQmlParserStatus {
 public:
     enum Role {
         IdRole = Qt::UserRole + 1,
-        OriginRole,     // "document" or "library"
-        GroupRole,      // the section title: "In this document", "Library"
+        OriginRole, // "document" or "library"
+        GroupRole,  // the section title: "In this document", "Library"
         NameRole,
-        TypeRole,       // the file format's name
-        TypeTextRole,   // its title
+        TypeRole,     // the file format's name
+        TypeTextRole, // its title
         DiameterTextRole,
         FlutesRole,
         RootNameRole,

@@ -174,7 +174,7 @@ Item {
                         compact: true
                         iconName: "refresh"
                         enabled: !CamTools.refreshing
-                        toolTipText: CamTools.refreshing ? qsTr("Reading the library foldersâ€¦")
+                        toolTipText: CamTools.refreshing ? qsTr("Reading the library folders…")
                                                          : qsTr("Read the library folders again")
                         onClicked: CamTools.refresh()
                     }
@@ -216,7 +216,7 @@ Item {
                             Label {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: (parent.modelData.kind === "user" ? qsTr("My library") : parent.modelData.name)
-                                      + "  " + (parent.modelData.loading ? qsTr("(readingâ€¦)")
+                                      + "  " + (parent.modelData.loading ? qsTr("(reading…)")
                                                 : !parent.modelData.open ? qsTr("(cannot be opened)")
                                                 : parent.modelData.kind === "builtin" ? qsTr("(built-in, read-only)")
                                                 : parent.modelData.kind === "shared" ? qsTr("(shared)") : "")
@@ -283,7 +283,7 @@ Item {
                                 id: newButton
                                 objectName: "toolLibraryNew"
                                 iconName: "plus"
-                                text: popup.holders ? qsTr("New holder") : qsTr("New toolâ€¦")
+                                text: popup.holders ? qsTr("New holder") : qsTr("New tool…")
                                 toolTipText: popup.holders ? qsTr("A new holder in my library")
                                                            : qsTr("A new tool in my library: choose its type")
                                 enabled: CamTools.myLibrary !== ""
@@ -322,7 +322,7 @@ Item {
                             objectName: "toolLibrarySearch"
                             width: parent.width
                             iconName: "search"
-                            placeholderText: popup.holders ? qsTr("Search holders") : qsTr("Search name, maker, type, threadâ€¦")
+                            placeholderText: popup.holders ? qsTr("Search holders") : qsTr("Search name, maker, type, thread…")
                             Accessible.name: qsTr("Search")
                             Keys.onDownPressed: {
                                 listView.forceActiveFocus()
@@ -357,7 +357,7 @@ Item {
                                 height: Theme.controlHeight
                                 verticalAlignment: Text.AlignVCenter
                                 secondary: true
-                                text: qsTr("Ã˜")
+                                text: qsTr("Ø")
                             }
                             TextField {
                                 id: minField
@@ -541,8 +541,8 @@ Item {
                                         secondary: true
                                         font: Theme.smallFont
                                         text: row.flutes > 0 && !popup.holders
-                                              ? qsTr("%1 Â· %2 Â· %n flute(s)", "", row.flutes).arg(row.typeText).arg(row.diameterText)
-                                              : qsTr("%1 Â· %2").arg(row.typeText).arg(row.diameterText)
+                                              ? qsTr("%1 · %2 · %n flute(s)", "", row.flutes).arg(row.typeText).arg(row.diameterText)
+                                              : qsTr("%1 · %2").arg(row.typeText).arg(row.diameterText)
                                     }
                                 }
                                 Row {
@@ -1056,7 +1056,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 wrapMode: Text.Wrap
                                 color: CamTools.statusIsError ? Theme.error : Theme.textSecondary
-                                text: CamTools.saving ? qsTr("Savingâ€¦")
+                                text: CamTools.saving ? qsTr("Saving…")
                                       : CamTools.status !== "" ? CamTools.status
                                       : CamTools.dirty && Object.keys(CamTools.problems).length > 0
                                         ? qsTr("Correct the fields marked in red to save")

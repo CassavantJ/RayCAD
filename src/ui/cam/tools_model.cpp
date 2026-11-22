@@ -10,6 +10,7 @@
 #include <ray_api/cam_tools.h>
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -255,9 +256,10 @@ void ToolLibraryModel::setCommands(CommandCatalog* commands)
     QPointer<ToolLibraryModel> self(this);
     commands_->setUiHandler(
         QStringLiteral("cam.toolLibrary."),
-        CommandCatalog::UiHandler{
-            [self](const QString& id) { return self ? self->commandReason(id) : trs("The tool library is not available"); },
-            [self](const QString& id) { return self && self->runCommand(id); }});
+        CommandCatalog::UiHandler{[self](const QString& id) {
+                                      return self ? self->commandReason(id) : trs("The tool library is not available");
+                                  },
+                                  [self](const QString& id) { return self && self->runCommand(id); }});
 }
 
 void ToolLibraryModel::setUnits(UnitsObject* unitsObject)
@@ -270,10 +272,10 @@ void ToolLibraryModel::setUnits(UnitsObject* unitsObject)
         // What is shown goes to the new unit unless it holds edits (a text with its unit still reads the same).
         if (draft_ && !dirty()) {
             Draft d = *draft_;
-            d.values = d.holder ? toolsui::holderValues(*api::cam_tools::holderFromJson(compact(d.baseJson).toStdString()),
-                                                        units())
-                                : toolsui::toolValues(*api::cam_tools::toolFromJson(compact(d.baseJson).toStdString()),
-                                                      units());
+            d.values =
+                d.holder
+                    ? toolsui::holderValues(*api::cam_tools::holderFromJson(compact(d.baseJson).toStdString()), units())
+                    : toolsui::toolValues(*api::cam_tools::toolFromJson(compact(d.baseJson).toStdString()), units());
             draft_ = std::move(d);
             recheck();
             emit valuesChanged();
@@ -424,7 +426,8 @@ QVariantList ToolLibraryModel::toolTypes() const
 {
     QVariantList out;
     for (const TypeInfo& t : kTypes)
-        out.push_back(QVariantMap{{QStringLiteral("value"), QLatin1String(t.name)}, {QStringLiteral("text"), trs(t.title)}});
+        out.push_back(
+            QVariantMap{{QStringLiteral("value"), QLatin1String(t.name)}, {QStringLiteral("text"), trs(t.title)}});
     return out;
 }
 
@@ -432,7 +435,8 @@ QVariantList ToolLibraryModel::opClasses() const
 {
     QVariantList out;
     for (const TypeInfo& t : kOpClasses)
-        out.push_back(QVariantMap{{QStringLiteral("value"), QLatin1String(t.name)}, {QStringLiteral("text"), trs(t.title)}});
+        out.push_back(
+            QVariantMap{{QStringLiteral("value"), QLatin1String(t.name)}, {QStringLiteral("text"), trs(t.title)}});
     return out;
 }
 
@@ -480,7 +484,7 @@ void ToolLibraryModel::buildCatalog()
         }
         for (int i = 0; i < static_cast<int>(infos.size()); ++i) {
             const auto& r = infos[static_cast<std::size_t>(i)];
-            const QString kind = i == last                  ? QStringLiteral("user")
+            const QString kind = i == last               ? QStringLiteral("user")
                                  : r.open && !r.writable ? QStringLiteral("builtin")
                                                          : QStringLiteral("shared");
             roots_.push_back(QVariantMap{{QStringLiteral("index"), i},
@@ -543,17 +547,16 @@ void ToolLibraryModel::buildCatalog()
             if (const lib::Holder* original = s != nullptr ? s->holder(id) : nullptr) {
                 e.hasLibraryCopy = true;
                 e.libraryChanged = original->geometryHash() != embedded.item.geometryHash();
-                e.libraryDiffers =
-                    api::cam_tools::contentHash(*original) != api::cam_tools::contentHash(embedded.item);
+                e.libraryDiffers = api::cam_tools::contentHash(*original) != api::cam_tools::contentHash(embedded.item);
             }
             holders_.push_back(std::move(e));
-            holderChoices_.push_back(
-                QVariantMap{{QStringLiteral("id"), idText(id.value)}, {QStringLiteral("name"), qs(embedded.item.name)}});
+            holderChoices_.push_back(QVariantMap{{QStringLiteral("id"), idText(id.value)},
+                                                 {QStringLiteral("name"), qs(embedded.item.name)}});
         }
         for (const auto& [id, embedded] : cam->materials) {
             materialIds.insert(idText(id.value));
-            materials_.push_back(
-                QVariantMap{{QStringLiteral("id"), idText(id.value)}, {QStringLiteral("name"), qs(embedded.item.name)}});
+            materials_.push_back(QVariantMap{{QStringLiteral("id"), idText(id.value)},
+                                             {QStringLiteral("name"), qs(embedded.item.name)}});
         }
     }
     if (s != nullptr) {
@@ -591,7 +594,9 @@ void ToolLibraryModel::buildCatalog()
         const QString na = a.toMap().value(QStringLiteral("name")).toString();
         const QString nb = b.toMap().value(QStringLiteral("name")).toString();
         const int c = na.compare(nb, Qt::CaseInsensitive);
-        return c != 0 ? c < 0 : a.toMap().value(QStringLiteral("id")).toString() < b.toMap().value(QStringLiteral("id")).toString();
+        return c != 0 ? c < 0
+                      : a.toMap().value(QStringLiteral("id")).toString() <
+                            b.toMap().value(QStringLiteral("id")).toString();
     };
     std::stable_sort(materials_.begin(), materials_.end(), byName);
     std::stable_sort(holderChoices_.begin(), holderChoices_.end(), byName);
@@ -623,8 +628,9 @@ void ToolLibraryModel::buildCatalog()
         if (gone) {
             clearEditor(); // an undo took it out of the document
         } else {
-            const QJsonObject now = draft_->holder ? parseObject(api::cam_tools::holderJson(*documentHolder(draft_->id)))
-                                                   : parseObject(api::cam_tools::toolJson(*documentTool(draft_->id)));
+            const QJsonObject now = draft_->holder
+                                        ? parseObject(api::cam_tools::holderJson(*documentHolder(draft_->id)))
+                                        : parseObject(api::cam_tools::toolJson(*documentTool(draft_->id)));
             if (now != draft_->baseJson) { // the document's copy changed (an update, an undo): shown as it is now
                 const QString id = draft_->id;
                 const bool holder = draft_->holder;
@@ -823,37 +829,43 @@ QVariantMap ToolLibraryModel::problems() const
     return out;
 }
 
-QVariantList ToolLibraryModel::fields() const
+void ToolLibraryModel::updateFields()
 {
     QVariantList out;
-    if (!draft_)
-        return out;
+    QVariantList rows;
+    if (draft_) {
+        for (const toolsui::Field& f : draft_->holder ? toolsui::segmentFields() : toolsui::presetFields())
+            rows.push_back(QVariantMap{{QStringLiteral("key"), QLatin1String(f.key)},
+                                       {QStringLiteral("label"), trs(f.label)},
+                                       {QStringLiteral("kind"), QLatin1String(f.kind)}});
+    }
+    if (!draft_) {
+        if (!fields_.isEmpty() || !rowFields_.isEmpty()) {
+            fields_.clear();
+            rowFields_.clear();
+            emit fieldsChanged();
+        }
+        return;
+    }
     std::vector<toolsui::Field> list;
     if (draft_->holder) {
         list = toolsui::holderFields();
     } else {
-        const auto type = api::cam_tools::toolTypeFromName(
-            draft_->values.fields.count(QStringLiteral("type")) ? draft_->values.fields.at(QStringLiteral("type")).toStdString()
-                                                                : std::string());
+        const auto type =
+            api::cam_tools::toolTypeFromName(draft_->values.fields.count(QStringLiteral("type"))
+                                                 ? draft_->values.fields.at(QStringLiteral("type")).toStdString()
+                                                 : std::string());
         list = toolsui::toolFields(type.value_or(lib::ToolType::FlatEndMill));
     }
     for (const toolsui::Field& f : list)
         out.push_back(QVariantMap{{QStringLiteral("key"), QLatin1String(f.key)},
                                   {QStringLiteral("label"), trs(f.label)},
                                   {QStringLiteral("kind"), QLatin1String(f.kind)}});
-    return out;
-}
-
-QVariantList ToolLibraryModel::rowFields() const
-{
-    QVariantList out;
-    if (!draft_)
-        return out;
-    for (const toolsui::Field& f : draft_->holder ? toolsui::segmentFields() : toolsui::presetFields())
-        out.push_back(QVariantMap{{QStringLiteral("key"), QLatin1String(f.key)},
-                                  {QStringLiteral("label"), trs(f.label)},
-                                  {QStringLiteral("kind"), QLatin1String(f.kind)}});
-    return out;
+    if (out != fields_ || rows != rowFields_) {
+        fields_ = out;
+        rowFields_ = rows;
+        emit fieldsChanged();
+    }
 }
 
 bool ToolLibraryModel::libraryChanged() const
@@ -935,12 +947,13 @@ bool ToolLibraryModel::select(const QString& origin, const QString& kind, const 
     } else {
         if (s == nullptr)
             return false;
-        const auto root = s->rootOf(d.holder ? lib::ItemKind::Holder : lib::ItemKind::Tool, Uuid::fromString(id.toStdString()));
+        const auto root =
+            s->rootOf(d.holder ? lib::ItemKind::Holder : lib::ItemKind::Tool, Uuid::fromString(id.toStdString()));
         if (!root)
             return false;
         d.sourceRoot = static_cast<int>(*root);
-        const bool writable = d.sourceRoot < roots_.size() &&
-                              roots_[d.sourceRoot].toMap().value(QStringLiteral("writable")).toBool();
+        const bool writable =
+            d.sourceRoot < roots_.size() && roots_[d.sourceRoot].toMap().value(QStringLiteral("writable")).toBool();
         d.readOnly = !writable;
         d.root = writable ? d.sourceRoot : -1;
         if (d.holder) {
@@ -971,6 +984,7 @@ void ToolLibraryModel::open(Draft draft)
     status_.clear();
     statusIsError_ = false;
     recheck();
+    updateFields();
     updateProfile();
     emit editorChanged();
     emit valuesChanged();
@@ -981,6 +995,7 @@ void ToolLibraryModel::clearEditor()
 {
     draft_.reset();
     checked_ = {};
+    updateFields();
     deleteAsked_ = false;
     conflict_.clear();
     if (!profile_.isEmpty()) {
@@ -1011,7 +1026,8 @@ bool ToolLibraryModel::newItem(const QString& type)
         d.values = toolsui::holderValues(h, u);
     } else {
         const auto t = api::cam_tools::toolTypeFromName(type.toStdString());
-        const QString material = materials_.isEmpty() ? QString() : materials_.front().toMap().value(QStringLiteral("id")).toString();
+        const QString material =
+            materials_.isEmpty() ? QString() : materials_.front().toMap().value(QStringLiteral("id")).toString();
         lib::Tool tool = newTool(t.value_or(lib::ToolType::FlatEndMill), u.inch, material);
         tool.name = trs("New %1").arg(typeTitle(type).toLower()).toStdString();
         d.id = idText(tool.id.value);
@@ -1075,7 +1091,7 @@ void ToolLibraryModel::setValue(const QString& key, const QString& text)
     deleteAsked_ = false;
     recheck();
     if (key == QLatin1String("type"))
-        emit editorChanged(); // other fields apply
+        updateFields(); // other fields apply
     emit valuesChanged();
     updateProfile();
 }
@@ -1106,8 +1122,9 @@ void ToolLibraryModel::addRow()
         // the type's usual cut for the first material without it, else the first free pair.
         std::set<std::pair<QString, QString>> used;
         for (const toolsui::Row& r : draft_->values.rows)
-            used.insert({r.fields.count(QStringLiteral("material")) ? r.fields.at(QStringLiteral("material")) : QString(),
-                         r.fields.count(QStringLiteral("opClass")) ? r.fields.at(QStringLiteral("opClass")) : QString()});
+            used.insert(
+                {r.fields.count(QStringLiteral("material")) ? r.fields.at(QStringLiteral("material")) : QString(),
+                 r.fields.count(QStringLiteral("opClass")) ? r.fields.at(QStringLiteral("opClass")) : QString()});
         toolsui::Row row = toolsui::newPresetRow(type.value_or(lib::ToolType::FlatEndMill), QString(), u);
         const QString usual = row.fields[QStringLiteral("opClass")];
         QString material, opClass = usual;
@@ -1235,14 +1252,10 @@ void ToolLibraryModel::updateProfile()
     if (key == profileKey_)
         return;
     profileKey_ = key;
-    profile_ = QVariantMap{{QStringLiteral("outline"), points(p.outline)},
-                           {QStringLiteral("cutter"), points(p.cutter)},
-                           {QStringLiteral("holder"), points(p.holder)},
-                           {QStringLiteral("halfWidth"), p.halfWidth},
-                           {QStringLiteral("height"), p.height},
-                           {QStringLiteral("stickOut"), p.stickOut},
-                           {QStringLiteral("diameter"), diameter},
-                           {QStringLiteral("length"), length}};
+    profile_ = QVariantMap{{QStringLiteral("outline"), points(p.outline)}, {QStringLiteral("cutter"), points(p.cutter)},
+                           {QStringLiteral("holder"), points(p.holder)},   {QStringLiteral("halfWidth"), p.halfWidth},
+                           {QStringLiteral("height"), p.height},           {QStringLiteral("stickOut"), p.stickOut},
+                           {QStringLiteral("diameter"), diameter},         {QStringLiteral("length"), length}};
     ++profileRevision_;
     emit profileChanged();
 }
@@ -1300,7 +1313,8 @@ bool ToolLibraryModel::startSave(bool overwrite, bool asCopy)
     lib::LibraryStack* s = stack();
     api::IApp* a = app();
     const int root = asCopy ? myRoot() : draft_->root;
-    std::shared_ptr<lib::ILibrary> library = s != nullptr && root >= 0 ? s->sharedLibrary(static_cast<std::size_t>(root)) : nullptr;
+    std::shared_ptr<lib::ILibrary> library =
+        s != nullptr && root >= 0 ? s->sharedLibrary(static_cast<std::size_t>(root)) : nullptr;
     if (library == nullptr || a == nullptr) {
         setConflict(Error{ErrorCode::IoError, trs("The library cannot be written now").toStdString(), {}},
                     QStringLiteral("save"));
@@ -1346,7 +1360,8 @@ bool ToolLibraryModel::startSave(bool overwrite, bool asCopy)
             if (tool)
                 out.status = overwrite ? library->save(*tool) : api::cam_tools::saveTool(*library, *tool, base);
             else
-                out.status = overwrite ? library->save(*holderItem) : api::cam_tools::saveHolder(*library, *holderItem, base);
+                out.status =
+                    overwrite ? library->save(*holderItem) : api::cam_tools::saveHolder(*library, *holderItem, base);
             return out;
         });
     QPointer<ToolLibraryModel> self(this);
@@ -1395,7 +1410,9 @@ void ToolLibraryModel::setConflict(const Error& error, const QString& action)
     const QString message = qs(error.message);
     const bool locked = error.code == ErrorCode::Locked;
     const bool changed = locked && message.contains(QStringLiteral("by someone else"));
-    const QString kind = changed ? QStringLiteral("changed") : locked ? QStringLiteral("locked") : QStringLiteral("failed");
+    const QString kind = changed  ? QStringLiteral("changed")
+                         : locked ? QStringLiteral("locked")
+                                  : QStringLiteral("failed");
     const QString what = draft_ && draft_->holder ? trs("holder") : trs("tool");
     const int root = draft_ ? (draft_->root >= 0 ? draft_->root : draft_->sourceRoot) : -1;
     const QString library = rootLabel(root);
@@ -1404,8 +1421,9 @@ void ToolLibraryModel::setConflict(const Error& error, const QString& action)
         file = qs(error.context.front());
     } else if (draft_ && root >= 0 && root < roots_.size()) {
         const QString dir = roots_[root].toMap().value(QStringLiteral("dir")).toString();
-        file = dir + (draft_->holder ? QStringLiteral("/holders/%1.holder.json") : QStringLiteral("/tools/%1.tool.json"))
-                         .arg(draft_->id);
+        file =
+            dir + (draft_->holder ? QStringLiteral("/holders/%1.holder.json") : QStringLiteral("/tools/%1.tool.json"))
+                      .arg(draft_->id);
     }
     QString heading;
     QString text;
@@ -1424,7 +1442,7 @@ void ToolLibraryModel::setConflict(const Error& error, const QString& action)
                    .arg(name, library);
     } else {
         heading = action == QLatin1String("delete") ? trs("The %1 could not be deleted").arg(what)
-                                                  : trs("The %1 could not be saved").arg(what);
+                                                    : trs("The %1 could not be saved").arg(what);
         text = trs("%1 could not be written to %2. Your changes are still here.").arg(name, library);
     }
     conflict_ = QVariantMap{{QStringLiteral("kind"), kind},
@@ -1433,7 +1451,7 @@ void ToolLibraryModel::setConflict(const Error& error, const QString& action)
                             {QStringLiteral("message"), text},
                             {QStringLiteral("detail"), message},
                             {QStringLiteral("library"), library},
-                            {QStringLiteral("file"), file},
+                            {QStringLiteral("file"), QDir::toNativeSeparators(file)},
                             {QStringLiteral("canCopy"), action == QLatin1String("save") && myRoot() >= 0}};
     status_.clear();
     emit statusChanged();
@@ -1485,7 +1503,8 @@ bool ToolLibraryModel::resolveConflict(const QString& choice)
             buildCatalog();
         if (!select(QStringLiteral("library"), holder ? QStringLiteral("holder") : QStringLiteral("tool"), id)) {
             clearEditor();
-            setStatus(holder ? trs("The holder is no longer in the library") : trs("The tool is no longer in the library"));
+            setStatus(holder ? trs("The holder is no longer in the library")
+                             : trs("The tool is no longer in the library"));
         } else {
             setStatus(trs("Your changes were discarded; this is the library's version"));
         }
@@ -1533,16 +1552,17 @@ bool ToolLibraryModel::confirmDelete()
     const QString name = title();
     const int root = draft_->root;
     const Hash256 base = *draft_->base;
-    JobHandle<bool> job = a->jobs().submit<bool>(
-        JobInfo{"Deleting from the tool library", JobPriority::Interactive, false},
-        [library, holder, id, base](JobContext&) -> Result<bool> {
-            const Uuid uuid = Uuid::fromString(id.toStdString());
-            const Status st = holder ? api::cam_tools::removeHolder(*library, HolderId{uuid}, base)
-                                     : api::cam_tools::removeTool(*library, ToolId{uuid}, base);
-            if (!st)
-                return tl::unexpected(st.error());
-            return true;
-        });
+    JobHandle<bool> job =
+        a->jobs().submit<bool>(JobInfo{"Deleting from the tool library", JobPriority::Interactive, false},
+                               [library, holder, id, base](JobContext&) -> Result<bool> {
+                                   const Uuid uuid = Uuid::fromString(id.toStdString());
+                                   const Status st = holder
+                                                         ? api::cam_tools::removeHolder(*library, HolderId{uuid}, base)
+                                                         : api::cam_tools::removeTool(*library, ToolId{uuid}, base);
+                                   if (!st)
+                                       return tl::unexpected(st.error());
+                                   return true;
+                               });
     QPointer<ToolLibraryModel> self(this);
     job.then([self, name, root](Result<bool> r) {
         if (!self)
@@ -1572,7 +1592,8 @@ bool ToolLibraryModel::updateFromLibrary()
     api::IApp* a = app();
     QJsonObject args;
     if (draft_->holder) {
-        args[QStringLiteral("holders")] = QJsonArray{jsonObject(api::cam_tools::holderJson(*libraryHolder(draft_->id)))};
+        args[QStringLiteral("holders")] =
+            QJsonArray{jsonObject(api::cam_tools::holderJson(*libraryHolder(draft_->id)))};
     } else {
         args[QStringLiteral("tools")] = QJsonArray{jsonObject(api::cam_tools::toolJson(*libraryTool(draft_->id)))};
     }
@@ -1606,14 +1627,16 @@ QVariantMap ToolLibraryModel::libraryArgsFor(const QString& toolId, const QStrin
     QVariantMap out;
     const doc::DocStatePtr state = docState();
     const cam::CamState* cam = state && state->cam ? state->cam.get() : nullptr;
-    if (!toolId.isEmpty() && (cam == nullptr || cam->tools.count(ToolId{Uuid::fromString(toolId.toStdString())}) == 0)) {
+    if (!toolId.isEmpty() &&
+        (cam == nullptr || cam->tools.count(ToolId{Uuid::fromString(toolId.toStdString())}) == 0)) {
         if (const lib::Tool* t = libraryTool(toolId))
             out.insert(QStringLiteral("tools"), QVariantList{jsonObject(api::cam_tools::toolJson(*t)).toVariantMap()});
     }
     if (!holderId.isEmpty() &&
         (cam == nullptr || cam->holders.count(HolderId{Uuid::fromString(holderId.toStdString())}) == 0)) {
         if (const lib::Holder* h = libraryHolder(holderId))
-            out.insert(QStringLiteral("holders"), QVariantList{jsonObject(api::cam_tools::holderJson(*h)).toVariantMap()});
+            out.insert(QStringLiteral("holders"),
+                       QVariantList{jsonObject(api::cam_tools::holderJson(*h)).toVariantMap()});
     }
     return out;
 }
@@ -1658,7 +1681,8 @@ void ToolListModel::componentComplete()
     if (source_)
         return;
     if (QQmlEngine* engine = qmlEngine(this))
-        setSource(engine->singletonInstance<ToolLibraryModel*>(QStringLiteral("RayCad.Ui"), QStringLiteral("CamTools")));
+        setSource(
+            engine->singletonInstance<ToolLibraryModel*>(QStringLiteral("RayCad.Ui"), QStringLiteral("CamTools")));
 }
 
 void ToolListModel::setSource(ToolLibraryModel* source)
@@ -1789,9 +1813,9 @@ void ToolListModel::refilter()
     };
     bound(min_, &f.minDiameter);
     bound(max_, &f.maxDiameter);
-    const QString problem =
-        bad.isEmpty() ? QString()
-                      : QCoreApplication::translate(toolsui::kTrContext, "Not a diameter: %1").arg(bad.join(QStringLiteral(", ")));
+    const QString problem = bad.isEmpty() ? QString()
+                                          : QCoreApplication::translate(toolsui::kTrContext, "Not a diameter: %1")
+                                                .arg(bad.join(QStringLiteral(", ")));
     beginResetModel();
     rows_.clear();
     total_ = 0;
@@ -1866,10 +1890,17 @@ QVariant ToolListModel::data(const QModelIndex& index, int role) const
 
 QHash<int, QByteArray> ToolListModel::roleNames() const
 {
-    return {{IdRole, "itemId"},           {OriginRole, "origin"},       {GroupRole, "group"},
-            {NameRole, "name"},           {TypeRole, "type"},           {TypeTextRole, "typeText"},
-            {DiameterTextRole, "diameterText"}, {FlutesRole, "flutes"}, {RootNameRole, "rootName"},
-            {ReadOnlyRole, "readOnly"},   {LibraryChangedRole, "libraryChanged"}};
+    return {{IdRole, "itemId"},
+            {OriginRole, "origin"},
+            {GroupRole, "group"},
+            {NameRole, "name"},
+            {TypeRole, "type"},
+            {TypeTextRole, "typeText"},
+            {DiameterTextRole, "diameterText"},
+            {FlutesRole, "flutes"},
+            {RootNameRole, "rootName"},
+            {ReadOnlyRole, "readOnly"},
+            {LibraryChangedRole, "libraryChanged"}};
 }
 
 QVariantMap ToolListModel::get(int row) const
