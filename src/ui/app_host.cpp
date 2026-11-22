@@ -30,6 +30,7 @@
 #include <QtQuick/QQuickWindow>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace ray::ui {
@@ -235,8 +236,18 @@ bool AppHost::load()
     if (!qEnvironmentVariableIsSet("QML_DISK_CACHE_PATH")) {
         qputenv("QML_DISK_CACHE_PATH", QDir::toNativeSeparators(qmlCache).toLocal8Bit());
     }
-    // Crisper small text on desktop monitors than distance-field text.
-    QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+    // Crisper small text on desktop monitors than distance-field text, at a whole device pixel ratio. Native text puts
+    // each glyph's quad on device pixels by rounding and samples the glyph cache texel for pixel; at a fractional ratio
+    // (125 %, 150 %, 175 %) a text item on half a device pixel gets quads a pixel short or long by float rounding, and
+    // a one-texel stroke vanishes or doubles (a hyphen, the stem of an l; Qt 6.12, every RHI backend: the shader's).
+    // The setting is fixed when an item is made and a window can move to any screen, so a fractional screen anywhere
+    // means distance-field text (tests/ui/cam/operation_test.cpp, "text keeps its thin strokes").
+    const QList<QScreen*> screens = QGuiApplication::screens();
+    const bool fractional = std::any_of(screens.begin(), screens.end(), [](const QScreen* s) {
+        const qreal r = s->devicePixelRatio();
+        return std::abs(r - std::round(r)) > 1e-3;
+    });
+    QQuickWindow::setTextRenderType(fractional ? QQuickWindow::QtTextRendering : QQuickWindow::NativeTextRendering);
 
     engine_ = std::make_unique<QQmlApplicationEngine>();
     ThemeObject::provideFor(engine_.get(), theme_.get());

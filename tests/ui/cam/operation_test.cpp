@@ -55,10 +55,12 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtGui/QFontMetricsF>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
 #include <QtQml/QQmlApplicationEngine>
+#include <QtQml/QQmlComponent>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickWindow>
 #include <QtTest/QTest>
@@ -602,6 +604,66 @@ QRect inkBox(const QImage& img, QQuickItem* item)
     return box;
 }
 
+// The pixels of the first hyphen of a Text item's single line that differ from the background: the ink between the
+// hyphen's advance, its middle three fifths, over the line's height (device pixels).
+int hyphenInk(const QImage& img, QQuickItem* text)
+{
+    const qreal dpr = img.devicePixelRatio();
+    const QString s = text->property("text").toString();
+    const qsizetype h = s.indexOf(QLatin1Char('-'));
+    REQUIRE(h >= 0);
+    const QFontMetricsF fm(text->property("font").value<QFont>());
+    const double x0 = fm.horizontalAdvance(s.left(h)), x1 = fm.horizontalAdvance(s.left(h + 1));
+    const double top = text->property("verticalAlignment").toInt() == Qt::AlignVCenter
+                           ? (text->height() - text->property("contentHeight").toDouble()) / 2
+                           : 0.0;
+    const QPointF a = text->mapToScene(QPointF(x0 + 0.2 * (x1 - x0), top)) * dpr;
+    const QPointF b = text->mapToScene(QPointF(x1 - 0.2 * (x1 - x0), top + fm.height())) * dpr;
+    const QColor bg = img.pixelColor(QPoint(int(a.x()), int(a.y())));
+    int ink = 0;
+    for (int y = int(a.y()); y <= int(b.y()); ++y) {
+        for (int x = int(std::ceil(a.x())); x <= int(b.x()); ++x) {
+            const QColor c = img.pixelColor(x, y);
+            if (std::abs(c.red() - bg.red()) + std::abs(c.green() - bg.green()) + std::abs(c.blue() - bg.blue()) > 60)
+                ++ink;
+        }
+    }
+    return ink;
+}
+
+// How many of the window's text items showing exactly `text` (with a hyphen), wholly in sight (inside every clipping
+// ancestor and the window), draw no ink where the hyphen is.
+int hyphensLost(const Window& w, const QString& text)
+{
+    const QImage img = w.grab();
+    std::vector<QQuickItem*> all{w.window()->contentItem()};
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        for (QQuickItem* c : all[i]->childItems())
+            all.push_back(c);
+    }
+    int lost = 0, seen = 0;
+    for (QQuickItem* item : all) {
+        if (!item->isVisible() || item->property("text").toString() != text)
+            continue;
+        const QRectF r = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+        bool inSight = QRectF(0, 0, w.window()->width(), w.window()->height()).contains(r);
+        for (QQuickItem* p = item->parentItem(); p != nullptr && inSight; p = p->parentItem()) {
+            if (p->clip())
+                inSight = p->mapRectToScene(QRectF(0, 0, p->width(), p->height())).contains(r);
+        }
+        if (!inSight)
+            continue;
+        ++seen;
+        if (hyphenInk(img, item) == 0) {
+            ++lost;
+            UNSCOPED_INFO("hyphen lost at scene " << r.x() << ", " << r.y());
+        }
+    }
+    INFO("'" << text.toStdString() << "' in sight " << seen << " times");
+    CHECK(seen > 0);
+    return lost;
+}
+
 // The footer (OK, Cancel, what blocks OK) is wholly inside the panel and the window, and the header on top, when the
 // form is taller than the panel: at the top of the scroll and at its bottom.
 void checkFooter(const Window& w)
@@ -1016,6 +1078,13 @@ TEST_CASE("the panel's tool picker: the types by cycle, the library as it change
     w.shown(QStringLiteral("toolLibraryClose"));
     CHECK(w.op()->active());
     w.shotsBothThemes(QStringLiteral("t045_picker_library"));
+    // Every library row in sight draws the hyphen of its library's name (operation_test's scale case says why).
+    for (const char* theme : {"dark", "light"}) {
+        w.host->theme()->setProperty("mode", QLatin1String(theme));
+        QTest::qWait(200);
+        CHECK(hyphensLost(w, QStringLiteral("RayCAD built-in library")) == 0);
+    }
+    w.host->theme()->setProperty("mode", QStringLiteral("dark"));
     tools->hide();
     REQUIRE(QTest::qWaitFor([&] { return !tools->shown(); }, 5000));
     CHECK(w.op()->active());
@@ -1250,6 +1319,21 @@ TEST_CASE("validation: a parameter out of range and a tap that does not fit the 
         CHECK(pitch->property("label").toString() == QStringLiteral("Pitch"));
         CHECK(pitch->property("value").toString().endsWith(QStringLiteral(" in/rev"))); // an inch document
     }
+    // The material's name is drawn with its hyphen ("6061-T6"), in both themes: it was once drawn "6061 T6" here (the
+    // scale case below says why).
+    {
+        QQuickItem* material = w.shown(QStringLiteral("operationCombo.material"));
+        w.inView(material);
+        QQuickItem* label = Window::findItem(material, QStringLiteral("label"));
+        REQUIRE(label != nullptr);
+        for (const char* theme : {"dark", "light"}) {
+            INFO("theme " << theme);
+            w.host->theme()->setProperty("mode", QLatin1String(theme));
+            QTest::qWait(200);
+            CHECK(hyphenInk(w.grab(), label) > 0);
+        }
+        w.host->theme()->setProperty("mode", QStringLiteral("dark"));
+    }
     w.shotsBothThemes(QStringLiteral("t045_tap_mismatch"));
 
     // The tool changed since the feeds were calculated: an update is offered, not made.
@@ -1426,6 +1510,62 @@ TEST_CASE("the UI thread stays within its budget while previews build", "[cam][s
     CHECK(worst < ray::test::uiBudgetMs(50));
     CHECK(ms[ms.size() / 2] < ray::test::uiBudgetMs(1000));
     w.op()->cancel();
+}
+
+// Native text (Qt Quick's NativeRendering, crisper at 100 % and 200 %) puts each glyph's quad on device pixels by
+// rounding in its vertex shader, and samples the glyph cache texel for pixel. At a fractional device pixel ratio
+// (125 %, 150 %, 175 %) a text item that lies on half a device pixel (here: at thirds of a logical pixel, in a list
+// scrolled by thirds) gets glyph quads a pixel short or long by float rounding, and a stroke one texel thin is dropped
+// or doubled: a hyphen vanishes ("6061 T6"), an l thins, an fl thickens. With native text forced here, 51 of some 1,700
+// hyphens were lost at 150 % and none at 100 % or 200 %. AppHost uses distance-field text when a screen has a
+// fractional ratio (app_host.cpp). This case runs at 100 %, 150 % and 200 % (the [scale] tests) and at the screen's own
+// ratio.
+TEST_CASE("text keeps its thin strokes at this scale: hyphens in a scrolled list", "[scale]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    QQmlComponent component(w.host->engine());
+    component.setData(R"(import QtQuick
+import RayCad.Ui
+Rectangle {
+    width: 1300; height: 760; color: Theme.panelBg
+    Flickable {
+        objectName: "hyphenFlick"
+        anchors.fill: parent
+        contentHeight: 3000
+        clip: true
+        Repeater {
+            model: 240
+            delegate: Text {
+                required property int index
+                x: 10 + (index % 6) * 210 + (index % 6) / 3
+                y: 6 + Math.floor(index / 6) * 18 + (index % 6) / 3
+                textFormat: Text.PlainText
+                text: "6061-T6 built-in"
+                font: index % 2 ? Theme.uiFont : Theme.smallFont
+                color: Theme.textPrimary
+            }
+        }
+    }
+})",
+                      QUrl());
+    std::unique_ptr<QObject> made(component.create());
+    INFO(component.errorString().toStdString());
+    auto* root = qobject_cast<QQuickItem*>(made.get());
+    REQUIRE(root != nullptr);
+    root->setParentItem(w.window()->contentItem());
+    root->setZ(1000);
+    QQuickItem* flick = Window::findItem(root, QStringLiteral("hyphenFlick"));
+    REQUIRE(flick != nullptr);
+    INFO("device pixel ratio " << w.window()->effectiveDevicePixelRatio());
+    int lost = 0;
+    for (const double contentY : {0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 4.0 / 3.0, 5.0 / 3.0, 7.0}) {
+        flick->setProperty("contentY", contentY);
+        QTest::qWait(150);
+        lost += hyphensLost(w, QStringLiteral("6061-T6 built-in"));
+    }
+    CHECK(lost == 0);
+    root->setParentItem(nullptr);
 }
 
 int main(int argc, char** argv)
