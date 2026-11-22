@@ -88,7 +88,7 @@ endforeach()
 # Compiles to nothing off Windows.
 foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
                          ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
-                         ray_ui_sketch_tests ray_ui_model_tests)
+                         ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/real_pointer_listener.cpp")
 endforeach()
 
