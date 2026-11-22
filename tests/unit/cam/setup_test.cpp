@@ -186,8 +186,8 @@ TEST_CASE("the WCS frame follows the rules of cam.h on a block", "[cam][setup]")
     SECTION("a model point as origin")
     {
         s.wcs.originMode = Wcs::OriginMode::ModelPoint;
-        s.wcs.originVertex = resolver->makeRef(
-            b1, findVertex(shape, [](Vec3 p) { return near3(p, Vec3{40, 20, 10}, 1e-9); }));
+        s.wcs.originVertex =
+            resolver->makeRef(b1, findVertex(shape, [](Vec3 p) { return near3(p, Vec3{40, 20, 10}, 1e-9); }));
         const ResolvedSetup rs = resolveOk(snap, s, *resolver);
         CHECK(same3(apply(rs.wcsFromModel, Vec3{40, 20, 10}), Vec3{0, 0, 0}));
         CHECK(nearBox(rs.partBounds, Box3{Vec3{-40, -20, -10}, Vec3{0, 0, 0}}, 0));
@@ -480,15 +480,16 @@ TEST_CASE("fixture bodies are carried into ResolvedGeometry and change neither s
     const auto withFixture =
         exec(f.state, command("cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","fixtureBodies":[")" + id('b', 3) +
                                                     R"("],"stock":{"type":"box","zPos":1}})"));
-    const auto plain = exec(f.state, command("cam.setup.edit", R"({"id":")" + id('a', 1) +
-                                                                   R"(","stock":{"type":"box","zPos":1}})"));
+    const auto plain =
+        exec(f.state, command("cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","stock":{"type":"box","zPos":1}})"));
     const auto resolveIn = [&](const doc::DocStatePtr& state, const doc::BuildResultPtr& build) {
         const CamSnapshot snap = doc::camSnapshot(state, build);
         const auto resolver = naming::makeResolver(snap.bodies);
         JobContext ctx;
         const Setup& setup = snap.cam->setups.at(0);
         auto setupResult = resolveSetup(snap, setup, *resolver, ctx);
-        auto geom = resolveSetupGeometry(GeometryRequest{snap, setup, snap.cam->operations.at(opId(1)), *resolver}, ctx);
+        auto geom =
+            resolveSetupGeometry(GeometryRequest{snap, setup, snap.cam->operations.at(opId(1)), *resolver}, ctx);
         return std::make_pair(std::move(setupResult), std::move(geom));
     };
     auto [fixtureSetup, fixtureGeom] = resolveIn(withFixture, f.build);

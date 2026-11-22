@@ -72,7 +72,8 @@ Vec3 quantized(Vec3 v)
 {
     constexpr double kUp = 0x1p40;
     constexpr double kDown = 0x1p-40;
-    return Vec3{std::nearbyint(v.x * kUp) * kDown, std::nearbyint(v.y * kUp) * kDown, std::nearbyint(v.z * kUp) * kDown};
+    return Vec3{std::nearbyint(v.x * kUp) * kDown, std::nearbyint(v.y * kUp) * kDown,
+                std::nearbyint(v.z * kUp) * kDown};
 }
 
 // The unit vector along `v`; nullopt for a zero or non-finite vector.
@@ -171,8 +172,8 @@ Result<Element> resolveOne(const CamSnapshot& snapshot, const naming::IResolver&
                            kernel::SubKind kind, const std::string& what)
 {
     if (ref.kind != kind) {
-        return failure(ErrorCode::InvalidArgument, what + " must be " + withArticle(kind) + ", not " +
-                                                       withArticle(ref.kind));
+        return failure(ErrorCode::InvalidArgument,
+                       what + " must be " + withArticle(kind) + ", not " + withArticle(ref.kind));
     }
     auto resolved = detail::resolveForCam(resolver, snapshot, ref, what);
     if (!resolved) {
@@ -499,8 +500,7 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
             const Setup* previous = snapshot.cam ? detail::findSetup(*snapshot.cam, from->previous) : nullptr;
             return failure(ErrorCode::InvalidArgument,
                            "The stock of " + where + " comes from " +
-                               (previous ? "setup " + label(*previous)
-                                         : "setup " + from->previous.value.toString()) +
+                               (previous ? "setup " + label(*previous) : "setup " + from->previous.value.toString()) +
                                ", and stock carried over from an earlier setup is not available yet: use box, "
                                "cylinder or solid stock");
         }
@@ -512,8 +512,8 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
         case Wcs::OriginMode::StockCorner: {
             const int k = wcs.stockCornerIndex;
             if (k < 0 || k > 7) {
-                return failure(ErrorCode::InvalidArgument, "The stock corner of " + where + " must be 0 to 7, not " +
-                                                               std::to_string(k));
+                return failure(ErrorCode::InvalidArgument,
+                               "The stock corner of " + where + " must be 0 to 7, not " + std::to_string(k));
             }
             origin[0] = (k == 1 || k == 2 || k == 5 || k == 6) ? stockNm.hi[0] : stockNm.lo[0];
             origin[1] = (k == 2 || k == 3 || k == 6 || k == 7) ? stockNm.hi[1] : stockNm.lo[1];
@@ -576,9 +576,8 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
                 made = kernel::makeBox(s.min, s.max);
             }
             if (!made || made->isNull()) {
-                return failure(ErrorCode::KernelFailure,
-                               "The stock solid of " + where + " could not be made" +
-                                   (made ? std::string() : ": " + made.error().message));
+                return failure(ErrorCode::KernelFailure, "The stock solid of " + where + " could not be made" +
+                                                             (made ? std::string() : ": " + made.error().message));
             }
             out.stockSolid = *made;
         }

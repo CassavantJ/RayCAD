@@ -86,9 +86,10 @@ TEST_CASE("a WCS from a face and an edge follows the model through edits, undo a
         sign = info->end.x > info->start.x ? 1.0 : -1.0;
     }
     env.run(command("cam.library.embed", library(toolJson(1), {}, machineJson(1))));
-    env.run(setupAdd(1, "\"" + b.value.toString() + "\"",
-                     R"(,"stock":{"type":"box","xNeg":1,"xPos":2,"yNeg":3,"yPos":4,"zNeg":5,"zPos":6},"wcs":{"zFace":)" +
-                         zFace + R"(,"xEdge":)" + xEdge + R"(,"origin":{"mode":"stockCorner","corner":0}})"));
+    env.run(
+        setupAdd(1, "\"" + b.value.toString() + "\"",
+                 R"(,"stock":{"type":"box","xNeg":1,"xPos":2,"yNeg":3,"yPos":4,"zNeg":5,"zPos":6},"wcs":{"zFace":)" +
+                     zFace + R"(,"xEdge":)" + xEdge + R"(,"origin":{"mode":"stockCorner","corner":0}})"));
     env.run(opAdd(1, 1, 1));
     REQUIRE(env.settle());
 

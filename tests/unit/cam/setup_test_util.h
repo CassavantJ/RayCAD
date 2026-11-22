@@ -156,7 +156,8 @@ inline Box3 grown(const Box3& b, const BoxStock& s)
 
 inline Box3 shifted(const Box3& b, Vec3 by)
 {
-    return Box3{Vec3{b.min.x - by.x, b.min.y - by.y, b.min.z - by.z}, Vec3{b.max.x - by.x, b.max.y - by.y, b.max.z - by.z}};
+    return Box3{Vec3{b.min.x - by.x, b.min.y - by.y, b.min.z - by.z},
+                Vec3{b.max.x - by.x, b.max.y - by.y, b.max.z - by.z}};
 }
 
 inline bool nearBox(const Box3& a, const Box3& b, double tol)
