@@ -365,6 +365,36 @@ Status putBody(Hasher& h, const CamSnapshot& snapshot, const BodyId& id, const s
     return {};
 }
 
+// The threads of the hole features named on the faces of part body `id` (T-035): the holes' threads are not modelled,
+// so a thread edit changes no shape and only this makes the operations on the body stale. Every "hole.*" name of
+// every face counts (a superset of what hole recognition reads: the first such name on a bore face), in feature id
+// order. Nothing is read when the document has no tapped hole.
+void putHoleThreads(Hasher& h, const CamSnapshot& snapshot, const BodyId& id)
+{
+    h.str("threads");
+    const naming::ResolverBody* body = detail::bodyOf(snapshot, id);
+    if (snapshot.holeThreads.empty() || body == nullptr) {
+        h.i64(0);
+        return;
+    }
+    std::set<FeatureId> origins;
+    const std::uint32_t faces = body->shape.count(kernel::SubKind::Face);
+    for (std::uint32_t f = 0; f < faces; ++f) {
+        for (const Hash256& name : body->map.namesOf(kernel::SubId{kernel::SubKind::Face, f})) {
+            const naming::TopoName* record = body->map.record(name);
+            if (record != nullptr && record->role.rfind("hole.", 0) == 0 &&
+                snapshot.holeThreads.count(record->origin) != 0) {
+                origins.insert(record->origin);
+            }
+        }
+    }
+    h.i64(static_cast<std::int64_t>(origins.size()));
+    for (const FeatureId& origin : origins) {
+        const HoleThread& t = snapshot.holeThreads.at(origin);
+        h.str(origin.value.toString()).str(t.spec).f64(t.pitch).f64(t.nominalDiameter).f64(t.depth);
+    }
+}
+
 Result<Hash256> operationHash(const CamSnapshot& snapshot, const naming::IResolver& resolver, const OperationId& id,
                               int depth);
 
@@ -378,6 +408,7 @@ Status putSetup(Hasher& h, const CamSnapshot& snapshot, const naming::IResolver&
     for (std::size_t i = 0; i < setup.partBodies.size(); ++i) {
         RAY_CAM_TRY(putBody(h, snapshot, setup.partBodies[i],
                             "Part body " + std::to_string(i + 1) + " of setup " + label(setup)));
+        putHoleThreads(h, snapshot, setup.partBodies[i]);
     }
     h.i64(static_cast<std::int64_t>(setup.fixtureBodies.size()));
     for (std::size_t i = 0; i < setup.fixtureBodies.size(); ++i) {
@@ -468,7 +499,7 @@ Result<Hash256> operationHash(const CamSnapshot& snapshot, const naming::IResolv
     }
 
     Hasher h;
-    h.str("raycad.cam.operation-input.v2");
+    h.str("raycad.cam.operation-input.v3"); // v3 (T-035): the hole threads of each part body
     h.str(op.type);
     h.str(op.paramsJson);
     // Tool: what it is, how far it sticks out, and what holds it (tool number and offset registers are G-code only).

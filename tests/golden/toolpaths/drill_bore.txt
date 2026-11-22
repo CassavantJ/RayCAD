@@ -1,0 +1,8 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X15 Y15 Z35
+moves 4
+0 Rapid Approach X15 Y15 Z35
+1 CycleBore Plunge X15 Y15 Z-1 F60 R22 top20 clear35 return RPlane dwell 200 ms
+2 CycleBore Plunge X15 Y35 Z-1 F60 R22 top20 clear35 return Initial dwell 200 ms
+3 CycleCancel Retract X15 Y35 Z35

@@ -1,0 +1,14 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X15 Y15 Z35
+moves 10
+0 Rapid Approach X15 Y15 Z35
+1 CycleDrill Plunge X15 Y15 Z16.7 F100 R22 top20 clear35 return RPlane
+2 CycleDrill Plunge X35 Y15 Z17 F100 R22 top20 clear35 return RPlane
+3 CycleDrill Plunge X55 Y15 Z16 F100 R22 top20 clear35 return RPlane
+4 CycleDrill Plunge X70 Y12 Z17.5 F100 R22 top20 clear35 return RPlane
+5 CycleDrill Plunge X70 Y38 Z11.5 F100 R16 top14 clear35 return Initial
+6 CycleDrill Plunge X52 Y38 Z17.5 F100 R22 top20 clear35 return RPlane
+7 CycleDrill Plunge X35 Y35 Z15 F100 R22 top20 clear35 return RPlane
+8 CycleDrill Plunge X15 Y35 Z16.7 F100 R22 top20 clear35 return Initial
+9 CycleCancel Retract X15 Y35 Z35

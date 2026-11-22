@@ -106,6 +106,7 @@ std::string locateBuiltinLibrary()
 Status AppImpl::initCam(const AppOptions& options)
 {
     operationTypes_ = std::make_shared<cam::OperationRegistry>();
+    cam::registerBuiltinOperationTypes(*operationTypes_); // "drill" (T-035)
     auto engine = cam::makeCamEngine(*jobs_, operationTypes_, &doc::camSnapshot);
     if (!engine) {
         return fail(ErrorCode::Internal, "The CAM engine could not start");

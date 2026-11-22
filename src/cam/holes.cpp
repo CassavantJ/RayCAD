@@ -997,6 +997,8 @@ void pickThread(RecognizedHole& h, const std::vector<std::uint32_t>& boreFaces, 
             if (auto thread = options.threadOf(record->origin); thread && !thread->spec.empty()) {
                 h.threadSpec = thread->spec;
                 h.threadPitch = thread->pitch;
+                h.threadNominalDiameter = thread->nominalDiameter; // T-035
+                h.threadDepth = thread->depth;
             }
             return;
         }
@@ -1181,6 +1183,26 @@ Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape& shape, c
     } catch (const std::bad_alloc&) {
         return failure(ErrorCode::Internal, "Out of memory while recognizing holes");
     }
+}
+
+// The thread pickup of one part of a ResolvedGeometry (cam.h, added by T-035): its element map and the document's
+// hole threads, both read from `geom`.
+HoleOptions holeOptionsFor(const ResolvedGeometry& geom, std::size_t part)
+{
+    HoleOptions options;
+    if (part >= geom.partNames.size() || geom.holeThreads.empty()) {
+        return options;
+    }
+    options.names = &geom.partNames[part];
+    const std::map<FeatureId, HoleThread>* threads = &geom.holeThreads;
+    options.threadOf = [threads](const FeatureId& id) -> std::optional<HoleThread> {
+        const auto it = threads->find(id);
+        if (it == threads->end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    };
+    return options;
 }
 
 // ---------- orderHolesShortestPath ----------

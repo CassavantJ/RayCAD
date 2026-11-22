@@ -28,6 +28,14 @@
 //    reads; GenerateInput carries the items reduced to exactly that (generatorTool and friends);
 //  - default member initialisers for the plain structs (not Move, FeedsInput/FeedsResult, ResolvedGeometry,
 //    HoleSegment and RecognizedHole, which other tasks are changing).
+// Amended by T-035 (the drilling operation, the first operation type):
+//  - the thread of a tapped hole reaches generators: HoleThread moved up and grew its nominal diameter and thread
+//    depth; CamSnapshot::holeThreads (doc::camSnapshot fills it from the hole features); ResolvedGeometry carries the
+//    part bodies' element maps and those threads (resolveSetupGeometry), holeOptionsFor() turns them into the
+//    HoleOptions of recognizeHoles, and RecognizedHole carries the thread's nominal diameter and depth;
+//  - operationInputHash covers the threads of the hole features named on the setup's part bodies, so a thread edit
+//    (which changes no geometry: the thread is not modelled) makes the operations on that body stale;
+//  - registerBuiltinOperationTypes: the operation types src/cam ships ("drill"), which the app registers.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -268,6 +276,14 @@ struct Toolpath {
 };
 
 // ---------- Generation ----------
+// The thread of a tapped hole feature as CAM reads it (T-097b; defined here, before its first use; the hole
+// recognition section says how it is picked up). Lengths in mm. Amended by T-035: nominalDiameter and depth.
+struct HoleThread {
+    std::string spec;              // the designation, "M6x1", "1/4-20 UNC", "M8x1-LH"
+    double pitch = 0;
+    double nominalDiameter = 0;    // the thread's major diameter; 0 when not known
+    double depth = 0;              // full-thread depth from the top of the tapped bore; 0: the whole tapped length
+};
 struct ResolvedGeometry {
     // Everything an operation needs, already resolved from references (resolveSetupGeometry, below). The shapes and
     // `selected` stay in the model frame (a SubId belongs to the shape it came from, and kernel::sliceAt, silhouette
@@ -281,6 +297,11 @@ struct ResolvedGeometry {
     Box3 stockBounds;
     // 2D in-process stock for rest-aware 2.5D ops: boundary loops of remaining material per Z level, if known.
     std::optional<std::vector<std::pair<double, std::vector<kernel::ProfileLoop>>>> stockSlices;
+    // Added by T-035: the element map of each part body (parallel to partShapes) and the threads of the document's
+    // tapped hole features (CamSnapshot::holeThreads), so a generator can read the thread of a hole it recognises
+    // (holeOptionsFor, in the hole recognition section). Empty maps where the caller has none.
+    std::vector<naming::ElementMap> partNames;
+    std::map<FeatureId, HoleThread> holeThreads;
 };
 // The engine hands a generator the embedded tool, holder and machine reduced to what the input hash covers
 // (generatorTool, generatorHolder, generatorMachine below): ids, names, vendor text, presets, comments and the
@@ -313,6 +334,9 @@ public:
 private:
     std::map<std::string, std::unique_ptr<IOperationType>, std::less<>> types_;
 };
+// Added by T-035: adds the operation types src/cam ships (src/cam/ops: "drill", which covers spot, drill, peck,
+// chipBreak, tap, bore and ream by its "cycle" parameter). The app calls it once at start-up (src/api).
+void registerBuiltinOperationTypes(OperationRegistry&);
 
 // ---------- Staleness / associativity ----------
 enum class OpStatus { UpToDate, Stale, Generating, Failed, ReferenceBroken, Suppressed };
@@ -337,6 +361,9 @@ struct CamSnapshot {
     std::shared_ptr<const CamState> cam;        // null: the document has no CAM state
     bool built = false;                         // false: no build yet; every operation is Stale until there is one
     std::vector<naming::ResolverBody> bodies;   // the built bodies (BuildResult::bodies), sorted by id
+    // Added by T-035: the thread of every tapped hole feature of the document, by feature id (the TopoName::origin
+    // of the "hole.*" names on its faces). The document's thread is not modelled, so only this tells CAM about it.
+    std::map<FeatureId, HoleThread> holeThreads;
 };
 using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const doc::BuildResultPtr&)>;
 
@@ -346,7 +373,8 @@ using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const d
 //   (lib::Tool::geometryHash, lib::Holder::geometryHash) and the machine fields a generator reads (generatorMachine:
 //   kind, axes, spindle speed range, rigid tapping); each geometry reference as it resolves now (state, and the content of every
 //   resolved element: surface, curve or point geometry); the setup's part and fixture bodies (each body's content
-//   hash, in setup order: GenerateInput carries the whole part shapes, so an edit anywhere on a part body counts);
+//   hash, in setup order: GenerateInput carries the whole part shapes, so an edit anywhere on a part body counts;
+//   with each part body, the CamSnapshot::holeThreads of the hole features named on its faces, by feature id);
 //   the stock (its definition; a solid stock's body content; a previous setup's stock and operation hashes for
 //   FromSetupStock) and the WCS (mode, corner, and its references as they resolve).
 // Not in it: names, the template id, tool number and offset registers, program number and comment, post, work
@@ -428,7 +456,8 @@ struct GeometryRequest {
 using ResolveGeometryFn = std::function<Result<ResolvedGeometry>(const GeometryRequest&, JobContext&)>;
 // The engine's default: resolveSetup, then partShapes and fixtureShapes are the setup's bodies in order (model
 // frame), `selected` / `selectedShapeIndex` the operation's geometry references as they resolve (one entry per
-// resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty.
+// resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty; partNames
+// the part bodies' element maps and holeThreads the snapshot's (T-035).
 Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest&, JobContext&);
 
 struct CamEngineOptions {
@@ -490,15 +519,22 @@ struct RecognizedHole {
     double threadPitch = 0;    // mm, with threadSpec; 0 when unknown
     kernel::SubId axisSub{};   // the face axisFace names, in the shape passed
     std::vector<kernel::SubId> faces;   // every face of the hole (walls, steps, floor) in the shape passed, sorted
+    // Added by T-035, with threadSpec (HoleThread): the thread's nominal diameter and full-thread depth, mm (0 unknown;
+    // a depth of 0 is the whole tapped length).
+    double threadNominalDiameter = 0, threadDepth = 0;
 };
 // Thread pickup (T-097b): the thread of the hole feature `feature`, which made the bore (TopoName::origin of a name
-// of role "hole.*" on the bore's faces, read through `names`); nullopt when the feature has none.
-struct HoleThread { std::string spec; double pitch = 0; };
+// of role "hole.*" on the bore's faces, read through `names`); nullopt when the feature has none. HoleThread is
+// defined in the generation section.
 struct HoleOptions {
     const naming::ElementMap* names = nullptr;   // the body's element map; null: no thread pickup
     std::function<std::optional<HoleThread>(const FeatureId&)> threadOf;   // empty: no thread pickup
     double maxDiameter = 0;   // > 0: holes whose bore is wider are not reported (circular pockets); 0: no limit
 };
+// Added by T-035: the thread pickup of part `part` of a ResolvedGeometry (its partNames entry and holeThreads), for
+// a generator; no pickup when the geometry has no element map for that part. The options point into `geom`, which
+// must outlive them.
+HoleOptions holeOptionsFor(const ResolvedGeometry& geom, std::size_t part);
 // Holes of `shape` (model frame) along Z of the frame wcsFromModel (a rigid move: the setup's ResolvedSetup), sorted
 // by (x, y, zTop) and then axisSub, so the result does not depend on face order. Deterministic. Errors:
 // InvalidArgument for a null shape or a frame that is not a rigid move; KernelFailure when a face or edge cannot be

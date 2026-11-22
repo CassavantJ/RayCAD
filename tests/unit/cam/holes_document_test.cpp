@@ -84,7 +84,8 @@ cam::HoleOptions threadPickup(const DocState& state, const naming::ElementMap& n
             if (f.id == id) {
                 auto thread = features::holeThreadOf(f, {});
                 if (thread && *thread) {
-                    return cam::HoleThread{(*thread)->designation, (*thread)->pitch};
+                    return cam::HoleThread{(*thread)->designation, (*thread)->pitch, (*thread)->nominalDiameter,
+                                           (*thread)->depth.value_or(0.0)};
                 }
             }
         }

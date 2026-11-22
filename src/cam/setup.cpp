@@ -603,8 +603,11 @@ Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest& request, Jo
         geom.wcsFromModel = resolved->wcsFromModel;
         geom.stockBounds = resolved->stockBounds;
         for (const BodyId& id : setup.partBodies) {
-            geom.partShapes.push_back(detail::bodyOf(snapshot, id)->shape); // resolveSetup checked they are built
+            const naming::ResolverBody* body = detail::bodyOf(snapshot, id); // resolveSetup checked they are built
+            geom.partShapes.push_back(body->shape);
+            geom.partNames.push_back(body->map); // T-035: the thread pickup of hole recognition (holeOptionsFor)
         }
+        geom.holeThreads = snapshot.holeThreads;
         for (std::size_t i = 0; i < setup.fixtureBodies.size(); ++i) {
             const BodyId& id = setup.fixtureBodies[i];
             const naming::ResolverBody* body = detail::bodyOf(snapshot, id);

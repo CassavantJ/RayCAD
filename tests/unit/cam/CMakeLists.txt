@@ -58,6 +58,8 @@ add_executable(ray_cam_toolpath_tests
     toolpath_format_test.cpp
     invariants/cycle_invariants.h
     invariants/cycle_invariants_test.cpp
+    invariants/toolpath_invariants.h
+    invariants/toolpath_invariants_test.cpp
 )
 target_link_libraries(ray_cam_toolpath_tests PRIVATE ray_cam ray_core Catch2::Catch2WithMain)
 ray_add_test(ray_cam_toolpath_tests)
@@ -67,3 +69,25 @@ add_executable(ray_cam_feeds_tests feeds_test.cpp)
 target_link_libraries(ray_cam_feeds_tests PRIVATE ray_cam ray_lib ray_core Catch2::Catch2WithMain)
 target_compile_definitions(ray_cam_feeds_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 ray_add_test(ray_cam_feeds_tests)
+# The drilling operation (task T-035): depths, feeds and checks on kernel-built parts, the golden toolpath of each cycle
+# (tests/golden/toolpaths, with a corpus part) and the chain through the backplot and the post host to G-code, and end
+# to end through the document and the engine. src/ for the type's private header (cam/ops/drill.h), the rest as the
+# hole recognition tests.
+add_executable(ray_cam_drill_tests
+    drill_depth_test.cpp
+    drill_document_test.cpp
+    drill_golden_test.cpp
+    drill_test_util.h
+    drill_validate_test.cpp
+    toolpath_dump.h
+    invariants/toolpath_invariants.h
+)
+target_link_libraries(ray_cam_drill_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_sim ray_post ray_naming
+    ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_drill_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_drill_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths"
+    RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_drill_tests)

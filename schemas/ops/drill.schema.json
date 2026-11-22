@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/drill.schema.json",
+  "title": "Drilling",
+  "description": "Parameters of a 'drill' operation (cam.h Operation::paramsJson, task T-035): spot drilling, drilling, peck drilling, chip breaking, tapping, boring and reaming as canned cycles, one hole per cycle move. The operation's geometry is a face of each hole to machine. Its heights are measured from each hole's own top: 'retract' is the R plane (where the feed starts and where G99 returns), 'top' moves the hole top, 'clearance' is the initial level (G98) measured from the highest hole top; 'feedPlane' and 'bottom' are not used. The feed into the hole is the cutting feed (Operation cutting feedCut); a tap's feed is its pitch times the spindle speed. Lengths are millimetres, times seconds. Annotations for editors: 'x-unit' (length, time, count), 'x-enumTitles' (labels of an enum, in order), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads) and 'x-geometry' (what the geometry picker selects).",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "top"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "coolant"],
+  "x-geometry": { "kind": "face", "count": "oneOrMore", "description": "A face of each hole to machine (any face of a hole selects it)." },
+  "x-propertyOrder": ["cycle", "depthFrom", "depth", "depthReference", "breakthrough", "allowBelowFloor",
+                      "spotDiameter", "peck", "peckClearance", "tapLeadPitches", "leftHand", "dwell", "holeOrder",
+                      "allowOtherTools"],
+  "properties": {
+    "cycle": {
+      "title": "Cycle",
+      "description": "What the tool does in each hole.",
+      "enum": ["spot", "drill", "peck", "chipBreak", "tap", "bore", "ream"],
+      "x-enumTitles": ["Spot drill", "Drill (G81, G82 with a dwell)", "Peck, full retract (G83)",
+                       "Chip break (G73)", "Tap (G84, G74 left-hand)", "Bore, feed out (G85, G89 with a dwell)",
+                       "Ream, feed out (G85, G89 with a dwell)"],
+      "default": "drill"
+    },
+    "depthFrom": {
+      "title": "Depth from",
+      "description": "'hole': the depth the model gives each hole (through holes break through, blind holes go to their bottom, a spot to its chamfer diameter, a tap to the thread depth). 'value': the depth below each hole's top given here.",
+      "enum": ["hole", "value"],
+      "x-enumTitles": ["The hole", "A value"],
+      "default": "hole"
+    },
+    "depth": {
+      "title": "Depth",
+      "description": "Depth below the hole top: of the full diameter or of the tip (Depth reference).",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 2000,
+      "default": 10,
+      "x-unit": "length",
+      "x-relevantWhen": { "depthFrom": ["value"] }
+    },
+    "depthReference": {
+      "title": "Depth reference",
+      "description": "'fullDiameter': the depth is where the tool reaches its full diameter, so the tip goes deeper by the length of its point. 'tip': the depth of the tool tip.",
+      "enum": ["fullDiameter", "tip"],
+      "x-enumTitles": ["Full diameter", "Tool tip"],
+      "default": "fullDiameter",
+      "x-relevantWhen": { "depthFrom": ["value"] }
+    },
+    "breakthrough": {
+      "title": "Breakthrough",
+      "description": "Through holes: how far past the exit the full diameter goes (the tip goes further by the length of its point; a tap's lead is added too).",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 1,
+      "x-unit": "length",
+      "x-relevantWhen": { "cycle": ["drill", "peck", "chipBreak", "tap", "bore", "ream"], "depthFrom": ["hole"] }
+    },
+    "allowBelowFloor": {
+      "title": "Drill point below a flat floor",
+      "description": "Blind holes with a flat floor: off, the tip stops at the floor (the floor is left with a drill point); on, the full diameter reaches the floor and the tip goes below it.",
+      "type": "boolean",
+      "default": false,
+      "x-relevantWhen": { "cycle": ["drill", "peck", "chipBreak", "bore", "ream"], "depthFrom": ["hole"] }
+    },
+    "spotDiameter": {
+      "title": "Spot diameter",
+      "description": "Diameter of the spot at the hole top; 0: the hole's chamfer or countersink diameter, else its drilled diameter.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 0,
+      "x-unit": "length",
+      "x-relevantWhen": { "cycle": ["spot"], "depthFrom": ["hole"] }
+    },
+    "peck": {
+      "title": "Peck depth",
+      "description": "Depth of each peck (Q), the first one measured from the R plane; 0: no pecking, the hole is drilled in one feed (G81).",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 2,
+      "x-unit": "length",
+      "x-relevantWhen": { "cycle": ["peck", "chipBreak"] }
+    },
+    "peckClearance": {
+      "title": "Peck clearance",
+      "description": "Re-entry clearance above the last depth (G83) or back-off (G73); 0: the control's own setting.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "x-unit": "length",
+      "x-relevantWhen": { "cycle": ["peck", "chipBreak"] }
+    },
+    "tapLeadPitches": {
+      "title": "Tap lead",
+      "description": "Taps: how many pitches the tap tip goes beyond the full-thread depth (the tap's chamfer, e.g. 2 for a plug tap). Not added when the hole gives no thread depth: the tap then goes to the drilled depth.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 2,
+      "x-unit": "count",
+      "x-relevantWhen": { "cycle": ["tap"] }
+    },
+    "leftHand": {
+      "title": "Left-hand thread",
+      "description": "Taps: tap left-hand (G74) holes that have no thread spec, such as those of an imported part. A hole with a thread spec is tapped by its spec.",
+      "type": "boolean",
+      "default": false,
+      "x-relevantWhen": { "cycle": ["tap"] }
+    },
+    "dwell": {
+      "title": "Dwell",
+      "description": "Dwell at the bottom of each hole.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 60,
+      "default": 0,
+      "x-unit": "time"
+    },
+    "holeOrder": {
+      "title": "Hole order",
+      "description": "'shortest': the shortest path from the work origin; 'selection': the order the holes were picked.",
+      "enum": ["shortest", "selection"],
+      "x-enumTitles": ["Shortest path", "Selection order"],
+      "default": "shortest"
+    },
+    "allowOtherTools": {
+      "title": "Allow other tools",
+      "description": "Let an end mill or another tool not made for the cycle do it (never a tap other than for tapping).",
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
