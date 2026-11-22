@@ -491,6 +491,36 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
     CHECK(out->text.find("G53 Z15.") != std::string::npos);
 }
 
+TEST_CASE("machine overrides are JSON text: strings are decoded for String and Enum properties", "[post][engine]")
+{
+    // As a machine definition holds them (libraries.h): "2", "true", "\"none\"" (the library codec writes them so).
+    Program program = goldenProgram(true);
+    program.machine.postPropertyOverrides["header"] = R"("machine header")"; // an escape, decoded
+    program.machine.postPropertyOverrides["coolantStyle"] = R"("none")";
+    program.machine.postPropertyOverrides["numberBlocks"] = "true";
+    program.machine.postPropertyOverrides["numberStep"] = "2";
+    auto out = postWith("iso-test.post.js", program);
+    REQUIRE(out.has_value());
+    CHECK(out->text.find("(MACHINE HEADER FOR TESTER)") != std::string::npos);
+    CHECK(out->text.find("\"machine") == std::string::npos); // no quotes of the JSON text reach the program
+    CHECK(out->text.find("N12 ") != std::string::npos);
+    // The setup's own overrides stay plain text.
+    program.properties["header"] = "setup header";
+    out = postWith("iso-test.post.js", program);
+    REQUIRE(out.has_value());
+    CHECK(out->text.find("(SETUP HEADER FOR TESTER)") != std::string::npos);
+    // A broken JSON string is refused, naming the property.
+    for (const char* text : {R"("none)", R"("bad \q escape")", R"("trailing" x)"}) {
+        INFO(text);
+        Program bad = goldenProgram(true);
+        bad.machine.postPropertyOverrides["coolantStyle"] = text;
+        const auto r = postWith("iso-test.post.js", bad);
+        REQUIRE_FALSE(r.has_value());
+        CHECK(r.error().code == ErrorCode::InvalidArgument);
+        CHECK(r.error().message.find("coolantStyle") != std::string::npos);
+    }
+}
+
 TEST_CASE("the date comes only from the job, and only with includeDate", "[post][engine]")
 {
     Program program = goldenProgram(true);

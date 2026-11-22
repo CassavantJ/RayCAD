@@ -310,22 +310,6 @@ constexpr std::pair<const char*, cam::Wcs::OriginMode> kOrigins[] = {
     {"stockTopCenter", cam::Wcs::OriginMode::StockTopCenter},
     {"modelPoint", cam::Wcs::OriginMode::ModelPoint}};
 constexpr std::pair<const char*, int> kAxes[] = {{"x", 0}, {"y", 1}, {"z", 2}};
-constexpr std::pair<const char*, lib::ToolType> kToolTypes[] = {{"flatEndMill", lib::ToolType::FlatEndMill},
-                                                                {"ballEndMill", lib::ToolType::BallEndMill},
-                                                                {"bullEndMill", lib::ToolType::BullEndMill},
-                                                                {"chamferMill", lib::ToolType::ChamferMill},
-                                                                {"faceMill", lib::ToolType::FaceMill},
-                                                                {"spotDrill", lib::ToolType::SpotDrill},
-                                                                {"drill", lib::ToolType::Drill},
-                                                                {"tap", lib::ToolType::Tap},
-                                                                {"reamer", lib::ToolType::Reamer},
-                                                                {"boringBar", lib::ToolType::BoringBar},
-                                                                {"threadMill", lib::ToolType::ThreadMill},
-                                                                {"engraveCutter", lib::ToolType::EngraveCutter}};
-constexpr std::pair<const char*, lib::MachineDef::Kind> kMachineKinds[] = {{"mill3", lib::MachineDef::Kind::Mill3Axis},
-                                                                           {"mill4", lib::MachineDef::Kind::Mill4Axis},
-                                                                           {"mill5", lib::MachineDef::Kind::Mill5Axis},
-                                                                           {"lathe", lib::MachineDef::Kind::Lathe}};
 
 Status nonNegative(const Obj& o, std::string_view key, double v)
 {
@@ -750,421 +734,57 @@ Result<std::vector<BodyId>> readBodies(const Value& value, const Source& source,
 
 // ---------- Embedded library items ----------
 
-Result<cam::Embedded<lib::Tool>> readTool(const Value& value, const Source& source, std::string_view field)
+namespace {
+
+// One item through the library's codec (cam.h embeddedJson and friends): FormatError / FormatTooNew of a stored item
+// become the document's errors, an argument's become InvalidArgument naming the field.
+template <class E, class Parse>
+Result<E> itemFromText(std::string_view text, const Source& source, std::string_view field, Parse parse)
 {
-    RAY_CAMJSON_TRY(o, Obj::of(value, source, std::string(field)));
-    RAY_CAMJSON_CHECK(o->only({"bodyMaterial",
-                               "cornerRadius",
-                               "defaultToolNumber",
-                               "diameter",
-                               "fluteLength",
-                               "flutes",
-                               "id",
-                               "name",
-                               "overallLength",
-                               "presets",
-                               "productId",
-                               "schema",
-                               "shankDiameter",
-                               "shoulderLength",
-                               "threadPitch",
-                               "threadSpec",
-                               "tipAngle",
-                               "tipDiameter",
-                               "type",
-                               "vendor"}));
-    RAY_CAMJSON_CHECK(o->schema());
-    cam::Embedded<lib::Tool> out;
-    lib::Tool& t = out.item;
-    RAY_CAMJSON_TRY(id, o->uuid("id"));
-    t.id = ToolId{*id};
-    RAY_CAMJSON_TRY(name, o->string("name", std::nullopt));
-    RAY_CAMJSON_TRY(vendor, o->string("vendor", std::string()));
-    RAY_CAMJSON_TRY(productId, o->string("productId", std::string()));
-    RAY_CAMJSON_TRY(type, enumOf(*o, "type", kToolTypes, std::optional<lib::ToolType>()));
-    RAY_CAMJSON_TRY(flutes, o->integer("flutes", std::nullopt, 0, 1000));
-    t.name = std::move(*name);
-    t.vendor = std::move(*vendor);
-    t.productId = std::move(*productId);
-    t.type = *type;
-    t.flutes = *flutes;
-    const std::pair<const char*, double*> required[] = {{"diameter", &t.diameter},
-                                                        {"shankDiameter", &t.shankDiameter},
-                                                        {"fluteLength", &t.fluteLength},
-                                                        {"shoulderLength", &t.shoulderLength},
-                                                        {"overallLength", &t.overallLength}};
-    for (const auto& [key, slot] : required) {
-        RAY_CAMJSON_TRY(v, o->number(key, std::nullopt));
-        RAY_CAMJSON_CHECK(nonNegative(*o, key, *v));
-        *slot = *v;
-    }
-    RAY_CAMJSON_CHECK(positive(*o, "diameter", t.diameter));
-    const std::pair<const char*, double*> optional[] = {{"cornerRadius", &t.cornerRadius},
-                                                        {"tipAngle", &t.tipAngleDeg},
-                                                        {"tipDiameter", &t.tipDiameter},
-                                                        {"threadPitch", &t.threadPitch}};
-    for (const auto& [key, slot] : optional) {
-        RAY_CAMJSON_TRY(v, o->number(key, 0.0));
-        RAY_CAMJSON_CHECK(nonNegative(*o, key, *v));
-        *slot = *v;
-    }
-    RAY_CAMJSON_TRY(threadSpec, o->string("threadSpec", std::string()));
-    RAY_CAMJSON_TRY(bodyMaterial, o->string("bodyMaterial", std::string()));
-    RAY_CAMJSON_TRY(defaultNumber, o->integer("defaultToolNumber", 0, 0, 99999));
-    t.threadSpec = std::move(*threadSpec);
-    t.bodyMaterial = std::move(*bodyMaterial);
-    t.defaultToolNumber = *defaultNumber;
-    if (const Value* presets = o->get("presets")) {
-        if (!presets->isArray()) {
-            return o->error("presets", "must be an array");
+    auto item = parse(text);
+    if (!item) {
+        const Error& e = item.error();
+        if (source.kind == Source::Kind::Stored && e.code == ErrorCode::FormatTooNew) {
+            return tl::unexpected(Error{
+                ErrorCode::FormatTooNew, "This document needs a newer RayCAD: " + source.where + ": " + e.message, {}});
         }
-        for (std::size_t i = 0; i < presets->asArray().size(); ++i) {
-            RAY_CAMJSON_TRY(p,
-                            Obj::of(presets->asArray()[i], source, o->path("presets") + "[" + std::to_string(i) + "]"));
-            RAY_CAMJSON_CHECK(p->only({"chipLoad", "material", "maxAxialFraction", "maxRadialFraction", "opClass",
-                                       "rampAngle", "surfaceSpeed"}));
-            lib::ToolPreset preset{};
-            RAY_CAMJSON_TRY(material, p->uuid("material", true));
-            RAY_CAMJSON_TRY(opClass, p->string("opClass", std::string()));
-            preset.material = MaterialId{*material};
-            preset.opClass = std::move(*opClass);
-            const std::pair<const char*, double*> numbers[] = {{"surfaceSpeed", &preset.surfaceSpeedMMin},
-                                                               {"chipLoad", &preset.chipLoadMm},
-                                                               {"maxRadialFraction", &preset.maxRadialFraction},
-                                                               {"maxAxialFraction", &preset.maxAxialFraction},
-                                                               {"rampAngle", &preset.rampAngleDeg}};
-            for (const auto& [key, slot] : numbers) {
-                RAY_CAMJSON_TRY(v, p->number(key, 0.0));
-                RAY_CAMJSON_CHECK(nonNegative(*p, key, *v));
-                *slot = *v;
-            }
-            t.presets.push_back(std::move(preset));
+        if (field.empty()) {
+            return source.error(e.message);
         }
+        return source.error(field, e.message);
     }
-    if (source.kind == Source::Kind::Stored) {
-        out.extraJson = extrasOf(value, toJson(out));
-    }
-    return out;
+    return std::move(*item);
 }
 
-Value toJson(const cam::Embedded<lib::Tool>& e)
+template <class E, class Parse>
+Result<E> itemFromValue(const Value& value, const Source& source, std::string_view field, Parse parse)
 {
-    const lib::Tool& t = e.item;
-    Value::Array presets;
-    for (const lib::ToolPreset& p : t.presets) {
-        presets.push_back(Value::object({{"chipLoad", Value::number(p.chipLoadMm)},
-                                         {"material", nullableId(p.material.value)},
-                                         {"maxAxialFraction", Value::number(p.maxAxialFraction)},
-                                         {"maxRadialFraction", Value::number(p.maxRadialFraction)},
-                                         {"opClass", text(p.opClass)},
-                                         {"rampAngle", Value::number(p.rampAngleDeg)},
-                                         {"surfaceSpeed", Value::number(p.surfaceSpeedMMin)}}));
+    if (!value.isObject()) {
+        return source.error(field.empty() ? source.where : std::string(field), "must be a JSON object");
     }
-    Value known = Value::object({{"bodyMaterial", text(t.bodyMaterial)},
-                                 {"cornerRadius", Value::number(t.cornerRadius)},
-                                 {"defaultToolNumber", Value::number(t.defaultToolNumber)},
-                                 {"diameter", Value::number(t.diameter)},
-                                 {"fluteLength", Value::number(t.fluteLength)},
-                                 {"flutes", Value::number(t.flutes)},
-                                 {"id", idValue(t.id.value)},
-                                 {"name", text(t.name)},
-                                 {"overallLength", Value::number(t.overallLength)},
-                                 {"presets", Value::array(std::move(presets))},
-                                 {"productId", text(t.productId)},
-                                 {"schema", Value::number(kSchema)},
-                                 {"shankDiameter", Value::number(t.shankDiameter)},
-                                 {"shoulderLength", Value::number(t.shoulderLength)},
-                                 {"threadPitch", Value::number(t.threadPitch)},
-                                 {"threadSpec", text(t.threadSpec)},
-                                 {"tipAngle", Value::number(t.tipAngleDeg)},
-                                 {"tipDiameter", Value::number(t.tipDiameter)},
-                                 {"type", text(nameOf(t.type, kToolTypes))},
-                                 {"vendor", text(t.vendor)}});
-    return withExtras(std::move(known), e.extraJson);
+    return itemFromText<E>(json::write(value), source, field, parse);
+}
+
+} // namespace
+
+Result<cam::Embedded<lib::Tool>> readTool(const Value& value, const Source& source, std::string_view field)
+{
+    return itemFromValue<cam::Embedded<lib::Tool>>(value, source, field, &cam::embeddedToolFromJson);
 }
 
 Result<cam::Embedded<lib::Holder>> readHolder(const Value& value, const Source& source, std::string_view field)
 {
-    RAY_CAMJSON_TRY(o, Obj::of(value, source, std::string(field)));
-    RAY_CAMJSON_CHECK(o->only({"gaugeLength", "id", "name", "schema", "segments", "vendor"}));
-    RAY_CAMJSON_CHECK(o->schema());
-    cam::Embedded<lib::Holder> out;
-    lib::Holder& h = out.item;
-    RAY_CAMJSON_TRY(id, o->uuid("id"));
-    RAY_CAMJSON_TRY(name, o->string("name", std::nullopt));
-    RAY_CAMJSON_TRY(vendor, o->string("vendor", std::string()));
-    RAY_CAMJSON_TRY(gauge, o->number("gaugeLength", std::nullopt));
-    RAY_CAMJSON_CHECK(nonNegative(*o, "gaugeLength", *gauge));
-    h.id = HolderId{*id};
-    h.name = std::move(*name);
-    h.vendor = std::move(*vendor);
-    h.gaugeLength = *gauge;
-    if (const Value* segments = o->get("segments")) {
-        if (!segments->isArray()) {
-            return o->error("segments", "must be an array");
-        }
-        for (std::size_t i = 0; i < segments->asArray().size(); ++i) {
-            RAY_CAMJSON_TRY(
-                s, Obj::of(segments->asArray()[i], source, o->path("segments") + "[" + std::to_string(i) + "]"));
-            RAY_CAMJSON_CHECK(s->only({"height", "lowerDiameter", "upperDiameter"}));
-            lib::HolderSegment seg{};
-            const std::pair<const char*, double*> numbers[] = {
-                {"height", &seg.height}, {"lowerDiameter", &seg.lowerDiameter}, {"upperDiameter", &seg.upperDiameter}};
-            for (const auto& [key, slot] : numbers) {
-                RAY_CAMJSON_TRY(v, s->number(key, std::nullopt));
-                RAY_CAMJSON_CHECK(nonNegative(*s, key, *v));
-                *slot = *v;
-            }
-            h.segments.push_back(seg);
-        }
-    }
-    if (source.kind == Source::Kind::Stored) {
-        out.extraJson = extrasOf(value, toJson(out));
-    }
-    return out;
-}
-
-Value toJson(const cam::Embedded<lib::Holder>& e)
-{
-    const lib::Holder& h = e.item;
-    Value::Array segments;
-    for (const lib::HolderSegment& s : h.segments) {
-        segments.push_back(Value::object({{"height", Value::number(s.height)},
-                                          {"lowerDiameter", Value::number(s.lowerDiameter)},
-                                          {"upperDiameter", Value::number(s.upperDiameter)}}));
-    }
-    Value known = Value::object({{"gaugeLength", Value::number(h.gaugeLength)},
-                                 {"id", idValue(h.id.value)},
-                                 {"name", text(h.name)},
-                                 {"schema", Value::number(kSchema)},
-                                 {"segments", Value::array(std::move(segments))},
-                                 {"vendor", text(h.vendor)}});
-    return withExtras(std::move(known), e.extraJson);
+    return itemFromValue<cam::Embedded<lib::Holder>>(value, source, field, &cam::embeddedHolderFromJson);
 }
 
 Result<cam::Embedded<lib::Material>> readMaterial(const Value& value, const Source& source, std::string_view field)
 {
-    RAY_CAMJSON_TRY(o, Obj::of(value, source, std::string(field)));
-    RAY_CAMJSON_CHECK(o->only({"density", "group", "hardnessHb", "id", "name", "schema", "specificCuttingForce"}));
-    RAY_CAMJSON_CHECK(o->schema());
-    cam::Embedded<lib::Material> out;
-    lib::Material& m = out.item;
-    RAY_CAMJSON_TRY(id, o->uuid("id"));
-    RAY_CAMJSON_TRY(name, o->string("name", std::nullopt));
-    RAY_CAMJSON_TRY(group, o->string("group", std::string()));
-    RAY_CAMJSON_TRY(hardness, o->number("hardnessHb", 0.0));
-    RAY_CAMJSON_TRY(kc, o->number("specificCuttingForce", 0.0));
-    RAY_CAMJSON_TRY(density, o->number("density", 0.0));
-    m.id = MaterialId{*id};
-    m.name = std::move(*name);
-    m.group = std::move(*group);
-    m.hardnessHb = *hardness;
-    m.specificCuttingForceNmm2 = *kc;
-    m.densityGcm3 = *density;
-    if (source.kind == Source::Kind::Stored) {
-        out.extraJson = extrasOf(value, toJson(out));
-    }
-    return out;
-}
-
-Value toJson(const cam::Embedded<lib::Material>& e)
-{
-    const lib::Material& m = e.item;
-    Value known = Value::object({{"density", Value::number(m.densityGcm3)},
-                                 {"group", text(m.group)},
-                                 {"hardnessHb", Value::number(m.hardnessHb)},
-                                 {"id", idValue(m.id.value)},
-                                 {"name", text(m.name)},
-                                 {"schema", Value::number(kSchema)},
-                                 {"specificCuttingForce", Value::number(m.specificCuttingForceNmm2)}});
-    return withExtras(std::move(known), e.extraJson);
+    return itemFromValue<cam::Embedded<lib::Material>>(value, source, field, &cam::embeddedMaterialFromJson);
 }
 
 Result<cam::Embedded<lib::MachineDef>> readMachine(const Value& value, const Source& source, std::string_view field)
 {
-    RAY_CAMJSON_TRY(o, Obj::of(value, source, std::string(field)));
-    RAY_CAMJSON_CHECK(o->only({"axes", "control", "id", "kind", "model", "name", "options", "postProperties", "schema",
-                               "spindle", "toolChanger", "vendor"}));
-    RAY_CAMJSON_CHECK(o->schema());
-    cam::Embedded<lib::MachineDef> out;
-    lib::MachineDef& m = out.item;
-    RAY_CAMJSON_TRY(id, o->uuid("id"));
-    RAY_CAMJSON_TRY(name, o->string("name", std::nullopt));
-    RAY_CAMJSON_TRY(vendor, o->string("vendor", std::string()));
-    RAY_CAMJSON_TRY(model, o->string("model", std::string()));
-    RAY_CAMJSON_TRY(kind, enumOf(*o, "kind", kMachineKinds, std::optional<lib::MachineDef::Kind>()));
-    m.id = MachineId{*id};
-    m.name = std::move(*name);
-    m.vendor = std::move(*vendor);
-    m.model = std::move(*model);
-    m.kind = *kind;
-    if (const Value* axes = o->get("axes")) {
-        if (!axes->isArray()) {
-            return o->error("axes", "must be an array");
-        }
-        for (std::size_t i = 0; i < axes->asArray().size(); ++i) {
-            RAY_CAMJSON_TRY(a, Obj::of(axes->asArray()[i], source, o->path("axes") + "[" + std::to_string(i) + "]"));
-            RAY_CAMJSON_CHECK(a->only({"accel", "letter", "max", "maxFeed", "min", "rapid"}));
-            RAY_CAMJSON_TRY(letter, a->string("letter", std::nullopt));
-            if (letter->size() != 1) {
-                return a->error("letter", "must be one character");
-            }
-            lib::AxisDef axis{};
-            axis.letter = (*letter)[0];
-            const std::pair<const char*, double*> numbers[] = {{"min", &axis.minTravel},
-                                                               {"max", &axis.maxTravel},
-                                                               {"rapid", &axis.rapidMmMin},
-                                                               {"maxFeed", &axis.maxFeedMmMin},
-                                                               {"accel", &axis.accelMmS2}};
-            for (const auto& [key, slot] : numbers) {
-                RAY_CAMJSON_TRY(v, a->number(key, std::nullopt));
-                *slot = *v;
-            }
-            m.axes.push_back(axis);
-        }
-    }
-    const auto section = [&](std::string_view key) -> Result<std::optional<Obj>> {
-        if (o->get(key) == nullptr) {
-            return std::optional<Obj>();
-        }
-        RAY_CAMJSON_TRY(child, o->child(key));
-        return std::optional<Obj>(std::move(*child));
-    };
-    RAY_CAMJSON_TRY(spindle, section("spindle"));
-    m.maxRpm = m.minRpm = m.spindlePowerKw = m.spindleTorqueNm = 0;
-    if (*spindle) {
-        const Obj& s = **spindle;
-        RAY_CAMJSON_CHECK(s.only({"maxRpm", "minRpm", "powerKw", "torqueNm"}));
-        RAY_CAMJSON_TRY(maxRpm, s.number("maxRpm", 0.0));
-        RAY_CAMJSON_TRY(minRpm, s.number("minRpm", 0.0));
-        RAY_CAMJSON_TRY(power, s.number("powerKw", 0.0));
-        RAY_CAMJSON_TRY(torque, s.number("torqueNm", 0.0));
-        m.maxRpm = *maxRpm;
-        m.minRpm = *minRpm;
-        m.spindlePowerKw = *power;
-        m.spindleTorqueNm = *torque;
-    }
-    RAY_CAMJSON_TRY(changer, section("toolChanger"));
-    m.toolCapacity = 0;
-    m.toolChangeSec = 0;
-    if (*changer) {
-        const Obj& c = **changer;
-        RAY_CAMJSON_CHECK(c.only({"capacity", "changeSeconds"}));
-        RAY_CAMJSON_TRY(capacity, c.integer("capacity", 0, 0, 100000));
-        RAY_CAMJSON_TRY(seconds, c.number("changeSeconds", 0.0));
-        m.toolCapacity = *capacity;
-        m.toolChangeSec = *seconds;
-    }
-    RAY_CAMJSON_TRY(control, section("control"));
-    m.rigidTapping = false;
-    m.maxBlockNumber = 0;
-    m.maxProgramNameLength = 0;
-    m.peckClearance = 0;
-    if (*control) {
-        const Obj& c = **control;
-        RAY_CAMJSON_CHECK(c.only(
-            {"defaultPost", "dialect", "maxBlockNumber", "maxProgramNameLength", "peckClearance", "rigidTapping"}));
-        RAY_CAMJSON_TRY(dialect, c.string("dialect", std::string()));
-        RAY_CAMJSON_TRY(post, c.string("defaultPost", std::string()));
-        RAY_CAMJSON_TRY(rigid, c.boolean("rigidTapping", false));
-        RAY_CAMJSON_TRY(maxBlock, c.integer("maxBlockNumber", 0, 0, 1 << 30));
-        RAY_CAMJSON_TRY(maxName, c.integer("maxProgramNameLength", 0, 0, 1 << 20));
-        RAY_CAMJSON_TRY(peckClearance, c.number("peckClearance", 0.0));
-        if (!(*peckClearance >= 0.0 && *peckClearance <= 1000.0)) {
-            return c.error("peckClearance", "must be from 0 to 1000 (mm)");
-        }
-        m.peckClearance = *peckClearance;
-        m.controlDialect = std::move(*dialect);
-        m.defaultPost = std::move(*post);
-        m.rigidTapping = *rigid;
-        m.maxBlockNumber = *maxBlock;
-        m.maxProgramNameLength = *maxName;
-    }
-    RAY_CAMJSON_TRY(options, section("options"));
-    m.throughSpindleCoolant = m.hasProbe = m.hasToolSetter = false;
-    if (*options) {
-        const Obj& c = **options;
-        RAY_CAMJSON_CHECK(c.only({"probe", "throughSpindleCoolant", "toolSetter"}));
-        RAY_CAMJSON_TRY(tsc, c.boolean("throughSpindleCoolant", false));
-        RAY_CAMJSON_TRY(probe, c.boolean("probe", false));
-        RAY_CAMJSON_TRY(setter, c.boolean("toolSetter", false));
-        m.throughSpindleCoolant = *tsc;
-        m.hasProbe = *probe;
-        m.hasToolSetter = *setter;
-    }
-    if (const Value* props = o->get("postProperties")) {
-        if (!props->isObject()) {
-            return o->error("postProperties", "must be a JSON object");
-        }
-        for (const Member& p : props->asObject()) {
-            if (p.value.isString()) {
-                m.postPropertyOverrides[p.key] = p.value.asString();
-            } else if (p.value.isBool() || p.value.isNumber() || p.value.isNull()) {
-                m.postPropertyOverrides[p.key] = json::write(p.value);
-            } else {
-                return o->error(join("postProperties", p.key), "must be a string, number, boolean or null");
-            }
-        }
-    }
-    if (source.kind == Source::Kind::Stored) {
-        out.extraJson = extrasOf(value, toJson(out));
-    }
-    return out;
-}
-
-Value toJson(const cam::Embedded<lib::MachineDef>& e)
-{
-    const lib::MachineDef& m = e.item;
-    Value::Array axes;
-    for (const lib::AxisDef& a : m.axes) {
-        axes.push_back(Value::object({{"accel", Value::number(a.accelMmS2)},
-                                      {"letter", text(std::string(1, a.letter))},
-                                      {"max", Value::number(a.maxTravel)},
-                                      {"maxFeed", Value::number(a.maxFeedMmMin)},
-                                      {"min", Value::number(a.minTravel)},
-                                      {"rapid", Value::number(a.rapidMmMin)}}));
-    }
-    Value::Object props;
-    for (const auto& [key, v] : m.postPropertyOverrides) {
-        // A literal or number written as a string by readMachine goes back as itself (see cam_json.h).
-        Value value = text(v);
-        if (v == "true" || v == "false" || v == "null" ||
-            (!v.empty() && (v[0] == '-' || (v[0] >= '0' && v[0] <= '9')))) {
-            if (auto parsed = json::parse(v); parsed && !parsed->isString() && !parsed->isArray() &&
-                                              !parsed->isObject() && json::write(*parsed) == v) {
-                value = std::move(*parsed);
-            }
-        }
-        props.push_back({key, std::move(value)});
-    }
-    Value::Object control = {{"defaultPost", text(m.defaultPost)},
-                             {"dialect", text(m.controlDialect)},
-                             {"maxBlockNumber", Value::number(m.maxBlockNumber)},
-                             {"maxProgramNameLength", Value::number(m.maxProgramNameLength)},
-                             {"rigidTapping", Value::boolean(m.rigidTapping)}};
-    if (m.peckClearance != 0) { // optional: written only when known
-        control.insert(control.begin() + 4, {"peckClearance", Value::number(m.peckClearance)});
-    }
-    Value known =
-        Value::object({{"axes", Value::array(std::move(axes))},
-                       {"control", Value::object(std::move(control))},
-                       {"id", idValue(m.id.value)},
-                       {"kind", text(nameOf(m.kind, kMachineKinds))},
-                       {"model", text(m.model)},
-                       {"name", text(m.name)},
-                       {"options", Value::object({{"probe", Value::boolean(m.hasProbe)},
-                                                  {"throughSpindleCoolant", Value::boolean(m.throughSpindleCoolant)},
-                                                  {"toolSetter", Value::boolean(m.hasToolSetter)}})},
-                       {"postProperties", Value::object(std::move(props))},
-                       {"schema", Value::number(kSchema)},
-                       {"spindle", Value::object({{"maxRpm", Value::number(m.maxRpm)},
-                                                  {"minRpm", Value::number(m.minRpm)},
-                                                  {"powerKw", Value::number(m.spindlePowerKw)},
-                                                  {"torqueNm", Value::number(m.spindleTorqueNm)}})},
-                       {"toolChanger", Value::object({{"capacity", Value::number(m.toolCapacity)},
-                                                      {"changeSeconds", Value::number(m.toolChangeSec)}})},
-                       {"vendor", text(m.vendor)}});
-    return withExtras(std::move(known), e.extraJson);
+    return itemFromValue<cam::Embedded<lib::MachineDef>>(value, source, field, &cam::embeddedMachineFromJson);
 }
 
 // ---------- Whole objects ----------
@@ -1305,7 +925,7 @@ Value writeKind(const Map& items, std::vector<std::pair<Hash256, std::string>>& 
 {
     Value::Object out;
     for (const auto& [id, item] : items) {
-        std::string bytes = json::write(toJson(item));
+        std::string bytes = cam::embeddedJson(item); // the library's file format (cam.h)
         const Hash256 hash = hashOf(bytes);
         out.push_back({id.value.toString(), text(hash.hex())});
         objects.emplace_back(hash, std::move(bytes));
@@ -1358,9 +978,26 @@ Result<Value> fetch(const Hash256& hash, const std::function<Result<std::string>
     return std::move(*parsed);
 }
 
-template <class Map, class ReadFn>
+// Fetches an object named in the manifest and checks its bytes against its hash.
+Result<std::string> fetchBytes(const Hash256& hash, const std::function<Result<std::string>(const Hash256&)>& object,
+                               const std::string& what)
+{
+    auto bytes = object(hash);
+    if (!bytes) {
+        Error error = bytes.error();
+        error.context.push_back("while reading " + what + " " + hash.hex());
+        return tl::unexpected(error);
+    }
+    if (hashOf(*bytes) != hash) {
+        return tl::unexpected(
+            Error{ErrorCode::FormatError, "Invalid document: " + what + " does not match its hash " + hash.hex(), {}});
+    }
+    return std::move(*bytes);
+}
+
+template <class E, class Map, class Parse>
 Status readKind(const Value& embedded, std::string_view kind, const char* what, Map& out,
-                const std::function<Result<std::string>(const Hash256&)>& object, ReadFn read)
+                const std::function<Result<std::string>(const Hash256&)>& object, Parse parse)
 {
     const Source manifest{Source::Kind::Stored, "manifest"};
     const Value* items = embedded.find(kind);
@@ -1377,9 +1014,9 @@ Status readKind(const Value& embedded, std::string_view kind, const char* what, 
             return manifest.error(field, "is not keyed by a lower-case UUID");
         }
         RAY_CAMJSON_TRY(hash, parseHash(m.value, manifest, field));
-        RAY_CAMJSON_TRY(value, fetch(*hash, object, what));
+        RAY_CAMJSON_TRY(bytes, fetchBytes(*hash, object, what));
         const Source source{Source::Kind::Stored, std::string(what) + " " + hash->hex()};
-        RAY_CAMJSON_TRY(item, read(*value, source, std::string_view()));
+        RAY_CAMJSON_TRY(item, itemFromText<E>(*bytes, source, std::string_view(), parse));
         if (item->item.id.value != id) {
             return manifest.error(field, "names an item whose id is " + item->item.id.value.toString());
         }
@@ -1492,10 +1129,14 @@ Result<std::shared_ptr<const cam::CamState>> readCam(const Value& manifest,
         if (!embedded->isObject()) {
             return manifestSource.error("embedded", "must be an object");
         }
-        RAY_CAMJSON_CHECK(readKind(*embedded, "tools", "tool", state->tools, object, readTool));
-        RAY_CAMJSON_CHECK(readKind(*embedded, "holders", "holder", state->holders, object, readHolder));
-        RAY_CAMJSON_CHECK(readKind(*embedded, "machines", "machine", state->machines, object, readMachine));
-        RAY_CAMJSON_CHECK(readKind(*embedded, "materials", "material", state->materials, object, readMaterial));
+        RAY_CAMJSON_CHECK(readKind<cam::Embedded<lib::Tool>>(*embedded, "tools", "tool", state->tools, object,
+                                                             &cam::embeddedToolFromJson));
+        RAY_CAMJSON_CHECK(readKind<cam::Embedded<lib::Holder>>(*embedded, "holders", "holder", state->holders, object,
+                                                               &cam::embeddedHolderFromJson));
+        RAY_CAMJSON_CHECK(readKind<cam::Embedded<lib::MachineDef>>(*embedded, "machines", "machine", state->machines,
+                                                                   object, &cam::embeddedMachineFromJson));
+        RAY_CAMJSON_CHECK(readKind<cam::Embedded<lib::Material>>(*embedded, "materials", "material", state->materials,
+                                                                 object, &cam::embeddedMaterialFromJson));
     }
     return std::shared_ptr<const cam::CamState>(std::move(state));
 }

@@ -1,5 +1,7 @@
 // LibraryStack: layered roots, tool queries and template lookup.
 #include "lib_test_util.h"
+#include "library_internal.h"
+#include "test_dispatcher.h"
 #include "tool_query.h"
 
 #include <ray/libraries.h>
@@ -7,6 +9,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <optional>
 #include <random>
 #include <string>
 
@@ -32,6 +36,22 @@ std::vector<std::string> names(const std::vector<ray::lib::Tool>& tools)
         out.push_back(t.name);
     }
     return out;
+}
+
+// The names a query finds; the test fails if the query is malformed.
+std::vector<std::string> names(const ray::Result<std::vector<ray::lib::Tool>>& found)
+{
+    INFO((found ? std::string() : "the query failed: " + found.error().message));
+    REQUIRE(found);
+    return names(*found);
+}
+
+// The message of a query that must fail.
+std::string failure(const ray::Result<std::vector<ray::lib::Tool>>& found)
+{
+    REQUIRE_FALSE(found);
+    CHECK(found.error().code == ray::ErrorCode::InvalidArgument);
+    return found.error().message;
 }
 
 } // namespace
@@ -137,7 +157,8 @@ TEST_CASE("queryTools filters and sorts by (diameter, id), whatever the order of
     saveAll(dir.dir(), tools);
     LibraryStack stack;
     stack.setRoots({dir.dir()});
-    const std::map<std::string, double> vars = {{"feature.minWidth", 12}, {"feature.diameter", 6}};
+    const ray::lib::QueryVars vars = {
+        {"feature.minWidth", 12.0}, {"feature.diameter", 6.0}, {"feature.threadSpec", std::string("M6 x 1")}};
     CHECK(names(stack.queryTools(R"({"type":["FlatEndMill","ballEndMill"],"diameter":{"max":"0.6*feature.minWidth"}})",
                                  vars)) == std::vector<std::string>{"T5", "T1", "T3", "T4"});
     CHECK(names(stack.queryTools(R"({"diameter":"$feature.diameter","type":"tap"})", vars)) ==
@@ -148,18 +169,31 @@ TEST_CASE("queryTools filters and sorts by (diameter, id), whatever the order of
     CHECK(names(stack.queryTools(R"({"opClass":"finish","diameter":{"min":7}})", vars)) ==
           std::vector<std::string>{"T2"});
     CHECK(names(stack.queryTools(R"({"material":")" + fixedId(900).toString() + R"(","type":"tap"})", vars)).empty());
-    CHECK(stack.queryTools("{}", vars).size() == 7);
-    // Malformed queries match nothing.
-    CHECK(stack.queryTools(R"({"colour":"red"})", vars).empty());
-    CHECK(stack.queryTools(R"({"diameter":"feature.unknown"})", vars).empty());
-    CHECK(stack.queryTools(R"({"threadSpec":"$feature.threadSpec"})", vars).empty());
-    CHECK(stack.queryTools("[", vars).empty());
+    CHECK(names(stack.queryTools("{}", vars)).size() == 7);
+    // A string variable (the plan's own template example, PLAN.md 3.6), and the canonical and bare spellings.
+    CHECK(names(stack.queryTools(R"({"type":"tap","threadSpec":"$feature.threadSpec"})", vars)) ==
+          std::vector<std::string>{"T6"});
+    CHECK(names(stack.queryTools(R"({"diameter":{"max":"0.5 * $feature.minWidth"}})", vars)) ==
+          names(stack.queryTools(R"({"diameter":{"max":"0.5 * feature.minWidth"}})", vars)));
+    // Without the '$' a string key is a literal: no tool's thread is called "feature.threadSpec".
+    CHECK(names(stack.queryTools(R"({"threadSpec":"feature.threadSpec"})", vars)).empty());
+    // Malformed queries are errors that say what is wrong, not silent empty results.
+    CHECK(failure(stack.queryTools(R"({"colour":"red"})", vars)).find("colour") != std::string::npos);
+    CHECK(failure(stack.queryTools(R"({"diameter":"feature.unknown"})", vars))
+              .find("unknown variable $feature.unknown") != std::string::npos);
+    CHECK(failure(stack.queryTools(R"({"threadSpec":"$feature.nothing"})", vars))
+              .find("unknown variable $feature.nothing") != std::string::npos);
+    CHECK(failure(stack.queryTools(R"({"diameter":"$feature.threadSpec"})", vars)).find("is a string, not a number") !=
+          std::string::npos);
+    CHECK(failure(stack.queryTools(R"({"threadSpec":"$feature.diameter"})", vars)).find("is a number, not a string") !=
+          std::string::npos);
+    CHECK(failure(stack.queryTools("[", vars)).find("not valid JSON") != std::string::npos);
 }
 
 TEST_CASE("expressions", "[lib][stack]")
 {
     using ray::lib::detail::evaluate;
-    const std::map<std::string, double> vars = {{"feature.threadDepth", 12}, {"tool.threadPitch", 1.25}, {"w", 4}};
+    const ray::lib::QueryVars vars = {{"feature.threadDepth", 12.0}, {"tool.threadPitch", 1.25}, {"w", 4.0}};
     CHECK(*evaluate("$feature.threadDepth + 2 * $tool.threadPitch", vars) == 14.5);
     CHECK(*evaluate("0.6*w", vars) == 0.6 * 4);
     CHECK(*evaluate("-(w - 1) / 2", vars) == -1.5);
@@ -211,4 +245,110 @@ TEST_CASE("templatesFor picks matching templates, the most specific first", "[li
     CHECK(got == std::vector<std::string>{"d aluminium on the Haas", "c aluminium", "a any", "b any"});
     CHECK(stack.templatesFor("hole.tapped", steel, ray::MachineId{}).size() == 3);
     CHECK(stack.templatesFor("", steel, ray::MachineId{}).size() == 4);
+}
+
+TEST_CASE("roots say where items come from, which are writable, and their names", "[lib][stack]")
+{
+    TempDir builtin;
+    TempDir shop;
+    TempDir user;
+    writeFile(builtin.path("library.json"), R"({"schema":1,"name":"Built-in"})");
+    saveAll(builtin.dir(), {sampleTool(1), sampleTool(2)});
+    {
+        auto library = ray::lib::ILibrary::open(builtin.dir());
+        REQUIRE(library);
+        REQUIRE((*library)->save(sampleHolder(10)));
+        REQUIRE((*library)->save(sampleMaterial(11)));
+        REQUIRE((*library)->save(sampleMachine(12)));
+        REQUIRE((*library)->save(sampleTemplate(13)));
+    }
+    auto mine = sampleTool(2);
+    mine.name = "my tool 2";
+    saveAll(user.dir(), {mine});
+    TempDir parent;
+    const std::string missing = parent.path("gone");
+
+    LibraryStack stack;
+    stack.setRoots({builtin.dir(), shop.dir(), missing, user.dir()}, 1);
+    const auto roots = stack.roots();
+    REQUIRE(roots.size() == 4);
+    CHECK(roots[0].name == "Built-in");
+    CHECK(roots[0].open);
+    CHECK_FALSE(roots[0].writable); // the built-in library is read-only
+    CHECK(roots[1].writable);
+    CHECK_FALSE(roots[2].open);
+    CHECK_FALSE(roots[2].writable);
+    CHECK(roots[2].name == "gone"); // no library.json: the folder's name
+    CHECK(roots[3].writable);
+    CHECK(stack.library(0) == nullptr);
+    CHECK(stack.library(1) != nullptr);
+    CHECK(stack.library(2) == nullptr);
+    CHECK(stack.library(9) == nullptr);
+
+    using ray::lib::ItemKind;
+    CHECK(stack.rootOf(ItemKind::Tool, fixedId(1)) == std::optional<std::size_t>(0));
+    CHECK(stack.rootOf(ItemKind::Tool, fixedId(2)) == std::optional<std::size_t>(3)); // the user's copy wins
+    CHECK(stack.rootOf(ItemKind::Holder, fixedId(10)) == std::optional<std::size_t>(0));
+    CHECK(stack.rootOf(ItemKind::Material, fixedId(11)) == std::optional<std::size_t>(0));
+    CHECK(stack.rootOf(ItemKind::Machine, fixedId(12)) == std::optional<std::size_t>(0));
+    CHECK(stack.rootOf(ItemKind::Template, fixedId(13)) == std::optional<std::size_t>(0));
+    CHECK_FALSE(stack.rootOf(ItemKind::Tool, fixedId(10)).has_value());
+
+    // Merged lists of every kind, sorted by id.
+    REQUIRE(stack.tools().size() == 2);
+    CHECK(stack.tools()[0].id.value == fixedId(1));
+    CHECK(stack.tools()[1].name == "my tool 2");
+    CHECK(stack.holders().size() == 1);
+    CHECK(stack.materials().size() == 1);
+    CHECK(stack.machines().size() == 1);
+    REQUIRE(stack.templates().size() == 1);
+    REQUIRE(stack.opTemplate(fixedId(13)) != nullptr);
+    CHECK(stack.opTemplate(fixedId(13))->name == "Template 13");
+
+    // Saving into a writable root's library shows after remerge, which also calls the listeners.
+    int calls = 0;
+    const int listener = stack.subscribe([&calls] { ++calls; });
+    CHECK(listener != 0);
+    CHECK(stack.subscribe({}) == 0);
+    auto shopTool = sampleTool(3);
+    REQUIRE(stack.library(1)->save(shopTool));
+    CHECK(stack.tool(shopTool.id) == nullptr);
+    stack.remerge();
+    CHECK(calls == 1);
+    CHECK(stack.rootOf(ItemKind::Tool, fixedId(3)) == std::optional<std::size_t>(1));
+    REQUIRE(stack.library(1)->remove(ItemKind::Tool, fixedId(3)));
+    stack.remerge();
+    CHECK(calls == 2);
+    CHECK(stack.tool(shopTool.id) == nullptr);
+    stack.unsubscribe(listener);
+    stack.remerge();
+    CHECK(calls == 2);
+}
+
+TEST_CASE("one watch over the whole stack merges a change on the UI thread and calls the listeners", "[lib][stack]")
+{
+    ray::lib::detail::setWatchIntervalMs(20);
+    TempDir builtin;
+    TempDir user;
+    saveAll(builtin.dir(), {sampleTool(1)});
+    ray::test::TestDispatcher dispatcher;
+    {
+        LibraryStack stack;
+        stack.watch(dispatcher);
+        stack.setRoots({builtin.dir(), user.dir()}, 1); // roots set after watch() are watched too
+        int calls = 0;
+        stack.subscribe([&calls] { ++calls; });
+        // Another writer (here: another library over the same folder) adds a tool to the user library.
+        saveAll(user.dir(), {sampleTool(2)});
+        CHECK(dispatcher.runUntil([&] { return stack.tool(ray::ToolId{fixedId(2)}) != nullptr; },
+                                  std::chrono::milliseconds(10000)));
+        CHECK(calls >= 1);
+        CHECK(stack.rootOf(ray::lib::ItemKind::Tool, fixedId(2)) == std::optional<std::size_t>(1));
+        // New roots: callbacks of the old ones that are still queued do nothing.
+        stack.setRoots({builtin.dir()}, 1);
+        dispatcher.runUntil([] { return false; }, std::chrono::milliseconds(100));
+        CHECK(stack.tool(ray::ToolId{fixedId(2)}) == nullptr);
+    } // the stack goes with its watch threads; anything still queued finds it gone
+    dispatcher.runUntil([] { return false; }, std::chrono::milliseconds(100));
+    ray::lib::detail::setWatchIntervalMs(5000);
 }

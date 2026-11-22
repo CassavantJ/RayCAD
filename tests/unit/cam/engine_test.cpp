@@ -194,15 +194,9 @@ TEST_CASE("an operation's input hash changes with its params, tool, cutting data
     differs(exec(f.state, setupEdit(R"("wcs":{"origin":{"mode":"stockCorner","corner":3}})")), f.build, "WCS origin");
     differs(exec(f.state, setupEdit(R"("wcs":{"origin":{"mode":"stockCorner"},"zFace":)" + f.topRef + "}")), f.build,
             "WCS face");
-    differs(exec(exec(f.state, command("cam.library.embed", library({}, {}, machineJson(2)))),
+    differs(exec(exec(f.state, command("cam.library.embed", library({}, {}, machineJson(2, 9000)))),
                  setupEdit(R"("machine":")" + id('9', 2) + "\"")),
             f.build, "machine");
-    {
-        std::string peck = machineJson(1);
-        peck.insert(peck.find("\"rigidTapping\""), "\"peckClearance\":0.3,");
-        differs(exec(f.state, command("cam.library.embed", library({}, {}, peck))), f.build,
-                "the embedded machine's peck clearance");
-    }
     // The part itself (here: the part is a different box; its top face is then gone, see the Broken test, so the op
     // without geometry shows the part's content counts).
     {
@@ -245,6 +239,147 @@ TEST_CASE("the input hash ignores unrelated bodies, the tier, names and G-code-o
     const Hash256 atHigh = inputHash(f.state, f.withBody(1, high));
     CHECK(atLow == atHigh);
     CHECK(atLow == h0);
+}
+
+namespace {
+// The JSON with every occurrence of `from` replaced by `to`.
+std::string replaced(std::string text, const std::string& from, const std::string& to)
+{
+    REQUIRE(text.find(from) != std::string::npos);
+    for (auto at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) {
+        text.replace(at, from.size(), to);
+    }
+    return text;
+}
+// The JSON object with members added in front.
+std::string withMembers(const std::string& object, const std::string& members)
+{
+    return "{" + members + "," + object.substr(1);
+}
+} // namespace
+
+TEST_CASE("the input hash takes the tool's and holder's geometry and the machine fields a generator reads",
+          "[cam][engine][hash]")
+{
+    Fixture f;
+    const doc::DocStatePtr withHolder = exec(f.state, opEdit(R"("tool":{"holder":")" + id('e', 1) + R"("})"));
+    const Hash256 h0 = inputHash(withHolder, f.build);
+    const auto embed = [&](const std::string& tools, const std::string& holders, const std::string& machines) {
+        return exec(withHolder, command("cam.library.embed", library(tools, holders, machines)));
+    };
+    const auto same = [&](const doc::DocStatePtr& state, const char* what) {
+        INFO(what);
+        CHECK(inputHash(state, f.build) == h0);
+    };
+    const auto differs = [&](const doc::DocStatePtr& state, const char* what) {
+        INFO(what);
+        CHECK(inputHash(state, f.build) != h0);
+    };
+    // Not what a generator reads: none of these makes the operation stale.
+    same(embed(replaced(toolJson(1), "Tool 1", "Renamed tool"), {}, {}), "tool renamed");
+    same(embed(withMembers(toolJson(1), R"("vendor":"Acme","productId":"A-6","comment":"From the catalogue",)"
+                                        R"("bodyMaterial":"HSS","threadSpec":"M6x1","aCoating":"TiAlN")"),
+               {}, {}),
+         "tool vendor, order number, comment, body material, thread designation and an unknown key");
+    same(embed(replaced(toolJson(1), R"("defaultToolNumber":1)", R"("defaultToolNumber":9)"), {}, {}),
+         "default tool number");
+    same(embed(withMembers(toolJson(1), R"("presets":[{"material":"b0000000-0000-4000-8000-000000000099",)"
+                                        R"("opClass":"rough","surfaceSpeed":250,"chipLoad":0.05,)"
+                                        R"("maxRadialFraction":0.1,"maxAxialFraction":1,"rampAngle":2}])"),
+               {}, {}),
+         "cutting data of a material (presets): the operation has its own");
+    same(embed({}, replaced(holderJson(1), "Holder 1", "Renamed holder"), {}), "holder renamed");
+    same(embed({}, withMembers(holderJson(1), R"("vendor":"Acme","comment":"measured")"), {}),
+         "holder vendor and comment");
+    same(embed({}, {}, replaced(machineJson(1), "Mill 1", "Renamed mill")), "machine renamed");
+    same(embed({}, {}, replaced(machineJson(1), R"("useG187":true)", R"("useG187":false)")),
+         "a post property of the machine");
+    same(embed({}, {},
+               replaced(machineJson(1), R"("toolChanger":{"capacity":20})",
+                        R"("toolChanger":{"capacity":40,"changeSeconds":2})")),
+         "the tool changer");
+    same(embed({}, {}, replaced(machineJson(1), R"("powerKw":7.5)", R"("powerKw":11,"torqueNm":80)")),
+         "spindle power and torque (feeds are the operation's)");
+    same(embed({}, {},
+               replaced(replaced(machineJson(1), R"("dialect":"generic-iso")", R"("dialect":"fanuc")"),
+                        R"("defaultPost":"generic-iso")", R"("defaultPost":"fanuc")")),
+         "controller dialect and default post");
+    same(embed({}, {}, withMembers(machineJson(1), R"("vendor":"Haas","model":"VF-2","verified":true)")),
+         "vendor, model, verified");
+    // The machine's peck clearance is read when a cycle is expanded into plain moves (post host, backplot), from the
+    // machine as it is then; the toolpath does not change with it (its moves carry their own cyclePeckClearance).
+    const auto withPeck =
+        embed({}, {}, replaced(machineJson(1), R"("rigidTapping":true)", R"("peckClearance":0.3,"rigidTapping":true)"));
+    same(withPeck, "the machine's peck clearance");
+    // The document keeps it (the library's codec), for the post host and the backplot.
+    CHECK(withPeck->cam->machines.at(MachineId{Uuid::fromString(id('9', 1))}).item.peckClearance == 0.3);
+    // What a generator reads: each of these does.
+    differs(embed(replaced(toolJson(1), R"("fluteLength":20)", R"("fluteLength":22)"), {}, {}), "flute length");
+    differs(embed(replaced(toolJson(1), R"("flutes":3)", R"("flutes":2)"), {}, {}), "flutes");
+    differs(embed(replaced(toolJson(1), R"("type":"flatEndMill")", R"("type":"ballEndMill")"), {}, {}), "tool type");
+    differs(embed(withMembers(toolJson(1), R"("cornerRadius":0.5)"), {}, {}), "corner radius");
+    differs(embed({}, replaced(holderJson(1), R"("upperDiameter":40)", R"("upperDiameter":42)"), {}), "holder segment");
+    differs(embed({}, replaced(holderJson(1), R"("gaugeLength":40)", R"("gaugeLength":45)"), {}), "gauge length");
+    differs(embed({}, {}, machineJson(1, 10000)), "maximum spindle speed");
+    differs(embed({}, {}, replaced(machineJson(1), R"("max":500)", R"("max":600)")), "axis travel");
+    differs(embed({}, {}, replaced(machineJson(1), R"("rigidTapping":true)", R"("rigidTapping":false)")),
+            "rigid tapping");
+}
+
+TEST_CASE("a generator receives the items reduced to what the input hash covers", "[cam][engine][hash]")
+{
+    lib::Tool tool;
+    tool.id = ToolId{Uuid::fromString(id('d', 1))};
+    tool.name = "Tool";
+    tool.vendor = "Acme";
+    tool.comment = "c";
+    tool.extraJson = R"({"x":1})";
+    tool.threadSpec = "M6x1";
+    tool.presets.push_back(lib::ToolPreset{});
+    tool.defaultToolNumber = 4;
+    tool.type = lib::ToolType::Tap;
+    tool.diameter = 6;
+    tool.threadPitch = 1;
+    const lib::Tool seen = generatorTool(tool);
+    CHECK(seen.id.value == Uuid{});
+    CHECK(seen.name.empty());
+    CHECK(seen.vendor.empty());
+    CHECK(seen.comment.empty());
+    CHECK(seen.extraJson.empty());
+    CHECK(seen.threadSpec.empty());
+    CHECK(seen.presets.empty());
+    CHECK(seen.defaultToolNumber == 0);
+    CHECK(seen.type == lib::ToolType::Tap);
+    CHECK(seen.diameter == 6);
+    CHECK(seen.threadPitch == 1);
+    CHECK(seen.geometryHash() == tool.geometryHash());
+
+    lib::Holder holder;
+    holder.name = "H";
+    holder.gaugeLength = 40;
+    holder.segments = {{40, 30, 40}};
+    CHECK(generatorHolder(holder).name.empty());
+    CHECK(generatorHolder(holder).geometryHash() == holder.geometryHash());
+
+    lib::MachineDef machine;
+    machine.name = "M";
+    machine.maxRpm = 12000;
+    machine.spindlePowerKw = 7.5;
+    machine.controlDialect = "fanuc";
+    machine.postPropertyOverrides = {{"a", "1"}};
+    machine.rigidTapping = true;
+    machine.peckClearance = 0.3;
+    machine.axes = {{'X', 0, 500, 1, 2, 3}};
+    const lib::MachineDef m = generatorMachine(machine);
+    CHECK(m.peckClearance == 0); // an expansion setting, not a generator input (cam.h operationInputHash)
+    CHECK(m.name.empty());
+    CHECK(m.spindlePowerKw == 0);
+    CHECK(m.controlDialect.empty());
+    CHECK(m.postPropertyOverrides.empty());
+    CHECK(m.maxRpm == 12000);
+    CHECK(m.rigidTapping);
+    REQUIRE(m.axes.size() == 1);
+    CHECK(m.axes[0].maxTravel == 500);
 }
 
 TEST_CASE("the input hash is the same after the document is saved and read back", "[cam][engine][hash]")

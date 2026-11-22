@@ -3,6 +3,9 @@
 // Status: PLAN DRAFT, revised by T-017 (asynchronous open/save, several open documents, app events and jobs,
 // AppOptions/makeApp for the GUI, HeadlessApp; CAM, libraries and post are null until M2); crash recovery wired in
 // (a recovery journal per document, pendingRecoveries/recover/discardRecovery, Warning events).
+// Wave-1 CAM modules joined (also in docs/interfaces/api.h): operationTypes(), libraries(), cam() and posts() are
+// made by the app (one of each per app); AppOptions::libraryRoots and builtinLibraryDir say how the library stack is
+// made; library settings (ray_api/settings.h "library.*") change it while the app runs.
 //
 // The UI, the command palette, keyboard shortcuts, scripts (v2) and the MCP server (v2) all call this
 // and nothing else. Built-in features and operations are registered through the same registries a
@@ -145,7 +148,18 @@ public:
     virtual const doc::CommandRegistry& commandTypes() const = 0;
     virtual IJobSystem& jobs() = 0;
     virtual IUiDispatcher& dispatcher() = 0;
-    // CAM, tool libraries, simulation and post processing arrive in M2 (PLAN.md 13): until then these are null.
+    // CAM, tool libraries and post processing (M2). Never null for an app made by makeApp / makeHeadlessApp.
+    // operationTypes: add operation types only before the first document is created or opened (the CAM engine's
+    //   workers read the registry without a lock).
+    // libraries: the library stack (AppOptions::libraryRoots); UI thread only, as LibraryStack is. The app watches
+    //   it (LibraryStack::watch) and makes it again when the library settings change.
+    // cam: the one CAM engine of the app, over every open document (makeCamEngine with doc::camSnapshot). Its
+    //   generations are app jobs: closing a document cancels those of its operations, and the app's destructor
+    //   cancels and waits for all of them. They are not listed in activeJobs(); ICamEngine::status says Generating.
+    //   Toolpaths are cached by input hash, so two documents with the same inputs share them; operation ids are
+    //   assumed unique across open documents (two copies of one file open at once share each operation's last
+    //   toolpath and running job).
+    // posts: the post engine (post::makeQuickJsPostEngine).
     virtual cam::OperationRegistry* operationTypes() = 0;
     virtual lib::LibraryStack* libraries() = 0;
     virtual cam::ICamEngine* cam() = 0;
@@ -220,7 +234,14 @@ struct AppOptions {
     // A job system to use instead of making one (it must outlive the app and dispatch to `dispatcher`).
     IJobSystem* jobs = nullptr;
     int workerThreads = 0;                              // for the job system the app makes; 0 = one per hardware thread
-    std::vector<std::string> libraryRoots;              // lowest first; unused until M2
+    // The library stack (lowest first). Non-empty: exactly these roots, all writable, whatever the settings (tests,
+    // golden-file tools). Empty: the default stack, which follows the settings: the built-in library (read-only,
+    // builtinLibraryDir), then the shared folders of "library.sharedFolders" in order, then the user library
+    // ("library.userFolder", else <user data dir>/library, made when missing; none when nothing is persisted).
+    std::vector<std::string> libraryRoots;
+    // The built-in library for the default stack. nullopt: the shipped one next to the program (resources/library
+    // beside the executable, ../share/raycad/library, or ../Resources/library in a macOS bundle); "": none.
+    std::optional<std::string> builtinLibraryDir;
     // nullopt: $RAYCAD_USER_DATA_DIR if set, else the platform's per-user application data folder
     // (%LOCALAPPDATA%\RayCAD, ~/Library/Application Support/RayCAD, $XDG_DATA_HOME/raycad or ~/.local/share/raycad),
     // resolved at run time. "": nothing is persisted.

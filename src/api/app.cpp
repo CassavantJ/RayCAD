@@ -104,6 +104,9 @@ Status AppImpl::init(AppOptions options, std::unique_ptr<QueueDispatcher> owned)
         // app names it through the store's own hook; for the platform default it is the store's default anyway.
         store::detail::setRecoveryDir(fromFsPath(toFsPath(userDataDir_) / "recovery"));
     }
+    if (auto st = initCam(options); !st) {
+        return withContext(st.error(), "starting CAM, the libraries and the post engine");
+    }
     actions_ = makeActionRegistry(*this);
     if (auto st = registerBuiltinActions(*this); !st) {
         return withContext(st.error(), "registering the built-in actions");
@@ -142,6 +145,8 @@ AppImpl::~AppImpl()
         for (auto& w : waits) {
             w();
         }
+        // The CAM engine (its generations were app jobs, ended above) and the library stack's watch threads.
+        shutdownCam();
         // 2. Close every document; a rebuild still running reads no file after this. Unsaved changes keep their
         //    journal, so the next start offers them for recovery.
         std::vector<DocEntry*> entries;
@@ -406,6 +411,9 @@ void AppImpl::closeEntry(DocEntry* entry, bool keepJournal)
         }
     }
     const std::string id = owned->od.id;
+    if (owned->od.document) {
+        cancelGenerations(owned->od.document->state()); // its toolpaths are of no use any more
+    }
     owned->fileSource->detach();
     owned->od.document.reset();
     {

@@ -302,8 +302,8 @@ ray::lib::Tool sampleTool(int n, ray::lib::ToolType type, double diameter)
         t.threadPitch = 1;
         t.threadSpec = "M6x1";
     }
-    t.presets.push_back({ray::MaterialId{fixedId(900)}, "rough", 250, 0.05, 0.1, 2, 2});
-    t.presets.push_back({ray::MaterialId{fixedId(900)}, "finish", 300, 0.04, 0.05, 2, 2});
+    t.presets.push_back({ray::MaterialId{fixedId(900)}, "rough", 250, 0.05, 0.1, 2, 2, ""});
+    t.presets.push_back({ray::MaterialId{fixedId(900)}, "finish", 300, 0.04, 0.05, 2, 2, ""});
     return t;
 }
 

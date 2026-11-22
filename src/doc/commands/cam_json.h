@@ -20,25 +20,15 @@
 //   Heights   {"bottom","clearance","feedPlane","retract","top"}              mm
 //   ToolRef   {"diameterOffset","holder":"<uuid>"|null,"lengthOffset","number","stickOut","tool":"<uuid>"}
 //   TopoRef   naming::toJson (naming.h)
-// Embedded library items, one object each, in the library file format of PLAN.md 3.6 (field names follow
-// libraries.h; angles in degrees as there):
-//   Tool      {"bodyMaterial","cornerRadius","defaultToolNumber","diameter","fluteLength","flutes","id","name",
-//              "overallLength","presets":[{"chipLoad","material","maxAxialFraction","maxRadialFraction","opClass",
-//              "rampAngle","surfaceSpeed"}],"productId","schema":1,"shankDiameter","shoulderLength","threadPitch",
-//              "threadSpec","tipAngle","tipDiameter","type":"flatEndMill"|...,"vendor"}
-//   Holder    {"gaugeLength","id","name","schema":1,"segments":[{"height","lowerDiameter","upperDiameter"}],"vendor"}
-//   Material  {"density","group","hardnessHb","id","name","schema":1,"specificCuttingForce"}
-//   Machine   {"axes":[{"accel","letter":"X","max","maxFeed","min","rapid"}],"control":{"defaultPost","dialect",
-//              "maxBlockNumber","maxProgramNameLength","peckClearance" (only when not 0),"rigidTapping"},"id",
-//              "kind":"mill3"|"mill4"|"mill5"|"lathe",
-//              "model","name","options":{"probe","throughSpindleCoolant","toolSetter"},"postProperties":{...},
-//              "schema":1,"spindle":{"maxRpm","minRpm","powerKw","torqueNm"},"toolChanger":{"capacity",
-//              "changeSeconds"},"vendor"}
-//              (postProperties values are kept as strings; a value that is a JSON literal or number, such as true,
-//              is written back as that literal)
+// Embedded library items (tools, holders, machines, materials), one object each: exactly the library's file format
+// (schemas/*.schema.json, libraries.h toJson), read and written by the library's codec through cam.h embeddedJson and
+// embedded*FromJson, so a library file and the same item embedded in a document are the same JSON. The item's schema
+// is checked in a stored object and in command arguments alike; the keys it does not know are kept in the item's
+// extraJson in both (they come from the library file the item was taken from).
 // Optional members (with their defaults) are the same in a stored object and in command arguments; a stored object
-// always has all of them. Unknown keys of a stored object, at any depth of nested objects (not inside arrays), are
-// kept in the struct's extraJson and written back unchanged; in command arguments they are refused.
+// always has all of them. Unknown keys of a stored setup, operation or CAM object, at any depth of nested objects
+// (not inside arrays), are kept in the struct's extraJson and written back unchanged; in command arguments they are
+// refused.
 #pragma once
 
 #include "../json.h"
@@ -85,15 +75,11 @@ json::Value toJson(const cam::Heights&);
 json::Value toJson(const std::vector<naming::TopoRef>&);
 json::Value refToJson(const naming::TopoRef&);
 
-// ---------- Embedded library items ----------
+// ---------- Embedded library items (the library's codec; written with cam::embeddedJson) ----------
 Result<cam::Embedded<lib::Tool>> readTool(const json::Value&, const Source&, std::string_view field);
 Result<cam::Embedded<lib::Holder>> readHolder(const json::Value&, const Source&, std::string_view field);
 Result<cam::Embedded<lib::MachineDef>> readMachine(const json::Value&, const Source&, std::string_view field);
 Result<cam::Embedded<lib::Material>> readMaterial(const json::Value&, const Source&, std::string_view field);
-json::Value toJson(const cam::Embedded<lib::Tool>&);
-json::Value toJson(const cam::Embedded<lib::Holder>&);
-json::Value toJson(const cam::Embedded<lib::MachineDef>&);
-json::Value toJson(const cam::Embedded<lib::Material>&);
 
 // ---------- Whole objects ----------
 json::Value toJson(const cam::Setup&);

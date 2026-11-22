@@ -45,7 +45,9 @@ function(ray_precompile_all)
     # job and module tests).
     foreach(_test IN ITEMS
             ray_api_tests ray_doc_tests ray_doc_s4_tests ray_kernel_tests ray_naming_tests ray_naming_oracle_tests
-            ray_render_tests ray_sketch_tests ray_store_tests)
+            ray_render_tests ray_sketch_tests ray_store_tests
+            # The M2 suites: library (6 sources), CAM engine (3 large ones), post host (6), sim backplot (4).
+            ray_lib_tests ray_cam_engine_tests ray_post_tests ray_sim_tests)
         ray_precompile(${_test} ${RAY_PCH_STD} ${RAY_PCH_CATCH2})
     endforeach()
     # The one Qt Quick test with several translation units.

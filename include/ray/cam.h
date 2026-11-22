@@ -16,6 +16,16 @@
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
+// Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
+//  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
+//    an item embedded from a library keeps them;
+//  - embeddedJson / embedded*FromJson: an embedded item's JSON is the library's file format (lib::toJson), so a
+//    library file and the same item in a document are the same JSON. src/doc reads and writes embedded items through
+//    these, as it may use cam but not lib (PLAN.md 1.1);
+//  - operationInputHash takes the tool's and holder's geometry (geometryHash) and only the machine fields a generator
+//    reads; GenerateInput carries the items reduced to exactly that (generatorTool and friends);
+//  - default member initialisers for the plain structs (not Move, FeedsInput/FeedsResult, ResolvedGeometry,
+//    HoleSegment and RecognizedHole, which other tasks are changing).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -31,8 +41,8 @@ namespace ray::doc { struct DocState; using DocStatePtr = std::shared_ptr<const 
 namespace ray::cam {
 
 // ---------- Setup ----------
-struct BoxStock      { double xNeg, xPos, yNeg, yPos, zNeg, zPos; };   // offsets beyond the part bounding box, in the WCS frame
-struct CylinderStock { double diameter, length; int axis; double endOffset; };
+struct BoxStock      { double xNeg = 0, xPos = 0, yNeg = 0, yPos = 0, zNeg = 0, zPos = 0; };   // offsets beyond the part bounding box, in the WCS frame
+struct CylinderStock { double diameter = 0, length = 0; int axis = 2; double endOffset = 0; };   // axis 0 x, 1 y, 2 z
 struct SolidStock    { BodyId body; };
 struct FromSetupStock{ SetupId previous; };                            // in-process stock carried from an earlier setup
 using StockDef = std::variant<BoxStock, CylinderStock, SolidStock, FromSetupStock>;
@@ -41,7 +51,7 @@ struct Wcs {
     // Orientation and origin are defined by references so they follow model edits.
     std::optional<naming::TopoRef> zFace;      // Z = outward normal of this planar face
     std::optional<naming::TopoRef> xEdge;      // X along this edge
-    enum class OriginMode { StockCorner, StockTopCenter, ModelPoint } originMode;
+    enum class OriginMode { StockCorner, StockTopCenter, ModelPoint } originMode = OriginMode::StockCorner;
     int stockCornerIndex = 0;                  // 0..7 when StockCorner
     std::optional<naming::TopoRef> originVertex;
     int workOffset = 1;                        // 1 => G54, 2 => G55 ...
@@ -63,19 +73,19 @@ struct Setup {
 };
 
 // ---------- Operation ----------
-struct ToolRef { ToolId tool; HolderId holder; int toolNumber; int lengthOffset; int diameterOffset; double stickOut; };
+struct ToolRef { ToolId tool; HolderId holder; int toolNumber = 1; int lengthOffset = 1; int diameterOffset = 1; double stickOut = 0; };
 
 struct CuttingData {
-    double spindleRpm; bool clockwise = true;
-    double feedCut, feedPlunge, feedRamp, feedLeadIn, feedLeadOut;   // mm/min
-    enum class Coolant { Off, Flood, Mist, ThroughTool, Air } coolant;
+    double spindleRpm = 0; bool clockwise = true;
+    double feedCut = 0, feedPlunge = 0, feedRamp = 0, feedLeadIn = 0, feedLeadOut = 0;   // mm/min
+    enum class Coolant { Off, Flood, Mist, ThroughTool, Air } coolant = Coolant::Off;
 };
 
-struct Heights {           // all relative to the WCS Z of the referenced level
-    double clearance;      // rapid-safe plane between operations
-    double retract;        // rapid-safe plane inside an operation
-    double feedPlane;      // switch from rapid to feed
-    double top, bottom;    // machining range; may be driven by geometry references
+struct Heights {               // all relative to the WCS Z of the referenced level
+    double clearance = 0;      // rapid-safe plane between operations
+    double retract = 0;        // rapid-safe plane inside an operation
+    double feedPlane = 0;      // switch from rapid to feed
+    double top = 0, bottom = 0;    // machining range; may be driven by geometry references
 };
 
 struct Operation {
@@ -96,10 +106,10 @@ struct Operation {
 // A library item embedded in the document (PLAN.md 3.1 "embedded", libraries.h): the copy its operations and setups
 // use, so a file opens, generates and posts identically on a machine that does not have the library. It is taken
 // from the library on first use (the cam.* commands carry it in their arguments) and changes only by a command.
+// The item's unknown keys are its own extraJson (libraries.h), so they come along from the library.
 template <class T>
 struct Embedded {
     T item;
-    std::string extraJson;                     // unknown keys of the item's JSON, kept and written back
 };
 
 struct CamState {
@@ -113,6 +123,19 @@ struct CamState {
     bool empty() const { return setups.empty() && operations.empty() && tools.empty() && holders.empty() &&
                                 machines.empty() && materials.empty() && extraJson.empty(); }
 };
+
+// The JSON of an embedded item is the library's file format of the item (lib::toJson: canonical, its unknown keys
+// included), so a library file and the same item embedded in a document are the same JSON; and back (lib::toolFromJson
+// and the others: the item's schema is checked; FormatError, or FormatTooNew for a newer "schema", naming the first
+// problem). src/doc stores and reads embedded items through these, as it may use cam but not lib (PLAN.md 1.1).
+std::string embeddedJson(const Embedded<lib::Tool>&);
+std::string embeddedJson(const Embedded<lib::Holder>&);
+std::string embeddedJson(const Embedded<lib::MachineDef>&);
+std::string embeddedJson(const Embedded<lib::Material>&);
+Result<Embedded<lib::Tool>> embeddedToolFromJson(std::string_view);
+Result<Embedded<lib::Holder>> embeddedHolderFromJson(std::string_view);
+Result<Embedded<lib::MachineDef>> embeddedMachineFromJson(std::string_view);
+Result<Embedded<lib::Material>> embeddedMaterialFromJson(std::string_view);
 
 // ---------- Toolpath IR ----------
 // Coordinates are in the setup WCS, integer nanometres. This is the single source for backplot,
@@ -227,9 +250,9 @@ struct Toolpath {
     OperationId operation;
     Hash256 inputHash;               // hash of everything the generator consumed
     std::vector<Move> moves;
-    Nm startX, startY, startZ;
+    Nm startX = 0, startY = 0, startZ = 0;
     // maxEngagementDeg alone is a short spike (S5); p99 and air-cut length are what describe an adaptive path.
-    struct Stats { double cutLengthMm, rapidLengthMm; double minZ, maxZ; double maxEngagementDeg, p99EngagementDeg, airCutLengthMm; } stats;
+    struct Stats { double cutLengthMm = 0, rapidLengthMm = 0; double minZ = 0, maxZ = 0; double maxEngagementDeg = 0, p99EngagementDeg = 0, airCutLengthMm = 0; } stats;
     std::vector<std::string> warnings;   // includes generator failure flags: start point not found, uncleared area remains, lead failed
     // The RCTP format, canonical little-endian, the golden-file format (PLAN.md 3.6): "RCTP", u32 version
     // (kToolpathFormatVersion), operation id (16 bytes), inputHash (32 bytes), u64 move count, startX, startY, startZ
@@ -257,6 +280,10 @@ struct ResolvedGeometry {
     // 2D in-process stock for rest-aware 2.5D ops: boundary loops of remaining material per Z level, if known.
     std::optional<std::vector<std::pair<double, std::vector<kernel::ProfileLoop>>>> stockSlices;
 };
+// The engine hands a generator the embedded tool, holder and machine reduced to what the input hash covers
+// (generatorTool, generatorHolder, generatorMachine below): ids, names, vendor text, presets, comments and the
+// machine's post and controller fields are empty or zero there, so a generator cannot depend on what does not make
+// its operation stale. Cutting data is the operation's own (Operation::cutting).
 struct GenerateInput {
     const Operation& op;
     const lib::Tool& tool;
@@ -287,7 +314,7 @@ private:
 
 // ---------- Staleness / associativity ----------
 enum class OpStatus { UpToDate, Stale, Generating, Failed, ReferenceBroken, Suppressed };
-struct OpState { OpStatus status; std::string message; std::shared_ptr<const Toolpath> toolpath; };
+struct OpState { OpStatus status = OpStatus::Stale; std::string message; std::shared_ptr<const Toolpath> toolpath; };
 
 class ICamEngine {
 public:
@@ -313,20 +340,32 @@ using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const d
 
 // The input hash of operation `op` (Toolpath::inputHash): BLAKE3 over everything its generator consumes, and nothing
 // else, so it changes exactly when the toolpath may change:
-//   the operation's type, params, tool stick-out, cutting data and heights; the embedded tool, holder and machine
-//   (their content, not their ids); each geometry reference as it resolves now (state, and the content of every
+//   the operation's type, params, tool stick-out, cutting data and heights; the embedded tool's and holder's geometry
+//   (lib::Tool::geometryHash, lib::Holder::geometryHash) and the machine fields a generator reads (generatorMachine:
+//   kind, axes, spindle speed range, rigid tapping); each geometry reference as it resolves now (state, and the content of every
 //   resolved element: surface, curve or point geometry); the setup's part and fixture bodies (each body's content
 //   hash, in setup order: GenerateInput carries the whole part shapes, so an edit anywhere on a part body counts);
 //   the stock (its definition; a solid stock's body content; a previous setup's stock and operation hashes for
 //   FromSetupStock) and the WCS (mode, corner, and its references as they resolve).
 // Not in it: names, the template id, tool number and offset registers, program number and comment, post, work
-// offset, operation order, bodies the setup does not use, the document's other features, and anything of the
-// hardware tier (display tessellation is not part of a shape's content). Generators must not read Operation::name or templateId.
+// offset, operation order, bodies the setup does not use, the document's other features, the library items' ids,
+// names, vendor text, comments, presets (cutting data is the operation's), thread designation, body material and
+// unknown keys, the machine's power, torque, tool changer, controller, options, post properties and peck clearance
+// (lib::MachineDef::peckClearance: it changes how a cycle is expanded into plain moves, which the post host and the
+// backplot work out from the current machine when they run, not the toolpath, whose moves carry their own
+// cyclePeckClearance), and anything of the hardware tier (display tessellation is not part of a shape's content). Generators must not read Operation::name
+// or templateId.
 // Errors: ReferenceBroken when a geometry or WCS reference does not resolve usably (Broken; Repaired and not
 // confirmed; Split or Merged, which change what is machined and need review: naming.h postableWithoutReview), or a
 // body the operation needs is not built; NotFound when the operation, its setup or an embedded item it names is
 // missing; InvalidArgument for a FromSetupStock chain that does not lead to an earlier setup.
 Result<Hash256> operationInputHash(const CamSnapshot&, const naming::IResolver&, const OperationId& op);
+// The items as GenerateInput carries them: copies with only what the input hash covers. A tool keeps its type,
+// flutes, diameters, lengths, corner radius, tip and thread pitch; a holder its gauge length and segments; a machine
+// its kind, axes, minimum and maximum rpm and rigid tapping. Everything else is the default (an empty id and name).
+lib::Tool generatorTool(const lib::Tool&);
+lib::Holder generatorHolder(const lib::Holder&);
+lib::MachineDef generatorMachine(const lib::MachineDef&);
 
 // ---------- Setup resolution (task T-033) ----------
 // A setup's WCS frame and stock, and the ResolvedGeometry an operation is generated on. Pure functions of their
@@ -409,7 +448,7 @@ std::unique_ptr<ICamEngine> makeCamEngine(IJobSystem& jobs, std::shared_ptr<cons
 // Entry falls back in order helix -> ramp along the cut -> pre-drill point (if given); if none fits, generation
 // fails with the minimum width needed (S5: upstream adaptive produced nothing for a slot 1.8 mm wider than the tool).
 enum class EntryKind : std::uint8_t { Helix, Ramp, PreDrill };
-struct LinkOptions { double maxStayDownDistance; bool allowRapidRetract; double leadRadius; double rampAngleDeg; double helixDiameter; double helixMinDiameter; std::vector<EntryKind> entryOrder; };
+struct LinkOptions { double maxStayDownDistance = 0; bool allowRapidRetract = false; double leadRadius = 0; double rampAngleDeg = 0; double helixDiameter = 0; double helixMinDiameter = 0; std::vector<EntryKind> entryOrder; };
 // Orders cut passes and inserts leads, ramps, retracts and links. Never rapids below feedPlane inside stock bounds.
 Result<std::vector<Move>> linkPasses(std::span<const std::vector<Move>> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&);
 
@@ -553,7 +592,7 @@ struct FeedsResult {
 Result<FeedsResult> computeFeeds(const FeedsInput&);
 
 // ---------- Cycle time ----------
-struct CycleTime { double cutSec, rapidSec, toolChangeSec, totalSec; };
+struct CycleTime { double cutSec = 0, rapidSec = 0, toolChangeSec = 0, totalSec = 0; };
 CycleTime estimateCycleTime(std::span<const Toolpath* const>, const lib::MachineDef&);   // v1: trapezoidal accel per axis
 
 } // namespace ray::cam

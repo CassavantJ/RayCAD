@@ -84,7 +84,7 @@ int writer(const std::string& root, const std::string& acksPath, std::uint64_t s
         const int presets = 1 + static_cast<int>(gRng() % 200);
         t.presets.clear();
         for (int i = 0; i < presets; ++i) {
-            t.presets.push_back({ray::MaterialId{libtest::fixedId(1000 + i)}, "rough", 100.0 + i, 0.05, 0.1, 1, 2});
+            t.presets.push_back({ray::MaterialId{libtest::fixedId(1000 + i)}, "rough", 100.0 + i, 0.05, 0.1, 1, 2, ""});
         }
         acks << "B " << which << " " << n << "\n" << std::flush;
         auto saved = (*library)->save(t);

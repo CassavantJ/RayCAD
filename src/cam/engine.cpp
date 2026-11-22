@@ -279,7 +279,7 @@ private:
         if (setup == nullptr || type == nullptr) {
             return failure(ErrorCode::Internal, "The operation changed while its toolpath was being prepared");
         }
-        auto items = detail::itemsOf(cam, *setup, op);
+        auto items = detail::generatorItemsOf(cam, *setup, op); // only what the input hash covers (cam.h)
         if (!items) {
             return tl::unexpected(items.error());
         }
@@ -291,7 +291,7 @@ private:
             return tl::unexpected(geom.error());
         }
         resolving.set(1);
-        const GenerateInput input{op, *items->tool, items->holder, *items->machine, *geom};
+        const GenerateInput input{op, items->tool, items->holder ? &*items->holder : nullptr, items->machine, *geom};
         if (auto valid = type->validate(input); !valid) {
             return tl::unexpected(valid.error());
         }
