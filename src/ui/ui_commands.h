@@ -56,6 +56,7 @@ std::span<const UiCommand> camTreeUiCommands();      // cam/setup_tree.cpp: cam.
 std::span<const UiCommand> camOperationUiCommands(); // cam/operation_tool.cpp: cam.opTool.* (T-045)
 std::span<const UiCommand> camToolsUiCommands();     // cam/tools_model.cpp: cam.toolLibrary.* (T-046)
 std::span<const UiCommand> camPostUiCommands();      // cam/post_tool.cpp: cam.post.* (T-047)
+std::span<const UiCommand> camTemplatesUiCommands(); // cam/templates_model.cpp: cam.templates.* (T-057)
 // All of the above, in that order.
 const std::vector<UiCommand>& allUiCommands();
 

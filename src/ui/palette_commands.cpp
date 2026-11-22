@@ -374,6 +374,8 @@ const std::vector<UiCommand>& allUiCommands()
             out.insert(out.end(), table.begin(), table.end());
         const std::span<const UiCommand> tools = camToolsUiCommands(); // T-046
         out.insert(out.end(), tools.begin(), tools.end());
+        const std::span<const UiCommand> templates = camTemplatesUiCommands(); // T-057
+        out.insert(out.end(), templates.begin(), templates.end());
         return out;
     }();
     return all;

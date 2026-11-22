@@ -12,6 +12,8 @@ var paths = {
     "glass": { d: "M 5.75 2.75 H 11.75 A 1.75 1.75 0 0 1 13.5 4.5 V 10.25 "
                   + "M 4.25 5.25 H 9.25 A 1.75 1.75 0 0 1 11 7 V 11.75 A 1.75 1.75 0 0 1 9.25 13.5 H 4.25 "
                   + "A 1.75 1.75 0 0 1 2.5 11.75 V 7 A 1.75 1.75 0 0 1 4.25 5.25 Z" },
+    // T-057: an operation template (a card over a card, with lines on it).
+    "template": { d: "M 5.25 2.75 H 13.25 V 10.75 M 2.75 5.25 H 10.75 V 13.25 H 2.75 Z M 5 8.5 H 8.5 M 5 11 H 8.5" },
     "chevron-down": { d: "M 4.5 6.25 L 8 9.75 L 11.5 6.25" },
     "chevron-up": { d: "M 4.5 9.75 L 8 6.25 L 11.5 9.75" },
     "chevron-right": { d: "M 6.25 4.5 L 9.75 8 L 6.25 11.5" },

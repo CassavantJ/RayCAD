@@ -74,6 +74,7 @@ public:
         OperationCountRole,
         CanMoveUpRole,
         CanMoveDownRole,
+        TemplateRole, // T-057: the name of the template the operation came from, "" when none
     };
 
     SetupTreeModel(SceneController* scene, Session* session, AppContext* context, QObject* parent = nullptr);
@@ -144,6 +145,7 @@ private:
         QString name, type, detail;
         bool suppressed = false;
         int operations = 0;
+        std::string templateId; // T-057: Operation::templateId
         int index = 0;    // within its list (setups, or the setup's operations)
         int siblings = 0; // the list's length
     };

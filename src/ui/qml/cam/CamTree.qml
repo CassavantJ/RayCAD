@@ -138,6 +138,7 @@ Item {
                             required property bool expanded
                             required property bool canMoveUp
                             required property bool canMoveDown
+                            required property string rowTemplate // T-057: the template it came from, "" none
 
                             readonly property bool isSetup: rowKind === "setup"
                             readonly property bool current: CamTreeModel.currentIndex === index
@@ -164,6 +165,7 @@ Item {
                             height: implicitHeight
                             Accessible.role: Accessible.TreeItem
                             Accessible.name: rowName + (statusText !== "" ? ", " + statusText : "")
+                                             + (rowTemplate !== "" ? ", " + qsTr("from template %1").arg(rowTemplate) : "")
                             Accessible.selected: current
 
                             Rectangle {
@@ -331,6 +333,31 @@ Item {
                                             toolTipText: qsTr("Post this setup (Ctrl+P)")
                                             onClicked: CamPost.open(row.rowId)
                                         }
+                                        // T-057: operation templates.
+                                        RowTool {
+                                            objectName: "camRowTemplates." + row.index
+                                            visible: row.isSetup
+                                            shown: row.hovered
+                                            iconName: "template"
+                                            toolTipText: qsTr("Apply operation templates to this setup's holes")
+                                            onClicked: CamTemplates.open(row.rowId)
+                                        }
+                                        RowTool {
+                                            objectName: "camRowSaveTemplate." + row.index
+                                            visible: !row.isSetup
+                                            shown: row.hovered
+                                            iconName: "template"
+                                            toolTipText: qsTr("Save this operation as a template")
+                                            onClicked: CamTemplates.openSave(row.rowId)
+                                        }
+                                        RowTool {
+                                            objectName: "camRowReapply." + row.index
+                                            visible: !row.isSetup && row.rowTemplate !== ""
+                                            shown: row.hovered
+                                            iconName: "refresh"
+                                            toolTipText: qsTr("Re-apply template %1 to this operation").arg(row.rowTemplate)
+                                            onClicked: CamTemplates.reapply(row.rowId)
+                                        }
                                         RowTool {
                                             objectName: "camRowUp." + row.index
                                             shown: row.hovered && row.canMoveUp
@@ -391,11 +418,13 @@ Item {
                                 }
                             }
 
-                            // What the setup is on, or why the row failed.
+                            // What the setup is on, or why the row failed, or (T-057) the template an operation came
+                            // from.
                             Label {
                                 id: details
                                 objectName: "camRowDetails." + row.index
-                                visible: row.bad ? row.message !== "" : row.isSetup && row.rowDetail !== ""
+                                visible: row.bad ? row.message !== ""
+                                                 : row.isSetup ? row.rowDetail !== "" : row.rowTemplate !== ""
                                 anchors.top: main.bottom
                                 x: icon.x
                                 width: row.width - x - Theme.spacingS
@@ -404,7 +433,8 @@ Item {
                                 maximumLineCount: 4
                                 font: Theme.smallFont
                                 color: row.bad ? Theme.error : Theme.textSecondary
-                                text: row.bad ? row.message : row.rowDetail
+                                text: row.bad ? row.message
+                                      : row.isSetup ? row.rowDetail : qsTr("From template %1").arg(row.rowTemplate)
                             }
                         }
                     }
@@ -435,6 +465,33 @@ Item {
                     iconName: "close"
                     toolTipText: qsTr("Dismiss")
                     onClicked: CamTreeModel.dismissMessage()
+                }
+            }
+            // T-057: what a template action started from a row did (re-apply), while the template panel is closed.
+            Item {
+                visible: !CamTemplates.shown && CamTemplates.status !== ""
+                width: content.width
+                height: templatesMessage.implicitHeight + Theme.spacingS
+                Label {
+                    id: templatesMessage
+                    objectName: "camTreeTemplatesMessage"
+                    x: Theme.spacingS
+                    width: parent.width - 2 * Theme.spacingS - templatesDismiss.width
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                    font: Theme.smallFont
+                    color: CamTemplates.statusIsError ? Theme.error : Theme.textSecondary
+                    text: CamTemplates.status
+                }
+                ToolButton {
+                    id: templatesDismiss
+                    objectName: "camTreeTemplatesDismiss"
+                    anchors.right: parent.right
+                    anchors.rightMargin: Theme.spacingXs
+                    compact: true
+                    iconName: "close"
+                    toolTipText: qsTr("Dismiss")
+                    onClicked: CamTemplates.dismissStatus()
                 }
             }
         }

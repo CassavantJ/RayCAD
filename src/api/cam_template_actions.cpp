@@ -20,8 +20,9 @@
 //   counterboreDiameter, counterboreDepth, countersinkDiameter, count, label, targeted}], "targets": n,
 //   "templates": [{id, name, set, sequence}], "operations": [{name, type, template, templateName, tool, toolName,
 //   toolNumber, holes, params, rpm, feedCut}], "missing": [{template, templateName, rule, holes}], "untouched": n,
-//   "ok": bool, "message": "..."}. Apply: the same with each operation's "id"; it refuses (NotFound, the message naming
-// each missing tool and its holes, nothing created) when a tool is missing, and when no operation would be made.
+//   "ok": bool, "message": "..." (why it cannot be applied)}. Apply: the same with each operation's "id"; it refuses
+// (NotFound, "Nothing was created: " and the message naming each missing tool and its holes) when a tool is missing,
+// and when no operation would be made.
 // Apply is one cam.batch command (one undo step): cam.library.embed for the library tools (and material) the document
 // does not have yet, then cam.operation.add for each operation, at the end of the setup, in the plan's order. Tool
 // numbers: the number the document already gives the tool, else its default number when no other tool has it, else
@@ -679,10 +680,10 @@ Result<Planned> planOnUi(AppImpl& app, const doc::DocState& state, const SetupHo
     if (!p.plan.missing.empty()) {
         p.message = tpl::missingToolsMessage(p.plan, p.templates, p.holes);
     } else if (targets.empty()) {
-        p.message = "Nothing was created: the setup has no recognised hole that the request names";
+        p.message = "The setup has no recognised hole that the request names";
     } else if (p.plan.operations.empty()) {
-        p.message = "Nothing was created: none of the templates applies to the holes named (their feature kind or "
-                    "their conditions do not match)";
+        p.message = "None of the templates applies to the holes named (their feature kind or their conditions do not "
+                    "match)";
     }
     if (!makeCommand || !p.message.empty()) {
         return p;
@@ -875,7 +876,9 @@ Result<ActionResult> applyAction(AppImpl& app, std::string_view argsJson, bool a
                 return result(planJson(*holes, *planned, rq->setup));
             }
             if (!planned->message.empty()) {
-                return fail(ErrorCode::NotFound, planned->message);
+                std::string message = planned->message;
+                message[0] = static_cast<char>(message[0] - 'A' + 'a');
+                return fail(ErrorCode::NotFound, "Nothing was created: " + message);
             }
             if (!app.pointOfNoReturn(ctx.cancel)) {
                 return fail(ErrorCode::Cancelled, "Cancelled");

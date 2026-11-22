@@ -359,6 +359,7 @@ TEST_CASE("picked holes and hole filters choose the targets", "[cam][templates][
                            R"({"setup":")" + kSetup + R"(","set":"Tapped holes","holes":{"threadSpec":"M6x1"}})")};
     CHECK(none.number("ok") == "false");
     CHECK_THAT(none.str("message"), ContainsSubstring("no recognised hole"));
+    CHECK_THAT(none.str("message"), !ContainsSubstring("Nothing was created")); // a preview creates nothing anyway
     auto refused = tryInvoke(*app, "cam.template.apply",
                              R"({"setup":")" + kSetup + R"(","set":"Tapped holes","holes":{"threadSpec":"M6x1"}})");
     REQUIRE_FALSE(refused);

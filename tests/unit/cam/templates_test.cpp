@@ -456,7 +456,7 @@ TEST_CASE("a missing tool is listed with its rule and holes, and nothing else fa
     REQUIRE(plan->missing.size() == 3); // spot drill (20 mm), tap drill, tap
     const std::string message = tpl::missingToolsMessage(*plan, tappedSet, holes);
     INFO(message);
-    CHECK_THAT(message, ContainsSubstring("Nothing was created"));
+    CHECK_THAT(message, ContainsSubstring("No tool in the libraries for 'Spot drill'"));
     CHECK_THAT(message, ContainsSubstring("'Tap' (tap, thread M20x2.5) for 2 holes (M20x2.5 at X 5 Y 5, M20x2.5 at X 45 Y 5)"));
     CHECK_THAT(message, ContainsSubstring("'Tap drill' (drill, diameter 17.47 to 17.53 mm"));
     CHECK_THAT(message, ContainsSubstring("'Spot drill' (spotDrill, diameter at least 20 mm"));

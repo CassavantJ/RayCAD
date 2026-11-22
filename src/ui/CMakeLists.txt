@@ -131,7 +131,8 @@ set(RAY_UI_QML_FILES
     qml/cam/ToolFields.qml
     qml/cam/ToolPicker.qml
     qml/cam/PostDialog.qml # T-047
-    qml/cam/GcodeView.qml)
+    qml/cam/GcodeView.qml
+    qml/cam/Templates.qml) # T-057
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -198,6 +199,8 @@ qt_add_qml_module(ray_ui
         cam/post_view.cpp
         cam/post_tool.h
         cam/post_tool.cpp
+        cam/templates_model.h # T-057
+        cam/templates_model.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick

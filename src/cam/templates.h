@@ -185,8 +185,8 @@ struct Plan {
 // A tool that cannot be found is not an error: it is listed in Plan::missing.
 Result<Plan> planTemplates(std::span<const lib::OpTemplate> templates, std::span<const PlanHole> holes,
                            const PlanContext& context);
-// "Nothing was created: no tool in the libraries for 'Tap drill' (drill, diameter 5.06 to 5.16 mm) for 4 holes
-// (1/4-20 UNC at X 12.7 Y 10.16, ...); ..." for a plan with missing tools.
+// "No tool in the libraries for 'Tap drill' (drill, diameter 5.06 to 5.16 mm) for 4 holes (1/4-20 UNC at X 12.7
+// Y 10.16, ...); ..." for a plan with missing tools.
 std::string missingToolsMessage(const Plan& plan, std::span<const lib::OpTemplate> templates,
                                 std::span<const PlanHole> holes);
 

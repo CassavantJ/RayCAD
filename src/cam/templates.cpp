@@ -1314,13 +1314,13 @@ std::string missingToolsMessage(const Plan& plan, std::span<const lib::OpTemplat
     if (plan.missing.empty()) {
         return {};
     }
-    std::string out = "Nothing was created: ";
+    std::string out;
     bool firstEntry = true;
     for (const MissingTool& m : plan.missing) {
-        out += firstEntry ? "" : "; ";
+        out += firstEntry ? "No" : "; no";
         firstEntry = false;
         const std::string name = m.templateIndex < templates.size() ? templates[m.templateIndex].name : "?";
-        out += "no tool in the libraries for " + inQuotes(name) + " (" + m.rule + ") for " +
+        out += " tool in the libraries for " + inQuotes(name) + " (" + m.rule + ") for " +
                std::to_string(m.holes.size()) + (m.holes.size() == 1 ? " hole (" : " holes (");
         constexpr std::size_t kListed = 3;
         for (std::size_t i = 0; i < m.holes.size() && i < kListed; ++i) {

@@ -940,6 +940,8 @@ FocusScope {
 
     // T-046: the tool library manager (cam/ToolLibrary.qml, cam.toolLibrary.open), made the first time it is shown.
     ToolLibrary {}
+    // T-057: the operation template panel (cam/Templates.qml, cam.templates.open), made the first time it is shown.
+    Templates {}
 
     // T-019: file dialogs, the unsaved-changes prompt and crash recovery, over everything.
     FileDialogs {

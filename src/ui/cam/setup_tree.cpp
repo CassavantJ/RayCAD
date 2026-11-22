@@ -273,6 +273,7 @@ void SetupTreeModel::sync()
                 o.type = qs(op->second.type);
                 o.detail = o.type;
                 o.suppressed = op->second.suppressed;
+                o.templateId = op->second.templateId;
                 o.index = static_cast<int>(j);
                 o.siblings = static_cast<int>(s.operations.size());
                 rows.push_back(o);
@@ -492,6 +493,14 @@ QVariant SetupTreeModel::data(const QModelIndex& index, int role) const
         return r->index > 0;
     case CanMoveDownRole:
         return r->index + 1 < r->siblings;
+    case TemplateRole: {
+        // T-057: the template's name now (a renamed template shows its new name).
+        if (r->templateId.empty())
+            return QString();
+        lib::LibraryStack* stack = app() != nullptr ? app()->libraries() : nullptr;
+        const lib::OpTemplate* t = stack != nullptr ? stack->opTemplate(Uuid::fromString(r->templateId)) : nullptr;
+        return t != nullptr ? qs(t->name) : trt("a template not in the libraries");
+    }
     default:
         return {};
     }
@@ -513,7 +522,8 @@ QHash<int, QByteArray> SetupTreeModel::roleNames() const
             {ExpandedRole, "expanded"},
             {OperationCountRole, "operationCount"},
             {CanMoveUpRole, "canMoveUp"},
-            {CanMoveDownRole, "canMoveDown"}};
+            {CanMoveDownRole, "canMoveDown"},
+            {TemplateRole, "rowTemplate"}};
 }
 
 QVariantMap SetupTreeModel::get(int row) const

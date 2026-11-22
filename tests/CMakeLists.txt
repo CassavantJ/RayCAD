@@ -68,7 +68,8 @@ add_subdirectory(ui/cam_tools) # T-046 (sets up its own screen and driver-thread
 foreach(_target IN ITEMS ray_render_tests ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests
                          ray_ui_palette_tests ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests
                          ray_ui_section_tests ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests
-                         ray_ui_cam_operation_tests ray_ui_cam_post_tests ray_ui_cam_flow_tests)
+                         ray_ui_cam_operation_tests ray_ui_cam_post_tests ray_ui_cam_flow_tests
+                         ray_ui_cam_templates_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support/driver_threads_listener.cpp")
 endforeach()
 
@@ -80,7 +81,8 @@ endforeach()
 foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
                          ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
                          ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests
-                         ray_ui_cam_post_tests ray_ui_cam_flow_tests)
+                         ray_ui_cam_post_tests ray_ui_cam_flow_tests
+                         ray_ui_cam_templates_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/screen/test_screen_listener.cpp")
     target_link_libraries(${_target} PRIVATE ray_ui_test_screen)
 endforeach()
@@ -95,7 +97,8 @@ find_package(Qt6 6.12 REQUIRED COMPONENTS GuiPrivate)
 foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
                          ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
                          ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests
-                         ray_ui_cam_post_tests ray_ui_cam_flow_tests)
+                         ray_ui_cam_post_tests ray_ui_cam_flow_tests
+                         ray_ui_cam_templates_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/foreign_input_listener.cpp"
                                       "${CMAKE_CURRENT_SOURCE_DIR}/ui/window_focus.cpp")
     target_link_libraries(${_target} PRIVATE Qt6::GuiPrivate) # window_focus.cpp: QWindowSystemInterface
