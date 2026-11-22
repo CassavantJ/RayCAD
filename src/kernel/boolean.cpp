@@ -39,7 +39,10 @@
 //
 // TRANSFORMED. A rigid move only (core.h Xform). The geometry is copied and moved (BRepBuilderAPI_Transform with
 // copied geometry), so the result shares no TShape with the input and carries no location; every sub-shape is
-// reported Modified to its moved copy. The identity is a no-op and fails (section 7 rule 6).
+// reported Modified to its moved copy. The identity returns the input shape itself, every sub-shape Modified to
+// itself: section 7 rule 6 (detect no-ops) is about OCCT reporting success while doing nothing when a change was
+// asked for, and the identity asks for none, so callers (setup frames that are often the identity) need not
+// special-case it.
 #include "boolean_internal.h"
 
 #include <BOPAlgo_Alerts.hxx>
@@ -147,6 +150,11 @@ struct Attempt {
     std::vector<SubId> slivers; // of a successful result: its sliver faces that involve the tool (SLIVERS above)
 };
 
+Attempt failed(Error error, bool invalid = false)
+{
+    return {tl::unexpected(std::move(error)), invalid, {}};
+}
+
 // The result faces that come from a face of the tool (a Modified or Generated entry of input 1), by SubId index.
 std::vector<bool> toolFaces(const OpResult& out)
 {
@@ -177,10 +185,10 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     // first attempt wrote.
     auto targetCopy = detail::privateCopy(target, kCopyGeometry, where);
     if (!targetCopy)
-        return {tl::unexpected(targetCopy.error())};
+        return failed(targetCopy.error());
     auto toolCopy = detail::privateCopy(tool, kCopyGeometry, where);
     if (!toolCopy)
-        return {tl::unexpected(toolCopy.error())};
+        return failed(toolCopy.error());
     const OpWords words = wordsFor(op);
     BRepAlgoAPI_BooleanOperation maker;
     NCollection_List<TopoDS_Shape> arguments;
@@ -197,7 +205,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     occ::handle<detail::JobIndicator> indicator = new detail::JobIndicator(ctx, 0.0, 0.8, words.stage);
     maker.Build(indicator->Start());
     if (ctx.cancel.cancelled() || maker.HasError(STANDARD_TYPE(BOPAlgo_AlertUserBreak)))
-        return {tl::unexpected(detail::cancelledError(where))};
+        return failed(detail::cancelledError(where));
     if (!maker.IsDone() || maker.HasErrors()) {
         std::ostringstream dump;
         maker.DumpErrors(dump);
@@ -208,7 +216,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
                                     where);
         if (!dump.str().empty())
             error.context.insert(error.context.begin(), "OCCT: " + dump.str());
-        return {tl::unexpected(std::move(error))};
+        return failed(std::move(error));
     }
     if (unify)
         maker.SimplifyResult();
@@ -216,7 +224,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
 
     const TopoDS_Shape solids = detail::normaliseSolids(maker.Shape());
     if (solids.IsNull())
-        return {tl::unexpected(kernelFailure(emptyMessage(op), where))};
+        return failed(kernelFailure(emptyMessage(op), where));
     // Faces of the inputs the result keeps untouched are not checked again when both inputs passed validation
     // (boolean_internal.h INCREMENTAL CHECK).
     const std::array<const Shape*, 2> originals{&target, &tool};
@@ -227,7 +235,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     if (!checked) {
         Error error = kernelFailure(invalidMessage(op), where);
         error.context.insert(error.context.begin(), checked.error().message);
-        return {tl::unexpected(std::move(error)), true};
+        return failed(std::move(error), true);
     }
     const double volume = *checked;
 
@@ -239,7 +247,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     for (int input = 0; input < 2; ++input)
         if (auto mapped = detail::remapSources(out.history, input, input == 0 ? *targetCopy : *toolCopy, where);
             !mapped)
-            return {tl::unexpected(mapped.error())};
+            return failed(mapped.error());
 
     bool toolContributes = false;
     for (const HistoryEntry& entry : out.history.entries)
@@ -250,7 +258,7 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
     const double scale = std::max({targetVolume, toolVolume, 1.0});
     const double change = std::abs(volume - targetVolume);
     if (change <= kNoOpRelative * scale || (!toolContributes && change <= kNoiseRelative * scale))
-        return {tl::unexpected(kernelFailure(noOpMessage(op), where))};
+        return failed(kernelFailure(noOpMessage(op), where));
     const double slack = kBoundRelative * scale;
     bool expected = true;
     switch (op) {
@@ -268,16 +276,16 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
         Error error = kernelFailure(invalidMessage(op), where);
         error.context.insert(error.context.begin(), "volume " + std::to_string(targetVolume) + " -> " +
                                                         std::to_string(volume) + " is not the expected change");
-        return {tl::unexpected(std::move(error)), true};
+        return failed(std::move(error), true);
     }
 
     const std::uint32_t solidCount = out.shape.count(SubKind::Solid);
     if (solidCount > 1) {
         if (op == BoolOp::Union)
-            return {tl::unexpected(kernelFailure(
+            return failed(kernelFailure(
                 "The added material does not overlap the body, or touches it only along an edge or at a point, so "
                 "the result would be separate solids. Move it so it overlaps the body or shares a face with it.",
-                where))};
+                where));
         out.warnings.push_back(std::string(words.subject) + " leaves " + std::to_string(solidCount) +
                                " separate solids.");
     }
@@ -296,7 +304,7 @@ Attempt attemptBoth(BoolOp op, const Shape& target, const Shape& tool, double fu
     if (unified.result || !unified.invalid)
         return unified;
     if (auto ok = ctx.cancel.check(); !ok)
-        return {tl::unexpected(detail::cancelledError(where))};
+        return failed(detail::cancelledError(where));
     Attempt plain = attempt(op, target, tool, false, fuzzy, targetVolume, toolVolume, ctx, where);
     if (!plain.result)
         return unified;
@@ -393,9 +401,17 @@ Result<OpResult> transformed(const Shape& shape, const Xform& xform)
         for (int j = 0; j < 4; ++j)
             if (std::abs(r(i, j) - (i == j ? 1.0 : 0.0)) > 1e-12)
                 identity = false;
-    if (identity)
-        return tl::unexpected(kernelFailure(
-            "The move does nothing: the transform is the identity, so the body would not change.", where));
+    if (identity) {
+        // The input itself (shapes are immutable), every sub-shape Modified to itself.
+        OpResult out;
+        out.shape = shape;
+        for (std::size_t slot = 0; slot < detail::kSubKindCount; ++slot) {
+            const auto kind = static_cast<SubKind>(slot);
+            for (std::uint32_t i = 0; i < shape.count(kind); ++i)
+                out.history.entries.push_back({HistoryEntry::Relation::Modified, 0, SubId{kind, i}, {SubId{kind, i}}});
+        }
+        return out;
+    }
 
     return detail::guarded(where, [&]() -> Result<OpResult> {
         gp_Trsf trsf;
