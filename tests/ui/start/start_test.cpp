@@ -24,6 +24,7 @@
 #include "scene_controller.h"
 #include "session.h"
 #include "session_recovery.h"
+#include "test_screen.h"
 #include "theme_object.h"
 #include "viewport_item.h"
 
@@ -57,6 +58,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -860,15 +862,29 @@ TEST_CASE("warm start to the first frame, against PLAN.md section 9", "[bench][w
     QTemporaryDir data;
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("RAYCAD_USER_DATA_DIR"), data.path());
+    QStringList arguments{QStringLiteral("--bench-start"), QStringLiteral("--size"), QStringLiteral("1440x900")};
+    // RAY_TEST_SCREEN: --size would centre the window on the primary screen; a saved window of the same size on the
+    // test screen puts it there instead (the start then also reads that one small settings file).
+    if (const std::optional<QRect> g = ray::test::screen::childWindowGeometry(QSize(1440, 900))) {
+        QFile f(QDir(data.path()).filePath(QStringLiteral("settings.json")));
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(QStringLiteral(R"({"format":"raycad.settings","version":1,"window":{"x":%1,"y":%2,"width":%3,)"
+                               R"("height":%4}})")
+                    .arg(g->x())
+                    .arg(g->y())
+                    .arg(g->width())
+                    .arg(g->height())
+                    .toUtf8());
+        arguments = QStringList{QStringLiteral("--bench-start")};
+    }
     const QRegularExpression frameRe(QStringLiteral("first_frame_ms=([0-9.]+)"));
     const QRegularExpression sessionRe(QStringLiteral("session_ms=([0-9.]+)"));
     std::vector<double> frames, sessions;
     for (int run = 0; run < 7; ++run) {
         QProcess p;
         p.setProcessEnvironment(env);
-        p.start(QStringLiteral(RAY_RAYCAD_EXE),
-                {QStringLiteral("--bench-start"), QStringLiteral("--size"), QStringLiteral("1440x900")});
-        REQUIRE(p.waitForFinished(60000));
+        p.start(QStringLiteral(RAY_RAYCAD_EXE), arguments);
+        REQUIRE(ray::test::screen::waitForChild(p, 60000));
         const QString out = QString::fromUtf8(p.readAllStandardOutput());
         INFO(out.toStdString() << QString::fromUtf8(p.readAllStandardError()).toStdString());
         REQUIRE(p.exitCode() == 0);
