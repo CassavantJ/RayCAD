@@ -36,6 +36,7 @@ add_subdirectory(unit/sketch)
 add_subdirectory(naming/oracle)
 add_subdirectory(unit/store)
 add_subdirectory(unit/api)
+add_subdirectory(unit/cam) # T-032
 add_subdirectory(unit/render)
 add_subdirectory(unit/core_jobs)
 add_subdirectory(lint)

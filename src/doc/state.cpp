@@ -17,13 +17,18 @@
 // that reads back to the same float (0.72, not 0.7200000286102295) and read back directly to float precision.
 // Feature props are embedded as JSON; an empty propsJson is written as {}. Keys this version does not know are
 // kept in the extraJson member of the struct they belong to and written back unchanged; a known key in
-// extraJson is ignored on writing. The manifest's "cam" key (the CAM object, PLAN.md 3.1) is not interpreted
-// yet: it is kept like an unknown key, and DocState::cam is neither written nor read (the CAM tasks add it).
-// The schema schemas/doc.manifest.schema.json and schemas/doc.feature.schema.json describe both objects.
+// extraJson is ignored on writing. A state with CAM state (DocState::cam, not empty) also has the CAM object and one
+// object per embedded library item, named in the manifest's "cam" and "embedded" keys and written after the feature
+// objects (commands/cam_json.h has their form, task T-032); a state without CAM state is written exactly as before,
+// and a manifest without those keys (a document from before CAM) reads back with a null DocState::cam.
+// The schemas schemas/doc.manifest.schema.json, schemas/doc.feature.schema.json and schemas/doc.cam.schema.json
+// describe the objects.
+#include "commands/cam_json.h"
 #include "document_impl.h"
 #include "json.h"
 #include "json_number.h"
 
+#include <ray/cam.h>
 #include <ray/document.h>
 
 #include <algorithm>
@@ -168,6 +173,10 @@ StateObjects serialize(const DocState& state)
     std::vector<Member> members{{"bodies", Value::array(std::move(bodies))},
                                 {"features", Value::array(std::move(featureHashes))},
                                 {"parameters", Value::array(std::move(params))}};
+    // CAM state ("cam", "embedded") only when there is some, so a document without it keeps its bytes and hash.
+    for (Member& m : camjson::writeCam(state.cam, out.features)) {
+        members.push_back(std::move(m));
+    }
     // The rollback bar only when it is set, so a document that never used it keeps its bytes and hash.
     if (state.rollback) {
         members.push_back({"rollback", idValue(state.rollback->value)});
@@ -405,7 +414,8 @@ Result<DocState> deserialize(std::string_view manifestBytes,
         return tl::unexpected(schema.error());
     }
     DocState state;
-    state.extraJson = extrasOf(manifest, {"bodies", "features", "parameters", "rollback", "schema", "settings"});
+    state.extraJson =
+        extrasOf(manifest, {"bodies", "cam", "embedded", "features", "parameters", "rollback", "schema", "settings"});
 
     // Settings.
     {
@@ -555,6 +565,13 @@ Result<DocState> deserialize(std::string_view manifestBytes,
         body.extraJson = extrasOf(b, {"color", "id", "name", "role", "visible"});
         state.bodies.push_back(std::move(body));
     }
+
+    // CAM state (task T-032): null when the manifest names none.
+    auto cam = camjson::readCam(manifest, featureObject);
+    if (!cam) {
+        return tl::unexpected(cam.error());
+    }
+    state.cam = std::move(*cam);
     return state;
 }
 
