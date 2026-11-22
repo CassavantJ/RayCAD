@@ -6,6 +6,10 @@
 // in output units and are snapped back to integer nanometres by `out`, so print them through `out`, not toFixed.
 // The canned-cycle settlement (cam.h) added CycleMove.returnLevel, peckClearance and leftHand, and gave top and
 // clearance their IR meaning (the hole top and the initial level).
+// T-040 (the shipped posts) added, all optional and backwards compatible: capabilities.arcPlanes and helicalPlanes
+// (the host linearises arcs in other planes), out.setFormat (decimals per dialect, trailing-zero style, comment
+// length), the decimals argument of out.feed (tapping feeds), out.sequence.max, and machine.controlDialect,
+// maxBlockNumber and maxProgramNameLength in ProgramContext.
 
 declare function definePost(post: PostDefinition): void;
 
@@ -22,6 +26,9 @@ interface PostDefinition {
     cannedCycles: CycleKind[];      // cycles not listed are expanded by the host into rapid/linear moves
     rigidTap: boolean;
     cutterComp: boolean;
+    arcPlanes?: ("XY" | "XZ" | "YZ")[];       // planes the control cuts arcs in (default all three); arcs in
+                                               // other planes reach onLinear as lines within 1 um
+    helicalPlanes?: ("XY" | "XZ" | "YZ")[];   // planes it cuts helical arcs in (default all three)
   };
   properties: Record<string, PropertySpec>;      // the host also reads lineEnding ("crlf" | "lf", default "crlf")
                                                  // and includeDate (bool, default false), and declares them if the
@@ -89,7 +96,8 @@ interface ProgramContext {
   units: "inch" | "mm"; workOffset: number;                 // 1 => G54
   date: string | null;                                      // null unless includeDate is on
   machine: { name: string; model: string; maxRpm: number; rigidTapping: boolean; hasToolSetter: boolean;
-             travel: Record<string, [number, number]> };
+             travel: Record<string, [number, number]>;
+             controlDialect: string; maxBlockNumber: number; maxProgramNameLength: number };   // 0 = not known
   properties: Record<string, boolean | number | string>;
   tools: ToolInfo[];                                        // every tool in the program, in first-use order
   sections: Section[];
@@ -103,11 +111,20 @@ interface Writer {
   modal(group: string, word: string): string | null;        // e.g. out.modal("motion", "G1")
   axis(letter: string, value: number): string | null;       // formatted with the dialect's coordinate format; null if unchanged
   word(letter: string, value: number, fmt?: FormatSpec): string;   // always emitted
-  feed(value: number): string | null;
+  feed(value: number, decimals?: number): string | null;    // decimals: this word only (0..6), e.g. a tapping feed
   resetModal(...groups: string[]): void;                    // no args resets all, e.g. after a tool change;
                                                             // "feed", "axes" and one letter "A".."Z" (that axis) also reset
-  sequence: { enabled: boolean; start: number; increment: number; onlyOnToolChange: boolean };
+  setFormat(f: OutputFormat): void;                         // keys left out keep their value; forgets axes and feed
+  sequence: { enabled: boolean; start: number; increment: number; onlyOnToolChange: boolean;
+              max: number };                                // N numbers wrap to start past max; 0 = no limit
+                                                            // (starts as machine.maxBlockNumber)
   warn(message: string): void;                              // surfaces in the UI; does not stop posting
   fail(message: string): never;                             // stops posting with an error
 }
 interface FormatSpec { decimals: number; trimZeros?: boolean; forceDecimalPoint?: boolean; leadingZero?: boolean; scale?: number; }
+// Output format (T-040). Defaults: axisDecimals 3 (mm) or 4 (inch), feedDecimals 1 (mm) or 2 (inch), trailingZeros
+// "trim". trailingZeros: "trim" X12. X12.5, "one" X12.0 X12.5, "all" X12.000 X12.500; a decimal point is always
+// written. It applies to out.axis, out.feed and out.word without a format. commentMaxLength: sanitised comments are
+// cut to this many characters (0 = no limit).
+interface OutputFormat { axisDecimals?: number; feedDecimals?: number; trailingZeros?: "trim" | "one" | "all";
+                         commentMaxLength?: number; }

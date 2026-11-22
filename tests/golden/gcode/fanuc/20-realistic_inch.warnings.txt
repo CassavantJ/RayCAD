@@ -1,0 +1,1 @@
+section 4 (Chip-break drill): the peck clearance 0.0118 is not posted; FANUC takes it from parameter 5114 [F1, unverified]

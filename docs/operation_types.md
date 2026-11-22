@@ -35,21 +35,83 @@ checks `type` (number, integer, boolean, string) or `enum` (of strings) and the 
 schema does not have (a parameter of a newer RayCAD this one cannot honour), and requires a `default` on every
 property. Keep parameters flat: one object of scalars.
 
-Every property has a `title`, a `description` and a `default`. Editor annotations (ignored by both validators):
+Every property has a `title`, a `description` and a `default`. The operation panel (T-045, `src/ui/cam/operation_form.h`)
+builds its form from the schema alone, with no code of its own for any type, so the schema is the whole contract
+between a type and its editor.
 
-- `x-unit`: `length` (mm), `angle`, `time` (s), `count`: the quantity, so the form converts units;
-- `x-enumTitles`: labels of the enum values, in the enum's order;
-- `x-relevantWhen`: `{ "<property>": [values...], ... }`: the property matters only when every named property has
-  one of the listed values (the validators of the repository have no `if`/`then`, so this is an annotation);
-- `x-propertyOrder` (top level): the order of the form (canonical JSON sorts keys);
-- `x-heightsUsed`, `x-cuttingUsed` (top level): the members of `Operation::heights` and `Operation::cutting` the type
-  reads (`rpm` for `spindleRpm`), so the panel shows only those;
-- `x-geometry` (top level): what the geometry picker selects: `kind` (`face`, `edge`), `count` (`oneOrMore`, ...)
-  and a `description` for the prompt.
+### The schema subset the form edits
+
+Top level: `type: "object"`, `properties`, `additionalProperties` (false), `required`, `title`, `description`,
+`$schema`, `$id`, `$comment` and the `x-` annotations below. Any other top-level keyword (`allOf`, `anyOf`, `oneOf`,
+`if`/`then`/`else`, `patternProperties`, `dependentRequired`, ...) is shown as a row saying the form cannot edit it.
+
+A property is one of:
+
+| Kind | Schema | Field |
+|-|-|-|
+| number | `"type": "number"`, optional `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | a text field that takes expressions (below) |
+| integer | `"type": "integer"`, the same limits | the same; the value must be whole |
+| boolean | `"type": "boolean"` | a check box |
+| choice | `"enum"` of strings (optionally with `"type": "string"`) | a list |
+| text | `"type": "string"`, optional `minLength`, `maxLength`, `pattern` | a text field |
+
+with `title`, `description` (the field's hint), `default`, `$comment` and the property annotations. Anything else
+(`object`, `array`, `$ref`, `oneOf`, a type list, `const`, an enum of numbers, an `x-unit` the form does not know) gives
+the property a row "cannot edit this parameter here" naming the reason; its stored value is kept unchanged. A property
+without a `default` cannot be reset (OpSchema refuses such a schema anyway).
+
+### Property annotations
+
+- `x-unit`: the quantity of a number or integer. Stored values are always in these units, whatever the document's:
+  - `length`: mm. The field shows the document's display unit ("10 mm", "0.3937 in") and takes what the feature panels
+    take: a bare number in the display unit, a number with a unit (`mm`, `in`), an expression, parameter names
+    (`doc::evaluate`, kind Length). Limits are mm and shown converted.
+  - `angle`: degrees. A bare number is degrees; `deg` and `rad` and expressions work (kind Angle).
+  - `time`: seconds. A bare number is seconds; a trailing `s`, `ms` or `min` is read; the rest is a plain expression.
+  - `count`: a plain number or expression without units (kind Unitless); also the meaning of no `x-unit`.
+- `x-enumTitles`: the labels of a choice's `enum` values, an array of strings of the same length and order. A list of
+  another length is a schema problem: the form shows the values themselves.
+- `x-relevantWhen`: `{ "<property>": [values...], ... }`. The property matters only when every named property is
+  relevant itself (so relevance is transitive) and has one of the listed values. Each named property must be a choice
+  (values are its enum strings) or a boolean (values are `true` / `false`) of the same schema; a name that is not, or a
+  value not in its enum, is a schema problem the form reports. A property that is not relevant is hidden and not
+  validated by the form; its value stays as it was (or its default) and is stored, so the type must give it no
+  meaning in that case. (The validators of the repository have no `if`/`then`, so this is an annotation.)
+
+### Top-level annotations
+
+- `x-propertyOrder`: the order of the form, an array of property names; properties it does not list follow in key
+  order (canonical JSON sorts keys), names that are not properties are ignored.
+- `x-heightsUsed`: the members of `Operation::heights` the type reads, a subset of `clearance`, `retract`,
+  `feedPlane`, `top`, `bottom`; absent means all five. Only these are shown. The commands still store all five,
+  ordered clearance >= retract >= feedPlane >= top >= bottom, so the panel gives an unused height the value of the
+  nearest used one before it in that order, else of the nearest used one after it (drill: `feedPlane` = `retract`,
+  `bottom` = `top`), and the type must not read them.
+- `x-cuttingUsed`: the members of `Operation::cutting` the type reads, a subset of `rpm`, `clockwise`, `feedCut`,
+  `feedPlunge`, `feedRamp`, `feedLeadIn`, `feedLeadOut`, `coolant`; absent means all. Only these are shown; `rpm` and
+  `feedCut` are always required by the commands, and an unused feed is stored as the cut feed.
+- `x-geometry`: what the geometry picker selects, `{ "kind", "count", "description" }`:
+  - `kind`: `hole` (a face of a hole recognised along the setup's Z, `recognizeHoles`; a click on any face of the hole
+    picks it and the operation stores the hole's bore wall, one reference per hole), `face`, `edge`, or `none` (the
+    type takes no geometry);
+  - `count`: `one`, `oneOrMore` or `any` (zero or more); OK needs at least one for `one` and `oneOrMore`;
+  - `description`: the prompt shown above the list.
+  Absent means `{ "kind": "none" }`.
+- `x-toolTypes`: the tool types (the library's `type` names, `flatEndMill`, `drill`, `tap`, ...) the tool picker
+  offers first: an array, or `{ "property": "<choice>", "values": { "<value>": [types], ... }, "default": [types] }`
+  when they depend on a choice (drill: by `cycle`). Other tools are listed after a "Show every tool" switch; the type's
+  `validate` stays the judge. Absent: every tool.
 
 Lengths are stored in mm, times in seconds; the operation's own `Heights` and `CuttingData` are not params. Say in
 the schema's top `description` what the type reads from them and what it ignores (drill ignores `feedPlane` and
 `bottom`).
+
+### Feeds the panel offers
+
+"Use calculated" fills `rpm` and `feedCut` from `computeFeeds` for the tool, the setup's material and its machine.
+`computeFeeds` has no rule for plunge, ramp and lead feeds, so the panel offers fractions of the cut feed as editable
+defaults and says so: plunge 50 %, ramp 75 %, lead-in and lead-out 100 %. What it wrote is kept with the operation
+(`Operation::calculated`, a record in no input hash), so the panel tells calculated values from typed ones.
 
 ## validate and generate
 

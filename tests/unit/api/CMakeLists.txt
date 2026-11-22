@@ -28,6 +28,8 @@ target_include_directories(ray_api_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/api" "
     # The measure tests (T-022) build reference parts with the kernel's test builders (shape_testing.h, no OCCT header).
     "${CMAKE_SOURCE_DIR}/src/kernel")
 target_compile_definitions(ray_api_tests PRIVATE RAY_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data"
-    RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files" RAY_STORE_HELPER="$<TARGET_FILE:ray_api_helper>")
+    RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files" RAY_STORE_HELPER="$<TARGET_FILE:ray_api_helper>"
+    # The built-in library as the build copies it beside the programs (src/api/CMakeLists.txt), for the post list.
+    RAY_BUILTIN_LIBRARY_COPY="$<TARGET_FILE_DIR:ray_api_tests>/resources/library")
 add_dependencies(ray_api_tests ray_api_helper)
 ray_add_test(ray_api_tests)

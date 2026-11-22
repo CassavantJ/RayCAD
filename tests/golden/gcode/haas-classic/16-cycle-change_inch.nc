@@ -1,0 +1,31 @@
+%
+O01116 (Matrix: cycle code and values changing inside one run)
+(Document post matrix setup Op 1 top)
+(Machine Test VMC Haas classic)
+(T4 D0.1969 drill 5 mm drill)
+G20
+G17 G40 G49 G80 G90 G94
+(Drill, mixed)
+G00 G53 G49 Z0.
+(T4 5 mm drill in CAT40 ER32)
+T4 M06
+G20
+G00 G90 G54 G17 X0.3937 Y0.3937
+S2000 M03
+G43 H4 Z1.1811
+M08
+G81 G99 X0.3937 Y0.3937 Z0.4724 R0.8661 F5.91
+G80
+G00 Z1.1811
+G82 G99 X0.7874 Y0.3937 Z0.4724 P0.200 R0.8661 F5.91
+X1.1811 Z0.315 R0.9055
+G80
+G00 Z1.1811
+G81 G98 X1.5748 Y0.3937 Z0.315 R0.9055 F5.91
+G80
+G00 G53 G49 Z0.
+M05
+M09
+G00 G53 Y0.
+M30
+%

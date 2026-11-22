@@ -19,6 +19,8 @@ var paths = {
     "dash": { d: "M 4 8 H 12" },
     "close": { d: "M 4.5 4.5 L 11.5 11.5 M 11.5 4.5 L 4.5 11.5" },
     "plus": { d: "M 8 3.5 V 12.5 M 3.5 8 H 12.5" },
+    // T-045: back to the default value (a turn anticlockwise, the arrow at its start).
+    "reset": { d: "M 4 8 A 4 4 0 1 0 5.2 5.2 M 5.2 2.4 V 5.2 H 2.4" },
     "more": { fill: true,
               d: "M 4.75 8 A 1.25 1.25 0 1 1 2.25 8 A 1.25 1.25 0 1 1 4.75 8 Z "
                  + "M 9.25 8 A 1.25 1.25 0 1 1 6.75 8 A 1.25 1.25 0 1 1 9.25 8 Z "

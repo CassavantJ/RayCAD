@@ -288,7 +288,9 @@ private:
             return emitLinear(end, m.feedMicronPerMin, m.role, m.compensation, index);
         }
         const bool helical = start[f.axes.w] != end[f.axes.w];
-        if (caps_.arcs == ArcOutput::None || (helical && !caps_.helical)) {
+        const auto plane = std::min<std::size_t>(static_cast<std::size_t>(m.plane), 2);
+        if (caps_.arcs == ArcOutput::None || !caps_.arcPlanes[plane] ||
+            (helical && (!caps_.helical || !caps_.helicalPlanes[plane]))) {
             return linearise(m, f, start, end, index);
         }
         double cap = std::clamp(caps_.maxArcDegrees, 1.0, 360.0);

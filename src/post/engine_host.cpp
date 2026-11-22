@@ -758,6 +758,40 @@ Result<Declaration> Session::readDeclaration()
             }
         }
         JS_FreeValue(ctx_, cycles);
+        // Optional plane lists (T-040): arcs in other planes, or helical arcs in other planes, become lines.
+        auto planes = [&](const char* key, std::array<bool, 3>& out) {
+            JSValue list = r.get(caps, key);
+            if (r.problem || JS_IsUndefined(list)) {
+                JS_FreeValue(ctx_, list);
+                return;
+            }
+            const std::string path = std::string("capabilities.") + key;
+            std::int64_t n = 0;
+            if (!JS_IsArray(list) || JS_GetLength(ctx_, list, &n) || n > 3) {
+                JS_FreeValue(ctx_, list);
+                r.fail(path + " must be an array of \"XY\", \"XZ\" and \"YZ\"");
+                return;
+            }
+            out = {false, false, false};
+            for (std::int64_t i = 0; i < n && !r.problem; ++i) {
+                JSValue item = JS_GetPropertyUint32(ctx_, list, static_cast<std::uint32_t>(i));
+                bool ok = JS_IsString(item);
+                const std::string name = ok ? toStdString(ctx_, item, ok) : std::string();
+                JS_FreeValue(ctx_, item);
+                if (ok && name == "XY") {
+                    out[0] = true;
+                } else if (ok && name == "XZ") {
+                    out[1] = true;
+                } else if (ok && name == "YZ") {
+                    out[2] = true;
+                } else {
+                    r.fail(path + ": \"" + name + "\" is not one of XY, XZ, YZ");
+                }
+            }
+            JS_FreeValue(ctx_, list);
+        };
+        planes("arcPlanes", d.motion.arcPlanes);
+        planes("helicalPlanes", d.motion.helicalPlanes);
     }
     JS_FreeValue(ctx_, caps);
     if (r.problem) {

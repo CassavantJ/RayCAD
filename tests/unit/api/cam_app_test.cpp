@@ -3,6 +3,7 @@
 #include "api_test_util.h"
 
 #include <ray/api.h>
+#include <ray_api/cam_setup.h>
 #include <ray_api/settings.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -282,6 +283,17 @@ TEST_CASE("an app has its operation registry, CAM engine, library stack and post
     CHECK(roots[0].name == "One");
     CHECK(roots[0].writable);
     CHECK(explicitApp->libraries()->tool(ToolId{Uuid::fromString(uuid('d', 1))}) != nullptr);
+}
+
+TEST_CASE("the app's post list has the shipped posts of the built-in library", "[api][cam][library]")
+{
+    // T-040 / T-041: the built-in library is copied beside the programs (src/api/CMakeLists.txt), posts included; the
+    // setup panel lists the posts of every library root with postStems.
+    const auto stems = api::cam_setup::postStems({RAY_BUILTIN_LIBRARY_COPY});
+    for (const char* post : {"fanuc", "generic-iso", "haas-classic", "haas-ngc"}) {
+        INFO(post);
+        CHECK(std::find(stems.begin(), stems.end(), post) != stems.end());
+    }
 }
 
 TEST_CASE("the default library stack: built-in, shared folders from the settings, then the user library",

@@ -1,0 +1,1 @@
+section 0 (chip-break drilling G73): the peck clearance 0.3 is not posted; FANUC takes it from parameter 5114 [F1, unverified]

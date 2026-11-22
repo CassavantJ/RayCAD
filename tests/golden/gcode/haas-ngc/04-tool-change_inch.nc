@@ -1,0 +1,71 @@
+%
+O01104 (Matrix: tool changes with pre-select, G43 length offsets, a repeated tool)
+(Document post matrix setup Op 1 top)
+(Machine Test VMC Haas NGC)
+(T1 D1.9685 faceMill 50 mm face mill)
+(T5 D0.2362 flatEndMill 6 mm 2FL end mill)
+(T3 D0.3937 spotDrill 10 mm spot drill)
+G20
+G17 G40 G49 G80 G90 G94
+(Face)
+G00 G53 G49 Z0.
+(T1 50 mm face mill in CAT40 ER32)
+T1 M06
+T5
+G20
+G00 G90 G54 G17 X0. Y0.
+S3000 M03
+G43 H1 Z0.9843
+M08
+X-1.1811 Y0.3937
+Z0.0787
+G01 Z0. F11.81
+X4.3307 F59.06
+G00 Z0.9843
+G00 G53 G49 Z0.
+M05
+M09
+(Slot A)
+(T5 6 mm 2FL end mill in CAT40 ER32)
+T5 M06
+T3
+G20
+G00 G90 G54 G17 X0. Y0.
+S9000 M03
+G43 H25 Z0.9843
+M08
+X0.3937 Y0.7874
+Z0.0787
+G01 Z-0.1181 F5.91
+X2.3622 F27.56
+G00 Z0.1969
+(Slot B)
+G00 Z0.9843
+G90 G54 G17 X0. Y0.
+S9000 M03
+X0.3937 Y1.1811
+Z0.0787
+G01 Z-0.1181 F5.91
+X2.3622 F27.56
+G00 Z0.9843
+G00 G53 G49 Z0.
+M05
+M09
+(Spot)
+(T3 10 mm spot drill in CAT40 ER32)
+T3 M06
+G20
+G00 G90 G54 G17 X0. Y0.
+S2000 M03
+G43 H3 Z0.9843
+M08
+X0.7874 Y1.7717
+Z0.1969
+G01 Z-0.0394 F3.94
+G00 Z0.9843
+G00 G53 G49 Z0.
+M05
+M09
+G00 G53 Y0.
+M30
+%

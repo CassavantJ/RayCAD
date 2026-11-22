@@ -184,6 +184,14 @@ FocusScope {
                         anchors.fill: parent
                         view: viewport.view
                     }
+                    // T-045: cam/OperationPanel.qml, in the same place (one of the two is open at a time). The tool
+                    // library (T-046) and posting (T-047) go here beside them.
+                    OperationPanel {
+                        anchors.fill: parent
+                        view: viewport.view
+                    }
+                    // T-045: the selected operation's toolpath in the view (CamToolpaths draws into the viewport).
+                    readonly property int toolpathsShown: CamToolpaths.shownCount
                 }
             }
         }
