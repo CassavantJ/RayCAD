@@ -369,7 +369,7 @@ const std::vector<UiCommand>& allUiCommands()
         std::vector<UiCommand> out;
         for (const std::span<const UiCommand> table :
              {generalUiCommands(), measureUiCommands(), sectionUiCommands(), sketchUiCommands(), constraintUiCommands(),
-              modelUiCommands(), camSetupUiCommands(), camTreeUiCommands()})
+              modelUiCommands(), camSetupUiCommands(), camTreeUiCommands(), camOperationUiCommands()})
             out.insert(out.end(), table.begin(), table.end());
         return out;
     }();

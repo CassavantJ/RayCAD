@@ -7,8 +7,11 @@
 //              WCS or the stock, from api::cam_setup::setupStates), then the worst of their operations. Statuses are
 //              worked out on the job system (a superseded run is cancelled) whenever the document changes (an edit in
 //              either workspace, undo, redo) or publishes a build, and when a generation the tree started ends; the
-//              progress of those comes from their jobs. The engine gives no notice of a generation it did not start
-//              for the tree, so while one shows Generating the tree looks again after a short pause (only then).
+//              progress of those comes from their jobs. T-045: the engine's own statuses come from
+//              ICamEngine::statusAsync (a job of the engine's, so no worker holds a pointer to it), and its
+//              notifications (ICamEngine::subscribe: a generation started, progressed or ended anywhere, a preview was
+//              filed) start a run too, coalesced to one in kNoticeMs; the progress of any generation is in its status.
+//              Nothing polls.
 //   Actions    rename, remove, move up and down (cam.setup.* and cam.operation.*), suppress (operations), edit (a
 //              setup opens the setup panel, CamSetup.edit; an operation is announced for the operation panel of
 //              T-045, operationEditRequested) and generate (ICamEngine::generate of an operation, or of every stale
@@ -89,7 +92,10 @@ public:
     int currentIndex() const { return current_; }
     void setCurrentIndex(int index);
     QString message() const { return message_; }
-    bool busy() const { return statusJob_.valid() && !statusJob_.done(); }
+    bool busy() const
+    {
+        return (statusJob_.valid() && !statusJob_.done()) || (setupJob_.valid() && !setupJob_.done());
+    }
 
     // ---- QML ----
     Q_INVOKABLE QVariantMap get(int row) const;
@@ -112,6 +118,15 @@ public:
     // Status runs finished (each one ICamEngine::status over the whole document).
     int statusRuns() const { return statusRuns_; }
     std::optional<cam::OpStatus> statusOf(const OperationId& id) const;
+    // T-045: the engine's whole status of an operation as last read (null when not known), and the current row's
+    // setup (its own, or the one an operation row is in) and operation.
+    const cam::OpState* opState(const OperationId& id) const;
+    std::optional<SetupId> currentSetup() const;
+    std::optional<OperationId> currentOperation() const;
+    // Makes the row of `id` current as soon as the tree lists it (an operation just added).
+    void selectWhenListed(const QString& id);
+    // Engine notifications heard (tests).
+    int notices() const { return notices_; }
     // Re-reads the statuses now (also done by every document notification).
     void refresh();
 
@@ -167,14 +182,20 @@ private:
     QString message_;
 
     // Statuses.
+    void subscribeEngine();
     Statuses statuses_;
-    JobHandle<std::shared_ptr<const Statuses>> statusJob_;
+    JobHandle<std::map<OperationId, cam::OpState>> statusJob_;            // ICamEngine::statusAsync
+    JobHandle<std::shared_ptr<const std::map<SetupId, Status>>> setupJob_; // api::cam_setup::setupStates
     std::uint64_t statusSerial_ = 0;
     int statusRuns_ = 0;
-    QTimer refreshTimer_;   // coalesces the notifications of one change into one run
-    QTimer generatingPoll_; // single shot: a generation the tree did not start is under way
+    QTimer refreshTimer_; // coalesces the notifications of one change into one run
+    QTimer noticeTimer_;  // coalesces the engine's notifications (progress comes at up to 30 Hz)
     std::map<OperationId, JobHandle<std::shared_ptr<const cam::Toolpath>>> generating_; // started here
     std::map<OperationId, double> progress_;
+    cam::ICamEngine* engine_ = nullptr; // the engine subscribed to (the app's, which outlives this model's use)
+    int engineListener_ = 0;
+    int notices_ = 0;
+    QString pendingSelect_;
 };
 
 } // namespace ray::ui

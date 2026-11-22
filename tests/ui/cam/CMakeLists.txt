@@ -27,7 +27,8 @@ endif()
 list(APPEND _mods "QSG_NO_VSYNC=set:1")
 set_tests_properties(ray_ui_cam_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
 
-add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp)
+add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp
+    operation_unit_test.cpp) # T-045: the schema form over every registered type and synthetic schemas, the panel logic
 target_link_libraries(ray_ui_cam_unit_tests PRIVATE ray_ui ray_api Qt6::Core Catch2::Catch2WithMain)
 target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 set_property(TARGET ray_ui_cam_unit_tests PROPERTY FOLDER "tests")

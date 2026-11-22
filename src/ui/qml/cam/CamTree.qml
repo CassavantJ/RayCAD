@@ -10,6 +10,8 @@ import RayCad.Ui
 Item {
     id: root
     objectName: "camTree"
+    // T-045: the operation panel hears the tree's edit requests from its start (CamOperation connects to them).
+    readonly property bool operationPanelOpen: CamOperation.active
 
     Connections {
         target: CamTreeModel
@@ -256,7 +258,17 @@ Item {
                                     spacing: Theme.spacingXs
                                     visible: !row.renaming
 
-                                    // The row's tools while it is hovered: move up and down, delete.
+                                    // The row's tools while it is hovered: a new operation (setups, T-045), move up
+                                    // and down, delete.
+                                    ToolButton {
+                                        objectName: "camRowNewOperation." + row.index
+                                        visible: row.isSetup && (row.hovered || row.current)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        compact: true
+                                        iconName: "plus"
+                                        toolTipText: qsTr("New operation in this setup")
+                                        onClicked: CamOperation.startFor(row.rowId)
+                                    }
                                     ToolButton {
                                         objectName: "camRowUp." + row.index
                                         visible: row.hovered && row.canMoveUp
