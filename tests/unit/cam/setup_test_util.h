@@ -8,8 +8,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -174,29 +176,31 @@ inline std::string text(const Box3& b)
 template <class Pred>
 kernel::SubId findEdge(const kernel::Shape& shape, Pred pred)
 {
-    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Edge); ++i) {
+    std::optional<kernel::SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Edge) && !found; ++i) {
         const kernel::SubId sub{kernel::SubKind::Edge, i};
         auto info = kernel::curveInfo(shape, sub);
         if (info && pred(*info)) {
-            return sub;
+            found = sub;
         }
     }
-    FAIL("no such edge");
-    return kernel::SubId{};
+    REQUIRE(found.has_value()); // no such edge
+    return found.value_or(kernel::SubId{});
 }
 
 template <class Pred>
 kernel::SubId findVertex(const kernel::Shape& shape, Pred pred)
 {
-    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Vertex); ++i) {
+    std::optional<kernel::SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Vertex) && !found; ++i) {
         const kernel::SubId sub{kernel::SubKind::Vertex, i};
         auto p = kernel::vertexPoint(shape, sub);
         if (p && pred(*p)) {
-            return sub;
+            found = sub;
         }
     }
-    FAIL("no such vertex");
-    return kernel::SubId{};
+    REQUIRE(found.has_value()); // no such vertex
+    return found.value_or(kernel::SubId{});
 }
 
 } // namespace ray::cam::test
