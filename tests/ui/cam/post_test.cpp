@@ -1066,7 +1066,7 @@ TEST_CASE("settings are remembered per setup, overwrite rules, a second post wri
     REQUIRE(p->post());
     w.posted("done");
     const QString file = p->resultPath();
-    CHECK(QFileInfo(file).fileName() == QStringLiteral("Op 1 - top 2002.nc"));
+    CHECK(QFileInfo(file).fileName() == QStringLiteral("Op_1_-_top 2002.nc"));
     const QByteArray firstBytes = readFile(file);
     // The program number went back to the setup (one undo step), the post too.
     REQUIRE(QTest::qWaitFor(
@@ -1096,7 +1096,7 @@ TEST_CASE("settings are remembered per setup, overwrite rules, a second post wri
     w.shotsBothThemes(QStringLiteral("t047_post_ask"));
     w.click(QStringLiteral("postNewName"));
     w.posted("done");
-    CHECK(QFileInfo(p->resultPath()).fileName() == QStringLiteral("Op 1 - top 2002_2.nc"));
+    CHECK(QFileInfo(p->resultPath()).fileName() == QStringLiteral("Op_1_-_top 2002_2.nc"));
     CHECK(readFile(p->resultPath()) == firstBytes);
     REQUIRE(p->post());
     w.posted("asking");

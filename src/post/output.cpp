@@ -246,6 +246,28 @@ std::string sanitizeFileName(std::string_view stem, bool* changed)
     return out;
 }
 
+std::string fieldNameText(std::string_view value)
+{
+    const auto space = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; };
+    std::size_t first = 0, last = value.size();
+    while (first < last && space(value[first])) {
+        ++first;
+    }
+    while (last > first && space(value[last - 1])) {
+        --last;
+    }
+    std::string out;
+    out.reserve(last - first);
+    for (std::size_t i = first; i < last; ++i) {
+        if (!space(value[i])) {
+            out.push_back(value[i]);
+        } else if (!space(value[i - 1])) { // i > first: value[first] is not a space
+            out.push_back('_');            // one '_' for the whole run
+        }
+    }
+    return out;
+}
+
 bool isTemporaryOutputName(std::string_view name)
 {
     return name.size() > 6 && name.front() == '.' && name.substr(name.size() - 4) == ".tmp";
@@ -292,20 +314,21 @@ Result<FileName> fileNameFor(std::string_view pattern, const NameFields& fields,
                                               "} is not valid: only {program:N} takes a width, N from 1 to 9"));
             }
         }
+        // A field's value has no spaces in the name (many controls and DNC links refuse them): fieldNameText.
         if (key == "program") {
             raw += numberText(fields.programNumber, width);
         } else if (key == "setup") {
-            raw += fields.setupName;
+            raw += fieldNameText(fields.setupName);
         } else if (key == "doc") {
-            raw += fields.documentName;
+            raw += fieldNameText(fields.documentName);
         } else if (key == "part") {
-            raw += fields.partName;
+            raw += fieldNameText(fields.partName);
         } else if (key == "comment") {
-            raw += fields.programComment;
+            raw += fieldNameText(fields.programComment);
         } else if (key == "post") {
-            raw += fields.postId;
+            raw += fieldNameText(fields.postId);
         } else if (key == "machine") {
-            raw += fields.machineName;
+            raw += fieldNameText(fields.machineName);
         } else if (key == "ext") {
             raw += fields.extension;
             wroteExt = true;

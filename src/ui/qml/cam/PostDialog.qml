@@ -440,7 +440,8 @@ FocusScope {
                 Field {
                     key: "pattern"
                     label: qsTr("File name")
-                    hint: qsTr("Fields: {program}, {program:5} (zero-padded), {setup}, {doc}, {part}, {comment}, {post}, {machine}, {ext}")
+                    hint: qsTr("Fields: {program}, {program:5} (zero-padded), {setup}, {doc}, {part}, {comment}, {post}, {machine}, {ext}. "
+                               + "Whitespace in a field's value becomes one _; the pattern's own text keeps its spaces.")
                 }
                 Label {
                     objectName: "postPatternHelp"
@@ -450,7 +451,8 @@ FocusScope {
                     elide: Text.ElideNone
                     secondary: true
                     font: Theme.smallFont
-                    text: qsTr("Fields: {program}, {program:5}, {setup}, {doc}, {part}, {comment}, {post}, {machine}, {ext}")
+                    text: qsTr("Fields: {program}, {program:5}, {setup}, {doc}, {part}, {comment}, {post}, {machine}, {ext}. "
+                               + "Spaces in a field's value become _ (many controls refuse them); your own text stays as typed.")
                 }
                 Row {
                     spacing: Theme.spacingS
@@ -461,7 +463,7 @@ FocusScope {
                         objectName: "postFileName"
                         width: root.fieldWidth
                         anchors.verticalCenter: parent.verticalCenter
-                        font: Theme.strongFont // not the mono font: its O and 0 look alike, and O numbers matter here
+                        font: Theme.strongFont
                         wrapMode: Text.WrapAnywhere
                         elide: Text.ElideNone
                         text: CamPost.fileName !== "" ? CamPost.fileName : "—"

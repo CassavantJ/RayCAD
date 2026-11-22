@@ -522,7 +522,7 @@ TEST_CASE("cam.post refuses every blocking state and writes nothing; a good setu
     const QJsonObject r = QJsonDocument::fromJson(QByteArray::fromStdString(first)).object();
     const std::string path = r.value("path").toString().toStdString();
     const std::string name = r.value("fileName").toString().toStdString();
-    CHECK_THAT(name, Catch::Matchers::EndsWith("_Setup 1.nc"));
+    CHECK_THAT(name, Catch::Matchers::EndsWith("_Setup_1.nc"));
     CHECK(out.files() == std::vector<std::string>{name});
     const std::string bytes = readAll(path);
     CHECK(bytes.size() == static_cast<std::size_t>(r.value("bytes").toInt()));

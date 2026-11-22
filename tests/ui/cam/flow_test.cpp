@@ -470,12 +470,15 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
         w.click(item);
         REQUIRE(QTest::qWaitFor([&] { return w.op()->toolId() == kDrill6; }, 5000));
     }
-    // Three holes, each by a real click on its bore wall where the view shows it.
+    // Four holes, each by a real click on its bore wall where the view shows it; the fourth is removed again below.
     REQUIRE(QTest::qWaitFor([&] { return w.op()->holeCount() == 6; }, kTimeoutMs));
+    CHECK(w.shown(QStringLiteral("operationPickCount"))->property("text").toString() == QStringLiteral("No holes picked"));
+    CHECK(w.host->selection()->toolHighlight().empty());
+    std::vector<QPointF> pickedAt; // where each picked hole's bore was clicked
     {
         std::vector<std::string> refused;
         int picked = 0;
-        for (std::size_t i = 0; i < w.op()->holeCount() && picked < 3; ++i) {
+        for (std::size_t i = 0; i < w.op()->holeCount() && picked < 4; ++i) {
             const api::cam_operation::Hole h = w.op()->holes()[i];
             const QPointF p = w.sceneOf(farWall(w, h));
             if (!w.clear(p))
@@ -485,6 +488,7 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
             const bool took = QTest::qWaitFor([&] { return static_cast<int>(w.op()->picks().size()) > before; }, 10000);
             if (took) {
                 ++picked;
+                pickedAt.push_back(p);
             } else {
                 refused.push_back("hole " + std::to_string(i) + " at " + std::to_string(p.x()) + "," +
                                   std::to_string(p.y()) + ": " + w.op()->message().toStdString());
@@ -493,7 +497,81 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
         for (const std::string& r : refused)
             UNSCOPED_INFO("a click on a bore picked no hole: " << r);
         INFO("holes picked by a click in the view: " << picked);
-        REQUIRE(picked == 3);
+        REQUIRE(picked == 4);
+    }
+    // Every picked hole is marked in the view by all its faces, in the selection's highlight, and the count stays in
+    // the panel's fixed header whatever the list's scroll.
+    const auto holeFacesMarked = [&](int expectedPicks) {
+        std::vector<render::PickHit> want;
+        for (int i = 0; i < expectedPicks; ++i) {
+            const std::vector<render::PickHit> h = w.op()->pickHits(i);
+            INFO("pick " << i);
+            REQUIRE_FALSE(h.empty());
+            const auto& holes = w.op()->holes();
+            const auto hole = std::find_if(holes.begin(), holes.end(), [&](const api::cam_operation::Hole& x) {
+                return x.boreFace == h.front().subIndex;
+            });
+            REQUIRE(hole != holes.end());
+            CHECK(h.size() == hole->faces.size());
+            for (const render::PickHit& f : h) {
+                CHECK(f.kind == kernel::SubKind::Face);
+                CHECK(f.item == w.host->scene()->itemForBody(0));
+                CHECK(std::binary_search(hole->faces.begin(), hole->faces.end(), f.subIndex));
+            }
+            want.insert(want.end(), h.begin(), h.end());
+        }
+        const std::vector<render::PickHit>& shown = w.host->selection()->toolHighlight();
+        REQUIRE(shown.size() == want.size());
+        for (std::size_t i = 0; i < want.size(); ++i)
+            CHECK((shown[i].item == want[i].item && shown[i].subIndex == want[i].subIndex));
+        // What the viewport is asked to draw includes them.
+        const std::vector<render::PickHit> drawn = w.host->selection()->hits();
+        for (const render::PickHit& f : want)
+            CHECK(std::any_of(drawn.begin(), drawn.end(),
+                              [&](const render::PickHit& d) { return d.item == f.item && d.subIndex == f.subIndex; }));
+    };
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 4 && !w.op()->previewBusy(); }, kTimeoutMs));
+    holeFacesMarked(4);
+    {
+        QQuickItem* count = w.shown(QStringLiteral("operationPickCount"));
+        CHECK(count->property("text").toString() == QStringLiteral("4 holes"));
+        CHECK(w.shown(QStringLiteral("operationHeader"))->isAncestorOf(count));
+        // A picked hole looks marked: its bore wall's pixel differs from what it was before the pick, the pointer away.
+        w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                    Qt::NoButton);
+        QTest::qWait(300);
+        w.host->selection()->setToolHighlight({});
+        const QImage unmarked = w.grab();
+        w.op()->setHoveredPick(-1);
+        emit w.op()->picksChanged(); // the panel marks them again
+        REQUIRE(!w.host->selection()->toolHighlight().empty());
+        const QImage marked = w.grab();
+        const double dpr = w.window()->effectiveDevicePixelRatio();
+        const QPoint at = (pickedAt.front() * dpr).toPoint();
+        INFO("pixel at the first picked bore: " << unmarked.pixelColor(at).name().toStdString() << " -> "
+                                                 << marked.pixelColor(at).name().toStdString());
+        CHECK(unmarked.pixel(at) != marked.pixel(at));
+    }
+    // Removing a pick from the list unmarks its hole at once.
+    w.click(QStringLiteral("operationPickRemove.3"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 3; }, 5000));
+    holeFacesMarked(3);
+    CHECK(w.shown(QStringLiteral("operationPickCount"))->property("text").toString() == QStringLiteral("3 holes"));
+    // The list row under the pointer marks its hole more strongly (the hover highlight on its bore).
+    {
+        QQuickItem* pickRow = w.shown(QStringLiteral("operationPick.1"));
+        w.inView(pickRow);
+        w.sendMouse(QEvent::MouseMove, w.centreOf(pickRow), Qt::NoButton, Qt::NoButton);
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->hoveredPick() == 1; }, 5000));
+        const auto emphasis = w.host->selection()->toolEmphasis();
+        REQUIRE(emphasis.has_value());
+        CHECK(emphasis->subIndex == w.op()->pickHits(1).front().subIndex);
+        CHECK(w.host->selection()->hoverHighlight().has_value());
+        w.shot("hole_row_hovered", true);
+        w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                    Qt::NoButton);
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->hoveredPick() == -1; }, 5000));
+        CHECK_FALSE(w.host->selection()->toolEmphasis().has_value());
     }
     w.shot("holes_picked");
     w.click(QStringLiteral("operationUseCalculated"));
@@ -714,6 +792,25 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
         REQUIRE(s->cam->tools.count(ToolId{Uuid::fromString(kDrill6.toStdString())}) == 1);
         CHECK(s->cam->tools.at(ToolId{Uuid::fromString(kDrill6.toStdString())}).item.contentHash() == toolHash);
     }
+    // What the tree says is true: toolpaths are not saved with the document, so an operation is "Up to date" only
+    // while this session still has its toolpath (the engine's cache by input hash, kept after a close for exactly
+    // this), and then it is drawn: the document opens with its first setup current. In a new session it would say
+    // "Not generated" (cam_test, "badges"). No toolpath hash is stored with the operation, so nothing is regenerated
+    // on open.
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == 0; }, 10000));
+    w.waitStatus(1, "upToDate");
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            for (const ToolpathDisplay::Shown& s : w.display()->shown())
+                if (s.op == opId && s.backplot && s.toolpath && !s.stale)
+                    return true;
+            return false;
+        },
+        kTimeoutMs));
+    for (const ToolpathDisplay::Shown& s : w.display()->shown()) {
+        if (s.op == opId)
+            CHECK(s.toolpath->hash().hex() == toolpathHash);
+    }
     w.shot("reopened");
     // The post's settings for the setup are remembered.
     w.clickRow(QStringLiteral("setupRow.0"));
@@ -723,6 +820,28 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     CHECK(w.post()->postId() == QStringLiteral("haas-ngc"));
     CHECK(w.post()->values().value(QStringLiteral("directory")).toString() == outDir);
     w.shot("post_remembered");
+    // Saved as "flow": the remembered {doc}_{setup} pattern names the file after the new document name, and the dialog
+    // says so before posting (no spaces: whitespace in a field's value becomes '_').
+    CHECK(w.post()->values().value(QStringLiteral("pattern")).toString() == QStringLiteral("{doc}_{setup}"));
+    REQUIRE(QTest::qWaitFor([&] { return w.post()->fileName() == QStringLiteral("flow_Setup_1.nc"); }, 10000));
+    CHECK(w.shown(QStringLiteral("postFileName"))->property("text").toString() == QStringLiteral("flow_Setup_1.nc"));
+    // It posts: the toolpath this session has is a real one.
+    REQUIRE(QTest::qWaitFor([&] { return w.post()->canPost(); }, kTimeoutMs));
+    w.click(QStringLiteral("postPost"));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const QString s = w.post()->state();
+            return s == QLatin1String("done") || s == QLatin1String("asking") || s == QLatin1String("failed");
+        },
+        kTimeoutMs * 2));
+    if (w.post()->state() == QLatin1String("asking"))
+        w.click(QStringLiteral("postReplace"));
+    w.posted("done");
+    CHECK(QFileInfo(w.post()->resultPath()).fileName() == QStringLiteral("flow_Setup_1.nc"));
+    {
+        const QByteArray reposted = readFile(w.post()->resultPath());
+        CHECK((reposted.contains("G83") || reposted.contains("G81")));
+    }
     w.post()->close();
     // Generated again: the same toolpath.
     CHECK(w.toolpath(opId)->hash().hex() == toolpathHash);
