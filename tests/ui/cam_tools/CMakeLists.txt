@@ -3,15 +3,18 @@
 #                                default library stack: browsing (and, [wallclock], 5,000 tools), filters, editing,
 #                                the side view, conflicts on a shared folder, the document's tools, the keyboard.
 #   ray_ui_cam_tools_unit_tests  the non-visual part (src/ui/cam/tools_logic.h): no window.
-# The window tests put their windows on RAY_TEST_SCREEN and raise the graphics driver's threads, as the other window
-# tests do (tests/CMakeLists.txt); both are set up here so that list there stays as it is.
-find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui Qml Quick Test)
+# The window tests put their windows on RAY_TEST_SCREEN, raise the graphics driver's threads, ignore other programs'
+# input and activation, and take the keyboard focus from Qt when the desktop does not grant it, as the other window
+# tests do (tests/CMakeLists.txt); all of it is set up here so the lists there stay as they are.
+find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui GuiPrivate Qml Quick Test)
 
 add_executable(ray_ui_cam_tools_tests tools_test.cpp
     "${CMAKE_SOURCE_DIR}/tests/support/driver_threads_listener.cpp"
-    "${CMAKE_SOURCE_DIR}/tests/ui/screen/test_screen_listener.cpp")
+    "${CMAKE_SOURCE_DIR}/tests/ui/screen/test_screen_listener.cpp"
+    "${CMAKE_SOURCE_DIR}/tests/ui/foreign_input_listener.cpp"
+    "${CMAKE_SOURCE_DIR}/tests/ui/window_focus.cpp")
 target_link_libraries(ray_ui_cam_tools_tests PRIVATE ray_ui ray_render ray_api ray_ui_test_screen Qt6::Core Qt6::Gui
-                                                     Qt6::Qml Qt6::Quick Qt6::Test Catch2::Catch2)
+                                                     Qt6::GuiPrivate Qt6::Qml Qt6::Quick Qt6::Test Catch2::Catch2)
 # The private headers of src/ui (AppHost, ToolLibraryModel, ...) and the CAM engine tests' test-only operation type and
 # library JSON (tests/unit/cam/engine_test_util.h).
 target_include_directories(ray_ui_cam_tools_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui" "${CMAKE_SOURCE_DIR}/tests/unit/cam")

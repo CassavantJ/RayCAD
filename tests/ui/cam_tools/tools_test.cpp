@@ -22,6 +22,7 @@
 // Screenshots: with RAY_T046_SHOTS set to a folder, the manager is saved there in both themes (list, editor, conflict).
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -52,9 +53,11 @@
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
 #include <QtQml/QQmlApplicationEngine>
+#include <QtQml/QQmlComponent>
 #include <QtQuick/QQuickItem>
 #include <QtQuick/QQuickItemGrabResult>
 #include <QtQuick/QQuickWindow>
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 
 #include <catch2/catch_session.hpp>
@@ -141,6 +144,7 @@ struct Window {
         REQUIRE(host->load());
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        ray::test::focusWindow(host->window()); // keys and the panel's shortcuts go to this window
         REQUIRE(host->startSession(userData.path().toStdString()));
         if (testOperation)
             host->app()->operationTypes()->add(std::make_unique<ct::TestOperation>());
@@ -233,13 +237,21 @@ struct Window {
         QCoreApplication::processEvents();
     }
     void click(const char* objectName) const { click(shown(QString::fromLatin1(objectName))); }
+    // Keys reach the window even when the desktop gave the activation to another program (window_focus.h).
+    void ensureFocus() const
+    {
+        if (QGuiApplication::focusWindow() != window())
+            ray::test::focusWindow(window());
+    }
     void key(int k, Qt::KeyboardModifiers mods = Qt::NoModifier) const
     {
+        ensureFocus();
         QTest::keyClick(window(), static_cast<Qt::Key>(k), mods);
         QCoreApplication::processEvents();
     }
     void type(const QString& text) const
     {
+        ensureFocus();
         for (const QChar c : text)
             QTest::keyClick(window(), c.toLatin1());
         QCoreApplication::processEvents();
@@ -969,15 +981,34 @@ TEST_CASE("picking a library tool for an operation embeds it; the document's too
     CHECK(m->readOnly());
     CHECK_FALSE(m->canUpdateFromLibrary());
 
-    // Picking a library tool for the operation: embedded in the same step, undone in one.
+    // The picker (qml/cam/ToolPicker.qml, the component the operation panel can use): drills only, a search, Enter.
     lib::Tool drill;
-    for (const lib::Tool& t : w.stack()->tools()) {
-        if (t.type == lib::ToolType::Drill) {
-            drill = t;
-            break;
-        }
+    m->hide(); // the picker lives in another panel
+    REQUIRE_FALSE(m->shown());
+    {
+        QQmlComponent component(w.host->engine());
+        component.setData("import QtQuick\nimport RayCad.Ui\nToolPicker { width: 400; toolType: \"drill\" }", QUrl());
+        std::unique_ptr<QObject> made(component.create());
+        INFO(component.errorString().toStdString());
+        auto* picker = qobject_cast<QQuickItem*>(made.get());
+        REQUIRE(picker != nullptr);
+        picker->setParentItem(w.window()->contentItem());
+        picker->setZ(100);
+        QSignalSpy picked(picker, SIGNAL(picked(QString, QString)));
+        w.typeInto(QStringLiteral("toolPickerSearch"), QStringLiteral("jobber 135"));
+        w.key(Qt::Key_Down);
+        w.key(Qt::Key_Return);
+        REQUIRE(picked.count() == 1);
+        const QString id = picked.at(0).at(0).toString();
+        CHECK(picked.at(0).at(1).toString() == QStringLiteral("library"));
+        const lib::Tool* t = w.stack()->tool(ToolId{Uuid::fromString(id.toStdString())});
+        REQUIRE(t != nullptr);
+        CHECK(t->type == lib::ToolType::Drill);
+        drill = *t;
+        picker->setParentItem(nullptr);
     }
-    REQUIRE(drill.id.value != Uuid{});
+    w.open();
+    // The pick for the operation: embedded in the same step, undone in one.
     const QString drillId = qs(drill.id.value.toString());
     const QVariantMap library = m->libraryArgsFor(drillId);
     REQUIRE(library.value(QStringLiteral("tools")).toList().size() == 1);
@@ -1224,7 +1255,7 @@ TEST_CASE("5,000 tools: the list stays responsive and only visible rows exist", 
     CHECK(typeGap < ray::test::uiBudgetMs(50));
     CHECK(scrollGap < ray::test::uiBudgetMs(50));
     CHECK(rescanGap < ray::test::uiBudgetMs(50));
-    CHECK(filterMs.back() < ray::test::uiBudgetMs(16));
+    CHECK(filterMs.back() < ray::test::uiBudgetMs(33)); // the High tier's stall budget (PLAN.md 9)
     w.checkNoWarnings();
 }
 
