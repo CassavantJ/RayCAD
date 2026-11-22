@@ -284,36 +284,81 @@ TEST_CASE("the section panel drives the viewport's plane; dragging redraws witho
     // The part is a closed solid and Medium has caps (its closedness is worked out on a worker first).
     CHECK(QTest::qWaitFor([&] { return w.info().sectionCaps == 1; }, 10000));
 
-    // Drag the slider's handle across its groove: every move redraws, nothing is uploaded again.
+    // Drag the slider's handle across its groove: every move that moves the plane is drawn, nothing is uploaded
+    // again, and the last frame shows where the drag ended.
     QQuickItem* slider = w.find("sectionOffsetSlider");
     REQUIRE(slider != nullptr);
     REQUIRE(slider->isEnabled());
+    const double middle = s->offset();
     const render::ViewportInfo before = w.info();
     const QPointF from = slider->mapToScene(QPointF(slider->width() / 2, slider->height() / 2));
     const QPointF to = slider->mapToScene(QPointF(slider->width() * 0.9, slider->height() / 2));
-    QTest::mousePress(w.window(), Qt::LeftButton, Qt::NoModifier, from.toPoint());
-    int moves = 0;
-    std::vector<double> offsets;
-    for (int i = 1; i <= 20; ++i) {
-        const QPointF p = from + (to - from) * (double(i) / 20);
-        QMouseEvent move(QEvent::MouseMove, p, w.window()->mapToGlobal(p), Qt::NoButton, Qt::LeftButton,
-                         Qt::NoModifier);
-        QGuiApplication::sendEvent(w.window(), &move);
-        const std::uint64_t frames = w.info().framesRendered;
-        // Returns at the move's frame; the long limit only matters on a loaded machine, where a frame can take over
-        // a second and the next move would otherwise be drawn in the same frame (fewer frames than moves).
-        static_cast<void>(QTest::qWaitFor([&] { return w.info().framesRendered > frames; }, 10000));
-        offsets.push_back(s->offset());
-        ++moves;
+    constexpr int kMoves = 20;
+    struct Drag {
+        std::vector<double> offsets; // after each move
+        int moved = 0;               // moves that moved the plane
+        int drawn = 0;               // ...and were drawn
+        bool interrupted = false;    // the window's activation changed during it
+        std::string trace;
+    };
+    // A drag ends when the window loses the activation: Qt Quick takes the grab from the item that has it. The test
+    // harness keeps other programs (other tests' windows open all the time on a busy machine) from taking it
+    // (ui/foreign_input_listener.cpp); should it change all the same, the slider rightly ignores the rest of the moves,
+    // and the drag is done again, from the middle.
+    const auto drag = [&] {
+        Drag d;
+        const auto watch = QObject::connect(w.window(), &QWindow::activeChanged, w.window(), [&] {
+            d.interrupted = true;
+            d.trace +=
+                std::string("\n  the window's activation changed: active ") + (w.window()->isActive() ? "yes" : "no");
+        });
+        QTest::mousePress(w.window(), Qt::LeftButton, Qt::NoModifier, from.toPoint());
+        double last = s->offset();
+        for (int i = 1; i <= kMoves; ++i) {
+            const QPointF p = from + (to - from) * (double(i) / kMoves);
+            QMouseEvent move(QEvent::MouseMove, p, w.window()->mapToGlobal(p), Qt::NoButton, Qt::LeftButton,
+                             Qt::NoModifier);
+            const std::uint64_t frames = w.info().framesRendered;
+            QGuiApplication::sendEvent(w.window(), &move);
+            d.offsets.push_back(s->offset());
+            const bool moved = s->offset() != last;
+            last = s->offset();
+            // A move that moved the plane is drawn: the next frame comes for it (however slowly on a loaded machine;
+            // without the wait, the next move would be drawn in the same frame).
+            const bool drew = moved && QTest::qWaitFor([&] { return w.info().framesRendered > frames; }, 10000);
+            d.moved += moved ? 1 : 0;
+            d.drawn += drew ? 1 : 0;
+            d.trace += "\n  move " + std::to_string(i) + ": offset " + std::to_string(s->offset()) +
+                       (moved ? drew ? ", drawn" : ", NOT drawn" : ", unchanged");
+        }
+        QTest::mouseRelease(w.window(), Qt::LeftButton, Qt::NoModifier, to.toPoint());
+        QObject::disconnect(watch);
+        return d;
+    };
+    Drag d;
+    int attempts = 0;
+    for (; attempts < 5; ++attempts) {
+        if (attempts > 0) {
+            s->setOffset(middle);
+            w.settle();
+        }
+        d = drag();
+        if (!d.interrupted)
+            break;
+        WARN("drag " << attempts + 1 << " lost the window's activation, done again:" << d.trace);
     }
-    QTest::mouseRelease(w.window(), Qt::LeftButton, Qt::NoModifier, to.toPoint());
+    const int tries = d.interrupted ? attempts : attempts + 1;
     w.settle();
     const render::ViewportInfo after = w.info();
-    INFO("frames " << before.framesRendered << " -> " << after.framesRendered << ", uploads " << before.meshUploads
-                   << " -> " << after.meshUploads);
+    INFO("drag " << tries << ": " << d.moved << " of " << kMoves << " moves moved the plane, " << d.drawn
+                 << " were drawn; frames " << before.framesRendered << " -> " << after.framesRendered << ", uploads "
+                 << before.meshUploads << " -> " << after.meshUploads << d.trace);
+    REQUIRE_FALSE(d.interrupted); // every one of five drags lost the activation: nothing can be told from them
     CHECK(after.meshUploads == before.meshUploads);
-    CHECK(after.framesRendered >= before.framesRendered + std::uint64_t(moves) / 2);
-    CHECK(offsets.back() > offsets.front());
+    CHECK(d.moved >= kMoves - 2); // the handle follows the pointer (the first moves may be within the drag threshold)
+    CHECK(d.drawn == d.moved);
+    const std::vector<double>& offsets = d.offsets;
+    CHECK(offsets.back() > middle);
     CHECK(std::is_sorted(offsets.begin(), offsets.end()));
     CHECK(std::abs(w.view()->viewport()->section()->origin.z - s->offset()) < 1e-9);
     // The numeric field follows the slider, in document units.

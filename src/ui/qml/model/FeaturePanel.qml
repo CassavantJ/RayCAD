@@ -1,8 +1,9 @@
 // The property panel of the open feature tool (task T-098; FeatureTool, model/feature_tools.h) in the shell's
 // viewportArea, to the right of the model tools column. One panel for every tool: the rows of the open tool's type
 // are shown. Numeric fields take numbers in the display unit, numbers with units, expressions and parameter names;
-// each change rebuilds the preview, and the document's message about the values shows under the field it names (or
-// at the bottom). OK (Enter) adds or edits the feature as one undo step; Cancel (Esc) leaves the document as it was.
+// each change rebuilds the preview, and the document's message about the values shows below OK and Cancel, the field
+// it names marked as invalid. OK (Enter) adds or edits the feature as one undo step; Cancel (Esc) leaves the document
+// as it was.
 // After a sketch is finished the panel offers Extrude for it.
 import QtQuick
 import RayCad.Ui
@@ -25,46 +26,36 @@ Item {
     readonly property real fieldWidth: Theme.controlHeight * 5.5
 
     // ---------- rows ----------
-    component FieldRow: Column {
+    // The field the message names is marked here; the message itself shows below OK and Cancel (featureMessage): it
+    // comes and goes as the values are typed (a half-typed "2" can be a radius too large), and a line that appeared
+    // here would move everything below it, OK too, under the pointer.
+    component FieldRow: Row {
         id: fieldRow
         property string key
         property string label
         property string placeholder: ""
         readonly property bool erroneous: FeatureTool.messageField === key && FeatureTool.message !== ""
         objectName: "featureField." + key
-        spacing: Theme.spacingXs / 2
-        Row {
-            spacing: Theme.spacingS
-            Label {
-                width: root.labelWidth
-                anchors.verticalCenter: parent.verticalCenter
-                secondary: true
-                text: fieldRow.label
-            }
-            TextField {
-                id: field
-                objectName: "featureInput." + fieldRow.key
-                width: root.fieldWidth
-                text: root.values[fieldRow.key] !== undefined ? String(root.values[fieldRow.key]) : ""
-                placeholderText: fieldRow.placeholder
-                invalid: fieldRow.erroneous
-                Accessible.name: fieldRow.label
-                onTextEdited: FeatureTool.setValue(fieldRow.key, text)
-                Keys.onReturnPressed: FeatureTool.commit()
-                Keys.onEnterPressed: FeatureTool.commit()
-                Keys.onEscapePressed: FeatureTool.cancel()
-            }
-        }
+        spacing: Theme.spacingS
         Label {
-            objectName: "featureFieldError." + fieldRow.key
-            visible: fieldRow.erroneous
-            x: root.labelWidth + Theme.spacingS
+            width: root.labelWidth
+            anchors.verticalCenter: parent.verticalCenter
+            secondary: true
+            text: fieldRow.label
+        }
+        TextField {
+            id: field
+            objectName: "featureInput." + fieldRow.key
             width: root.fieldWidth
-            wrapMode: Text.Wrap
-            elide: Text.ElideNone
-            font: Theme.smallFont
-            color: Theme.error
-            text: FeatureTool.message
+            text: root.values[fieldRow.key] !== undefined ? String(root.values[fieldRow.key]) : ""
+            placeholderText: fieldRow.placeholder
+            invalid: fieldRow.erroneous
+            Accessible.name: fieldRow.label
+            Accessible.description: fieldRow.erroneous ? FeatureTool.message : ""
+            onTextEdited: FeatureTool.setValue(fieldRow.key, text)
+            Keys.onReturnPressed: FeatureTool.commit()
+            Keys.onEnterPressed: FeatureTool.commit()
+            Keys.onEscapePressed: FeatureTool.cancel()
         }
     }
 
@@ -418,17 +409,6 @@ Item {
                     text: qsTr("Flip the normal")
                 }
 
-                // The message about the values that names no field, and the preview's state.
-                Label {
-                    objectName: "featureMessage"
-                    visible: FeatureTool.message !== "" && FeatureTool.messageField === ""
-                    width: root.labelWidth + root.fieldWidth + Theme.spacingS
-                    wrapMode: Text.Wrap
-                    elide: Text.ElideNone
-                    color: FeatureTool.previewStatus === "warning" ? Theme.warning
-                           : FeatureTool.previewStatus === "failed" ? Theme.error : Theme.textSecondary
-                    text: FeatureTool.message
-                }
                 Row {
                     spacing: Theme.spacingS
                     layoutDirection: Qt.RightToLeft
@@ -448,8 +428,20 @@ Item {
                         onClicked: FeatureTool.cancel()
                     }
                 }
-                // Below the buttons, so that OK and Cancel never move while a preview builds (the line comes and
-                // goes with every change: a click on OK must not land where it was a moment ago).
+                // Below the buttons, so that OK and Cancel never move while the values are typed or a preview builds
+                // (these lines come and go with every change: a click on OK must not land where it was a moment ago):
+                // the message about the values (the field it names is marked above), and the preview's state.
+                Label {
+                    objectName: "featureMessage"
+                    visible: FeatureTool.message !== ""
+                    width: root.labelWidth + root.fieldWidth + Theme.spacingS
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                    color: FeatureTool.previewStatus === "warning" ? Theme.warning
+                           : FeatureTool.previewStatus === "failed" || FeatureTool.messageField !== "" ? Theme.error
+                           : Theme.textSecondary
+                    text: FeatureTool.message
+                }
                 Label {
                     objectName: "featurePreviewState"
                     secondary: true

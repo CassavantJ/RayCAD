@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -435,6 +436,48 @@ double slowSketch(ray::api::HeadlessApp& app, double minMs)
     }
 }
 
+// Returns once every worker of the app's two is free: two jobs that each wait until both have started. A worker can
+// still be busy with an earlier rebuild after waitForBuild (one that was superseded, and cancelled, while it built a
+// feature: it ends at the feature's next cancel check); a test that counts on a free worker must not start before.
+// The time it waited, in ms.
+double bothWorkersFree(ray::api::HeadlessApp& app)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    auto started = std::make_shared<std::atomic<int>>(0);
+    const auto meet = [&] {
+        return app.jobs().submit<int>(ray::JobInfo{"both workers", ray::JobPriority::Interactive, false},
+                                      [started](ray::JobContext&) -> ray::Result<int> {
+                                          ++*started;
+                                          const auto deadline = std::chrono::steady_clock::now() + kWait;
+                                          while (started->load() < 2 && std::chrono::steady_clock::now() < deadline) {
+                                              std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                                          }
+                                          return started->load();
+                                      });
+    };
+    auto a = meet();
+    auto b = meet();
+    auto ra = app.wait(a, kWait);
+    auto rb = app.wait(b, kWait);
+    REQUIRE(ra);
+    REQUIRE(rb);
+    REQUIRE(*ra == 2);
+    REQUIRE(*rb == 2);
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// Waits for `job` without running any UI work on this thread (the UI thread of the headless app): what needs the UI
+// thread waits meanwhile. True if it finished within `timeout`.
+template <class T>
+bool doneWithoutUi(const ray::JobHandle<T>& job, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!job.done() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return job.done();
+}
+
 } // namespace
 
 TEST_CASE("document commands queue per document: order, cancel of a queued one, one worker per queue",
@@ -448,6 +491,7 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
     INFO("one width edit takes " << editMs << " ms");
     REQUIRE(app->waitForBuild(*od, kWait));
     const std::size_t undos = od->document->undoCount();
+    INFO("both workers were free after " << bothWorkersFree(*app) << " ms");
 
     SECTION("commands run in invoke order; a queued one cancelled ends at once and never runs")
     {
@@ -456,7 +500,9 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
         auto c = app->actions().invoke("sketch.constraint.set", widthArgs(31), Caller::User);
         auto d =
             app->actions().invoke("feature.edit", R"({"id":")" + id('f', 1) + R"(","name":"Meander"})", Caller::User);
-        // b waits behind a (still solving): its cancel completes it now, without a worker or a UI turn.
+        // b waits behind a (a command ends on the UI thread, which has not run since): its cancel completes it now,
+        // without a worker or a UI turn.
+        CHECK_FALSE(a.done());
         CHECK(b.cancel());
         CHECK(b.done());
         auto rb = b.wait();
@@ -484,7 +530,9 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
         for (int i = 0; i < kQueued; ++i) {
             queued.push_back(app->actions().invoke("sketch.constraint.set", widthArgs(29 + i), Caller::User));
         }
-        // A job submitted after the whole queue: one worker is the queue's, the other is free for it.
+        // A job submitted after the whole queue: one worker is the queue's, the other is free for it. Waited for
+        // without UI turns, so the queue cannot drain meanwhile (each command ends on the UI thread) and the order is
+        // forced: the job either gets the second worker while all six wait, or never runs.
         std::atomic<int> doneWhenItRan{-1};
         auto other = app->jobs().submit<int>(ray::JobInfo{"other", ray::JobPriority::Interactive, false},
                                              [&](ray::JobContext&) -> ray::Result<int> {
@@ -495,14 +543,14 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
                                                  doneWhenItRan = done;
                                                  return done;
                                              });
+        // Before, every queued command took a worker to wait for the one before it: the other job never ran here.
+        CHECK(doneWithoutUi(other, kWait));
         REQUIRE(app->wait(other, kWait));
         for (auto& q : queued) {
             REQUIRE(app->wait(q, kWait));
         }
         INFO("queued commands done when the other job ran: " << doneWhenItRan.load() << " of " << kQueued);
-        // Before, every queued command took a worker to wait for the one before it, so the other job ran only once
-        // all but one had started.
-        CHECK(doneWhenItRan.load() <= 1);
+        CHECK(doneWhenItRan.load() == 0);
         CHECK(od->document->undoCount() == undos + kQueued);
     }
     SECTION("the queues of two documents run side by side")
@@ -511,6 +559,7 @@ TEST_CASE("document commands queue per document: order, cancel of a queued one, 
         OpenDocument* second = app->active();
         REQUIRE(second != nullptr);
         REQUIRE(second != od);
+        REQUIRE(bothWorkersFree(*app) >= 0); // the new document's first rebuild has its worker back
         // The slow edit on the first document, by id; a quick one on the active (second) one, which is not queued
         // behind it.
         auto slow = app->actions().invoke(

@@ -7,7 +7,8 @@
 //   - exactly one blur per changed frame however many glass panels are open, none when the image did not change,
 //     none while idle; switching glass off stops the blur, frees the backdrop and gives flat panels with the same
 //     layout
-//   - 200 scripted window resizes with glass on: no crash, no warning, no RHI resource leak
+//   - 200 scripted window resizes with glass on: no crash, no warning, no RHI resource leak; and 200 more with every
+//     resize hovered (Qt's pointer, moved by the test), so the picking pass is made and kept: no leak either
 //   - imported body colours (an assembly file that carries them) are drawn, and a selection stays visible on them
 // With RAY_GLASS_SCREENSHOT_DIR set, the windows are saved there as PNG files (for review; nothing is compared).
 #include "../scene_graph_probe.h"
@@ -438,32 +439,60 @@ TEST_CASE("200 window resizes with glass on: no crash, no RHI resource leak", "[
         w.open(kBoxHole);
         w.grab();
         const std::int64_t baseline = w.info().liveRhiResources;
+        const std::uint64_t picks = w.info().pickBufferRenders;
         CHECK(w.info().backdropBlurs > 0);
-        std::int64_t most = baseline;
-        for (int i = 0; i < 200; ++i) {
-            const int width = 700 + (i * 37) % 900;
-            const int height = 500 + (i * 53) % 500;
-            w.window()->resize(width, height);
-            if (i % 25 == 7)
-                w.context()->setGlass(i % 2 == 0); // panels come and go as well
-            if (i % 2 == 0)
-                w.grab(); // a frame at this size
-            else
-                QCoreApplication::processEvents();
-            most = std::max(most, w.info().liveRhiResources);
-        }
-        w.context()->setGlass(true);
-        w.window()->resize(1200, 800);
-        REQUIRE(QTest::qWaitFor([&] { return std::abs(w.view()->width() - 1200) < 1; }, 5000));
-        w.grab();
-        // The backdrop texture replaced by the last resize is freed at the viewport's next frame (viewport_rhi.h).
-        w.view()->viewport()->requestFrame();
-        w.grab();
+        // 200 resizes, the pointer (Qt's, moved by the test) over the view at a new place each time when `hovering`;
+        // the most resources alive at once. Ends at 1200x800 with glass on, the replaced backdrop freed.
+        const auto resizes = [&](bool hovering) {
+            std::int64_t most = w.info().liveRhiResources;
+            for (int i = 0; i < 200; ++i) {
+                const int width = 700 + (i * 37) % 900;
+                const int height = 500 + (i * 53) % 500;
+                w.window()->resize(width, height);
+                if (hovering)
+                    QTest::mouseMove(w.window(),
+                                     QPoint(width / 2 + (i * 7) % 60 - 30, height / 2 + (i * 11) % 60 - 30));
+                if (i % 25 == 7)
+                    w.context()->setGlass(i % 2 == 0); // panels come and go as well
+                if (i % 2 == 0)
+                    w.grab(); // a frame at this size
+                else
+                    QCoreApplication::processEvents();
+                most = std::max(most, w.info().liveRhiResources);
+            }
+            w.context()->setGlass(true);
+            w.window()->resize(1200, 800);
+            REQUIRE(QTest::qWaitFor([&] { return std::abs(w.view()->width() - 1200) < 1; }, 5000));
+            w.grab();
+            // The backdrop texture replaced by the last resize is freed at the viewport's next frame (viewport_rhi.h).
+            w.view()->viewport()->requestFrame();
+            w.grab();
+            return most;
+        };
+        const std::int64_t most = resizes(false);
         INFO("RHI resources: " << baseline << " at the start, " << w.info().liveRhiResources << " at the end, at most "
-                               << most);
+                               << most << "; hover picks " << w.info().pickBufferRenders - picks);
         CHECK(w.info().liveRhiResources == baseline);
         CHECK(most <= baseline + 8);
+        // Nothing hovered, so nothing was picked: the real pointer over the window is ignored
+        // (ui/foreign_input_listener.cpp), and a pick would make the picking pass's resources.
+        CHECK(w.info().pickBufferRenders == picks);
         CHECK(w.view()->viewport()->blurredBackdropTexture().width > 0);
+
+        // Again with the pointer over the view, every hover picked: the picking pass's target and pipelines are made
+        // at the first pick and then kept, replaced at a new size, never added to.
+        QTest::mouseMove(w.window(), QPoint(600, 400));
+        REQUIRE(QTest::qWaitFor([&] { return w.info().pickBufferRenders > picks; }, 5000));
+        static_cast<void>(resizes(true)); // every size once with the picking pass
+        const std::int64_t picking = w.info().liveRhiResources;
+        const std::uint64_t picksBefore = w.info().pickBufferRenders;
+        const std::int64_t mostPicking = resizes(true);
+        INFO("with hover picks: " << picking << " before 200 more resizes, " << w.info().liveRhiResources
+                                  << " after, at most " << mostPicking << "; hover picks "
+                                  << w.info().pickBufferRenders - picksBefore);
+        CHECK(w.info().pickBufferRenders > picksBefore + 50);
+        CHECK(w.info().liveRhiResources == picking);
+        CHECK(mostPicking <= picking + 8);
         CHECK(w.host->warnings().isEmpty());
     }
     // The window and its QRhi are gone: QRhi's leak check warns about anything left over.

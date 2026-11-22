@@ -15,6 +15,7 @@
 //   - SceneController::syncFromDocument (the T-017/T-019 seam) lists features and bodies
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -958,27 +959,17 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file imports; i
     Window w("dark");
     REQUIRE(QFileInfo::exists(kMidSize));
 
-    // Watchdog: a 2 ms timer on the UI thread; a gap between ticks is time the event loop was blocked.
-    QElapsedTimer clock;
-    qint64 last = 0;
-    qint64 worst = 0;
-    QTimer tick;
-    tick.setTimerType(Qt::PreciseTimer);
-    tick.setInterval(2);
-    QObject::connect(&tick, &QTimer::timeout, [&] {
-        const qint64 now = clock.elapsed();
-        worst = std::max(worst, now - last);
-        last = now;
-    });
-    clock.start();
-    tick.start();
+    // Watchdog (ui_watchdog.h): the worst time the UI thread was busy or blocked between two of its 2 ms ticks.
+    ray::test::UiWatchdog dog;
+    dog.start();
     REQUIRE(w.host->files()->open(kMidSize));
-    REQUIRE(QTest::qWaitFor([&] { return w.settled(); }, kOpenTimeoutMs));
+    REQUIRE(ray::test::waitFor([&] { return w.settled(); }, kOpenTimeoutMs));
     // A few frames after the meshes arrived (uploads happen on the render thread).
-    QTest::qWait(300);
-    tick.stop();
-    INFO("worst UI-thread gap " << worst << " ms");
-    CHECK(worst < ray::test::uiBudgetMs(50));
+    ray::test::waitMs(300);
+    dog.stop();
+    WARN("UI-thread watchdog while a mid-size corpus file imports: worst " << dog.worst().describe() << "; longest gap "
+                                                                           << dog.worstWall().describe());
+    CHECK(dog.worstStallMs() < ray::test::uiBudgetMs(50));
     CHECK(w.scene()->bodyCount() >= 1);
 
     // Idle: no frame for a second.
