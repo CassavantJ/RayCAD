@@ -92,3 +92,5 @@ target_compile_definitions(ray_cam_drill_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_S
     RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_drill_tests)
+# The toolpath invariant checker and the property tests of the operation types (task T-058).
+add_subdirectory(invariants)
