@@ -142,6 +142,7 @@ set(RAY_TEST_LOCKS
     desktop=ray_ui_cam_operation_scale_2
     desktop=ray_ui_cam_tools_tests
     desktop=ray_ui_cam_post_tests
+    desktop=ray_ui_cam_flow_tests
     clipboard=ray_ui_measure_tests  # copies a value and the whole result, then reads the clipboard back
     clipboard=ray_ui_cam_post_tests) # copies G-code lines and the whole program, then reads the clipboard back
 
