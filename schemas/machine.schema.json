@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/machine.schema.json",
+  "title": "RayCAD machine definition",
+  "description": "One machine of a library, the file machines/<uuid>.machine.json (PLAN.md 3.6, libraries.h MachineDef). Lengths are millimetres, feeds and rapids millimetres per minute, acceleration millimetres per second squared. A value of 0 means not published or not known. Unknown keys are allowed and are kept when RayCAD saves the machine again.",
+  "type": "object",
+  "required": ["schema", "id", "name", "kind", "axes", "spindle", "toolChanger", "control"],
+  "properties": {
+    "schema": { "const": 1, "description": "Version of this file's format. A larger value means a newer RayCAD wrote it." },
+    "id": { "$ref": "#/$defs/uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "vendor": { "type": "string" },
+    "model": { "type": "string" },
+    "kind": { "enum": ["mill3", "mill4", "mill5", "lathe"], "description": "v1 implements mill3 only." },
+    "verified": { "type": "boolean", "description": "True once someone has checked the values against the real machine. Shipped definitions are false." },
+    "axes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "required": ["letter", "min", "max", "rapid", "maxFeed", "accel"],
+        "properties": {
+          "letter": { "type": "string", "pattern": "^[XYZABCUVW]$" },
+          "min": { "type": "number", "minimum": -100000, "maximum": 100000, "description": "Travel limit in machine coordinates (degrees for a rotary axis)." },
+          "max": { "type": "number", "minimum": -100000, "maximum": 100000 },
+          "rapid": { "type": "number", "minimum": 0, "maximum": 1000000 },
+          "maxFeed": { "type": "number", "minimum": 0, "maximum": 1000000 },
+          "accel": { "type": "number", "minimum": 0, "maximum": 1000000 }
+        }
+      }
+    },
+    "spindle": {
+      "type": "object",
+      "required": ["maxRpm"],
+      "properties": {
+        "maxRpm": { "type": "number", "exclusiveMinimum": 0, "maximum": 500000 },
+        "minRpm": { "type": "number", "minimum": 0, "maximum": 500000 },
+        "powerKw": { "type": "number", "minimum": 0, "maximum": 10000 },
+        "torqueNm": { "type": "number", "minimum": 0, "maximum": 100000 }
+      }
+    },
+    "toolChanger": {
+      "type": "object",
+      "required": ["capacity"],
+      "properties": {
+        "capacity": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "changeSeconds": { "type": "number", "minimum": 0, "maximum": 3600 }
+      }
+    },
+    "control": {
+      "type": "object",
+      "required": ["dialect", "defaultPost"],
+      "properties": {
+        "dialect": { "type": "string", "minLength": 1, "description": "'haas-ngc', 'fanuc', 'mazak-eia', 'generic-iso', ..." },
+        "defaultPost": { "type": "string", "minLength": 1, "description": "File stem of the post in posts/." },
+        "rigidTapping": { "type": "boolean" },
+        "maxBlockNumber": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "Largest N number (0: no limit known)." },
+        "maxProgramNameLength": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "0: no limit known." }
+      }
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "throughSpindleCoolant": { "type": "boolean" },
+        "probe": { "type": "boolean" },
+        "toolSetter": { "type": "boolean" }
+      }
+    },
+    "postProperties": { "type": "object", "description": "Machine-specific defaults for the post's properties, any JSON value each." },
+    "comment": { "type": "string" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

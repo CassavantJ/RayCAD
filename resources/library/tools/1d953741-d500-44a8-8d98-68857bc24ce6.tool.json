@@ -1,0 +1,96 @@
+{
+  "bodyMaterial": "HSS-E",
+  "comment": "Generic HSS-E spiral point plug tap, #10-24 UNC. Thread designation, pitch (25.4 / 24 = 1.058333 mm) from resources/standards/threads.json (ASME B1.1). Lengths and shank: approximate ASME B94.9 ground thread hand tap proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 4.826,
+  "fluteLength": 22.225,
+  "flutes": 3,
+  "id": "1d953741-d500-44a8-8d98-68857bc24ce6",
+  "name": "#10-24 UNC HSS-E spiral point tap",
+  "overallLength": 60.325,
+  "presets": [
+    {
+      "chipLoad": 0,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 15
+    },
+    {
+      "chipLoad": 0,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 12
+    },
+    {
+      "chipLoad": 0,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 9
+    },
+    {
+      "chipLoad": 0,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 7
+    },
+    {
+      "chipLoad": 0,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 5
+    },
+    {
+      "chipLoad": 0,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 4
+    },
+    {
+      "chipLoad": 0,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 3
+    },
+    {
+      "chipLoad": 0,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 1,
+      "opClass": "tap",
+      "rampAngle": 0,
+      "surfaceSpeed": 3
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 4.9276,
+  "shoulderLength": 22.225,
+  "threadPitch": 1.0583,
+  "threadSpec": "#10-24 UNC",
+  "tipAngle": 0,
+  "tipDiameter": 0,
+  "type": "tap",
+  "vendor": ""
+}

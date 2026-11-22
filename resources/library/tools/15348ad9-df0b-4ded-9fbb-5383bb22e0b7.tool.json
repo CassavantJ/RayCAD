@@ -1,0 +1,96 @@
+{
+  "bodyMaterial": "carbide",
+  "comment": "Generic carbide single-profile 60 degree thread mill: cuts any 60 degree pitch it fits (threadPitch 0 means any). The 60 degree profile is the ISO 68-1 / ASME B1.1 basic profile. Dimensions: approximate catalogue proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 6,
+  "fluteLength": 1.5,
+  "flutes": 3,
+  "id": "15348ad9-df0b-4ded-9fbb-5383bb22e0b7",
+  "name": "6 mm single-profile 60 deg carbide thread mill",
+  "overallLength": 57,
+  "presets": [
+    {
+      "chipLoad": 0.0144,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 125
+    },
+    {
+      "chipLoad": 0.0126,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 110
+    },
+    {
+      "chipLoad": 0.009,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 55
+    },
+    {
+      "chipLoad": 0.0081,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 45
+    },
+    {
+      "chipLoad": 0.0072,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 35
+    },
+    {
+      "chipLoad": 0.0072,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 32
+    },
+    {
+      "chipLoad": 0.0054,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 22
+    },
+    {
+      "chipLoad": 0.0054,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 20
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 6,
+  "shoulderLength": 1.5,
+  "threadPitch": 0,
+  "threadSpec": "",
+  "tipAngle": 60,
+  "tipDiameter": 0,
+  "type": "threadMill",
+  "vendor": ""
+}

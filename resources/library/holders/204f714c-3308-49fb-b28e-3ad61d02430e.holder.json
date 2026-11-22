@@ -1,0 +1,25 @@
+{
+  "comment": "Flange per the CAT40 (V-flange) standard (ASME B5.50, flange 2.50 in = 63.5 mm); the body and nose are a conservative generic envelope for collision checks; nose: ER16 collet nut about 28 mm across (ISO 15488 ER16 collets). Measure your own holders and correct the segments.",
+  "gaugeLength": 70,
+  "id": "204f714c-3308-49fb-b28e-3ad61d02430e",
+  "name": "CAT40 ER16 collet chuck, 70 mm gauge",
+  "schema": 1,
+  "segments": [
+    {
+      "height": 15.9,
+      "lowerDiameter": 63.5,
+      "upperDiameter": 63.5
+    },
+    {
+      "height": 24.1,
+      "lowerDiameter": 44.5,
+      "upperDiameter": 44.5
+    },
+    {
+      "height": 30,
+      "lowerDiameter": 28,
+      "upperDiameter": 32
+    }
+  ],
+  "vendor": ""
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/holder.schema.json",
+  "title": "RayCAD tool holder",
+  "description": "One tool holder of a library, the file holders/<uuid>.holder.json (PLAN.md 3.6, libraries.h Holder). The shape below the gauge line is a stack of cones and cylinders, listed from the gauge line down; simulation and collision checks use it. Lengths are millimetres. Unknown keys are allowed and are kept when RayCAD saves the holder again.",
+  "type": "object",
+  "required": ["schema", "id", "name", "gaugeLength", "segments"],
+  "properties": {
+    "schema": { "const": 1, "description": "Version of this file's format. A larger value means a newer RayCAD wrote it." },
+    "id": { "$ref": "#/$defs/uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "vendor": { "type": "string" },
+    "gaugeLength": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000, "description": "From the gauge line to the face the tool comes out of." },
+    "segments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["height", "lowerDiameter", "upperDiameter"],
+        "properties": {
+          "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+          "lowerDiameter": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000, "description": "Diameter at the end nearer the tool." },
+          "upperDiameter": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000, "description": "Diameter at the end nearer the spindle." }
+        }
+      }
+    },
+    "comment": { "type": "string" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

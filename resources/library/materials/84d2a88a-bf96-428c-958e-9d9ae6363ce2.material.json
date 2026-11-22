@@ -1,0 +1,10 @@
+{
+  "comment": "AISI 304 austenitic stainless steel, annealed. Density 7.90 g/cm3: Wikipedia 'SAE 304 stainless steel' (7,900 kg/m3). Hardness 201 HB: the maximum ASTM A240 allows for annealed 304 plate, a public specification limit (real stock is often softer). kc1.1 2300 N/mm2: approximate, ISO 513 group M. Cutting data for this material are in the tools' presets.",
+  "density": 7.9,
+  "group": "Stainless steel",
+  "hardnessHb": 201,
+  "id": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+  "name": "304 (annealed)",
+  "schema": 1,
+  "specificCuttingForce": 2300
+}

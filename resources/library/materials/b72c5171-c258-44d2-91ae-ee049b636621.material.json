@@ -1,0 +1,10 @@
+{
+  "comment": "6061 aluminium alloy, T6 temper. Density 2.70 g/cm3: Wikipedia '6061 aluminium alloy' (infobox). Hardness 95 HB: typical value of public 6061-T6 datasheets (ASM International / MatWeb), not re-checked here. kc1.1 700 N/mm2: approximate value for force estimates, of the order published for wrought aluminium (ISO 513 group N) in tooling handbooks; not from a specific table. Cutting data for this material are in the tools' presets.",
+  "density": 2.7,
+  "group": "Aluminium",
+  "hardnessHb": 95,
+  "id": "b72c5171-c258-44d2-91ae-ee049b636621",
+  "name": "6061-T6",
+  "schema": 1,
+  "specificCuttingForce": 700
+}

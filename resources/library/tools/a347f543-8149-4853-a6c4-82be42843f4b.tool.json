@@ -1,0 +1,96 @@
+{
+  "bodyMaterial": "carbide",
+  "comment": "Generic carbide full-form thread mill for 20 threads per inch (pitch 1.27 mm); diameter 4.5 mm stays inside the 1/4-20 UNC basic minor diameter 4.975 mm (resources/standards/threads.json, ASME B1.1). Dimensions: approximate catalogue proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 4.5,
+  "fluteLength": 13,
+  "flutes": 3,
+  "id": "a347f543-8149-4853-a6c4-82be42843f4b",
+  "name": "20 TPI carbide thread mill (1/4-20 UNC and up)",
+  "overallLength": 57,
+  "presets": [
+    {
+      "chipLoad": 0.0108,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 125
+    },
+    {
+      "chipLoad": 0.0095,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 110
+    },
+    {
+      "chipLoad": 0.0067,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 55
+    },
+    {
+      "chipLoad": 0.0061,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 45
+    },
+    {
+      "chipLoad": 0.0054,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 35
+    },
+    {
+      "chipLoad": 0.0054,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 32
+    },
+    {
+      "chipLoad": 0.004,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 22
+    },
+    {
+      "chipLoad": 0.004,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 2.889,
+      "maxRadialFraction": 0.1,
+      "opClass": "thread",
+      "rampAngle": 0,
+      "surfaceSpeed": 20
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 6,
+  "shoulderLength": 13,
+  "threadPitch": 1.27,
+  "threadSpec": "",
+  "tipAngle": 0,
+  "tipDiameter": 0,
+  "type": "threadMill",
+  "vendor": ""
+}

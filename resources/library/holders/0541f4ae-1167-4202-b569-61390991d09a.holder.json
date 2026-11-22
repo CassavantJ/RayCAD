@@ -1,0 +1,20 @@
+{
+  "comment": "Flange per the CAT40 (V-flange) standard (ASME B5.50, flange 2.50 in = 63.5 mm); the body and nose are a conservative generic envelope for collision checks; nose about 35 mm across for a 1/2 in bore. Measure your own holders and correct the segments.",
+  "gaugeLength": 63.5,
+  "id": "0541f4ae-1167-4202-b569-61390991d09a",
+  "name": "CAT40 end mill holder 1/2 in, 63.5 mm gauge",
+  "schema": 1,
+  "segments": [
+    {
+      "height": 15.9,
+      "lowerDiameter": 63.5,
+      "upperDiameter": 63.5
+    },
+    {
+      "height": 47.6,
+      "lowerDiameter": 35,
+      "upperDiameter": 44.5
+    }
+  ],
+  "vendor": ""
+}

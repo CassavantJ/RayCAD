@@ -1,0 +1,96 @@
+{
+  "bodyMaterial": "carbide inserts",
+  "comment": "Generic 2 in, 45 degree lead, 4-insert indexable face mill on a 3/4 in arbour (shankDiameter is the body diameter, fluteLength the largest depth of cut). Dimensions: approximate generic proportions (measure the real cutter). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 50.8,
+  "fluteLength": 6,
+  "flutes": 4,
+  "id": "91e50525-1a88-4f40-a282-2997b0fb4852",
+  "name": "2 in 45 deg 4-insert face mill",
+  "overallLength": 40,
+  "presets": [
+    {
+      "chipLoad": 0.1,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 0.06,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 400
+    },
+    {
+      "chipLoad": 0.1,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 0.06,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 350
+    },
+    {
+      "chipLoad": 0.1,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 0.04,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 180
+    },
+    {
+      "chipLoad": 0.1,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 0.04,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 150
+    },
+    {
+      "chipLoad": 0.08,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 0.04,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 120
+    },
+    {
+      "chipLoad": 0.08,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 0.03,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 120
+    },
+    {
+      "chipLoad": 0.06,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 0.03,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 80
+    },
+    {
+      "chipLoad": 0.06,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 0.03,
+      "maxRadialFraction": 0.75,
+      "opClass": "face",
+      "rampAngle": 0,
+      "surfaceSpeed": 50
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 40,
+  "shoulderLength": 6,
+  "threadPitch": 0,
+  "threadSpec": "",
+  "tipAngle": 0,
+  "tipDiameter": 0,
+  "type": "faceMill",
+  "vendor": ""
+}

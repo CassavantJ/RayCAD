@@ -1,0 +1,61 @@
+{
+  "axes": [
+    {
+      "accel": 0,
+      "letter": "X",
+      "max": 0,
+      "maxFeed": 16510,
+      "min": -762,
+      "rapid": 25400
+    },
+    {
+      "accel": 0,
+      "letter": "Y",
+      "max": 0,
+      "maxFeed": 16510,
+      "min": -406,
+      "rapid": 25400
+    },
+    {
+      "accel": 0,
+      "letter": "Z",
+      "max": 0,
+      "maxFeed": 16510,
+      "min": -508,
+      "rapid": 25400
+    }
+  ],
+  "comment": "Published catalogue values of the Haas VF-2 (Haas Automation, VF-2 specifications page, haascnc.com). X travel 762 mm, 8100 rpm, 22.4 kW, 122 N m, rapids 25.4 m/min, cutting feed 16.5 m/min (650 in/min), 20 tools, 4.2 s tool change and rigid tapping are the values recorded from that page in PLAN.md 3.6; Y 406 mm and Z 508 mm are the published VF-2 travels of 16 and 20 in, from memory of that page. The page refused automated reading when this file was made, so none was re-checked. Axis signs follow the usual Haas convention (home at 0, travel negative): check. Acceleration and the block and program name limits are not published: 0 = unknown. Not verified on a real machine.",
+  "control": {
+    "defaultPost": "haas-ngc",
+    "dialect": "haas-ngc",
+    "maxBlockNumber": 0,
+    "maxProgramNameLength": 0,
+    "rigidTapping": true
+  },
+  "id": "b903ede7-5123-4c26-bc15-466e92fba4c6",
+  "kind": "mill3",
+  "model": "",
+  "name": "Generic VMC, Haas NGC style (VF-2 class)",
+  "options": {
+    "probe": false,
+    "throughSpindleCoolant": false,
+    "toolSetter": false
+  },
+  "postProperties": {
+    "useG187": true
+  },
+  "schema": 1,
+  "spindle": {
+    "maxRpm": 8100,
+    "minRpm": 0,
+    "powerKw": 22.4,
+    "torqueNm": 122
+  },
+  "toolChanger": {
+    "capacity": 20,
+    "changeSeconds": 4.2
+  },
+  "vendor": "",
+  "verified": false
+}

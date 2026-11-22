@@ -1,0 +1,20 @@
+{
+  "comment": "Flange per the CAT40 (V-flange) standard (ASME B5.50, flange 2.50 in = 63.5 mm); the body and nose are a conservative generic envelope for collision checks; nose about 44.5 mm across, for 3/4 in bore face mills. Measure your own holders and correct the segments.",
+  "gaugeLength": 50.8,
+  "id": "7002292b-4aa8-4b02-9490-dcb8b27eda3b",
+  "name": "CAT40 shell mill arbour 3/4 in pilot, 50.8 mm gauge",
+  "schema": 1,
+  "segments": [
+    {
+      "height": 15.9,
+      "lowerDiameter": 63.5,
+      "upperDiameter": 63.5
+    },
+    {
+      "height": 34.9,
+      "lowerDiameter": 44.5,
+      "upperDiameter": 44.5
+    }
+  ],
+  "vendor": ""
+}

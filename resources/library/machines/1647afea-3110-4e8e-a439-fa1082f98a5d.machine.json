@@ -1,0 +1,59 @@
+{
+  "axes": [
+    {
+      "accel": 0,
+      "letter": "X",
+      "max": 1050,
+      "maxFeed": 0,
+      "min": 0,
+      "rapid": 0
+    },
+    {
+      "accel": 0,
+      "letter": "Y",
+      "max": 510,
+      "maxFeed": 0,
+      "min": 0,
+      "rapid": 0
+    },
+    {
+      "accel": 0,
+      "letter": "Z",
+      "max": 635,
+      "maxFeed": 0,
+      "min": 0,
+      "rapid": 0
+    }
+  ],
+  "comment": "Published catalogue values of the Mazak VC-Ez 20 (Mazak Corporation product page 'VC-Ez 20', mazak.com/us-en/detail/usa/vertical/us-vcez20zk/): travels 41.34 x 20.08 x 25 in (1050 x 510 x 635 mm), 12000 rpm, 18 kW (25 hp, 5 min rating), 30 tools, CAT No. 40; the series page ('Vertical Machining Centers VC-Ez') gives MAZATROL SmoothEz as standard and SmoothG as an option. Whether the control runs EIA/ISO programs is not stated there: check the control's options. Rapids, cutting feed, torque, tool change time, acceleration and rigid tapping are not stated there: 0 / false = unknown. Axis directions are not stated; travels are given from 0. Not verified on a real machine.",
+  "control": {
+    "defaultPost": "mazak-eia",
+    "dialect": "mazak-eia",
+    "maxBlockNumber": 0,
+    "maxProgramNameLength": 0,
+    "rigidTapping": false
+  },
+  "id": "1647afea-3110-4e8e-a439-fa1082f98a5d",
+  "kind": "mill3",
+  "model": "",
+  "name": "Generic Mazak VMC, EIA/ISO programs (VC-Ez 20 class)",
+  "options": {
+    "probe": false,
+    "throughSpindleCoolant": false,
+    "toolSetter": false
+  },
+  "postProperties": {},
+  "schema": 1,
+  "spindle": {
+    "maxRpm": 12000,
+    "minRpm": 0,
+    "powerKw": 18,
+    "torqueNm": 0
+  },
+  "toolChanger": {
+    "capacity": 30,
+    "changeSeconds": 0
+  },
+  "vendor": "",
+  "verified": false
+}

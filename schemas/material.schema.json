@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/material.schema.json",
+  "title": "RayCAD workpiece material",
+  "description": "One workpiece material of a library, the file materials/<uuid>.material.json (PLAN.md 3.6, libraries.h Material). Cutting data for it lives in the tools' presets, which name its id. Unknown keys are allowed and are kept when RayCAD saves the material again.",
+  "type": "object",
+  "required": ["schema", "id", "name", "group", "hardnessHb", "specificCuttingForce", "density"],
+  "properties": {
+    "schema": { "const": 1, "description": "Version of this file's format. A larger value means a newer RayCAD wrote it." },
+    "id": { "$ref": "#/$defs/uuid" },
+    "name": { "type": "string", "minLength": 1, "description": "Grade and condition, e.g. '6061-T6'." },
+    "group": { "type": "string", "minLength": 1, "description": "e.g. 'Aluminium', 'Steel', 'Stainless steel', 'Titanium'." },
+    "hardnessHb": { "type": "number", "minimum": 0, "maximum": 1000, "description": "Brinell hardness (0: not known)." },
+    "specificCuttingForce": { "type": "number", "minimum": 0, "maximum": 10000, "description": "Specific cutting force kc1.1 in N/mm2, for power and torque estimates (0: not known)." },
+    "density": { "type": "number", "minimum": 0, "maximum": 30, "description": "g/cm3 (0: not known)." },
+    "comment": { "type": "string" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}
