@@ -27,6 +27,7 @@
 #include "selection_model.h"
 #include "session.h"
 #include "settings.h"
+#include "test_screen.h"
 #include "theme_object.h"
 #include "units.h"
 #include "viewport_item.h"
@@ -843,13 +844,20 @@ TEST_CASE("warm start to the first frame with saved settings, against PLAN.md se
     // A populated settings file (theme, glass, tier, overrides, window and panels): reading and applying it is
     // part of the start; hardware detection is not (it runs after the first frame).
     QTemporaryDir data;
+    // RAY_TEST_SCREEN: the saved window is on the test screen instead, same size.
+    const QRect window = ray::test::screen::childWindowGeometry(QSize(1280, 800)).value_or(QRect(80, 80, 1280, 800));
     {
         QFile f(QDir(data.path()).filePath(QStringLiteral("settings.json")));
         REQUIRE(f.open(QIODevice::WriteOnly));
-        f.write(R"({"format":"raycad.settings","version":1,"appearance":{"theme":"light","glass":true},)"
-                R"("graphics":{"tier":"medium","msaaSamples":4,"lastDetectedTier":"high"},)"
-                R"("navigation":{"preset":"middle-orbit"},"panels":{"model":{"open":false}},)"
-                R"("units":{"newDocument":"metric"},"window":{"x":80,"y":80,"width":1280,"height":800}})");
+        f.write(QStringLiteral(R"({"format":"raycad.settings","version":1,"appearance":{"theme":"light","glass":true},)"
+                               R"("graphics":{"tier":"medium","msaaSamples":4,"lastDetectedTier":"high"},)"
+                               R"("navigation":{"preset":"middle-orbit"},"panels":{"model":{"open":false}},)"
+                               R"("units":{"newDocument":"metric"},"window":{"x":%1,"y":%2,"width":%3,"height":%4}})")
+                    .arg(window.x())
+                    .arg(window.y())
+                    .arg(window.width())
+                    .arg(window.height())
+                    .toUtf8());
     }
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("RAYCAD_USER_DATA_DIR"), data.path());
@@ -859,7 +867,7 @@ TEST_CASE("warm start to the first frame with saved settings, against PLAN.md se
         QProcess p;
         p.setProcessEnvironment(env);
         p.start(QStringLiteral(RAY_RAYCAD_EXE), {QStringLiteral("--bench-start")});
-        REQUIRE(p.waitForFinished(60000));
+        REQUIRE(ray::test::screen::waitForChild(p, 60000));
         const QString out = QString::fromUtf8(p.readAllStandardOutput());
         INFO(out.toStdString() << QString::fromUtf8(p.readAllStandardError()).toStdString());
         REQUIRE(p.exitCode() == 0);
@@ -875,7 +883,8 @@ TEST_CASE("warm start to the first frame with saved settings, against PLAN.md se
                                                                          "High 1000 ms)");
     CHECK(frame < ray::test::uiBudgetMs(2500));
     // --bench-start does not save the window (it would replace the user's own).
-    CHECK(readFile(QDir(data.path()).filePath(QStringLiteral("settings.json"))).contains(QStringLiteral("\"x\":80")));
+    CHECK(readFile(QDir(data.path()).filePath(QStringLiteral("settings.json")))
+              .contains(QStringLiteral("\"x\":%1").arg(window.x())));
 }
 
 int main(int argc, char** argv)

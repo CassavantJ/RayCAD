@@ -7,7 +7,10 @@ set_tests_properties(raycad_cli_version PROPERTIES PASS_REGULAR_EXPRESSION "^ray
 # driver_threads_listener.cpp says why; it timed out at 60 s beside a build without it).
 add_test(NAME raycad_smoke COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_SOURCE_DIR}/tests/support/run_with_driver_priority.py"
                                    "$<TARGET_FILE:raycad>" --smoke)
-set_tests_properties(raycad_smoke PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "raycad: smoke ok")
+# With RAY_TEST_SCREEN the script puts the window on that screen and reports any window on the primary one; the pass
+# expression alone would ignore the exit code that sets.
+set_tests_properties(raycad_smoke PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "raycad: smoke ok"
+                                             FAIL_REGULAR_EXPRESSION "was shown on the primary screen")
 ray_test_runtime_path(raycad_smoke QT)
 # Its settings come from a folder of its own, not the real user profile (which tests running next to it may change).
 set_property(TEST raycad_smoke APPEND PROPERTY ENVIRONMENT
