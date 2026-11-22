@@ -25,8 +25,10 @@ void main()
 {
     if (v_section > 0.0)
         discard;
-    outIds =vec4(v_id.rgb, floor(v_depthKind.z + 0.5) / 255.0);
-    outItem = vec4(bytes24(floor(item.ids.x + 0.5)), 1.0);
+    float kind = floor(v_depthKind.z + 0.5);
+    outIds = vec4(v_id.rgb, kind / 255.0);
+    // Backplot segments (IdKind 5, T-038) keep the high byte of their 32-bit move index in the item's alpha.
+    outItem = vec4(bytes24(floor(item.ids.x + 0.5)), kind > 4.5 ? v_id.a : 1.0);
     float ndcZ = v_depthKind.x / v_depthKind.y;
     float depth = clamp(0.5 * ndcZ + 0.5, 0.0, 1.0);
     outDepth = vec4(bytes24(floor(depth * 16777215.0 + 0.5)), 1.0);

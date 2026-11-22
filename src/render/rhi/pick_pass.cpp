@@ -23,7 +23,7 @@ constexpr float kFaceSlopeDepthBias = 1.5f;
 constexpr int kVertexMarginPx = 4;
 
 struct Shaders {
-    QShader meshVs, lineVs, wideVs, capVs, fs;
+    QShader meshVs, lineVs, wideVs, capVs, pathVs, fs;
     bool ok = false;
 };
 
@@ -34,7 +34,8 @@ const Shaders& shaders()
         out.meshVs = loadShader("pick_mesh.vert");
         out.lineVs = loadShader("pick_line.vert");
         out.wideVs = loadShader("pick_wideline.vert");
-        out.capVs = loadShader("pick_cap.vert"); // T-023
+        out.capVs = loadShader("pick_cap.vert");   // T-023
+        out.pathVs = loadShader("pick_path.vert"); // T-038
         out.fs = loadShader("pick.frag");
         out.ok = out.meshVs.isValid() && out.lineVs.isValid() && out.wideVs.isValid() && out.fs.isValid();
         return out;
@@ -141,6 +142,7 @@ void PickPass::releaseResources()
     faces_.reset();
     thinEdges_.reset();
     segments_.reset();
+    paths_.reset();
     capStencil_.reset();
     capFill_.reset();
     rt_.reset();
@@ -214,6 +216,7 @@ bool PickPass::ensurePipelines(const FrameContext& ctx)
     faces_.reset();
     thinEdges_.reset();
     segments_.reset();
+    paths_.reset();
     capStencil_.reset();
     capFill_.reset();
     const Shaders& sh = shaders();
@@ -246,6 +249,9 @@ bool PickPass::ensurePipelines(const FrameContext& ctx)
     thinEdges_ = make(sh.lineVs, thinEdgeVertexLayout(), P::Lines, P::LessOrEqual, false, false);
     if (rhi_->isFeatureSupported(QRhi::Instancing))
         segments_ = make(sh.wideVs, wideLineVertexLayout(), P::Triangles, P::LessOrEqual, false, false);
+    // T-038: backplot segments. They write depth, so where segments cross the nearer one holds the pixel.
+    if (sh.pathVs.isValid() && rhi_->isFeatureSupported(QRhi::Instancing))
+        paths_ = make(sh.pathVs, pickPathVertexLayout(), P::TriangleStrip, P::LessOrEqual, true, false);
     // T-023: section caps, as in the main pass (section.h), so a cap hides what lies behind it here too.
     if (sh.capVs.isValid()) {
         const auto finish = [&](Owned<QRhiGraphicsPipeline>& p) {
@@ -325,7 +331,15 @@ void PickPass::drawIds(const FrameContext& ctx)
     for (const DrawItem& d : ctx.draws) {
         if (!d.pickable)
             continue;
-        if (d.item->kind == detail::ItemKind::Lines) {
+        if (d.item->kind == detail::ItemKind::Backplot) {
+            // T-038: the range on screen, as the main pass draws it (the picture and the ID buffer agree).
+            if (!paths_ || !ctx.pathCorners)
+                continue;
+            use(paths_.get(), d.itemUniformOffset);
+            std::uint64_t drawCalls = 0;
+            const int level = pathLevelFor(*d.item, *d.gpu, ctx.snapshot->camera, size_.height());
+            drawBackplot(cb, ctx.pathCorners, *d.item, *d.gpu, level, drawCalls);
+        } else if (d.item->kind == detail::ItemKind::Lines) {
             if (!segments_ || !ctx.lineCorners || !d.gpu->wideEdges || d.gpu->segmentCount == 0)
                 continue;
             use(segments_.get(), d.itemUniformOffset);
@@ -361,7 +375,7 @@ std::shared_ptr<const detail::PickView> PickPass::makeView(const FrameContext& c
             continue;
         detail::PickItem item;
         item.id = d.item->id;
-        item.lines = d.item->kind == detail::ItemKind::Lines;
+        item.lines = d.item->kind == detail::ItemKind::Lines || d.item->kind == detail::ItemKind::Backplot;
         item.xform = d.item->xform;
         item.mesh = d.item->mesh;
         item.index = d.gpu->index;

@@ -1,6 +1,7 @@
 // The UI-thread half of every viewport (task T-014). See viewport_frontend.h.
 #include "viewport_frontend.h"
 
+#include "lines.h"
 #include "section.h"
 
 #include <QtCore/QMetaObject>
@@ -19,12 +20,6 @@ namespace ray::render::detail {
 namespace {
 
 constexpr int kMaxCaptureSide = 16384;
-
-// One warning per process for each entry point that a later task fills in.
-void notImplemented(std::once_flag& once, const char* what)
-{
-    std::call_once(once, [what] { ray::log(LogLevel::Warn, "render", std::string(what) + ": not implemented yet"); });
-}
 
 void grow(Box3& box, double x, double y, double z)
 {
@@ -267,17 +262,55 @@ void ViewportFrontend::updateMesh(ItemId id, std::shared_ptr<const kernel::Mesh>
     changed(true, false);
 }
 
-ItemId ViewportFrontend::addBackplot(std::shared_ptr<const sim::Backplot>)
+ItemId ViewportFrontend::addBackplot(std::shared_ptr<const sim::Backplot> backplot)
 {
-    static std::once_flag once;
-    notImplemented(once, "IViewport::addBackplot");
-    return 0;
+    // T-038 (lines.h): checked in one pass over the moves and vertices, then shared with the renderer as it is.
+    if (!backplot) {
+        ray::log(LogLevel::Warn, "render", "addBackplot: null backplot ignored");
+        return 0;
+    }
+    if (Status ok = validateBackplot(*backplot); !ok) {
+        ray::log(LogLevel::Warn, "render", "addBackplot: " + ok.error().message);
+        return 0;
+    }
+    SceneItem item;
+    item.id = nextId_++;
+    item.kind = ItemKind::Backplot;
+    item.localBounds = backplotBounds(*backplot);
+    item.style = MeshStyle{Token::PathCut, Token::PathCut, 1.0f, true, false};
+    item.geometryGeneration = nextGeometryGeneration_++;
+    if (backplot->lineVertices.size() >= kLodMinVertices) {
+        // Levels of detail on Qt's thread pool (about 0.1 s for 2 M segments); until they are ready the full path
+        // is drawn. The answer asks for a new frame (and a new ID buffer, which draws the same level).
+        auto lods = std::make_shared<PathLodSet>();
+        item.lods = lods;
+        pathLodsPending_->fetch_add(1);
+        std::weak_ptr<Outbox> outbox = outbox_;
+        QThreadPool::globalInstance()->start([bp = backplot, lods, pending = pathLodsPending_, outbox, this] {
+            lods->levels = buildPathLods(*bp);
+            lods->ready.store(true, std::memory_order_release);
+            pending->fetch_sub(1);
+            if (auto box = outbox.lock())
+                box->post([this] { changed(true, false); }); // dropped once this front is gone (Outbox::detach)
+        });
+    }
+    item.backplot = std::move(backplot);
+    const ItemId id = item.id;
+    items_.emplace(id, std::move(item));
+    changed(true, false);
+    return id;
 }
 
-void ViewportFrontend::setBackplotRange(ItemId, std::uint32_t, std::uint32_t)
+void ViewportFrontend::setBackplotRange(ItemId id, std::uint32_t firstMove, std::uint32_t lastMove)
 {
-    static std::once_flag once;
-    notImplemented(once, "IViewport::setBackplotRange");
+    // Scrubbing: only the instance range of the draw changes (no upload). The picking ID buffer holds the drawn range,
+    // so it counts as a scene change.
+    SceneItem* item = find(id);
+    if (!item || item->kind != ItemKind::Backplot || (item->firstMove == firstMove && item->lastMove == lastMove))
+        return;
+    item->firstMove = firstMove;
+    item->lastMove = lastMove;
+    changed(true, false);
 }
 
 ItemId ViewportFrontend::addLines(std::span<const Vec3> segments, Token colour, float widthPx, bool dashed)
@@ -307,11 +340,23 @@ ItemId ViewportFrontend::addLines(std::span<const Vec3> segments, Token colour, 
     return id;
 }
 
-ItemId ViewportFrontend::addToolGlyph(std::span<const Vec2>, Token)
+ItemId ViewportFrontend::addToolGlyph(std::span<const Vec2> revolvedProfile, Token colour)
 {
-    static std::once_flag once;
-    notImplemented(once, "IViewport::addToolGlyph");
-    return 0;
+    // T-038: the revolved profile becomes an ordinary shaded mesh (lines.h, revolveProfile), uploaded once; moving the
+    // tool is setTransform, which changes a uniform only. It does not answer picks (PickMode::Never), so it never
+    // stands between the cursor and the toolpath under it.
+    if (colour >= Token::Count)
+        return 0;
+    Result<kernel::Mesh> mesh = revolveProfile(revolvedProfile);
+    if (!mesh) {
+        ray::log(LogLevel::Warn, "render", "addToolGlyph: " + mesh.error().message);
+        return 0;
+    }
+    const ItemId id = addMesh(std::make_shared<const kernel::Mesh>(std::move(*mesh)), Xform::identity(),
+                              MeshStyle{colour, colour, 1.0f, false, false});
+    if (SceneItem* item = find(id))
+        item->pickMode = PickMode::Never;
+    return id;
 }
 
 void ViewportFrontend::setTransform(ItemId id, const Xform& xf)
@@ -567,6 +612,7 @@ ViewportInfo ViewportFrontend::info() const
     std::lock_guard lock(status_->mutex);
     ViewportInfo info = status_->info;
     info.closedChecksPending = std::uint32_t(std::max(0, closedChecksPending_->load()));
+    info.pathLodsPending = std::uint32_t(std::max(0, pathLodsPending_->load()));
     return info;
 }
 
