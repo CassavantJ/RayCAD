@@ -16,3 +16,17 @@ target_include_directories(ray_cam_engine_tests PRIVATE "${CMAKE_SOURCE_DIR}/src
 target_compile_definitions(ray_cam_engine_tests PRIVATE RAY_DOC_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/unit/doc/golden"
     RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas" RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_engine_tests)
+
+# Setup resolution (task T-033): on hand-made builds, on a corpus part imported through the document, and in a document
+# rebuilt by the real rebuilder through edits, undo and redo. Same links and include folders as the engine tests.
+add_executable(ray_cam_setup_tests
+    setup_document_test.cpp
+    setup_test.cpp
+)
+target_link_libraries(ray_cam_setup_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_naming ray_kernel ray_core
+    Catch2::Catch2WithMain)
+target_include_directories(ray_cam_setup_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/doc" "${CMAKE_SOURCE_DIR}/tests/unit/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_setup_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_setup_tests)

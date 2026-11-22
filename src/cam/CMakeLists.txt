@@ -1,7 +1,8 @@
 # cam: Setups, operations, toolpath IR, generators. Allowed dependencies: PLAN.md section 1.1.
 add_library(ray_cam STATIC
     cam_module.cpp
-    engine.cpp   # ICamEngine, makeCamEngine, resolveGeometryBasic (task T-032)
+    engine.cpp   # ICamEngine, makeCamEngine (task T-032)
+    setup.cpp    # resolveSetup, resolveSetupGeometry (task T-033)
     state.cpp    # OperationRegistry, operationInputHash (task T-032)
     state.h
 )

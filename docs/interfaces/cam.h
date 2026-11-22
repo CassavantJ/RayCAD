@@ -8,6 +8,9 @@
 //  - the engine section: CamSnapshot (src/cam cannot read doc types, PLAN.md 1.1 and 15: the engine reads snapshots
 //    through a function the document module provides, doc::camSnapshot), operationInputHash, the setup-resolution
 //    seam for T-033 (ResolveGeometryFn) and makeCamEngine. ICamEngine itself is unchanged.
+// Amended by T-033 (setup resolution): resolveSetup and ResolvedSetup (the frame, both directions of it, and the stock
+// solid, without an operation: for the setup preview and the simulator), resolveSetupGeometry in place of the
+// stand-in resolveGeometryBasic, and ResolvedGeometry's comment says which frame each member is in.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -144,7 +147,10 @@ struct Toolpath {
 
 // ---------- Generation ----------
 struct ResolvedGeometry {
-    // Everything an operation needs, already resolved from references and expressed in the WCS frame.
+    // Everything an operation needs, already resolved from references (resolveSetupGeometry, below). The shapes and
+    // `selected` stay in the model frame (a SubId belongs to the shape it came from, and kernel::sliceAt, silhouette
+    // and recognizeHoles take the frame or setup Z as an argument); wcsFromModel maps them into the WCS, the frame of
+    // the toolpath IR; stockBounds is in the WCS.
     Xform wcsFromModel;
     std::vector<kernel::Shape> partShapes;
     std::vector<kernel::Shape> fixtureShapes;
@@ -225,9 +231,56 @@ using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const d
 // missing; InvalidArgument for a FromSetupStock chain that does not lead to an earlier setup.
 Result<Hash256> operationInputHash(const CamSnapshot&, const naming::IResolver&, const OperationId& op);
 
-// Setup resolution: the ResolvedGeometry an operation is generated on (task T-033 implements it). The engine calls
-// it on a worker, after the input hash is known and before IOperationType::validate and generate. It must be a pure
-// function of the request (the hash above covers what it may read).
+// ---------- Setup resolution (task T-033) ----------
+// A setup's WCS frame and stock, and the ResolvedGeometry an operation is generated on. Pure functions of their
+// inputs; the input hash above covers everything they read (part, fixture and stock bodies, the stock definition,
+// the origin mode and corner, the WCS references as they resolve; Wcs::workOffset is G-code only and not read).
+//
+// Frame: right-handed and orthonormal; wcsFromModel maps a model point p to R p - o (rows of R: the WCS axes in model
+// coordinates, o: the origin in that orientation).
+//   Z  the outward (out of the material) normal of Wcs::zFace, which must be planar; without one, model +Z.
+//   X  Wcs::xEdge, which must be straight, in its curve direction (kernel::CurveInfo start to end), projected into the
+//      plane normal to Z; an edge within 0.06 degrees of Z is refused. Without one: model +X projected when Z is
+//      within 45 degrees of model Z (|Z.z| >= cos 45), else the X that makes Y model +Z projected (seen from outside
+//      a side face, model up is WCS Y).
+//   Y  Z x X.
+//   Each reference must resolve as the input hash requires (Exact, or a repair the user confirmed) to one element of
+//   its kind: zFace a face, xEdge an edge, originVertex a vertex.
+// Stock (stockBounds), axis-aligned in the WCS orientation, never in the model axes:
+//   BoxStock       the box around the part bodies in the WCS orientation, grown by the offsets.
+//   CylinderStock  axis along WCS X, Y or Z (axis 0, 1, 2), centred on the part box across the axis; its + end lies
+//                  endOffset beyond the part box along the axis and it runs `length` back from there.
+//   SolidStock     the body as it lies in the WCS; stockBounds is its box in the WCS orientation.
+//   FromSetupStock the simulated stock of an earlier setup, which does not exist yet: InvalidArgument saying so.
+// Origin, on the stock box in the WCS orientation:
+//   StockCorner (Wcs::stockCornerIndex 0..7), seen from +Z (looking down, X to the right, Y up):
+//        top (Z max)        bottom (Z min)
+//        3 ------ 2         7 ------ 6        corner k: X max for k = 1, 2, 5, 6; Y max for k = 2, 3, 6, 7;
+//        |        |         |        |                  Z max for k = 0..3 (4..7 lie under 0..3).
+//        0 ------ 1         4 ------ 5        The default, 0, is the top front left corner.
+//   StockTopCenter  the centre of the stock's top face.   ModelPoint  the vertex Wcs::originVertex.
+// Rounding (bit-identical on every platform): face normals and edge directions read from the model are rounded per
+// component to a multiple of 2^-40 (ties to even), and an axis within 1e-9 of a model axis becomes that axis exactly;
+// the rest is IEEE arithmetic with dmath::sqrt. Bounds, offsets and the origin are rounded to integer nanometres
+// (toNm) in the WCS orientation, so partBounds and stockBounds are whole nanometres in the WCS.
+struct ResolvedSetup {
+    Xform wcsFromModel;          // model -> WCS
+    Xform modelFromWcs;          // WCS -> model (sim::buildBackplot, the triad and the stock on screen)
+    Box3 partBounds;             // box of the part bodies, in the WCS; all zero when the setup has none
+    Box3 stockBounds;            // in the WCS
+    kernel::Shape stockSolid;    // the stock solid in the WCS; null unless SetupResolveOptions::stockSolid
+};
+struct SetupResolveOptions { bool stockSolid = false; };
+// Cheap enough for a live preview when the frame is axis-aligned (the bounds then come from the model boxes); a
+// tilted frame measures each body moved into it. Errors: ReferenceBroken for a part, fixture or stock body that is
+// not built or a reference that does not resolve usably; InvalidArgument for a WCS or stock the setup cannot have
+// (above; also box or cylinder stock without part bodies); KernelFailure when a body cannot be measured or the stock
+// solid made; Cancelled.
+Result<ResolvedSetup> resolveSetup(const CamSnapshot&, const Setup&, const naming::IResolver&, JobContext&,
+                                   SetupResolveOptions = {});
+
+// The engine calls a ResolveGeometryFn on a worker, after the input hash is known and before IOperationType::validate
+// and generate. It must be a pure function of the request (the hash above covers what it may read).
 struct GeometryRequest {
     const CamSnapshot& snapshot;
     const Setup& setup;
@@ -235,13 +288,13 @@ struct GeometryRequest {
     const naming::IResolver& resolver;
 };
 using ResolveGeometryFn = std::function<Result<ResolvedGeometry>(const GeometryRequest&, JobContext&)>;
-// The stand-in until T-033: wcsFromModel is the identity, partShapes and fixtureShapes are the setup's bodies in
-// order, `selected` / `selectedShapeIndex` are the resolved geometry references (one entry per resolved element),
-// stockBounds is the box around the part shapes grown by a BoxStock's offsets (the plain part box otherwise).
-Result<ResolvedGeometry> resolveGeometryBasic(const GeometryRequest&, JobContext&);
+// The engine's default: resolveSetup, then partShapes and fixtureShapes are the setup's bodies in order (model
+// frame), `selected` / `selectedShapeIndex` the operation's geometry references as they resolve (one entry per
+// resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty.
+Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest&, JobContext&);
 
 struct CamEngineOptions {
-    ResolveGeometryFn resolveGeometry;   // empty: resolveGeometryBasic
+    ResolveGeometryFn resolveGeometry;   // empty: resolveSetupGeometry
     std::size_t cacheEntries = 256;      // toolpaths kept by input hash; the least recently used go first
 };
 // The engine. status() may be called from any thread. generate() and generateAllStale() return at once: the hash is

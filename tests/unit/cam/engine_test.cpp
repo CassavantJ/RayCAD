@@ -457,7 +457,7 @@ TEST_CASE("the operation registry keeps the first type of a name and lists them 
     CHECK(registry.find("face") == nullptr);
 }
 
-TEST_CASE("the stand-in setup resolution gives the part, the selected faces and the stock box", "[cam][engine]")
+TEST_CASE("the engine's setup resolution gives the part, the selected faces and the stock box", "[cam][engine]")
 {
     Fixture f;
     const auto state = exec(f.state, setupEdit(R"("stock":{"type":"box","xNeg":1,"xPos":2,"zPos":3},)"
@@ -468,7 +468,7 @@ TEST_CASE("the stand-in setup resolution gives the part, the selected faces and 
     const Setup& setup = snap.cam->setups.at(0);
     const Operation& op = snap.cam->operations.at(opId(1));
     JobContext ctx;
-    auto geom = resolveGeometryBasic(GeometryRequest{snap, setup, op, *resolver}, ctx);
+    auto geom = resolveSetupGeometry(GeometryRequest{snap, setup, op, *resolver}, ctx);
     REQUIRE(geom);
     CHECK(geom->partShapes.size() == 1);
     CHECK(geom->fixtureShapes.size() == 1);
@@ -477,7 +477,10 @@ TEST_CASE("the stand-in setup resolution gives the part, the selected faces and 
     auto info = kernel::surfaceInfo(geom->partShapes[0], geom->selected[0]);
     REQUIRE(info);
     CHECK(info->centroid.z > 9.99);
-    CHECK(geom->stockBounds.min.x < -0.99);
-    CHECK(geom->stockBounds.max.x > 41.99);
-    CHECK(geom->stockBounds.max.z > 12.99);
+    // The part box (0..40, 0..20, 0..10) grown by the offsets, in the WCS: origin at stock corner 0, the top front
+    // left corner (tests/unit/cam/setup_test.cpp covers the rest).
+    CHECK(geom->stockBounds.min.x == 0.0);
+    CHECK(geom->stockBounds.max.x == 43.0);
+    CHECK(geom->stockBounds.min.z == -13.0);
+    CHECK(geom->stockBounds.max.z == 0.0);
 }
