@@ -317,6 +317,10 @@ private:
         if (!(rpm > 0) || !std::isfinite(rpm)) {
             return invalid("Set a spindle speed");
         }
+        if (p_.cycle != DrillCycle::Tap && !c.clockwise) {
+            return invalid("The spindle is set to turn counter-clockwise (M4): a right-hand " +
+                           std::string(toolWord(tool().type)) + " does not cut that way; set it clockwise (M3)");
+        }
         if (in_.machine.maxRpm > 0 && rpm > in_.machine.maxRpm) {
             return invalid("The spindle speed " + mmText(rpm) + " rpm is above the machine's maximum of " +
                            mmText(in_.machine.maxRpm) + " rpm");
@@ -623,6 +627,12 @@ private:
             plan_.warnings.push_back("The " + mmText(bore.diameter) + " mm hole at X" + mmText(h.x) + " Y" +
                                      mmText(h.y) + " is smaller than the thread's minor diameter (" + mmText(minor) +
                                      " mm): the tap would cut the full thread form");
+        }
+        if (in_.op.cutting.clockwise == ph.leftHand) {
+            return invalid(std::string("The thread of ") + at + " is " + (ph.leftHand ? "left" : "right") +
+                           "-hand, which taps with the spindle turning " +
+                           (ph.leftHand ? "counter-clockwise (M4)" : "clockwise (M3)") +
+                           "; the operation's spindle direction is the other way");
         }
         const Nm lead = toNm(p_.tapLeadPitches * t.threadPitch);
         if (p_.depthFromValue) {

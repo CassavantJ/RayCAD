@@ -209,7 +209,7 @@ TEST_CASE("drilling end to end: a hole feature, commands, the engine, a hole edi
     REQUIRE(again);
     CHECK((*again)->moves.at(1).z == -6'000'000 - 2'000'000);
 
-    // The thread becomes M6x0.75: the M6x1 tap is refused now; left-hand (M6x1-LH) is tapped with G74.
+    // The thread becomes M6x0.75: the M6x1 tap is refused now; left-hand (M6x1-LH) needs the spindle counter-clockwise.
     const auto fine = ct::exec(state, dt::editFeature("hole", 6, tappedHole(threadProps("M6x0.75", 0.75, 6, 8))));
     const auto fineBuild = e.env.rebuild(fine);
     CHECK(e.statusOf(fine, fineBuild, 2).status == OpStatus::Stale);
@@ -217,9 +217,12 @@ TEST_CASE("drilling end to end: a hole feature, commands, the engine, a hole edi
     REQUIRE_FALSE(refused);
     CHECK_THAT(refused.error().message, ContainsSubstring("does not match the M6x0.75 thread"));
     const auto left = ct::exec(state, dt::editFeature("hole", 6, tappedHole(threadProps("M6x1-LH", 1, 6, 8))));
+    // The operation's spindle still turns clockwise, so the left-hand thread is refused until that is changed
+    // (drill_validate_test covers the left-hand cycle itself).
     auto leftTap = e.generate(left, e.env.rebuild(left), 2);
-    REQUIRE(leftTap);
-    CHECK((*leftTap)->moves.at(1).cycleLeftHand == 1);
+    REQUIRE_FALSE(leftTap);
+    CHECK_THAT(leftTap.error().message,
+               ContainsSubstring("is left-hand, which taps with the spindle turning counter-clockwise (M4)"));
 
     // A wrong nominal diameter with the right pitch is refused too.
     const auto m8 = ct::exec(state, dt::editFeature("hole", 6, tappedHole(threadProps("M8x1", 1, 8, 8))));

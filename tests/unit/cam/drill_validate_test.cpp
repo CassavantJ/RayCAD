@@ -214,6 +214,9 @@ TEST_CASE("drill: what is only worth knowing becomes a toolpath warning", "[cam]
     CHECK(warns(small.path(), "smaller than the thread's minor diameter (5.368 mm)"));
     // Left-hand for a hole without a thread spec comes from the parameter.
     Case left = on({{70, 12}}, R"({"cycle":"tap","leftHand":true})", tap(6, 1));
+    // A left-hand thread taps with the spindle turning counter-clockwise; with it clockwise the operation is refused.
+    refused(left, "is left-hand, which taps with the spindle turning counter-clockwise (M4)");
+    left.op.cutting.clockwise = false;
     const Toolpath lp = left.path();
     CHECK(lp.moves.at(1).cycleLeftHand == 1);
     CHECK(warns(lp, "left-hand"));
