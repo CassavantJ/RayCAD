@@ -1,0 +1,288 @@
+# Hand labels of the hole recognition test (task T-034). Written by holes_labels_gen.py, which says how each
+# label was obtained (from the corpus generator's dimensions, or measured and checked by eye); do not edit by
+# hand. Format: see holes_labels_gen.py.
+part raycad-synthetic/plate_thru_holes_1.stp z+
+hole 30 26.666666667 10 through plain cyl:6.6:10:0
+hole 30 53.333333333 10 through plain cyl:6.6:10:0
+hole 60 26.666666667 10 through plain cyl:6.6:10:0
+hole 60 53.333333333 10 through plain cyl:6.6:10:0
+hole 90 26.666666667 10 through plain cyl:6.6:10:0
+hole 90 53.333333333 10 through plain cyl:6.6:10:0
+part raycad-synthetic/plate_thru_holes_2.stp z+
+hole 25 25 12 through plain cyl:9:12:0
+hole 25 50 12 through plain cyl:9:12:0
+hole 25 75 12 through plain cyl:9:12:0
+hole 50 25 12 through plain cyl:9:12:0
+hole 50 50 12 through plain cyl:9:12:0
+hole 50 75 12 through plain cyl:9:12:0
+hole 75 25 12 through plain cyl:9:12:0
+hole 75 50 12 through plain cyl:9:12:0
+hole 75 75 12 through plain cyl:9:12:0
+hole 100 25 12 through plain cyl:9:12:0
+hole 100 50 12 through plain cyl:9:12:0
+hole 100 75 12 through plain cyl:9:12:0
+hole 125 25 12 through plain cyl:9:12:0
+hole 125 50 12 through plain cyl:9:12:0
+hole 125 75 12 through plain cyl:9:12:0
+part raycad-synthetic/plate_thru_holes_2.stp z-
+hole 25 -25 0 through plain cyl:9:0:-12
+hole 25 -50 0 through plain cyl:9:0:-12
+hole 25 -75 0 through plain cyl:9:0:-12
+hole 50 -25 0 through plain cyl:9:0:-12
+hole 50 -50 0 through plain cyl:9:0:-12
+hole 50 -75 0 through plain cyl:9:0:-12
+hole 75 -25 0 through plain cyl:9:0:-12
+hole 75 -50 0 through plain cyl:9:0:-12
+hole 75 -75 0 through plain cyl:9:0:-12
+hole 100 -25 0 through plain cyl:9:0:-12
+hole 100 -50 0 through plain cyl:9:0:-12
+hole 100 -75 0 through plain cyl:9:0:-12
+hole 125 -25 0 through plain cyl:9:0:-12
+hole 125 -50 0 through plain cyl:9:0:-12
+hole 125 -75 0 through plain cyl:9:0:-12
+part raycad-synthetic/plate_thru_holes_2_brep.igs z+
+hole 25 25 12 through plain cyl:9:12:0
+hole 25 50 12 through plain cyl:9:12:0
+hole 25 75 12 through plain cyl:9:12:0
+hole 50 25 12 through plain cyl:9:12:0
+hole 50 50 12 through plain cyl:9:12:0
+hole 50 75 12 through plain cyl:9:12:0
+hole 75 25 12 through plain cyl:9:12:0
+hole 75 50 12 through plain cyl:9:12:0
+hole 75 75 12 through plain cyl:9:12:0
+hole 100 25 12 through plain cyl:9:12:0
+hole 100 50 12 through plain cyl:9:12:0
+hole 100 75 12 through plain cyl:9:12:0
+hole 125 25 12 through plain cyl:9:12:0
+hole 125 50 12 through plain cyl:9:12:0
+hole 125 75 12 through plain cyl:9:12:0
+part raycad-synthetic/plate_thru_holes_4.stp z+
+hole 30.48 25.4 12.7 through plain cyl:6.7564:12.7:0
+hole 30.48 50.8 12.7 through plain cyl:6.7564:12.7:0
+hole 30.48 76.2 12.7 through plain cyl:6.7564:12.7:0
+hole 60.96 25.4 12.7 through plain cyl:6.7564:12.7:0
+hole 60.96 50.8 12.7 through plain cyl:6.7564:12.7:0
+hole 60.96 76.2 12.7 through plain cyl:6.7564:12.7:0
+hole 91.44 25.4 12.7 through plain cyl:6.7564:12.7:0
+hole 91.44 50.8 12.7 through plain cyl:6.7564:12.7:0
+hole 91.44 76.2 12.7 through plain cyl:6.7564:12.7:0
+hole 121.92 25.4 12.7 through plain cyl:6.7564:12.7:0
+hole 121.92 50.8 12.7 through plain cyl:6.7564:12.7:0
+hole 121.92 76.2 12.7 through plain cyl:6.7564:12.7:0
+part raycad-synthetic/plate_thru_holes_5.stp z+
+hole 22.222222222 20 6 through plain cyl:4.5:6:0
+hole 22.222222222 40 6 through plain cyl:4.5:6:0
+hole 44.444444444 20 6 through plain cyl:4.5:6:0
+hole 44.444444444 40 6 through plain cyl:4.5:6:0
+hole 66.666666667 20 6 through plain cyl:4.5:6:0
+hole 66.666666667 40 6 through plain cyl:4.5:6:0
+hole 88.888888889 20 6 through plain cyl:4.5:6:0
+hole 88.888888889 40 6 through plain cyl:4.5:6:0
+hole 111.111111111 20 6 through plain cyl:4.5:6:0
+hole 111.111111111 40 6 through plain cyl:4.5:6:0
+hole 133.333333333 20 6 through plain cyl:4.5:6:0
+hole 133.333333333 40 6 through plain cyl:4.5:6:0
+hole 155.555555556 20 6 through plain cyl:4.5:6:0
+hole 155.555555556 40 6 through plain cyl:4.5:6:0
+hole 177.777777778 20 6 through plain cyl:4.5:6:0
+hole 177.777777778 40 6 through plain cyl:4.5:6:0
+part raycad-synthetic/plate_counterbore_1.stp z+
+hole 28.75 16.5 15 through counterbored cyl:11:15:8.5 cyl:6.6:8.5:0
+hole 28.75 38.5 15 through counterbored cyl:11:15:8.5 cyl:6.6:8.5:0
+hole 56.25 16.5 15 through counterbored cyl:11:15:8.5 cyl:6.6:8.5:0
+hole 56.25 38.5 15 through counterbored cyl:11:15:8.5 cyl:6.6:8.5:0
+part raycad-synthetic/plate_counterbore_1.stp z-
+hole 28.75 -16.5 0 through plain cyl:6.6:0:-8.5
+hole 28.75 -38.5 0 through plain cyl:6.6:0:-8.5
+hole 56.25 -16.5 0 through plain cyl:6.6:0:-8.5
+hole 56.25 -38.5 0 through plain cyl:6.6:0:-8.5
+part raycad-synthetic/plate_counterbore_3.stp z+
+hole 37.5 27 25 through counterbored cyl:18:25:14.2 cyl:11:14.2:0
+hole 37.5 63 25 through counterbored cyl:18:25:14.2 cyl:11:14.2:0
+hole 82.5 27 25 through counterbored cyl:18:25:14.2 cyl:11:14.2:0
+hole 82.5 63 25 through counterbored cyl:18:25:14.2 cyl:11:14.2:0
+hole 127.5 27 25 through counterbored cyl:18:25:14.2 cyl:11:14.2:0
+hole 127.5 63 25 through counterbored cyl:18:25:14.2 cyl:11:14.2:0
+part raycad-synthetic/plate_counterbore_4.stp z+
+hole 28.97 16.764 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 28.97 39.116 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 56.91 16.764 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 56.91 39.116 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+part raycad-synthetic/plate_countersink_1.stp z+
+hole 15 25 4 through countersunk cone:9:4.5:4:1.75:90 cyl:4.5:1.75:0
+hole 50 25 4 through countersunk cone:9:4.5:4:1.75:90 cyl:4.5:1.75:0
+hole 85 25 4 through countersunk cone:9:4.5:4:1.75:90 cyl:4.5:1.75:0
+part raycad-synthetic/plate_countersink_1.stp z-
+hole 15 -25 0 through plain cyl:4.5:0:-1.75
+hole 50 -25 0 through plain cyl:4.5:0:-1.75
+hole 85 -25 0 through plain cyl:4.5:0:-1.75
+part raycad-synthetic/plate_countersink_4.stp z+
+hole 15 25 9.525 through countersunk cone:13.208:6.7564:9.525:6.2992:90 cyl:6.7564:6.2992:0
+hole 41 25 9.525 through countersunk cone:13.208:6.7564:9.525:6.2992:90 cyl:6.7564:6.2992:0
+hole 67 25 9.525 through countersunk cone:13.208:6.7564:9.525:6.2992:90 cyl:6.7564:6.2992:0
+hole 93 25 9.525 through countersunk cone:13.208:6.7564:9.525:6.2992:90 cyl:6.7564:6.2992:0
+hole 119 25 9.525 through countersunk cone:13.208:6.7564:9.525:6.2992:90 cyl:6.7564:6.2992:0
+hole 145 25 9.525 through countersunk cone:13.208:6.7564:9.525:6.2992:90 cyl:6.7564:6.2992:0
+part raycad-synthetic/block_blind_holes_1.stp z+
+hole 15 20 40 conical plain cyl:5:40:25 cone:5:0:25:23.497848452:118
+hole 65 20 40 conical plain cyl:5:40:25 cone:5:0:25:23.497848452:118
+hole 40 45 40 conical plain cyl:8:40:31 cone:8:0:31:28.596557524:118
+part raycad-synthetic/block_blind_holes_1.stp z-
+part raycad-synthetic/block_blind_holes_1.stp tilt:a
+hole 15 20 40 conical plain cyl:5:40:25 cone:5:0:25:23.497848452:118
+hole 65 20 40 conical plain cyl:5:40:25 cone:5:0:25:23.497848452:118
+hole 40 45 40 conical plain cyl:8:40:31 cone:8:0:31:28.596557524:118
+part raycad-synthetic/block_blind_holes_4.stp z+
+hole 15 20 40 conical plain cyl:5.1054:40:24.76 cone:5.1054:0:24.76:23.226183098:118
+hole 27.5 20 40 conical plain cyl:5.1054:40:24.76 cone:5.1054:0:24.76:23.226183098:118
+hole 40 20 40 conical plain cyl:5.1054:40:24.76 cone:5.1054:0:24.76:23.226183098:118
+hole 52.5 20 40 conical plain cyl:5.1054:40:24.76 cone:5.1054:0:24.76:23.226183098:118
+hole 65 20 40 conical plain cyl:5.1054:40:24.76 cone:5.1054:0:24.76:23.226183098:118
+hole 40 45 40 conical plain cyl:8.16864:40:30.856 cone:8.16864:0:30.856:28.401892956:118
+part raycad-synthetic/chamfer_block_3.stp z+
+hole 35 22.5 30 through chamfered cone:14:12:30:29:90 cyl:12:29:0
+part raycad-synthetic/chamfer_block_3.stp z-
+hole 35 -22.5 0 through plain cyl:12:0:-29
+part raycad-synthetic/chamfer_block_4.stp z+
+hole 35 22.5 30 through plain cyl:12:30:0
+part raycad-synthetic/thin_wall_box_3.stp z+
+hole 50 30 1 through plain cyl:10:1:0
+part raycad-synthetic/rib_plate_1.stp z+
+hole 12 12 18.99 conical plain cyl:3.3:18.99:3.99 cone:3.3:0:3.99:2.998579979:118
+hole 108 68 18.99 conical plain cyl:3.3:18.99:3.99 cone:3.3:0:3.99:2.998579979:118
+part raycad-synthetic/flange_bolt_circle_2.stp z+
+hole 0 0 27.99 through plain cyl:20:27.99:0
+hole 45.6 0 14 through plain cyl:10:14:0
+hole 22.8 39.490758413 14 through plain cyl:10:14:0
+hole -22.8 39.490758413 14 through plain cyl:10:14:0
+hole -45.6 0 14 through plain cyl:10:14:0
+hole -22.8 -39.490758413 14 through plain cyl:10:14:0
+hole 22.8 -39.490758413 14 through plain cyl:10:14:0
+part raycad-synthetic/flange_bolt_circle_2.stp z-
+hole 0 0 0 through plain cyl:20:0:-27.99
+hole 45.6 0 0 through plain cyl:10:0:-14
+hole 22.8 -39.490758413 0 through plain cyl:10:0:-14
+hole -22.8 -39.490758413 0 through plain cyl:10:0:-14
+hole -45.6 0 0 through plain cyl:10:0:-14
+hole -22.8 39.490758413 0 through plain cyl:10:0:-14
+hole 22.8 39.490758413 0 through plain cyl:10:0:-14
+part raycad-synthetic/l_bracket_4.stp z+
+hole 52 15 8 through plain cyl:6.6:8:0
+hole 52 35 8 through plain cyl:6.6:8:0
+part raycad-synthetic/manifold_block_4.stp z+
+hole 45 45 72 conical plain cyl:11.25:72:28.8 cone:11.25:0:28.8:25.420159018:118
+hole 13.5 13.5 72 conical plain cyl:5:72:60 cone:5:0:60:58.497848452:118
+hole 76.5 13.5 72 conical plain cyl:5:72:60 cone:5:0:60:58.497848452:118
+hole 13.5 76.5 72 conical plain cyl:5:72:60 cone:5:0:60:58.497848452:118
+hole 76.5 76.5 72 conical plain cyl:5:72:60 cone:5:0:60:58.497848452:118
+hole 22.5 67.5 72 through plain cyl:11.25:72:0
+part raycad-synthetic/manifold_block_4.stp z-
+hole 22.5 -67.5 0 through plain cyl:11.25:0:-72
+part raycad-synthetic/fixture_plate_2.stp z+
+hole 12.192 12.192 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 140.208 12.192 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 12.192 89.408 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 140.208 89.408 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 70.104 10.16 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+hole 82.296 10.16 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+hole 70.104 91.44 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+hole 82.296 91.44 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+part raycad-synthetic/fixture_plate_2.stp z-
+hole 12.192 -12.192 0 through plain cyl:6.7564:0:-12.446
+hole 140.208 -12.192 0 through plain cyl:6.7564:0:-12.446
+hole 12.192 -89.408 0 through plain cyl:6.7564:0:-12.446
+hole 140.208 -89.408 0 through plain cyl:6.7564:0:-12.446
+part raycad-synthetic/fixture_plate_2.stp tilt:b
+hole 12.192 12.192 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 140.208 12.192 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 12.192 89.408 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 140.208 89.408 19.05 through counterbored cyl:11.176:19.05:12.446 cyl:6.7564:12.446:0
+hole 70.104 10.16 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+hole 82.296 10.16 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+hole 70.104 91.44 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+hole 82.296 91.44 19.05 conical plain cyl:5.1054:19.05:6.35 cone:5.1054:0:6.35:4.816183098:118
+part raycad-synthetic/circular_pocket_1.stp z+
+hole 40 40 35.5 conical plain cyl:6:35.5:25.5 cone:6:0:25.5:23.697418143:118
+part raycad-synthetic/closed_pocket_5.stp z+
+part raycad-synthetic/slot_through_3.stp z+
+part raycad-synthetic/keyway_tslot_1.stp z+
+part raycad-synthetic/circular_pocket_2.stp z+
+part raycad-synthetic/fillet_block_4.stp z+
+part raycad-synthetic/open_pocket_step_4.stp z+
+part raycad-synthetic/plate_counterbore_3_surf.igs z+
+part nist-d2mi/827-9999-905.stp z+
+hole 0 0 2.159 through plain cyl:3.5687:2.159:-1.748566
+part nist-d2mi/827-9999-905.stp z-
+hole 0 0 23.114 through counterbored cyl:4.0894:23.114:1.905 cone:4.0894:3.5687:1.905:1.748566:118 cyl:3.5687:1.748566:-2.159
+part nist-d2mi/827-9999-906.stp z+
+hole 13.769994 65.269994 2.54 through plain cyl:3.2512:2.54:-4.2672
+hole 4.269994 4.269994 2.54 through plain cyl:3.2512:2.54:-4.2672
+hole 60.325 6.35 8.89 conical counterbored cyl:6.35:8.89:5.715 cyl:3.81:5.715:2.54 cone:3.81:0:2.54:1.395360418:118
+hole 63.5 63.1952 8.89 conical counterbored cyl:6.35:8.89:6.35 cyl:4.7625:6.35:2.54 cone:4.7625:0:2.54:1.109200547:118
+hole 88.769994 65.269994 2.54 through plain cyl:3.2512:2.54:-4.2672
+hole 98.269994 4.269994 2.54 through plain cyl:3.2512:2.54:-4.2672
+part nist-d2mi/827-9999-906.stp z-
+hole 4.269994 -4.269994 4.2672 through plain cyl:3.2512:4.2672:-2.54
+hole 13.769994 -65.269994 4.2672 through plain cyl:3.2512:4.2672:-2.54
+hole 88.769994 -65.269994 4.2672 through plain cyl:3.2512:4.2672:-2.54
+hole 98.269994 -4.269994 4.2672 through plain cyl:3.2512:4.2672:-2.54
+part nist-pmi/nist_ftc_09_asme1_rd_geometry.stp y+
+hole -0.150114 -38.39972 3.03784 through plain cyl:6.35:3.03784:0
+hole -0.150114 101.6 3.03784 through plain cyl:6.35:3.03784:0
+hole -12.7 -91.44 3.03784 through plain cyl:5.6134:3.03784:0
+hole -17.78 -110.49 3.03784 through plain cyl:3.96875:3.03784:0
+hole -19.05 129.54 3.03784 through plain cyl:6.35:3.03784:0
+hole -31.75 -91.44 3.03784 through plain cyl:19.05:3.03784:0
+hole -45.72 -110.49 3.03784 through plain cyl:3.96875:3.03784:0
+hole -50.8 -91.44 3.03784 through plain cyl:5.6134:3.03784:0
+hole -55.88 -110.49 3.03784 through plain cyl:3.96875:3.03784:0
+hole -57.15 -38.39972 3.03784 through plain cyl:6.35:3.03784:0
+hole -57.15 101.6 3.03784 through plain cyl:6.35:3.03784:0
+hole -7.62 -110.49 3.03784 through plain cyl:3.96875:3.03784:0
+hole -82.55 -107.95 3.03784 through chamfered cone:7.4676:5.9436:3.03784:2.27584:90 cyl:5.9436:2.27584:0
+hole -82.55 107.95 3.03784 through chamfered cone:7.4676:5.9436:3.03784:2.27584:90 cyl:5.9436:2.27584:0
+hole -85.09 -19.05 3.03784 through plain cyl:6.35:3.03784:0
+hole -85.09 0 3.03784 through plain cyl:6.35:3.03784:0
+hole -85.09 19.05 3.03784 through plain cyl:6.35:3.03784:0
+hole 0 129.54 3.03784 through plain cyl:6.35:3.03784:0
+hole 19.05 129.54 3.03784 through plain cyl:6.35:3.03784:0
+hole 27.94 -91.44 3.03784 through plain cyl:7.1374:3.03784:0
+hole 38.1 -57.15 3.03784 through plain cyl:8.001:3.03784:0
+hole 46.99 -91.44 3.03784 through plain cyl:7.1374:3.03784:0
+hole 50.8 15.24 3.03784 through plain cyl:3.96875:3.03784:0
+hole 57.15 -57.15 3.03784 through plain cyl:8.001:3.03784:0
+hole 66.04 -91.44 3.03784 through plain cyl:7.1374:3.03784:0
+hole 70.556563466 7.056563466 3.03784 through plain cyl:3.96875:3.03784:0
+hole 78.74 -12.7 3.03784 through plain cyl:3.96875:3.03784:0
+hole 82.55 -107.95 3.03784 through chamfered cone:7.4676:5.9436:3.03784:2.27584:90 cyl:5.9436:2.27584:0
+hole 82.55 107.95 3.03784 through chamfered cone:7.4676:5.9436:3.03784:2.27584:90 cyl:5.9436:2.27584:0
+part nist-pmi/nist_ftc_09_asme1_rd_geometry.stp y-
+hole -0.150114 -101.6 0 through plain cyl:6.35:0:-3.03784
+hole -0.150114 38.39972 0 through plain cyl:6.35:0:-3.03784
+hole -12.7 91.44 0 through plain cyl:5.6134:0:-3.03784
+hole -17.78 110.49 0 through plain cyl:3.96875:0:-3.03784
+hole -19.05 -129.54 0 through plain cyl:6.35:0:-3.03784
+hole -31.75 91.44 0 through plain cyl:19.05:0:-3.03784
+hole -45.72 110.49 0 through plain cyl:3.96875:0:-3.03784
+hole -50.8 91.44 0 through plain cyl:5.6134:0:-3.03784
+hole -55.88 110.49 0 through plain cyl:3.96875:0:-3.03784
+hole -57.15 -101.6 0 through plain cyl:6.35:0:-3.03784
+hole -57.15 38.39972 0 through plain cyl:6.35:0:-3.03784
+hole -7.62 110.49 0 through plain cyl:3.96875:0:-3.03784
+hole -82.55 -107.95 0 through plain cyl:5.9436:0:-2.27584
+hole -82.55 107.95 0 through plain cyl:5.9436:0:-2.27584
+hole -85.09 -19.05 0 through plain cyl:6.35:0:-3.03784
+hole -85.09 0 0 through plain cyl:6.35:0:-3.03784
+hole -85.09 19.05 0 through plain cyl:6.35:0:-3.03784
+hole 0 -129.54 0 through plain cyl:6.35:0:-3.03784
+hole 19.05 -129.54 0 through plain cyl:6.35:0:-3.03784
+hole 27.94 91.44 0 through plain cyl:7.1374:0:-3.03784
+hole 38.1 57.15 0 through plain cyl:8.001:0:-3.03784
+hole 46.99 91.44 0 through plain cyl:7.1374:0:-3.03784
+hole 50.8 -15.24 0 through plain cyl:3.96875:0:-3.03784
+hole 57.15 57.15 0 through plain cyl:8.001:0:-3.03784
+hole 66.04 91.44 0 through plain cyl:7.1374:0:-3.03784
+hole 70.556563466 -7.056563466 0 through plain cyl:3.96875:0:-3.03784
+hole 78.74 12.7 0 through plain cyl:3.96875:0:-3.03784
+hole 82.55 -107.95 0 through plain cyl:5.9436:0:-2.27584
+hole 82.55 107.95 0 through plain cyl:5.9436:0:-2.27584

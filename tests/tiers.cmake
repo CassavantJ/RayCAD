@@ -87,6 +87,7 @@ set(RAY_TEST_PROCESSORS
 # (Not [timing]: the kernel tests already have a hidden "[.timing]" benchmark, which "[timing]" would select.)
 set(RAY_WALLCLOCK_SPLITS
     ray_kernel_tests=ray_kernel_tests
+    ray_cam_holes_tests=ray_cam_holes_tests
     ray_sketch_tests=ray_sketch_tests
     ray_store_tests=ray_store_tests
     ray_sim_tests=ray_sim_tests
