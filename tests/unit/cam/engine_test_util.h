@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -214,15 +215,16 @@ inline Error applyFails(const doc::DocStatePtr& state, const doc::Command& c)
 template <class Pred>
 kernel::SubId findFace(const kernel::Shape& shape, Pred pred)
 {
-    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face); ++i) {
+    std::optional<kernel::SubId> found;
+    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face) && !found; ++i) {
         const kernel::SubId sub{kernel::SubKind::Face, i};
         auto info = kernel::surfaceInfo(shape, sub);
         if (info && pred(*info)) {
-            return sub;
+            found = sub;
         }
     }
-    FAIL("no such face");
-    return {};
+    REQUIRE(found.has_value());
+    return found.value_or(kernel::SubId{});
 }
 
 } // namespace ray::cam::test
