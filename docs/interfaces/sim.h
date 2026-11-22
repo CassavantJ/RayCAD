@@ -16,9 +16,25 @@ namespace ray::render { class IComputeBackend; }   // render.h
 namespace ray::sim {
 
 // ---------- Backplot (instant, all tiers) ----------
+// Layout (settled in T-037; src/sim/backplot.cpp says what each move kind becomes). `lineVertices` is ONE continuous
+// line strip in the model frame (modelFromWcs applied), in mm. Vertex 0 is the toolpath start and belongs to no move
+// (moveIndex 0xFFFFFFFF). Every later vertex ENDS the segment from the vertex before it and carries that segment's
+// attributes: `role` and `kind` are cam::MoveRole and cam::MoveKind values, `feed` is in mm/min (0 for rapid motion),
+// `moveIndex` is the IR move, `pad` is 0. So segment s runs from vertex s to s+1 with the attributes of vertex s+1:
+// draw segments as instances reading the buffer twice, one vertex apart (a line strip with flat attributes would take
+// them from the provoking vertex, which differs between graphics APIs: the first on Direct3D, the last on OpenGL).
+// `kind` is the MOTION: Rapid (draw dashed), Linear, ArcCW or ArcCCW (chords). Canned cycles are expanded into the
+// rapids and feeds the control makes, as Rapid and Linear vertices of the cycle's move. A move without motion
+// (Dwell, CycleCancel, a zero-length move) has one zero-length vertex with its own kind.
+// `moveFirstVertex` has moves.size() + 1 entries, the last one lineVertices.size(): the vertices of move m are
+// [moveFirstVertex[m], moveFirstVertex[m + 1]), never empty, all with moveIndex m. Moves a to b (inclusive, as in
+// setBackplotRange) are therefore the segments [moveFirstVertex[a] - 1, moveFirstVertex[b + 1] - 1), found without a
+// search. ounds (added in T-037) is the box of every vertex as stored, so the renderer needs no pass of its own.
 struct BackplotVertex { float x, y, z; std::uint8_t role; std::uint8_t kind; std::uint16_t pad; float feed; std::uint32_t moveIndex; };
-struct Backplot { std::vector<BackplotVertex> lineVertices; std::vector<std::uint32_t> moveFirstVertex; };
-// Arcs are flattened to `chordTol` for DISPLAY only. Budget: 1 M moves in under 150 ms on the Low reference CPU.
+struct Backplot { std::vector<BackplotVertex> lineVertices; std::vector<std::uint32_t> moveFirstVertex; Box3 bounds; };
+// Arcs are flattened to `chordTol` (mm, clamped to at least 1e-4) for DISPLAY only: no chord is farther than chordTol
+// from its arc (before float rounding of the vertices). Deterministic: identical bytes on every platform.
+// Budget: 1 M moves in under 150 ms on the Low reference CPU.
 Backplot buildBackplot(const cam::Toolpath&, const Xform& modelFromWcs, double chordTol);
 
 // ---------- Stock model ----------
