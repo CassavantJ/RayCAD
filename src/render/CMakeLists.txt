@@ -25,6 +25,10 @@ add_library(ray_render STATIC
     highlight.cpp
     section.h
     section.cpp
+    lines.h
+    lines.cpp
+    rhi/path_lines.h
+    rhi/path_lines.cpp
     rhi/pick_pass.h
     rhi/pick_pass.cpp
     rhi/backdrop_pass.h
@@ -65,6 +69,9 @@ qt_add_shaders(ray_render "ray_render_shaders"
         shaders/pick_line.vert
         shaders/pick_wideline.vert
         shaders/pick_cap.vert
+        shaders/path.vert
+        shaders/path.frag
+        shaders/pick_path.vert
         shaders/pick.frag
         shaders/backdrop.vert
         shaders/backdrop_down.frag
@@ -72,6 +79,6 @@ qt_add_shaders(ray_render "ray_render_shaders"
         shaders/backdrop_blur11.frag
         shaders/backdrop_blur15.frag
         shaders/backdrop_blur23.frag)
-# backdrop.glsl is #included by the backdrop_*.frag variants (T-016).
-set_source_files_properties(shaders/frame.glsl shaders/backdrop.glsl PROPERTIES HEADER_FILE_ONLY TRUE)
-target_sources(ray_render PRIVATE shaders/frame.glsl shaders/backdrop.glsl)
+# backdrop.glsl is #included by the backdrop_*.frag variants (T-016), path.glsl by the backplot shaders (T-038).
+set_source_files_properties(shaders/frame.glsl shaders/backdrop.glsl shaders/path.glsl PROPERTIES HEADER_FILE_ONLY TRUE)
+target_sources(ray_render PRIVATE shaders/frame.glsl shaders/backdrop.glsl shaders/path.glsl)

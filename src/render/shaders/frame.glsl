@@ -18,6 +18,9 @@ layout(std140, binding = 0) uniform FrameBlock {
     vec4 draftPositive; // T-023: linear RGB of the three draft classes
     vec4 draftNegative;
     vec4 draftVertical;
+    // T-038: linear RGB of the toolpath tokens by colour slot (src/render/lines.h PathSlot): PathCut, PathRapid,
+    // PathPlunge, PathRamp, PathLead, PathLink; 6 and 7 unused.
+    vec4 pathColor[8];
 } frame;
 
 // Per item: transform, colours from the theme tokens of its style, line parameters, and its id for T-015.
@@ -27,6 +30,8 @@ layout(std140, binding = 1) uniform ItemBlock {
     vec4 faceColor;   // linear RGB, a = opacity
     vec4 edgeColor;   // linear RGB, a = 1
     vec4 line;        // x: width in pixels, y: 1 if dashed, z: 1 for anti-aliased (smooth) edges
+                      // Backplots (T-038): x: width in pixels, y: 1 to draw every segment in edgeColor instead of
+                      // by move type, w: width in the picking ID buffer in pixels; faceColor.a is the opacity
     vec4 ids;         // x: item id (T-015); y: 1 when draft analysis may paint these faces (T-023); zw reserved
 } item;
 

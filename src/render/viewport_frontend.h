@@ -18,7 +18,9 @@ class QObject;
 
 namespace ray::render::detail {
 
-enum class ItemKind : std::uint8_t { Mesh, Lines };
+// Backplot (T-038): a toolpath's line strip, drawn by move type (lines.h). A tool glyph is a Mesh item.
+enum class ItemKind : std::uint8_t { Mesh, Lines, Backplot };
+struct PathLodSet; // lines.h
 
 // Segments of an addLines item: xyz of both ends, segment after segment.
 struct LineSet {
@@ -37,10 +39,16 @@ struct ClosedCheck {
 struct SceneItem {
     ItemId id = 0;
     ItemKind kind = ItemKind::Mesh;
-    std::shared_ptr<const kernel::Mesh> mesh; // Mesh items
-    std::shared_ptr<const LineSet> lines;     // Lines items
+    std::shared_ptr<const kernel::Mesh> mesh;      // Mesh items
+    std::shared_ptr<const LineSet> lines;          // Lines items
+    std::shared_ptr<const sim::Backplot> backplot; // Backplot items (T-038)
+    std::shared_ptr<const PathLodSet> lods;        // Backplot items: levels of detail, made on a worker (lines.h)
+    // Backplot items: the moves drawn, inclusive (setBackplotRange). Changing them never changes geometryGeneration.
+    std::uint32_t firstMove = 0, lastMove = 0xFFFFFFFFu;
     Xform xform = Xform::identity();
-    MeshStyle style{}; // Lines items: style.face and style.edge are the line colour
+    // Lines items: style.face and style.edge are the line colour. Backplot items: edge PathCut (the default) draws by
+    // move type, any other edge token draws the whole path in that colour; opacity applies (render.h).
+    MeshStyle style{};
     bool visible = true;
     PickMode pickMode = PickMode::WhenVisible;
     std::uint64_t geometryGeneration = 0; // changes whenever mesh or lines are replaced
@@ -180,6 +188,7 @@ private:
     std::shared_ptr<SharedStatus> status_;
     std::unique_ptr<QObject> uiContext_; // receives the outbox's queued wake-ups on the UI thread
     std::shared_ptr<std::atomic<int>> closedChecksPending_ = std::make_shared<std::atomic<int>>(0);
+    std::shared_ptr<std::atomic<int>> pathLodsPending_ = std::make_shared<std::atomic<int>>(0); // T-038
 };
 
 // Validates a mesh for display: sizes of the arrays agree and every index and range is in bounds.
