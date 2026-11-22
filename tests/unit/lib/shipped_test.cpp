@@ -124,6 +124,27 @@ TEST_CASE("the shipped library has what PLAN.md T-031 asks for", "[lib][shipped]
     CHECK(taps.count("UNF") == 1);
 }
 
+TEST_CASE("the shipped posts are in the library and the machines name them", "[lib][shipped]")
+{
+    // T-040 / T-041: the four shipped posts; the posts themselves are tested in tests/unit/post (shipped_posts_test).
+    auto opened = ray::lib::ILibrary::open(kRoot);
+    REQUIRE(opened);
+    std::set<std::string> stems;
+    for (const std::string& path : (*opened)->postFiles()) {
+        const std::string name = std::filesystem::path(path).filename().string();
+        stems.insert(name.substr(0, name.size() - std::string(".post.js").size()));
+    }
+    for (const char* post : {"generic-iso", "fanuc", "haas-ngc", "haas-classic"}) {
+        INFO(post);
+        CHECK(stems.count(post) == 1);
+    }
+    for (const auto& m : (*opened)->machines()) {
+        INFO(m.name);
+        // mazak-eia is task T-042, blocked on the control-generation question (PLAN.md section 15, question 2).
+        CHECK((stems.count(m.defaultPost) == 1 || m.defaultPost == "mazak-eia"));
+    }
+}
+
 TEST_CASE("every shipped file cites its source and is in the form the library writes", "[lib][shipped]")
 {
     int files = 0;

@@ -326,6 +326,10 @@ Result<PostOutput> runProgram(Session& s, const Declaration& decl, const PostJob
         setNum(c, machine, "maxRpm", m.maxRpm);
         setBool(c, machine, "rigidTapping", m.rigidTapping);
         setBool(c, machine, "hasToolSetter", m.hasToolSetter);
+        // T-040: the control's limits as the machine definition knows them (0 = not known) and its dialect.
+        setStr(c, machine, "controlDialect", m.controlDialect);
+        setInt(c, machine, "maxBlockNumber", m.maxBlockNumber);
+        setInt(c, machine, "maxProgramNameLength", m.maxProgramNameLength);
         JSValue travel = JS_NewObject(c);
         for (const lib::AxisDef& a : m.axes) {
             JSValue range = JS_NewArray(c);

@@ -82,8 +82,10 @@ std::string sanitizeComment(std::string_view text, std::string_view dialect)
 
 Writer::Writer(WriterOptions options) : options_(std::move(options))
 {
-    coordinate_ = NumberFormat{options_.inch ? 4 : 3, true, true, true, 1.0};
-    feed_ = NumberFormat{options_.inch ? 2 : 1, true, true, true, 1.0};
+    Format f;
+    f.axisDecimals = options_.inch ? 4 : 3;
+    f.feedDecimals = options_.inch ? 2 : 1;
+    setFormat(f);
     grid_ = options_.inch ? fmt::kInchGrid : fmt::kMicroGrid;
     out_.text.reserve(std::min(options_.reserveBytes, options_.maxOutputBytes));
     out_.lineMap.reserve(options_.reserveLines);
@@ -137,7 +139,13 @@ bool Writer::block(std::span<const std::string_view> words)
 
 bool Writer::comment(std::string_view text)
 {
-    const std::string clean = sanitizeComment(text, options_.dialect);
+    std::string clean = sanitizeComment(text, options_.dialect);
+    if (format_.commentMaxLength > 0 && clean.size() > format_.commentMaxLength) {
+        clean.resize(format_.commentMaxLength); // ASCII only after sanitising: a byte is a character
+        while (!clean.empty() && clean.back() == ' ') {
+            clean.pop_back();
+        }
+    }
     if (clean.empty()) {
         return true;
     }
@@ -200,27 +208,59 @@ bool Writer::axis(char letter, std::int64_t n, std::string& word)
     word += letter;
     fmt::appendFixed(word, q, coordinate_.decimals, coordinate_.trimTrailingZeros, coordinate_.forceDecimalPoint,
                      coordinate_.leadingZero);
+    applyTrailing(word, coordinate_);
     return true;
 }
 
-bool Writer::feed(std::int64_t n, std::string& word)
+bool Writer::feed(std::int64_t n, std::string& word, int decimals)
 {
-    const std::int64_t q = fmt::roundGrid(n, feed_.decimals, grid_);
-    if (feedSet_ && feedLast_ == q) {
+    NumberFormat f = feed_;
+    if (decimals >= 0) {
+        f.decimals = std::min(decimals, fmt::kMaxDecimals);
+    }
+    const std::int64_t q = fmt::roundGrid(n, f.decimals, grid_);
+    if (feedSet_ && feedLast_ == q && feedLastDecimals_ == f.decimals) {
         return false;
     }
     feedSet_ = true;
     feedLast_ = q;
+    feedLastDecimals_ = f.decimals;
     word.clear();
     word += 'F';
-    fmt::appendFixed(word, q, feed_.decimals, feed_.trimTrailingZeros, feed_.forceDecimalPoint, feed_.leadingZero);
+    fmt::appendFixed(word, q, f.decimals, f.trimTrailingZeros, f.forceDecimalPoint, f.leadingZero);
+    applyTrailing(word, f);
     return true;
 }
 
-void Writer::word(std::string_view prefix, std::int64_t n, const NumberFormat& format, std::string& word) const
+void Writer::word(std::string_view prefix, std::int64_t n, const NumberFormat& format, std::string& word,
+                  bool trailing) const
 {
     word.assign(prefix);
     fmt::appendGrid(word, n, format, grid_);
+    if (trailing) {
+        applyTrailing(word, format);
+    }
+}
+
+void Writer::applyTrailing(std::string& word, const NumberFormat& f) const
+{
+    // Style "one": a number that ends in its decimal point gets one zero ("X12." -> "X12.0"). "all" is written with
+    // trimTrailingZeros off (setFormat), and "trim" leaves the word as it is.
+    if (format_.trailing == Trailing::One && f.decimals > 0 && !word.empty() && word.back() == '.') {
+        word += '0';
+    }
+}
+
+void Writer::setFormat(const Format& f)
+{
+    format_ = f;
+    format_.axisDecimals = std::clamp(f.axisDecimals, 0, fmt::kMaxDecimals);
+    format_.feedDecimals = std::clamp(f.feedDecimals, 0, fmt::kMaxDecimals);
+    const bool trim = format_.trailing != Trailing::All;
+    coordinate_ = NumberFormat{format_.axisDecimals, trim, true, true, 1.0};
+    feed_ = NumberFormat{format_.feedDecimals, trim, true, true, 1.0};
+    axisSet_.fill(false);
+    feedSet_ = false;
 }
 
 void Writer::resetAll()

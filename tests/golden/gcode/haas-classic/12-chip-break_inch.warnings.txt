@@ -1,0 +1,1 @@
+section 0 (chip-break drilling G73): the peck clearance 0.0118 is not posted; the control takes it from Setting 22 [H1 p.77, p.95]

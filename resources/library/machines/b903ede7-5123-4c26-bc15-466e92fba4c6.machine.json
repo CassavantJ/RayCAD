@@ -43,7 +43,7 @@
     "toolSetter": false
   },
   "postProperties": {
-    "useG187": true
+    "smoothing": "medium"
   },
   "schema": 1,
   "spindle": {
