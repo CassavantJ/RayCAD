@@ -4,6 +4,12 @@ add_library(ray_cam STATIC
     engine.cpp   # ICamEngine, makeCamEngine (task T-032)
     setup.cpp    # resolveSetup, resolveSetupGeometry (task T-033)
     feeds.cpp    # computeFeeds (task T-048)
+    geom2d.cpp   # the shared 2D geometry core of the milling operations (task T-050)
+    geom2d.h
+    geom2d_clip.cpp
+    geom2d_fit.cpp
+    geom2d_internal.h
+    geom2d_model.cpp
     holes.cpp    # recognizeHoles, orderHolesShortestPath (task T-034)
     json.cpp     # the JSON reader of operation params (a copy of src/lib's; task T-035)
     json.h
@@ -22,6 +28,9 @@ add_library(ray_cam STATIC
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)
+# Clipper2 (PLAN.md 2.1 "2D polygons") built with USINGZ: geom2d tags every vertex with the exact curve it came from.
+find_package(Clipper2 CONFIG REQUIRED)
+target_link_libraries(ray_cam PRIVATE Clipper2::Clipper2Z)
 
 # The parameter schemas of the operation types (schemas/ops/<type>.schema.json), compiled in so the type returns its
 # schema (IOperationType::paramsSchemaJson) and reads its defaults from the same text (ops/op_params.h), as src/lib

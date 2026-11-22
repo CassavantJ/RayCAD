@@ -6,6 +6,9 @@
 // axis does not say on which side the material is).
 // Amended by T-044 (CAM workspace): boundsIn, the box of a shape in a rigid frame without moving a copy of it (the
 // setup preview measures the part in a tilted WCS on every change; transformed() copies and checks the whole body).
+// Amended by T-050 (shared 2D geometry core): the rules of sliceAt, silhouette and minInternalCornerRadius are written
+// down below, and faceLoops / edgeCurves give a picked face or edge in a frame's XY by the same curve rules (CAM builds
+// contour and pocket boundaries from picked geometry, and only the kernel can read curves).
 //
 // Contract:
 //  - Shape is an immutable value handle. Every operation returns a new Shape plus a ShapeHistory.
@@ -95,6 +98,11 @@ struct MassProps { double volume, area; Vec3 centroid; };
 Result<MassProps>   massProps(const Shape&, double density = 1.0);
 struct Distance { double value; Vec3 p1, p2; };
 Result<Distance>    minDistance(const Shape&, SubId a, const Shape&, SubId b);
+// The smallest concave radius a cutter coming down `toolAxis` (model frame) meets, which limits its diameter (T-050,
+// src/kernel/slice_corner.cpp has the rules): concave cylinders about the axis (holes and corner fillets, also B-spline
+// faces that are such cylinders within 1e-4 mm), concave cones about it steeper than 45 degrees (drafted corners;
+// their smallest radius), and 0 for a sharp internal corner (a straight edge within 45 degrees of the axis where two
+// walls meet concavely). +infinity when nothing concave limits the tool. InvalidArgument for a zero axis.
 Result<double>      minInternalCornerRadius(const Shape&, Vec3 toolAxis, JobContext&);
 // A point of the face's surface at the middle of the face's parameter bounds (for a trimmed face it may lie outside
 // the face) and the normal there pointing out of the material: dP/du x dP/dv, reversed for a face used reversed, so
@@ -191,9 +199,32 @@ struct TriSoup { std::vector<double> positions; std::vector<std::uint32_t> indic
 Result<TriSoup> triangulateExact(const Shape&, double chordTol, JobContext&);
 
 // ---------- Sections and projections used by CAM ----------
-// Planar slice of a solid at height z in the given frame; returns closed loops (lines and arcs kept exact).
+// Rules (T-050; src/kernel/slice.cpp and slice_internal.h say how):
+//  - `frame` maps model points into the frame (a rigid move, as boundsIn; ResolvedSetup::wcsFromModel). Heights are
+//    frame Z and loops lie in the frame's XY, in mm.
+//  - Curves: a line stays a Line and a circle in a plane perpendicular to frame Z stays an Arc (a Circle for a whole
+//    loop; its `ccw` gives the loop's direction). Any other curve (ellipse, B-spline, intersection curve) becomes a
+//    Line or Arc when it lies within 5e-4 mm of one, else Lines within 5e-4 mm of it. No Bspline curves are returned.
+//  - Order: each region's outer loop, counter-clockwise seen from +Z, then its holes, clockwise; an island inside a
+//    hole is a region of its own. Regions, and the holes of a region, are sorted by their lowest vertex (x, then y,
+//    rounded to integer nanometres), and each loop starts at its lowest vertex. Loops of area below 1e-8 mm^2 (where a
+//    face only touches the plane) are dropped.
+// Planar slice of a solid at height z: the closure of the material just ABOVE z (the limit of the sections at z + e as
+// e -> 0+). At the height of a face looking up (a pocket floor) the pocket is open; at the top of the part the slice is
+// empty; at its bottom it is the footprint. A z within 1e-6 mm of a planar face perpendicular to frame Z is that face's
+// height. A face tangent to the plane contributes nothing. Empty outside the shape's height range.
 Result<std::vector<ProfileLoop>> sliceAt(const Shape&, const Xform& frame, double z, JobContext&);
-// Silhouette of the solid projected along frame Z (for stock and containment boundaries).
+// Silhouette of the solid projected along frame Z (for stock and containment boundaries): the outline of its shadow,
+// by the same rules. Exact where every face is a plane, a cylinder, cone, sphere or torus about frame Z, or a cylinder
+// or cone lying across it (with fillets and drafts between them); a face of any other kind is sampled at 16 heights.
 Result<std::vector<ProfileLoop>> silhouette(const Shape&, const Xform& frame, JobContext&);
+// Added by T-050: the loops of a planar face perpendicular to frame Z (normal within 1e-9 of +-Z), with its height and
+// whether it looks up (+Z), by the rules above (one region: outer, then holes). InvalidArgument for any other face.
+struct FaceLoops { double z = 0; bool facesUp = true; std::vector<ProfileLoop> loops; };
+Result<FaceLoops> faceLoops(const Shape&, SubId face, const Xform& frame);
+// Added by T-050: an edge projected along frame Z by the curve rules above, in its curve's direction (first to last
+// parameter); no curves for an edge along Z. zMin, zMax: the edge's height range in the frame.
+struct EdgeCurves { std::vector<ProfileCurve> curves; double zMin = 0, zMax = 0; };
+Result<EdgeCurves> edgeCurves(const Shape&, SubId edge, const Xform& frame);
 
 } // namespace ray::kernel

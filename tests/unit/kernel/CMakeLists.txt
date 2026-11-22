@@ -10,7 +10,8 @@ add_executable(ray_kernel_tests
     boolean_test.cpp
     blend_test.cpp
     blend_determinism_test.cpp
-    immutability_test.cpp)
+    immutability_test.cpp
+    slice_test.cpp) # sliceAt, silhouette, faceLoops, edgeCurves, minInternalCornerRadius (task T-050)
 target_link_libraries(ray_kernel_tests PRIVATE ray_kernel Catch2::Catch2WithMain)
 # occt_smoke.h, shape_testing.h, mesh_testing.h and io_internal.h are private to src/kernel; no OCCT header.
 target_include_directories(ray_kernel_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")

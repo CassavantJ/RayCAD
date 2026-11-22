@@ -18,7 +18,8 @@ add_library(ray_kernel STATIC
     io_internal.h io_occt.h io_worker.cpp io_import.cpp io_export.cpp
     boolean_internal.h boolean_history.cpp boolean.cpp
     sweep_internal.h sweep_profile.cpp sweep.cpp
-    blend.cpp)
+    blend.cpp
+    slice_internal.h slice_curves.cpp slice.cpp slice_corner.cpp)
 ray_module(ray_kernel DETERMINISTIC)
 target_link_libraries(ray_kernel PRIVATE ray_core ${RAY_OCCT_TOOLKITS})
 target_include_directories(ray_kernel SYSTEM PRIVATE ${OpenCASCADE_INCLUDE_DIR})
