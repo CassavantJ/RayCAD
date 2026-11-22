@@ -16,3 +16,10 @@ target_include_directories(ray_cam_engine_tests PRIVATE "${CMAKE_SOURCE_DIR}/src
 target_compile_definitions(ray_cam_engine_tests PRIVATE RAY_DOC_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/unit/doc/golden"
     RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas" RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_engine_tests)
+
+# Feeds and speeds (task T-048): computeFeeds on hand-made tools and machines, and on the shipped library
+# (resources/library, read through ILibrary).
+add_executable(ray_cam_feeds_tests feeds_test.cpp)
+target_link_libraries(ray_cam_feeds_tests PRIVATE ray_cam ray_lib ray_core Catch2::Catch2WithMain)
+target_compile_definitions(ray_cam_feeds_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+ray_add_test(ray_cam_feeds_tests)
