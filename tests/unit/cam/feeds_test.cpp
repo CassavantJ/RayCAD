@@ -672,30 +672,18 @@ struct Shipped {
     std::vector<lib::Tool> tools;
     std::vector<lib::Material> materials;
     std::vector<lib::MachineDef> machines;
-    const lib::Tool& tool(std::string_view id) const
+    template <class T>
+    static const T& byId(const std::vector<T>& items, std::string_view id)
     {
-        for (const auto& t : tools)
-            if (t.id.value == Uuid::fromString(id))
-                return t;
-        FAIL("no shipped tool " << id);
-        return tools.front();
+        auto it = std::find_if(items.begin(), items.end(),
+                               [&](const T& item) { return item.id.value == Uuid::fromString(id); });
+        INFO("no shipped item " << id);
+        REQUIRE(it != items.end());
+        return *it;
     }
-    const lib::Material& material(std::string_view id) const
-    {
-        for (const auto& m : materials)
-            if (m.id.value == Uuid::fromString(id))
-                return m;
-        FAIL("no shipped material " << id);
-        return materials.front();
-    }
-    const lib::MachineDef& machine(std::string_view id) const
-    {
-        for (const auto& m : machines)
-            if (m.id.value == Uuid::fromString(id))
-                return m;
-        FAIL("no shipped machine " << id);
-        return machines.front();
-    }
+    const lib::Tool& tool(std::string_view id) const { return byId(tools, id); }
+    const lib::Material& material(std::string_view id) const { return byId(materials, id); }
+    const lib::MachineDef& machine(std::string_view id) const { return byId(machines, id); }
 };
 
 const Shipped& shipped()
