@@ -221,10 +221,6 @@ tl::unexpected<Error> failure(ErrorCode code, std::string message)
     return tl::unexpected(Error{code, std::move(message), {}});
 }
 
-void put(Hasher& h, const Uuid& id)
-{
-    h.bytes(std::as_bytes(std::span<const std::uint8_t>(id.bytes.data(), id.bytes.size())));
-}
 void put(Hasher& h, const Hash256& hash)
 {
     h.bytes(std::as_bytes(std::span<const std::uint8_t>(hash.bytes.data(), hash.bytes.size())));
