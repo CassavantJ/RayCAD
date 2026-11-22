@@ -14,6 +14,10 @@ add_library(ray_api STATIC
     cam_setup.cpp
     include/ray_api/cam_operation.h # the operation panel's types, feeds, holes and backplot (T-045)
     cam_operation.cpp
+    include/ray_api/cam_post.h # posting, the gate and file output (T-047)
+    cam_post.cpp
+    cam_post_actions.h
+    cam_post_actions.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

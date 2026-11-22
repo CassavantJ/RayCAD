@@ -28,3 +28,21 @@ set_property(TARGET ray_post_tests PROPERTY FOLDER "tests")
 # The bench ([bench][wallclock]) runs alone as ray_post_tests_wallclock (tests/tiers.cmake).
 add_test(NAME ray_post_tests COMMAND ray_post_tests "~[wallclock]")
 ray_test_runtime_path(ray_post_tests)
+
+# File output (task T-047, src/post/output*): names, overwrite rules, atomic writes on a local folder, a loopback SMB
+# share when there is one ([smb] skips otherwise), a file-system fake, and a helper process killed mid-write.
+add_executable(ray_post_output_helper output_helper.cpp)
+target_link_libraries(ray_post_output_helper PRIVATE ray_post ray_core)
+target_include_directories(ray_post_output_helper PRIVATE "${CMAKE_SOURCE_DIR}/src/post")
+set_property(TARGET ray_post_output_helper PROPERTY FOLDER "tests")
+add_executable(ray_post_output_tests output_test.cpp)
+target_link_libraries(ray_post_output_tests PRIVATE ray_post ray_cam ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_post_output_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/post")
+target_compile_definitions(ray_post_output_tests PRIVATE
+    RAY_POST_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    RAY_GOLDEN_GCODE_ROOT="${CMAKE_SOURCE_DIR}/tests/golden/gcode"
+    RAY_POST_OUTPUT_HELPER="$<TARGET_FILE:ray_post_output_helper>")
+add_dependencies(ray_post_output_tests ray_post_output_helper)
+set_property(TARGET ray_post_output_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_post_output_tests COMMAND ray_post_output_tests)
+ray_test_runtime_path(ray_post_output_tests)

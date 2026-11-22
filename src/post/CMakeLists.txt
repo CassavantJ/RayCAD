@@ -8,7 +8,8 @@ add_library(ray_post STATIC
     engine_out.cpp
     engine_program.h engine_program.cpp
     engine_motion.h engine_motion.cpp
-    engine_thread.cpp)
+    engine_thread.cpp
+    output.h output.cpp output_fs.cpp) # T-047: file names, overwrite rules, atomic writes (writeProgram)
 ray_module(ray_post DETERMINISTIC)
 target_link_libraries(ray_post PRIVATE ray_core ray_cam ray_lib)
 
