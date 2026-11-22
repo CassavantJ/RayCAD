@@ -475,7 +475,7 @@ TEST_CASE("200 window resizes with glass on: no crash, no RHI resource leak", "[
         CHECK(w.info().liveRhiResources == baseline);
         CHECK(most <= baseline + 8);
         // Nothing hovered, so nothing was picked: the real pointer over the window is ignored
-        // (ui/real_pointer_listener.cpp), and a pick would make the picking pass's resources.
+        // (ui/foreign_input_listener.cpp), and a pick would make the picking pass's resources.
         CHECK(w.info().pickBufferRenders == picks);
         CHECK(w.view()->viewport()->blurredBackdropTexture().width > 0);
 

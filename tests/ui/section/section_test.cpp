@@ -301,9 +301,10 @@ TEST_CASE("the section panel drives the viewport's plane; dragging redraws witho
         bool interrupted = false;    // the window's activation changed during it
         std::string trace;
     };
-    // A drag ends when the window loses the activation: Qt Quick takes the grab from the item that has it (another
-    // program's window opening is enough, and other tests' windows open all the time on a busy machine). The slider
-    // then rightly ignores the rest of the moves; such a drag is done again, from the middle.
+    // A drag ends when the window loses the activation: Qt Quick takes the grab from the item that has it. The test
+    // harness keeps other programs (other tests' windows open all the time on a busy machine) from taking it
+    // (ui/foreign_input_listener.cpp); should it change all the same, the slider rightly ignores the rest of the moves,
+    // and the drag is done again, from the middle.
     const auto drag = [&] {
         Drag d;
         const auto watch = QObject::connect(w.window(), &QWindow::activeChanged, w.window(), [&] {

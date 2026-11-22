@@ -82,14 +82,15 @@ foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_star
     target_link_libraries(${_target} PRIVATE ray_ui_test_screen)
 endforeach()
 
-# ---------- The real mouse pointer ----------
-# The same tests ignore the system pointer over their windows: they drive them with Qt's own event injection, and a
-# pointer resting on a test window must not change what it does (ui/real_pointer_listener.cpp says why).
+# ---------- The rest of the desktop ----------
+# The same tests ignore the system pointer over their windows and other programs taking the activation: they drive
+# their windows with Qt's own event injection, and where the owner's mouse rests or which window another test opens
+# must not change what they do (ui/foreign_input_listener.cpp says why).
 # Compiles to nothing off Windows.
 foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
                          ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
                          ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests)
-    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/real_pointer_listener.cpp")
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/foreign_input_listener.cpp")
 endforeach()
 
 # ---------- The UI-thread watchdog ----------
