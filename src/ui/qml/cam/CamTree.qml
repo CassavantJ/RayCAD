@@ -138,6 +138,8 @@ Item {
                             required property bool expanded
                             required property bool canMoveUp
                             required property bool canMoveDown
+                            required property string cycleTime    // T-059: a setup's estimate, "est. h:mm:ss"
+                            required property string cycleTimeTip // and in full, with what it assumed
 
                             readonly property bool isSetup: rowKind === "setup"
                             readonly property bool current: CamTreeModel.currentIndex === index
@@ -237,6 +239,14 @@ Item {
                                     color: row.suppressed ? Theme.textSecondary : Theme.textPrimary
                                     elide: Text.ElideRight
                                     textFormat: Text.PlainText
+                                    // T-059: the cycle-time estimate of the operation or setup, in full.
+                                    readonly property bool hovered: nameHover.hovered
+                                    HoverHandler {
+                                        id: nameHover
+                                    }
+                                    HoverToolTip {
+                                        text: row.cycleTimeTip
+                                    }
                                 }
                                 TextField {
                                     id: nameField
@@ -404,7 +414,16 @@ Item {
                                 maximumLineCount: 4
                                 font: Theme.smallFont
                                 color: row.bad ? Theme.error : Theme.textSecondary
-                                text: row.bad ? row.message : row.rowDetail
+                                // T-059: a setup's cycle-time estimate on a line of its own; in full in the tooltip.
+                                text: row.bad ? row.message
+                                              : row.rowDetail + (row.cycleTime !== "" ? "\n" + row.cycleTime : "")
+                                readonly property bool hovered: detailsHover.hovered
+                                HoverHandler {
+                                    id: detailsHover
+                                }
+                                HoverToolTip {
+                                    text: row.bad ? "" : row.cycleTimeTip
+                                }
                             }
                         }
                     }

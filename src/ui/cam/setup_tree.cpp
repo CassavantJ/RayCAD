@@ -6,6 +6,7 @@
 #include "../scene_controller.h"
 #include "../session.h"
 #include "../ui_commands.h"
+#include "cycletime_logic.h"
 #include "setup_logic.h"
 #include "setup_tool.h"
 
@@ -99,6 +100,7 @@ SetupTreeModel::~SetupTreeModel()
         commands_->setUiHandler(QStringLiteral("cam.tree."), {});
     statusJob_.cancel();
     setupJob_.cancel();
+    cycleTimeJob_.cancel();
     unsubscribe();
     if (engineListener_ != 0 && app() != nullptr && app()->cam() == engine_)
         engine_->unsubscribe(engineListener_);
@@ -231,6 +233,13 @@ void SetupTreeModel::unsubscribe()
     noticeTimer_.stop();
     generating_.clear();
     progress_.clear();
+    ++cycleTimeSerial_;
+    cycleTimeJob_.cancel();
+    cycleTimeJob_ = {};
+    if (!cycleTimes_.empty()) {
+        cycleTimes_.clear();
+        emit cycleTimesChanged();
+    }
 }
 
 void SetupTreeModel::sync()
@@ -367,6 +376,7 @@ void SetupTreeModel::refresh()
         self->statuses_.ops = std::move(*r);
         ++self->statusRuns_;
         shown();
+        self->estimateCycleTimes(); // T-059
     });
     setupJob_.then([self, serial, shown](Result<std::shared_ptr<const std::map<SetupId, Status>>> r) {
         if (!self || serial != self->statusSerial_)
@@ -378,6 +388,87 @@ void SetupTreeModel::refresh()
         shown();
     });
     emit changed();
+}
+
+// ---------- cycle time (T-059) ----------
+void SetupTreeModel::estimateCycleTimes()
+{
+    doc::Document* d = liveDoc();
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    const doc::DocStatePtr state = d ? d->state() : nullptr;
+    std::vector<api::cam_cycletime::SetupInput> inputs;
+    if (state && state->cam && jobs != nullptr)
+        inputs = api::cam_cycletime::setupInputs(*state->cam, statuses_.ops);
+    // Estimates whose inputs did not change are kept; the others are worked out again on a worker (one job for all).
+    std::map<SetupId, std::shared_ptr<const CycleTimeEstimate>> kept;
+    std::vector<api::cam_cycletime::SetupInput> todo;
+    for (api::cam_cycletime::SetupInput& in : inputs) {
+        const auto it = cycleTimes_.find(in.setup);
+        if (it != cycleTimes_.end() && it->second->input.same(in))
+            kept.emplace(in.setup, it->second);
+        else
+            todo.push_back(std::move(in));
+    }
+    const bool dropped = kept.size() != cycleTimes_.size();
+    cycleTimes_ = std::move(kept);
+    ++cycleTimeSerial_;
+    cycleTimeJob_.cancel();
+    cycleTimeJob_ = {};
+    if (dropped)
+        showCycleTimes();
+    if (todo.empty())
+        return;
+    const std::uint64_t serial = cycleTimeSerial_;
+    cycleTimeJob_ = jobs->submit<std::shared_ptr<const std::vector<CycleTimeEstimate>>>(
+        JobInfo{"CAM cycle time", JobPriority::Background, false},
+        [todo = std::move(todo)](JobContext& ctx) -> Result<std::shared_ptr<const std::vector<CycleTimeEstimate>>> {
+            auto out = std::make_shared<std::vector<CycleTimeEstimate>>();
+            out->reserve(todo.size());
+            for (const api::cam_cycletime::SetupInput& in : todo) {
+                if (auto ok = ctx.cancel.check(); !ok)
+                    return tl::unexpected(ok.error());
+                out->push_back({in, api::cam_cycletime::estimate(in)});
+            }
+            return std::shared_ptr<const std::vector<CycleTimeEstimate>>(std::move(out));
+        });
+    QPointer<SetupTreeModel> self(this);
+    cycleTimeJob_.then([self, serial](Result<std::shared_ptr<const std::vector<CycleTimeEstimate>>> r) {
+        if (!self || serial != self->cycleTimeSerial_)
+            return;
+        self->cycleTimeJob_ = {};
+        if (!r)
+            return;
+        for (const CycleTimeEstimate& e : **r)
+            self->cycleTimes_[e.input.setup] = std::make_shared<const CycleTimeEstimate>(e);
+        ++self->cycleTimeRuns_;
+        self->showCycleTimes();
+    });
+}
+
+void SetupTreeModel::showCycleTimes()
+{
+    if (!rows_.empty())
+        emit dataChanged(index(0), index(count() - 1), {CycleTimeRole, CycleTimeTipRole});
+    emit cycleTimesChanged();
+}
+
+const SetupTreeModel::CycleTimeEstimate* SetupTreeModel::cycleTimeOf(const SetupId& id) const
+{
+    const auto it = cycleTimes_.find(id);
+    return it == cycleTimes_.end() ? nullptr : it->second.get();
+}
+
+const cam::CycleTimePart* SetupTreeModel::cycleTimeOf(const OperationId& id) const
+{
+    for (const auto& [setup, e] : cycleTimes_) {
+        const std::vector<OperationId>& ops = e->input.operations;
+        const auto it = std::find(ops.begin(), ops.end(), id);
+        if (it != ops.end()) {
+            const auto k = static_cast<std::size_t>(it - ops.begin());
+            return k < e->time.operations.size() ? &e->time.operations[k] : nullptr;
+        }
+    }
+    return nullptr;
 }
 
 const cam::OpState* SetupTreeModel::opState(const OperationId& id) const
@@ -492,6 +583,23 @@ QVariant SetupTreeModel::data(const QModelIndex& index, int role) const
         return r->index > 0;
     case CanMoveDownRole:
         return r->index + 1 < r->siblings;
+    case CycleTimeRole: {
+        const CycleTimeEstimate* e = r->setup ? cycleTimeOf(r->setupId) : nullptr;
+        return e != nullptr && e->input.complete && !e->input.operations.empty()
+                   ? camui::cycleTimeShort(e->time.totalSec)
+                   : QString();
+    }
+    case CycleTimeTipRole: {
+        if (r->setup) {
+            const CycleTimeEstimate* e = cycleTimeOf(r->setupId);
+            return e != nullptr && !e->input.operations.empty()
+                       ? camui::cycleTimeDetails(e->time, e->time.assumptions, e->input.complete)
+                       : QString();
+        }
+        const cam::CycleTimePart* p = cycleTimeOf(r->opId);
+        const CycleTimeEstimate* e = p != nullptr ? cycleTimeOf(r->setupId) : nullptr;
+        return e != nullptr ? camui::cycleTimeDetails(*p, e->time.assumptions, true) : QString();
+    }
     default:
         return {};
     }
@@ -513,7 +621,9 @@ QHash<int, QByteArray> SetupTreeModel::roleNames() const
             {ExpandedRole, "expanded"},
             {OperationCountRole, "operationCount"},
             {CanMoveUpRole, "canMoveUp"},
-            {CanMoveDownRole, "canMoveDown"}};
+            {CanMoveDownRole, "canMoveDown"},
+            {CycleTimeRole, "cycleTime"},
+            {CycleTimeTipRole, "cycleTimeTip"}};
 }
 
 QVariantMap SetupTreeModel::get(int row) const

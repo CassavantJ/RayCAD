@@ -99,13 +99,16 @@ class PostToolModel : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
     Q_PROPERTY(bool canPost READ canPost NOTIFY canPostChanged)
     Q_PROPERTY(QString postBlockedReason READ postBlockedReason NOTIFY canPostChanged)
+    // T-059: the setup's cycle-time estimate as the CAM tree worked it out (camui::cycleTimeDetails: h:mm:ss, marked as
+    // an estimate, with what it assumed); "" while there is none.
+    Q_PROPERTY(QString cycleTime READ cycleTime NOTIFY cycleTimeChanged)
 
 public:
     PostToolModel(SceneController* scene, Session* session, AppContext* context, QObject* parent = nullptr);
     ~PostToolModel() override;
     static PostToolModel* create(QQmlEngine* qml, QJSEngine* js);
     void setCommands(CommandCatalog* commands);
-    void setTree(SetupTreeModel* tree) { tree_ = tree; }
+    void setTree(SetupTreeModel* tree);
     void setViewer(GcodeModel* viewer) { viewer_ = viewer; }
 
     bool active() const { return setup_.has_value(); }
@@ -139,6 +142,7 @@ public:
     bool busy() const;
     bool canPost() const { return postBlockedReason().isEmpty(); }
     QString postBlockedReason() const;
+    QString cycleTime() const;
 
     // ---- QML ----
     Q_INVOKABLE bool open(const QString& setupId);
@@ -179,6 +183,7 @@ signals:
     void gateChanged();
     void stateChanged();
     void canPostChanged();
+    void cycleTimeChanged();
     void written(const QString& path);
 
 private:

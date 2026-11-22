@@ -171,6 +171,16 @@ FocusScope {
                 text: CamPost.machineName !== "" ? qsTr("Machine: %1").arg(CamPost.machineName)
                                                  : qsTr("The setup has no machine")
             }
+            // T-059: the setup's cycle-time estimate, h:mm:ss, marked as an estimate, with what it assumed.
+            Label {
+                objectName: "postDialogCycleTime"
+                visible: CamPost.cycleTime !== ""
+                width: parent.width
+                secondary: true
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                text: CamPost.cycleTime
+            }
             // The post and the unit it writes, where they cannot be missed (the Units row below changes the unit).
             Label {
                 objectName: "postDialogOutput"
