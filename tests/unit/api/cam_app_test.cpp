@@ -480,3 +480,58 @@ TEST_CASE("operation params are checked against the type's schema, with its defa
     CHECK(paramsOf(4) == R"({"anything":[1,2]})");
     CHECK(statusOf(*app, 4).status == cam::OpStatus::Failed);
 }
+TEST_CASE("closing a document makes the engine forget its operations, unless another open copy has them",
+          "[api][cam][forget]")
+{
+    Seen::get().reset();
+    TempDir dir;
+    const std::string builtin = dir.file("builtin");
+    writeLibrary(builtin, "Built-in");
+    const std::string a = dir.file("a.raycad");
+    const std::string b = dir.file("b.raycad");
+    auto app = makeCamApp("", builtin);
+    invoke(*app, "file.new", "{}");
+    makeBlock(*app);
+    addSetupAndOperation(*app, 1, R"({"mode":"plain"})");
+    invoke(*app, "file.saveAs", R"({"path":)" + jsonString(a) + "}");
+    REQUIRE(app->close(*app->active()));
+    std::filesystem::copy_file(ray::test::fsPath(a), ray::test::fsPath(b)); // a second file, same operation ids
+    const auto open = [&](const std::string& path) {
+        invoke(*app, "file.open", R"({"path":)" + jsonString(path) + "}");
+        REQUIRE(app->waitForBuild(*app->active(), kWait));
+        return app->active();
+    };
+    const auto editRpm = [&](int rpm) {
+        invoke(*app, "cam.operation.edit",
+               R"({"id":")" + uuid('c', 1) + R"(","cutting":{"rpm":)" + std::to_string(rpm) + "}}");
+    };
+
+    api::OpenDocument* first = open(a);
+    const auto toolpath = generate(*app, 1);
+    REQUIRE(Seen::get().runs.load() == 1);
+    api::OpenDocument* second = open(b);
+    CHECK(statusOf(*app, 1).status == cam::OpStatus::UpToDate); // the same inputs: found by input hash
+    editRpm(9000);
+    CHECK(statusOf(*app, 1).status == cam::OpStatus::Stale);
+    CHECK(statusOf(*app, 1).toolpath == toolpath); // the operation's latest toolpath, shown while stale
+
+    // Closing the first copy leaves the second one's entries alone.
+    REQUIRE(app->close(*first));
+    REQUIRE(app->active() == second);
+    CHECK(statusOf(*app, 1).toolpath == toolpath);
+
+    // Closing the last copy forgets them: reopened, an operation that is stale shows no old toolpath, and one whose
+    // inputs are those of a cached toolpath finds it again by input hash without generating.
+    REQUIRE(app->close(*second));
+    open(a);
+    CHECK(statusOf(*app, 1).status == cam::OpStatus::UpToDate);
+    CHECK(statusOf(*app, 1).toolpath == toolpath);
+    CHECK(Seen::get().runs.load() == 1);
+    REQUIRE(app->close(*app->active()));
+    open(a);
+    editRpm(7000);
+    const cam::OpState stale = statusOf(*app, 1);
+    CHECK(stale.status == cam::OpStatus::Stale);
+    CHECK(stale.toolpath == nullptr);
+    CHECK(generate(*app, 1)->inputHash != toolpath->inputHash);
+}

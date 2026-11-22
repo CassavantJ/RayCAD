@@ -18,6 +18,7 @@
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
 // Amended for the chip-thickness exponent (lib::Material::mc): PowerModel MillingKcMc and DrillingKcMc, and
 // FeedsResult::meanChipThicknessMm and specificCuttingForceNmm2.
+// Amended so closed documents do not leak: ICamEngine::forget (a no-op by default).
 // Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
 //  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
 //    an item embedded from a library keeps them;
@@ -328,6 +329,13 @@ public:
     // Operations run in parallel; each is internally deterministic and MUST be re-entrant (no shared globals, no
     // clock-driven branches). Cancellation is polled by iteration count, never by wall clock.
     virtual void generateAllStale(doc::DocStatePtr, doc::BuildResultPtr) = 0;
+    // Drops what the engine holds for these operations by id: the latest toolpath of each (shown while stale) and the
+    // record of a running generation. Called when their document closes, after their generations were cancelled; a
+    // generation that still ends later is filed in the cache by its input hash only. The cache by input hash is kept
+    // (bounded: CamEngineOptions::cacheEntries), so a document opened again finds toolpaths whose inputs it still has.
+    // Ids are not per document: the caller leaves out operations another open document has (a second copy of a file).
+    // The default does nothing (an engine without per-operation state).
+    virtual void forget(std::span<const OperationId>) {}
 };
 
 // ---------- The engine (task T-032) ----------

@@ -3,7 +3,8 @@
 // One operation registry, one CAM engine, one library stack and one post engine per app. The engine is
 // cam::makeCamEngine over doc::camSnapshot and the app's job system, wrapped so every generation is an app job: the
 // destructor cancels and waits for it like any other, and closing a document cancels the generations of its
-// operations. The library stack is made from AppOptions::libraryRoots, or (when they are empty) from the built-in
+// operations and makes the engine forget them (unless another open document has the same operation ids: a second copy
+// of the same file). The library stack is made from AppOptions::libraryRoots, or (when they are empty) from the built-in
 // library, the shared folders and the user library of the settings, made again on the UI thread when those settings
 // change, and watched (LibraryStack::watch) through the app's dispatcher.
 #include "app_impl.h"
@@ -48,6 +49,11 @@ public:
                 (void)generate(state, build, id);
             }
         }
+    }
+
+    void forget(std::span<const OperationId> ops) override
+    {
+        inner_->forget(ops);
     }
 
     void cancel(const std::set<OperationId>& ops)
@@ -195,7 +201,24 @@ void AppImpl::cancelGenerations(const doc::DocStatePtr& state)
     for (const auto& [id, op] : state->cam->operations) {
         ops.insert(id);
     }
+    // The engine keys what it holds by operation id, so two open copies of one file share it: operations that a
+    // document still open also has are left to it (the closing one is already out of documents_).
+    {
+        std::lock_guard<std::mutex> lock(docsMutex_);
+        for (const auto& e : documents_) {
+            const doc::DocStatePtr other = e->od.document ? e->od.document->state() : nullptr;
+            if (other && other->cam) {
+                for (const auto& [id, op] : other->cam->operations) {
+                    ops.erase(id);
+                }
+            }
+        }
+    }
     engine->cancel(ops);
+    // Then the engine drops their latest toolpaths; a generation that ends after this is cached by input hash only,
+    // so reopening the file finds its toolpaths again while they are in the cache (cam.h ICamEngine::forget).
+    const std::vector<OperationId> closed(ops.begin(), ops.end());
+    engine->forget(closed);
 }
 
 void AppImpl::shutdownCam()
