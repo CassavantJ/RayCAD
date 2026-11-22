@@ -21,6 +21,8 @@
 // Amended for the chip-thickness exponent (lib::Material::mc): PowerModel MillingKcMc and DrillingKcMc, and
 // FeedsResult::meanChipThicknessMm and specificCuttingForceNmm2.
 // Amended so closed documents do not leak: ICamEngine::forget (a no-op by default).
+// Amended by T-044 (CAM workspace, setups): Wcs::flipX and Wcs::flipZ, since the X edge's curve direction is not the
+// user's choice; resolveSetup and the input hash read them (a setup with neither keeps its hash).
 // Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
 //  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
 //    an item embedded from a library keeps them;
@@ -68,6 +70,11 @@ struct Wcs {
     int stockCornerIndex = 0;                  // 0..7 when StockCorner
     std::optional<naming::TopoRef> originVertex;
     int workOffset = 1;                        // 1 => G54, 2 => G55 ...
+    // Added by T-044: X follows the X edge's curve direction (or the default rule), which the user cannot choose, so
+    // the setup can turn it round. flipX: X (and with it Y) reversed; flipZ: Z reversed, into the material (X stays as
+    // its rule gives it for that Z, Y = Z x X). Both false in documents written before them.
+    bool flipX = false;
+    bool flipZ = false;
 };
 
 struct Setup {
@@ -386,7 +393,7 @@ using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const d
 //   hash, in setup order: GenerateInput carries the whole part shapes, so an edit anywhere on a part body counts;
 //   with each part body, the CamSnapshot::holeThreads of the hole features named on its faces, by feature id);
 //   the stock (its definition; a solid stock's body content; a previous setup's stock and operation hashes for
-//   FromSetupStock) and the WCS (mode, corner, and its references as they resolve).
+//   FromSetupStock) and the WCS (mode, corner, the flips when either is set, and its references as they resolve).
 // Not in it: names, the template id, tool number and offset registers, program number and comment, post, work
 // offset, operation order, bodies the setup does not use, the document's other features, the library items' ids,
 // names, vendor text, comments, presets (cutting data is the operation's), thread designation, body material and
@@ -410,7 +417,8 @@ lib::MachineDef generatorMachine(const lib::MachineDef&);
 // ---------- Setup resolution (task T-033) ----------
 // A setup's WCS frame and stock, and the ResolvedGeometry an operation is generated on. Pure functions of their
 // inputs; the input hash above covers everything they read (part, fixture and stock bodies, the stock definition,
-// the origin mode and corner, the WCS references as they resolve; Wcs::workOffset is G-code only and not read).
+// the origin mode and corner, the flips, the WCS references as they resolve; Wcs::workOffset is G-code only and not
+// read).
 //
 // Frame: right-handed and orthonormal; wcsFromModel maps a model point p to R p - o (rows of R: the WCS axes in model
 // coordinates, o: the origin in that orientation).
@@ -420,6 +428,9 @@ lib::MachineDef generatorMachine(const lib::MachineDef&);
 //      within 45 degrees of model Z (|Z.z| >= cos 45), else the X that makes Y model +Z projected (seen from outside
 //      a side face, model up is WCS Y).
 //   Y  Z x X.
+//   Flips (T-044): with Wcs::flipZ, Z is reversed before X is chosen (so X follows the rule above for the reversed Z);
+//   with Wcs::flipX, X is reversed after it is chosen; Y is Z x X either way, so the frame stays right-handed. Both
+//   are exact negations: they change no bit but the sign.
 //   Each reference must resolve as the input hash requires (Exact, or a repair the user confirmed) to one element of
 //   its kind: zFace a face, xEdge an edge, originVertex a vertex.
 // Stock (stockBounds), axis-aligned in the WCS orientation, never in the model axes:
@@ -447,8 +458,8 @@ struct ResolvedSetup {
     kernel::Shape stockSolid;    // the stock solid in the WCS; null unless SetupResolveOptions::stockSolid
 };
 struct SetupResolveOptions { bool stockSolid = false; };
-// Cheap enough for a live preview when the frame is axis-aligned (the bounds then come from the model boxes); a
-// tilted frame measures each body moved into it. Errors: ReferenceBroken for a part, fixture or stock body that is
+// Cheap enough for a live preview: an axis-aligned frame takes the bounds from the model boxes, a tilted one measures
+// each body in it with kernel::boundsIn (T-044: no copy of the body is made). Errors: ReferenceBroken for a part, fixture or stock body that is
 // not built or a reference that does not resolve usably; InvalidArgument for a WCS or stock the setup cannot have
 // (above; also box or cylinder stock without part bodies); KernelFailure when a body cannot be measured or the stock
 // solid made; Cancelled.

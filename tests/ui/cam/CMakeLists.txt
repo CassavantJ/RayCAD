@@ -1,0 +1,35 @@
+# The CAM workspace and its setups (task T-044).
+#   ray_ui_cam_tests       Catch2 driving the real Qt Quick window with the real application session: the four
+#                          interactions on an imported part, the live preview, editing, flips, undo and redo, the status
+#                          badges against the engine, switching workspaces. The tests draw through the viewport, so they
+#                          need a scene graph with QRhi; where there is none they skip.
+#   ray_ui_cam_unit_tests  the non-visual part (src/ui/cam/setup_logic.h): no window.
+find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui Qml Quick Test)
+
+add_executable(ray_ui_cam_tests cam_test.cpp)
+target_link_libraries(ray_ui_cam_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
+                                               Qt6::Test Catch2::Catch2)
+# The private headers of src/ui (AppHost, SetupToolModel, SetupTreeModel, ...) and the CAM engine tests' test-only
+# operation type (tests/unit/cam/engine_test_util.h).
+target_include_directories(ray_ui_cam_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui" "${CMAKE_SOURCE_DIR}/tests/unit/cam")
+target_compile_definitions(ray_ui_cam_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
+set_property(TARGET ray_ui_cam_tests PROPERTY FOLDER "tests")
+
+add_test(NAME ray_ui_cam_tests COMMAND ray_ui_cam_tests "~[wallclock]")
+set_tests_properties(ray_ui_cam_tests PROPERTIES TIMEOUT 900)
+# Catch2 exits with 4 when every test case skipped (no QRhi scene graph): CTest then reports the test as skipped.
+set_tests_properties(ray_ui_cam_tests PROPERTIES SKIP_RETURN_CODE 4)
+ray_test_runtime_path(ray_ui_cam_tests QT)
+get_test_property(ray_ui_cam_tests ENVIRONMENT_MODIFICATION _mods)
+if(NOT _mods)
+    set(_mods)
+endif()
+list(APPEND _mods "QSG_NO_VSYNC=set:1")
+set_tests_properties(ray_ui_cam_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+
+add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp)
+target_link_libraries(ray_ui_cam_unit_tests PRIVATE ray_ui ray_api Qt6::Core Catch2::Catch2WithMain)
+target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
+set_property(TARGET ray_ui_cam_unit_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_ui_cam_unit_tests COMMAND ray_ui_cam_unit_tests)
+ray_test_runtime_path(ray_ui_cam_unit_tests QT)

@@ -98,7 +98,8 @@ set(RAY_WALLCLOCK_SPLITS
     ray_ui_measure_tests=ray_ui_measure_tests
     ray_ui_sketch_tests=ray_ui_sketch_tests
     ray_ui_settings_tests=ray_ui_settings_tests
-    ray_ui_model_tests=ray_ui_model_tests)
+    ray_ui_model_tests=ray_ui_model_tests
+    ray_ui_cam_tests=ray_ui_cam_tests)
 
 # Whole tests timed against the wall clock, besides the <test>_wallclock splits: they run alone.
 set(RAY_SERIAL_TESTS
@@ -131,6 +132,7 @@ set(RAY_TEST_LOCKS
     desktop=ray_ui_section_tests
     desktop=ray_ui_sketch_tests
     desktop=ray_ui_model_tests
+    desktop=ray_ui_cam_tests
     clipboard=ray_ui_measure_tests) # copies a value and the whole result, then reads the clipboard back
 
 # ---------- implementation ----------

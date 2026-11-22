@@ -1,5 +1,5 @@
-// Geometry queries (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds, massProps,
-// minDistance, and their errors.
+// Geometry queries (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds, boundsIn (T-044),
+// massProps, minDistance, and their errors.
 #include <catch2/catch_test_macros.hpp>
 
 #include "kernel_test_util.h"
@@ -421,6 +421,54 @@ TEST_CASE("bounds are tight and come from the geometry", "[kernel][query][bounds
     const Box3 after = bounds(cut);
     CHECK(after.min.x == before.min.x);
     CHECK(after.max.z == before.max.z);
+}
+
+TEST_CASE("boundsIn measures a shape in a rigid frame as its moved copy would be measured", "[kernel][query][bounds]")
+{
+    // A rotation of 30 degrees about X and 20 about Z, with a shift: what cam::resolveSetup measures a part in.
+    const double a = kPi / 6, b = kPi / 9;
+    const double ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b);
+    // Rz(b) * Rx(a), rows.
+    const Xform frame{{cb, -sb * ca, sb * sa, 5.0, sb, cb * ca, -cb * sa, -7.0, 0.0, sa, ca, 11.0}};
+    const Shape shapes[] = {box(Vec3{-1, 2, -3}, Vec3{10, 20, 30}),
+                            take(makeCylinder(Vec3{1, 2, 3}, Vec3{0, 0, 1}, 5.0, 12.0)), take(testing::makeCutBody())};
+    for (const Shape& s : shapes) {
+        const Result<Box3> in = boundsIn(s, frame);
+        REQUIRE(in);
+        const Box3 moved = bounds(take(transformed(s, frame)).shape);
+        INFO("boundsIn " << in->min.x << " " << in->min.y << " " << in->min.z << " / " << in->max.x << " " << in->max.y
+                         << " " << in->max.z);
+        CHECK(close(in->min, moved.min, 1e-9));
+        CHECK(close(in->max, moved.max, 1e-9));
+    }
+    // The box's corners turned: the exact box of the eight turned corners (the faces are planes).
+    const Box3 boxIn = boundsIn(shapes[0], frame).value();
+    Box3 corners{Vec3{1e300, 1e300, 1e300}, Vec3{-1e300, -1e300, -1e300}};
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 p{(i & 1) ? 10.0 : -1.0, (i & 2) ? 20.0 : 2.0, (i & 4) ? 30.0 : -3.0};
+        const double* m = frame.m;
+        const Vec3 q{m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3], m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+                     m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]};
+        corners.min = Vec3{std::min(corners.min.x, q.x), std::min(corners.min.y, q.y), std::min(corners.min.z, q.z)};
+        corners.max = Vec3{std::max(corners.max.x, q.x), std::max(corners.max.y, q.y), std::max(corners.max.z, q.z)};
+    }
+    CHECK(close(boxIn.min, corners.min, 1e-9));
+    CHECK(close(boxIn.max, corners.max, 1e-9));
+    // The identity is allowed: the shape's own bounds.
+    const Result<Box3> same = boundsIn(shapes[0], Xform::identity());
+    REQUIRE(same);
+    CHECK(close(same->min, Vec3{-1, 2, -3}, 1e-12));
+    CHECK(close(same->max, Vec3{10, 20, 30}, 1e-12));
+    // Not a rigid move, not finite, no shape: refused with a reason, never thrown.
+    const Xform scale{{2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    const Xform mirror{{-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    const Xform nan{{std::numeric_limits<double>::quiet_NaN(), 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    for (const Xform& bad : {scale, mirror, nan}) {
+        const Result<Box3> r = boundsIn(shapes[0], bad);
+        REQUIRE_FALSE(r);
+        CHECK(r.error().code == ErrorCode::InvalidArgument);
+    }
+    CHECK_FALSE(boundsIn(Shape{}, frame));
 }
 
 TEST_CASE("every query returns an error and never throws on bad input", "[kernel][query][errors]")

@@ -752,7 +752,10 @@ std::string wcsSchema()
     return R"({"type":"object","additionalProperties":false,"description":"Work coordinate system","properties":{)"
            R"("origin":{"type":"object","required":["mode"],"properties":{"mode":{"enum":["stockCorner",)"
            R"("stockTopCenter","modelPoint"]},"corner":{"type":"integer","minimum":0,"maximum":7}}},)"
-           R"("workOffset":{"type":"integer","minimum":1,"maximum":99,"description":"1 is G54"},"zFace":)" +
+           R"("workOffset":{"type":"integer","minimum":1,"maximum":99,"description":"1 is G54"},)"
+           R"("flipX":{"type":"boolean","description":"Reverses X (and Y): X follows the X edge's curve direction"},)"
+           R"("flipZ":{"type":"boolean","description":"Reverses Z (into the material); X follows its rule for it"},)"
+           R"("zFace":)" +
            features::topoRefSchema() + R"(,"xEdge":)" + features::topoRefSchema() + R"(,"originVertex":)" +
            features::topoRefSchema() + "}}";
 }

@@ -1,4 +1,4 @@
-// Geometry queries on a Shape (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds,
+// Geometry queries on a Shape (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds, boundsIn (T-044),
 // massProps, minDistance; faceSample (task T-034). Every query reads the exact geometry, never a mesh, and runs
 // single-threaded.
 #include "shape_impl.h"
@@ -13,6 +13,7 @@
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -25,6 +26,7 @@
 #include <gp_Pln.hxx>
 #include <gp_Sphere.hxx>
 #include <gp_Torus.hxx>
+#include <gp_Trsf.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -350,6 +352,44 @@ Box3 bounds(const Shape& shape)
         return tightBounds(shape.impl->shape);
     });
     return result ? *result : Box3{};
+}
+
+// ---------- boundsIn (T-044) ----------
+// The shape moved as a location (TopoDS_Shape::Moved shares the geometry and the topology: nothing is copied), then
+// measured as bounds() measures. transformed() copies every surface and curve and then checks the copy (validity,
+// topology counts, volume), which is what a measurement does not need.
+Result<Box3> boundsIn(const Shape& shape, const Xform& frame)
+{
+    constexpr std::string_view where = "kernel::boundsIn";
+    if (auto ok = detail::requireShape(shape, where); !ok)
+        return tl::unexpected(ok.error());
+    const auto r = [&](int i, int j) {
+        return frame.m[i * 4 + j];
+    };
+    for (const double value : frame.m)
+        if (!std::isfinite(value))
+            return tl::unexpected(makeError(ErrorCode::InvalidArgument, "The frame must be finite.", where));
+    // A rigid move, as transformed() requires: orthonormal rows, right-handed.
+    constexpr double kRigidTolerance = 1e-9;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            const double dot = r(i, 0) * r(j, 0) + r(i, 1) * r(j, 1) + r(i, 2) * r(j, 2);
+            if (std::abs(dot - (i == j ? 1.0 : 0.0)) > kRigidTolerance)
+                return tl::unexpected(makeError(ErrorCode::InvalidArgument,
+                                                "Only rigid frames are allowed: the frame scales or skews.", where));
+        }
+    const double det = r(0, 0) * (r(1, 1) * r(2, 2) - r(1, 2) * r(2, 1)) -
+                       r(0, 1) * (r(1, 0) * r(2, 2) - r(1, 2) * r(2, 0)) +
+                       r(0, 2) * (r(1, 0) * r(2, 1) - r(1, 1) * r(2, 0));
+    if (!(det > 0.0))
+        return tl::unexpected(
+            makeError(ErrorCode::InvalidArgument, "Only rigid frames are allowed: the frame mirrors.", where));
+    return guarded(where, [&]() -> Result<Box3> {
+        gp_Trsf trsf;
+        trsf.SetValues(r(0, 0), r(0, 1), r(0, 2), r(0, 3), r(1, 0), r(1, 1), r(1, 2), r(1, 3), r(2, 0), r(2, 1),
+                       r(2, 2), r(2, 3));
+        return tightBounds(shape.impl->shape.Moved(TopLoc_Location(trsf)));
+    });
 }
 
 // ---------- massProps ----------

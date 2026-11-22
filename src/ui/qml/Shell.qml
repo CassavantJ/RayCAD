@@ -151,6 +151,9 @@ FocusScope {
             id: workspaceHost
             objectName: "workspaceHost"
             anchors.fill: parent
+            // A workspace's panels go over the view's own overlays (the view cube's axis triad in the bottom left
+            // corner), as the Design workspace's feature panel does.
+            z: 1
 
             Repeater {
                 model: AppContext.workspaceNames.length
@@ -163,10 +166,37 @@ FocusScope {
                     onCurrentChanged: if (current) used = true
                     active: used
                     visible: current
-                    // Each workspace's own tools arrive with their tasks (CAM: T-044).
-                    sourceComponent: Item {}
+                    // Each workspace's own tools arrive with their tasks. CAM (T-044): the setup panel; the operation
+                    // panel (T-045), the tool library (T-046) and posting (T-047) go into camWorkspace beside it.
+                    sourceComponent: index === 1 ? camWorkspace : emptyWorkspace
                 }
             }
+            Component {
+                id: emptyWorkspace
+                Item {}
+            }
+            Component {
+                id: camWorkspace
+                Item {
+                    objectName: "camWorkspace"
+                    // T-044: cam/SetupPanel.qml (and its markers and labels over the view).
+                    SetupPanel {
+                        anchors.fill: parent
+                        view: viewport.view
+                    }
+                }
+            }
+        }
+        // T-044: the model tools and panels are the Design workspace's; entering CAM closes an open feature tool
+        // (nothing changes in the document) and finishes the sketch being edited (its steps are saved already).
+        readonly property bool camShown: AppContext.workspace === 1
+        onCamShownChanged: {
+            if (!camShown)
+                return
+            if (FeatureTool.active)
+                FeatureTool.cancel()
+            if (SketchTool.active)
+                Commands.trigger("sketch.mode.finish")
         }
 
         // T-021: right-click (press and release without dragging) opens the context menu.
@@ -199,10 +229,12 @@ FocusScope {
         // T-092: New sketch, the plane picker, the sketch tools and the sketch's status (sketch/SketchPanel.qml).
         SketchPanel {
             anchors.fill: parent
+            visible: !viewportArea.camShown // T-044: Design only
         }
         // T-098: the open feature tool's property panel and the Extrude offer after a sketch (model/FeaturePanel.qml).
         FeaturePanel {
             anchors.fill: parent
+            visible: !viewportArea.camShown
         }
 
         // T-019: someone else holds the document's write lock.
@@ -241,6 +273,7 @@ FocusScope {
         PanelBase {
             id: messageBanner
             objectName: "messageBanner"
+            z: 2 // over a workspace's panels (workspaceHost)
             visible: AppContext.message !== ""
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
@@ -597,8 +630,9 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            title: qsTr("Model")
-            iconName: "cube"
+            // T-044: the CAM workspace shows its setups and operations here.
+            title: viewportArea.camShown ? qsTr("CAM") : qsTr("Model")
+            iconName: viewportArea.camShown ? "sliders" : "cube"
 
             ToolButton {
                 objectName: "leftPanelClose"
@@ -619,12 +653,26 @@ FocusScope {
             ModelTree {
                 id: modelTree
                 anchors.fill: parent
+                visible: !viewportArea.camShown
             }
             // T-021: right-click in the tree (on a body row: selects it first).
             ContextMenu {
                 objectName: "treeContextMenu"
                 anchors.fill: parent
                 treeRoot: modelTree
+                visible: !viewportArea.camShown
+            }
+            // T-044: cam/CamTree.qml, made the first time the CAM workspace is shown.
+            Loader {
+                objectName: "camTreeLoader"
+                anchors.fill: parent
+                property bool used: viewportArea.camShown
+                onUsedChanged: if (viewportArea.camShown) used = true
+                active: used
+                visible: viewportArea.camShown
+                sourceComponent: Component {
+                    CamTree {}
+                }
             }
         }
     }

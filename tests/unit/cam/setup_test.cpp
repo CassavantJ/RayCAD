@@ -1,11 +1,13 @@
 // Setup resolution (task T-033): the WCS frame rules, the stock types and their bounds, the corner numbering on an
 // imported reference part, the errors, and bit-identical results. Builds are made by hand (boxes and cylinders named
 // as imported bodies) or by importing a corpus part through the document; the edit-following test is in
-// setup_document_test.cpp.
+// setup_document_test.cpp. T-044: flip X and flip Z (frame, codec, commands, input hash).
 #include "engine_test_util.h"
 #include "setup_test_util.h"
 
 #include "rebuild_test_util.h" // the doc tests' rebuild environment (tests/unit/doc), for the corpus import
+
+#include "commands/cam_json.h" // the WCS codec (src/doc), for the flips (T-044)
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -637,4 +639,131 @@ TEST_CASE("setup resolution is bit-identical run to run, and pinned across platf
         CHECK(toMm(toNm(v)) == v);
     }
     CHECK(first.hex() == "54894a2c9bd975809b916886e301db9452499acd5f7a4b2ed1d2e8c2c32f53e0");
+}
+
+// ---------- Flip X and flip Z (T-044) ----------
+
+TEST_CASE("flip X and flip Z reverse their axes and keep the frame right-handed", "[cam][setup][flip]")
+{
+    Block f;
+    const CamSnapshot snap = f.snap();
+    const auto resolver = naming::makeResolver(snap.bodies);
+    const BodyId b1 = body('b', 1);
+    const kernel::Shape& shape = f.shape(1);
+    Setup s = snap.cam->setups.at(0);
+    CHECK_FALSE(s.wcs.flipX); // a setup made without them
+    CHECK_FALSE(s.wcs.flipZ);
+
+    SECTION("no references")
+    {
+        s.wcs.flipX = true;
+        checkAxes(resolveOk(snap, s, *resolver), Vec3{-1, 0, 0}, Vec3{0, -1, 0}, Vec3{0, 0, 1});
+        s.wcs.flipX = false;
+        s.wcs.flipZ = true; // looking up from below: X stays model X by its rule, Y turns over
+        checkAxes(resolveOk(snap, s, *resolver), Vec3{1, 0, 0}, Vec3{0, -1, 0}, Vec3{0, 0, -1});
+        s.wcs.flipX = true;
+        checkAxes(resolveOk(snap, s, *resolver), Vec3{-1, 0, 0}, Vec3{0, 1, 0}, Vec3{0, 0, -1});
+    }
+    SECTION("the top face and an X edge: flip X turns the edge's direction round")
+    {
+        s.wcs.zFace = resolver->makeRef(b1, planeFace(shape, Vec3{20, 10, 10}));
+        const auto edge = findEdge(shape, [](const kernel::CurveInfo& c) {
+            return c.type == kernel::CurveType::Line && std::abs(c.start.x - 40) < 1e-9 &&
+                   std::abs(c.end.x - 40) < 1e-9 && std::abs(c.start.z - 10) < 1e-9 && std::abs(c.end.z - 10) < 1e-9;
+        });
+        s.wcs.xEdge = resolver->makeRef(b1, edge);
+        const double sign = kernel::curveInfo(shape, edge)->end.y > kernel::curveInfo(shape, edge)->start.y ? 1 : -1;
+        checkAxes(resolveOk(snap, s, *resolver), Vec3{0, sign, 0}, Vec3{-sign, 0, 0}, Vec3{0, 0, 1});
+        s.wcs.flipX = true;
+        checkAxes(resolveOk(snap, s, *resolver), Vec3{0, -sign, 0}, Vec3{sign, 0, 0}, Vec3{0, 0, 1});
+    }
+    SECTION("the origin corner moves with the flipped axes")
+    {
+        // Corner 0 is the stock's (X min, Y min, Z max) in the WCS: with X and Y reversed it is the model's far corner.
+        s.wcs.flipX = true;
+        const ResolvedSetup rs = resolveOk(snap, s, *resolver);
+        CHECK(same3(apply(rs.modelFromWcs, Vec3{0, 0, 0}), Vec3{40, 20, 10}));
+        CHECK(nearBox(rs.stockBounds, Box3{Vec3{0, 0, -10}, Vec3{40, 20, 0}}, 0));
+        s.wcs.flipX = false;
+        s.wcs.flipZ = true; // Z down: the "top" is the model's bottom face, and Y is model -Y
+        const ResolvedSetup down = resolveOk(snap, s, *resolver);
+        CHECK(same3(apply(down.modelFromWcs, Vec3{0, 0, 0}), Vec3{0, 20, 0}));
+    }
+    SECTION("a flip is bit-identical run to run")
+    {
+        s.wcs.flipX = true;
+        s.wcs.flipZ = true;
+        const Hash256 first = hashOf(resolveOk(snap, s, *resolver));
+        CHECK(hashOf(resolveOk(snap, s, *resolver)) == first);
+    }
+}
+
+TEST_CASE("the flips are stored only when set, read as false when absent, and are in the input hash",
+          "[cam][setup][flip]")
+{
+    using ray::doc::camjson::readWcs;
+    using ray::doc::camjson::Source;
+    using ray::doc::camjson::toJson;
+    Block f;
+    f.state = exec(f.state, opAdd(1, 1, 1));
+
+    SECTION("the codec")
+    {
+        const Source stored{Source::Kind::Stored, "CAM object"};
+        Wcs wcs;
+        CHECK(doc::json::write(toJson(wcs)).find("flip") == std::string::npos); // as before T-044
+        wcs.flipX = true;
+        const std::string withX = doc::json::write(toJson(wcs));
+        CHECK(withX.find("\"flipX\":true") != std::string::npos);
+        CHECK(withX.find("flipZ") == std::string::npos);
+        auto parsed = doc::json::parse(withX);
+        REQUIRE(parsed);
+        auto back = readWcs(*parsed, stored, "wcs");
+        REQUIRE(back);
+        CHECK(back->flipX);
+        CHECK_FALSE(back->flipZ);
+        // A document written before the flips existed.
+        auto old = doc::json::parse(R"({"origin":{"mode":"stockCorner","corner":2},"workOffset":3})");
+        REQUIRE(old);
+        auto oldWcs = readWcs(*old, stored, "wcs");
+        REQUIRE(oldWcs);
+        CHECK_FALSE(oldWcs->flipX);
+        CHECK_FALSE(oldWcs->flipZ);
+        CHECK(oldWcs->stockCornerIndex == 2);
+        // Not a boolean.
+        auto bad = doc::json::parse(R"({"flipZ":1,"workOffset":1})");
+        REQUIRE(bad);
+        CHECK_FALSE(readWcs(*bad, stored, "wcs"));
+    }
+    SECTION("the commands and the input hash")
+    {
+        const auto hashOfOp = [&](const doc::DocStatePtr& state) {
+            const CamSnapshot snap = doc::camSnapshot(state, f.build);
+            const auto resolver = naming::makeResolver(snap.bodies);
+            auto h = operationInputHash(snap, *resolver, opId(1));
+            REQUIRE(h);
+            return *h;
+        };
+        const Hash256 plain = hashOfOp(f.state);
+        const std::string setup = R"({"id":")" + id('a', 1) + R"(","wcs":)";
+        const doc::DocStatePtr flippedX =
+            exec(f.state, command("cam.setup.edit", setup + R"({"flipX":true,"workOffset":1}})"));
+        REQUIRE(flippedX->cam->setups.at(0).wcs.flipX);
+        const Hash256 x = hashOfOp(flippedX);
+        CHECK(x != plain);
+        const doc::DocStatePtr flippedZ =
+            exec(f.state, command("cam.setup.edit", setup + R"({"flipZ":true,"workOffset":1}})"));
+        CHECK(hashOfOp(flippedZ) != plain);
+        CHECK(hashOfOp(flippedZ) != x);
+        // Back to unflipped, written as false or left out: the hash a setup had before the flips existed.
+        const doc::DocStatePtr back =
+            exec(flippedX, command("cam.setup.edit", setup + R"({"flipX":false,"workOffset":1}})"));
+        CHECK_FALSE(back->cam->setups.at(0).wcs.flipX);
+        CHECK(hashOfOp(back) == plain);
+        // The work offset is G-code only: not in the hash.
+        CHECK(hashOfOp(exec(f.state, command("cam.setup.edit", setup + R"({"workOffset":2}})"))) == plain);
+        // Refused: an unknown member of the WCS.
+        const Error e = applyFails(f.state, command("cam.setup.edit", setup + R"({"flipY":true}})"));
+        CHECK(e.code == ErrorCode::InvalidArgument);
+    }
 }

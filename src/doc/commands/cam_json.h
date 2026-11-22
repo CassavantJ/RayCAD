@@ -11,8 +11,9 @@
 //   Stock     {"type":"box","xNeg","xPos","yNeg","yPos","zNeg","zPos"} | {"type":"cylinder","axis":"x"|"y"|"z",
 //              "diameter","endOffset","length"} | {"type":"solid","body":"<uuid>"} | {"type":"fromSetup",
 //              "setup":"<uuid>"}
-//   Wcs       {"origin":{"mode":"stockCorner","corner":0..7} | {"mode":"stockTopCenter"} | {"mode":"modelPoint"},
-//              "originVertex"?:TopoRef,"workOffset":1,"xEdge"?:TopoRef,"zFace"?:TopoRef}
+//   Wcs       {"flipX"?:true,"flipZ"?:true,"origin":{"mode":"stockCorner","corner":0..7} | {"mode":"stockTopCenter"} |
+//              {"mode":"modelPoint"},"originVertex"?:TopoRef,"workOffset":1,"xEdge"?:TopoRef,"zFace"?:TopoRef}
+//              The flips (T-044) are written only when true; absent means false (every older document).
 //   Operation {"cutting":Cutting,"geometry":[TopoRef],"heights":Heights,"id","name","params":{...},
 //              "suppressed":false,"template":"","tool":ToolRef,"type":"drill"}
 //   Cutting   {"clockwise":true,"coolant":"off"|"flood"|"mist"|"throughTool"|"air","feedCut","feedLeadIn",
