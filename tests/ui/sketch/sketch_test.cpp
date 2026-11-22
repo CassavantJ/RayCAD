@@ -17,6 +17,7 @@
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
 #include "../ui_watchdog.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -84,6 +85,9 @@ struct Window {
         REQUIRE(host->load());
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        // Keys and window shortcuts go to Qt's focus window: taken whether or not the desktop grants it
+        // (window_focus.h).
+        REQUIRE(ray::test::focusWindow(host->window()));
         REQUIRE(host->viewport() != nullptr);
         REQUIRE(host->startSession(userData.path().toStdString()));
         host->files()->setUseNativeDialogs(false);

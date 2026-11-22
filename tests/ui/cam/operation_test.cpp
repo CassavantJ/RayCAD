@@ -22,6 +22,8 @@
 // Screenshots: with RAY_T045_SHOTS set to a folder, the window is saved there in both themes.
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -201,6 +203,9 @@ struct Window {
         REQUIRE(host->load());
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        // Keys and window shortcuts go to Qt's focus window: taken whether or not the desktop grants it
+        // (window_focus.h).
+        REQUIRE(ray::test::focusWindow(host->window()));
         REQUIRE(host->viewport() != nullptr);
         REQUIRE(host->startSession(userData.path().toStdString()));
         // Operation types go in before the first document (api.h).
@@ -310,6 +315,8 @@ struct Window {
     {
         QQuickItem* field = shown(objectName);
         inView(field);
+        if (QGuiApplication::focusWindow() != window()) // taken by another program since (window_focus.h)
+            ray::test::focusWindow(window());
         field->forceActiveFocus();
         QMetaObject::invokeMethod(field, "selectAll");
         if (text.isEmpty())
@@ -1479,18 +1486,10 @@ TEST_CASE("the UI thread stays within its budget while previews build", "[cam][s
     // The field in view first: scrolling the panel is not what is measured.
     w.inView(w.shown(QStringLiteral("schemaInput.breakthrough")));
     QTest::qWait(200);
-    QElapsedTimer clock;
-    qint64 last = 0, worst = 0;
-    QTimer tick;
-    tick.setTimerType(Qt::PreciseTimer);
-    tick.setInterval(2);
-    QObject::connect(&tick, &QTimer::timeout, [&] {
-        const qint64 now = clock.elapsed();
-        worst = std::max(worst, now - last);
-        last = now;
-    });
-    clock.start();
-    tick.start();
+    // Watchdog (ui_watchdog.h): the worst time the UI thread was busy or blocked between two of its 2 ms ticks. Inside
+    // the measured stretch the test waits with ray::test::waitFor, which does not sleep the UI thread.
+    ray::test::UiWatchdog dog;
+    dog.start();
     std::vector<double> ms;
     for (int i = 0; i < 6; ++i) {
         QElapsedTimer t;
@@ -1498,16 +1497,17 @@ TEST_CASE("the UI thread stays within its budget while previews build", "[cam][s
         const int shown = w.op()->previewsShown();
         w.typeInto(QStringLiteral("schemaInput.breakthrough"),
                    QString::number(1 + i % 3 + 0.5 * i) + QStringLiteral(" mm"));
-        REQUIRE(QTest::qWaitFor([&] { return w.op()->previewsShown() > shown && !w.op()->previewBusy(); }, kTimeoutMs));
+        REQUIRE(
+            ray::test::waitFor([&] { return w.op()->previewsShown() > shown && !w.op()->previewBusy(); }, kTimeoutMs));
         ms.push_back(static_cast<double>(t.elapsed()));
     }
-    tick.stop();
+    dog.stop();
     std::sort(ms.begin(), ms.end());
     WARN("operation preview latency (six holes, drill): median " << ms[ms.size() / 2] << " ms, worst " << ms.back()
                                                                  << " ms");
-    INFO("worst UI-thread gap " << worst << " ms");
-    WARN("UI-thread watchdog while operation previews build: worst gap " << worst << " ms");
-    CHECK(worst < ray::test::uiBudgetMs(50));
+    WARN("UI-thread watchdog while operation previews build: worst " << dog.worst().describe() << "; longest gap "
+                                                                     << dog.worstWall().describe());
+    CHECK(dog.worstStallMs() < ray::test::uiBudgetMs(50));
     CHECK(ms[ms.size() / 2] < ray::test::uiBudgetMs(1000));
     w.op()->cancel();
 }

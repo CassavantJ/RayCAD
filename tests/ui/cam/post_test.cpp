@@ -19,6 +19,7 @@
 // Screenshots: with RAY_T047_SHOTS set to a folder, the window is saved there in both themes.
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -164,6 +165,9 @@ struct Window {
         REQUIRE(host->load());
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        // Keys and window shortcuts go to Qt's focus window: taken whether or not the desktop grants it
+        // (window_focus.h).
+        REQUIRE(ray::test::focusWindow(host->window()));
         REQUIRE(host->viewport() != nullptr);
         REQUIRE(host->startSession(userData.path().toStdString()));
         host->app()->operationTypes()->add(std::make_unique<ct::TestOperation>());
@@ -257,6 +261,8 @@ struct Window {
     {
         QQuickItem* field = shown(objectName);
         inView(field);
+        if (QGuiApplication::focusWindow() != window()) // taken by another program since (window_focus.h)
+            ray::test::focusWindow(window());
         field->forceActiveFocus();
         QMetaObject::invokeMethod(field, "selectAll");
         QTest::keyClick(window(), Qt::Key_Delete);

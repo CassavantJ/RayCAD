@@ -94,7 +94,8 @@ endforeach()
 find_package(Qt6 6.12 REQUIRED COMPONENTS GuiPrivate)
 foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
                          ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
-                         ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests)
+                         ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests
+                         ray_ui_cam_post_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/foreign_input_listener.cpp"
                                       "${CMAKE_CURRENT_SOURCE_DIR}/ui/window_focus.cpp")
     target_link_libraries(${_target} PRIVATE Qt6::GuiPrivate) # window_focus.cpp: QWindowSystemInterface
@@ -104,7 +105,7 @@ endforeach()
 # The stall tests ([wallclock]) judge the time the UI thread itself was busy or blocked in its worst gap, not the time
 # it was runnable and not run (ui/ui_watchdog.h).
 foreach(_target IN ITEMS ray_ui_viewport_tests ray_ui_start_tests ray_ui_measure_tests ray_ui_sketch_tests
-                         ray_ui_model_tests)
+                         ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/ui_watchdog.cpp")
 endforeach()
 

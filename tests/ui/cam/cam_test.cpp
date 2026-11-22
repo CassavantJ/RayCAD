@@ -15,6 +15,8 @@
 // Screenshots: with RAY_T044_SHOTS set to a folder, the window is saved there in both themes.
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
+#include "../window_focus.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -135,6 +137,9 @@ struct Window {
         REQUIRE(host->load());
         host->show();
         REQUIRE(QTest::qWaitForWindowExposed(host->window()));
+        // Keys and window shortcuts go to Qt's focus window: taken whether or not the desktop grants it
+        // (window_focus.h).
+        REQUIRE(ray::test::focusWindow(host->window()));
         REQUIRE(host->viewport() != nullptr);
         REQUIRE(host->startSession(userData.path().toStdString()));
         // Operation types go in before the first document (api.h).
@@ -220,6 +225,8 @@ struct Window {
     void typeInto(const QString& key, const QString& text) const
     {
         QQuickItem* field = shown(QStringLiteral("setupInput.") + key);
+        if (QGuiApplication::focusWindow() != window()) // taken by another program since (window_focus.h)
+            ray::test::focusWindow(window());
         field->forceActiveFocus();
         QMetaObject::invokeMethod(field, "selectAll");
         for (const QChar c : text)
@@ -1119,18 +1126,17 @@ TEST_CASE("the preview on a large part: latency, tilted frames and the UI thread
     }
     w.toWorkspace(ui::kCamWorkspace);
 
-    QElapsedTimer clock;
-    qint64 last = 0, worst = 0;
-    QTimer tick;
-    tick.setTimerType(Qt::PreciseTimer);
-    tick.setInterval(2);
-    QObject::connect(&tick, &QTimer::timeout, [&] {
-        const qint64 now = clock.elapsed();
-        worst = std::max(worst, now - last);
-        last = now;
-    });
-    clock.start();
-    tick.start();
+    // Watchdog (ui_watchdog.h): the worst time the UI thread was busy or blocked between two of its 2 ms ticks. Inside
+    // the measured stretch the test waits with ray::test::waitFor, which does not sleep the UI thread.
+    ray::test::UiWatchdog dog;
+    dog.start();
+    const auto previewedAwake = [&] {
+        const bool done = ray::test::waitFor(
+            [&] { return !w.tool()->previewBusy() && w.tool()->previewStatus() == QLatin1String("ok"); }, kTimeoutMs);
+        INFO("setup preview: status '" << w.tool()->previewStatus().toStdString() << "', message '"
+                                       << w.tool()->message().toStdString() << "'");
+        REQUIRE(done);
+    };
 
     // The time from a field change to the preview shown, over a few changes.
     const auto latency = [&](const char* what) {
@@ -1139,7 +1145,7 @@ TEST_CASE("the preview on a large part: latency, tilted frames and the UI thread
             QElapsedTimer t;
             t.start();
             w.typeInto(QStringLiteral("zPos"), QString::number(1 + i));
-            w.previewed();
+            previewedAwake();
             ms.push_back(static_cast<double>(t.elapsed()));
         }
         std::sort(ms.begin(), ms.end());
@@ -1148,20 +1154,20 @@ TEST_CASE("the preview on a large part: latency, tilted frames and the UI thread
         return ms[ms.size() / 2];
     };
     REQUIRE(w.host->commands()->trigger(QStringLiteral("cam.tool.newSetup")));
-    w.previewed();
+    previewedAwake();
     const double aligned = latency("axis-aligned frame");
     double tiltedMs = 0;
     if (tilted) {
         w.host->selection()->applyClick(
             render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, tilted->index, tilted->at, 0},
             Qt::NoModifier);
-        REQUIRE(QTest::qWaitFor([&] { return w.tool()->hasZFace(); }, kTimeoutMs));
-        w.previewed();
+        REQUIRE(ray::test::waitFor([&] { return w.tool()->hasZFace(); }, kTimeoutMs));
+        previewedAwake();
         tiltedMs = latency("tilted frame");
     } else {
         WARN("no tilted planar face on the large part: the tilted frame was not measured");
     }
-    tick.stop();
+    dog.stop();
     // The resolve alone (api::cam_setup::previewSetup, what the panel's job runs), on the document's preview of the
     // setup, for the report: the frame, the part measured in it and the stock solid.
     {
@@ -1209,9 +1215,9 @@ TEST_CASE("the preview on a large part: latency, tilted frames and the UI thread
         WARN("the large part in a tilted frame: transformed + bounds " << median(copied) << " ms, boundsIn "
                                                                        << median(located) << " ms");
     }
-    INFO("worst UI-thread gap " << worst << " ms");
-    WARN("UI-thread watchdog while the setup preview builds on a large part: worst gap " << worst << " ms");
-    CHECK(worst < ray::test::uiBudgetMs(50));
+    WARN("UI-thread watchdog while the setup preview builds on a large part: worst "
+         << dog.worst().describe() << "; longest gap " << dog.worstWall().describe());
+    CHECK(dog.worstStallMs() < ray::test::uiBudgetMs(50));
     // An interactive preview: well under a second per change on either frame.
     CHECK(aligned < ray::test::uiBudgetMs(1000));
     CHECK(tiltedMs < ray::test::uiBudgetMs(1000));
