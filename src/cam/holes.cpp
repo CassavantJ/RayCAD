@@ -3,8 +3,7 @@
 // RECOGNITION reads the B-rep through the kernel queries only (surfaceInfo, faceSample, curveInfo, adjacent;
 // makeCylinder and minDistance for the clearance check), in the setup frame: a point p of the model is R p + t in the
 // WCS.
-//   1. Pieces: the cylinder and cone faces whose axis lies along setup Z (|axis x Z| <= kAxisSin) and which are
-//   concave:
+//   1. Pieces: the cylinder and cone faces with their axis along setup Z (|axis x Z| <= kAxisSin) that are concave:
 //      faceSample's outward normal points towards the axis, so the material is outside (a hole wall, not a boss). The
 //      edges of a piece are rings (circles coaxial with it, square to Z, of its radius at their height), lines along
 //      the axis (seams, and the joints where an exporter split a cylinder) and other edges (where a cross passage cuts

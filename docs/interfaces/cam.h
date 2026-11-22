@@ -16,6 +16,8 @@
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
+// Amended by T-034 (hole recognition): recognizeHoles takes the setup frame, has an overload without a resolver, and
+// HoleSegment, RecognizedHole and HoleOptions grew (see that section).
 // Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
 //  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
 //    an item embedded from a library keeps them;
