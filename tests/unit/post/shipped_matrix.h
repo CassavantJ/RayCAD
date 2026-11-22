@@ -24,17 +24,14 @@ namespace ray::post::test::shipped {
 
 using cam::MoveKind;
 using cam::MoveRole;
-// The shipped posts the T-043 interpreter has a dialect for: roundtrip/ iterates these (kPosts, goldenRuns()).
-inline constexpr const char* kPosts[] = {"generic-iso", "fanuc", "haas-ngc", "haas-classic"};
-// Shipped posts with no interpreter dialect yet (T-042, Mazak; the interpreter is extended for them separately).
-// Every other shipped-post test covers them: shipped_posts_test.cpp iterates allPosts() and goldenRuns(true).
-inline constexpr const char* kPostsWithoutInterpreter[] = {"mazak-smooth", "mazak-matrix"};
+// The shipped posts. The T-043 interpreter (roundtrip/) has a dialect for every one of them and iterates these
+// (kPosts, goldenRuns()); shipped_posts_test.cpp iterates allPosts() and goldenRuns(true), the same set.
+inline constexpr const char* kPosts[] = {"generic-iso",  "fanuc",        "haas-ngc",
+                                         "haas-classic", "mazak-smooth", "mazak-matrix"};
 
 inline std::vector<std::string> allPosts()
 {
-    std::vector<std::string> out(std::begin(kPosts), std::end(kPosts));
-    out.insert(out.end(), std::begin(kPostsWithoutInterpreter), std::end(kPostsWithoutInterpreter));
-    return out;
+    return std::vector<std::string>(std::begin(kPosts), std::end(kPosts));
 }
 
 inline bool isMazak(const std::string& post)

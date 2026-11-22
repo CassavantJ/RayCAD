@@ -39,6 +39,9 @@ std::string defaultCoolant(const std::string& post)
     if (post.rfind("haas", 0) == 0) {
         return "flood=M8/M9 through=M88/M89 air=M83/M84";
     }
+    if (isMazak(post)) {
+        return "flood=M8/M9"; // [ASSUMPTION: the Mazak post's default, mazak-smooth.md; M not read]
+    }
     return "flood=M8/M9 mist=M7/M9";
 }
 
@@ -48,11 +51,17 @@ std::string prop(const std::map<std::string, std::string>& props, const std::str
     return it == props.end() ? def : it->second;
 }
 
-rtgc::Dialect dialectFor(const std::string& post, const Program& program)
+rtgc::Dialect dialectFor(const std::string& post, const Program& program, int mazakReading = 0)
 {
     rtgc::Dialect d;
     d.name = post;
-    if (post == "fanuc") {
+    if (isMazak(post)) {
+        // No Mazak manual: the shop's statements (properties) say what the control does; the rest is read two ways.
+        d.family = rtgc::Family::Mazak;
+        d.mazakReading = mazakReading;
+        d.mazakM6RetractsZ = prop(program.properties, "m6LeavesZRetracted", "false") == "true";
+        d.mazakDwellMilliseconds = prop(program.properties, "dwellUnits", "milliseconds") == "milliseconds";
+    } else if (post == "fanuc") {
         d.family = rtgc::Family::Fanuc;
     } else if (post == "haas-ngc" || post == "haas-classic") {
         d.family = rtgc::Family::Haas;
@@ -174,32 +183,45 @@ struct Outcome {
     std::size_t segments = 0;
 };
 
+// The names of the two readings of a Mazak program (gcode_interp.h, Dialect::mazakReading).
+const char* readingName(int reading)
+{
+    return reading == 0 ? "[Mazak reading 0, FANUC-compatible] " : "[Mazak reading 1, RS274/NGC-like] ";
+}
+
+// Interprets and compares one program. A Mazak program is read both ways (no Mazak manual decides between them) and
+// must pass under each; its issues say which reading found them.
 Outcome roundTrip(const std::string& post, const std::string& text, const Program& program,
                   const std::vector<std::string>& warnings)
 {
-    const rtgc::Dialect d = dialectFor(post, program);
-    const rtgc::Trace t = rtgc::interpret(text, d);
     Outcome o;
-    o.segments = t.segs.size();
-    auto add = [&](const rtgc::Issue& i, bool err, bool saf) {
-        Found f{categoryOf(i.code, err, saf), i, rtgc::describe(i, t.lines), {}};
-        if (i.line > 0 && static_cast<std::size_t>(i.line) <= t.lines.size()) {
-            f.lineText = t.lines[static_cast<std::size_t>(i.line) - 1];
+    const int readings = isMazak(post) ? 2 : 1;
+    for (int reading = 0; reading < readings; ++reading) {
+        const rtgc::Dialect d = dialectFor(post, program, reading);
+        const rtgc::Trace t = rtgc::interpret(text, d);
+        o.segments = std::max(o.segments, t.segs.size());
+        const std::string tag = isMazak(post) ? readingName(reading) : "";
+        auto add = [&](const rtgc::Issue& i, bool err, bool saf) {
+            rtgc::Issue tagged = i;
+            tagged.text = tag + i.text;
+            Found f{categoryOf(i.code, err, saf), tagged, rtgc::describe(tagged, t.lines), {}};
+            if (i.line > 0 && static_cast<std::size_t>(i.line) <= t.lines.size()) {
+                f.lineText = t.lines[static_cast<std::size_t>(i.line) - 1];
+            }
+            o.found.push_back(f);
+        };
+        for (const rtgc::Issue& i : t.errors) {
+            add(i, true, false);
         }
-        o.found.push_back(f);
-    };
-    for (const rtgc::Issue& i : t.errors) {
-        add(i, true, false);
-    }
-    for (const rtgc::Issue& i : t.safety) {
-        add(i, false, true);
-    }
-    for (const rtgc::Issue& i : rtgc::compare(t, expectationFor(program, warnings))) {
-        add(i, false, false);
+        for (const rtgc::Issue& i : t.safety) {
+            add(i, false, true);
+        }
+        for (const rtgc::Issue& i : rtgc::compare(t, expectationFor(program, warnings))) {
+            add(i, false, false);
+        }
     }
     return o;
 }
-
 std::vector<std::string> warningLines(const std::string& text)
 {
     std::vector<std::string> out;
@@ -234,7 +256,26 @@ const std::vector<Known>& knownFindings()
         "M6 retracts is the builder's macro [F1, unverified; docs/post_review/fanuc.md question 2]; RS274/NGC's M6 "
         "leaves the axes where they are [N 3.6.3]. (Haas M06 retracts Z itself [H1 p.19], so the Haas posts are "
         "safe with none.)";
+    // M1: Mazak "T<n> T<m> M6" (toolPreselect = sameBlock).
+    static const char* const kTwoT =
+        "The Mazak post writes the tool change with the next tool in the same block, 'T5 T3 M6'. No Mazak manual "
+        "could be read (mazak-smooth.md item 6), so which T the M6 mounts is unknown: read as the post means it "
+        "(the first T mounted, the second pre-selected) the program is right; read as RS274/NGC reads T words (the "
+        "most recent T word takes effect [N 3.7.3]; two T words in a block are not allowed at all [N 3.3.5]) M6 "
+        "mounts the next operation's tool and every cut runs with the wrong tool and the wrong length offset.";
+    // M2: Mazak G28 retract from below the next operation's start height.
+    static const char* const kG28All =
+        "The Mazak post retracts for the tool change with 'G91 G28 Z0.' straight from the last move (here Z10, the "
+        "coolant program's last rapid). If the control's G28 sends every axis home, as RS274/NGC's does "
+        "[N 3.5.8: the home position is a whole point], X and Y move at the same time as Z rises from Z10, below "
+        "the Z25 the toolpath travels at. Read as FANUC's G28 (only the axes named) it is safe. No Mazak manual "
+        "decides (mazak-smooth.md item 8). Safe either way: a G0 Z up to the clearance before G28, or G53 Z0.";
     static const std::vector<Known> k = {
+        {"mazak-smooth", "33-preselect-same-block", "rt-tool", "reading 1, RS274/NGC-like] tool T", kTwoT},
+        {"mazak-smooth", "pairwise", "rt-tool", "reading 1, RS274/NGC-like] tool T", kTwoT},
+        {"mazak-matrix", "pairwise", "rt-tool", "reading 1, RS274/NGC-like] tool T", kTwoT},
+        {"mazak-smooth", "06-coolant", "rt-unsafe-rapid", "G91 G28 Z0.): [Mazak reading 1", kG28All},
+        {"mazak-matrix", "06-coolant", "rt-unsafe-rapid", "G91 G28 Z0.): [Mazak reading 1", kG28All},
         {"fanuc", "pairwise", "rt-unsafe-rapid", "at Z unknown", kNoRetract},
         {"fanuc", "pairwise", "safety-xy-rapid-z-unknown", "G17 X0", kNoRetract},
         {"generic-iso", "pairwise", "rt-unsafe-rapid", "at Z unknown", kNoRetract},
@@ -862,6 +903,38 @@ std::vector<Mutation> mutations()
                  return rewrite(x, [decimals](double v) { return v - 2 * std::pow(10.0, -decimals); });
              });
              return i + 1;
+         }},
+        {"swap synchronous right- and left-hand tapping (G84.2 / G84.3)", "30-tap-g84-2",
+         [](L& l, const std::string&) {
+             const int i =
+                 firstLine(l, [](const T& t) { return has(t, [](const std::string& x) { return x == "G84.2"; }); });
+             if (i < 0) {
+                 return -1;
+             }
+             replaceTok(
+                 l, i, [](const std::string& x) { return x == "G84.2"; },
+                 [](const std::string&) { return std::string("G84.3"); });
+             return i + 1;
+         }},
+        {"swap the tool and the next tool of T<n> T<m> M6", "33-preselect-same-block",
+         [](L& l, const std::string&) {
+             const int i = firstLine(l, [](const T& t) {
+                 return std::count_if(t.begin(), t.end(),
+                                      [](const std::string& x) { return !x.empty() && x[0] == 'T'; }) == 2;
+             });
+             if (i < 0) {
+                 return -1;
+             }
+             T t = tokens(l[static_cast<std::size_t>(i)]);
+             std::vector<std::size_t> at;
+             for (std::size_t k = 0; k < t.size(); ++k) {
+                 if (!t[k].empty() && t[k][0] == 'T') {
+                     at.push_back(k);
+                 }
+             }
+             std::swap(t[at[0]], t[at[1]]);
+             l[static_cast<std::size_t>(i)] = join(t);
+             return firstFeedAfter(l, static_cast<std::size_t>(i)) + 1;
          }},
         {"delete M30", "01-arcs-xy",
          [](L& l, const std::string&) {

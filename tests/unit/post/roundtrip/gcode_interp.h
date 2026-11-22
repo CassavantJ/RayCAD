@@ -34,6 +34,7 @@ enum class Family {
     Ngc,   // RS274/NGC as [N] describes it (the generic ISO post's target)
     Fanuc, // FANUC 0i-MF / 30i-MB class [F1, ASSUMPTION throughout]
     Haas,  // Haas mill controls [H1]
+    Mazak, // MAZATROL Smooth / Matrix running EIA/ISO programs [M, not read: ASSUMPTION throughout, see Dialect]
 };
 
 enum CoolantBit : unsigned { kFlood = 1, kMist = 2, kThrough = 4, kAir = 8 };
@@ -56,6 +57,24 @@ struct Dialect {
     // 5114 / 5115 [F1, ASSUMPTION], Haas Setting 22 [H1 p.77, p.95 per haas-ngc.md], RS274/NGC "backed off a bit"
     // [N 3.5.16.4]). The test sets them to what the machine is assumed to be set to.
     double peckClearanceMm = 0.5;
+
+    // Mazak. No Mazak EIA/ISO programming manual is openly published by Mazak (docs/post_review/mazak-smooth.md; a
+    // search for one on Mazak's own sites found none), so every Mazak rule is an ASSUMPTION. The interpreter takes the
+    // ISO / FANUC-compatible meanings the post was written for, and where a rule decides whether a block is safe it
+    // reads the program both plausible ways; the test requires the program to be safe under each:
+    //   reading 0, "FANUC-compatible": G98 returns to the initial level of the run; Q and P are kept by later blocks
+    //     of a run; G28 moves only the axes named; G84 / G85 / G89 feed out to R; G83 retracts to R between pecks;
+    //     M6 makes no motion (unless mazakM6RetractsZ); a number without a decimal point counts least increments;
+    //     in "T<n> T<m> M6" M6 mounts T<n> and T<m> is the next tool.
+    //   reading 1, "RS274/NGC-like": G98 returns to the Z before the block [N 3.5.20]; Q and P are required on every
+    //     block [N 3.5.16]; G28 goes to a home point in every axis [N 3.5.8]; G84 / G85 / G89 feed out to clear Z
+    //     and G83 retracts to clear Z [N 3.5.16.4-6]; M6 retracts Z to machine zero; a number without a point is
+    //     the number [N 3.3.2.1]; in "T<n> T<m> M6" the last T word is the one M6 mounts [N 3.7.3].
+    int mazakReading = 0;
+    // The shop's statements about the machine (post properties): M6 leaves Z at machine zero (m6LeavesZRetracted);
+    // the dwell P unit of G4 and of the cycles (dwellUnits: milliseconds, or seconds).
+    bool mazakM6RetractsZ = false;
+    bool mazakDwellMilliseconds = true;
 };
 
 // Parses "flood=M8/M9 mist=M7/M9 through=M88/M89 air=M83/M84" (an empty code, "through=/", means none). Returns false

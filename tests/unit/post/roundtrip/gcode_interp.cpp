@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <initializer_list>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -269,6 +270,8 @@ int gGroup(int g)
     case 820:
     case 830:
     case 840:
+    case 842:
+    case 843:
     case 850:
     case 890:
         return 1;
@@ -300,6 +303,11 @@ int gGroup(int g)
         return 10;
     case 1870:
         return 20; // Haas G187 smoothing: a group of its own
+    case 611:
+    case 640:
+        return 13; // path control [N table 4]
+    case 50:
+        return 21; // Mazak G05 high-speed mode: a group of its own
     default:
         return 12; // work offsets
     }
@@ -327,6 +335,10 @@ bool gKnown(int g, const Dialect& d)
     case Family::Haas:
         // G110-G129 and G154 P1-P99 extra work offsets, G73, G74, G187 [H1 per haas-ngc.md word list]
         return (g >= 1100 && g <= 1290 && g % 10 == 0) || g == 1540 || g == 730 || g == 740 || g == 1870;
+    case Family::Mazak:
+        // [ASSUMPTION, M not read] G54.1 P1-P48, G73, G74, G84.2 / G84.3 synchronous tapping, G61.1 / G64 and G05
+        // high-speed modes (no motion): the words docs/post_review/mazak-smooth.md lists.
+        return g == 541 || g == 730 || g == 740 || g == 842 || g == 843 || g == 611 || g == 640 || g == 50;
     }
     return false;
 }
@@ -421,7 +433,15 @@ namespace {
 
 class Interp {
 public:
-    Interp(const Dialect& d, Trace& t) : d_(d), t_(t) {}
+    Interp(const Dialect& d, Trace& t) : d_(d), t_(t)
+    {
+        const bool mazak = d.family == Family::Mazak;
+        const bool mazakNgc = mazak && d.mazakReading == 1;
+        ngcRules_ = d.family == Family::Ngc || mazakNgc;
+        intIncrement_ = d.family == Family::Fanuc || d.family == Family::Haas || (mazak && !mazakNgc);
+        m6RetractsZ_ = d.family == Family::Haas || (mazak && (mazakNgc || d.mazakM6RetractsZ));
+        rigidM29_ = d.family == Family::Fanuc || mazak;
+    }
 
     void run(const std::string& text)
     {
@@ -496,6 +516,11 @@ public:
 private:
     const Dialect& d_;
     Trace& t_;
+    // Rules that differ between controls (and between the two readings of a Mazak program, gcode_interp.h).
+    bool ngcRules_ = false;     // canned cycles, G28 and repeated cycle words as RS274/NGC [N 3.5.8, 3.5.16, 3.5.20]
+    bool intIncrement_ = false; // a number without a decimal point counts least increments
+    bool m6RetractsZ_ = false;  // M6 leaves Z at machine zero
+    bool rigidM29_ = false;     // M29 rigid tapping mode
     Modal m_;
     P3 pos_;
     int motion_ = -1; // G x 10 of the modal motion; -1 after G80 or at the start
@@ -559,7 +584,7 @@ private:
     // cited pages]; RS274/NGC reads it as the number itself [N 3.3.2.1].
     double axisWord(const Word& w) const
     {
-        if (!w.point && d_.family != Family::Ngc) {
+        if (!w.point && intIncrement_) {
             return w.value * (m_.inch ? 1e-4 : 1e-3);
         }
         return w.value;
@@ -608,6 +633,20 @@ private:
             (void)cycleP;
             s = w.point ? w.value : w.value / 1000;
             tol = w.point ? 1 / pow10i(w.frac) : 0.001;
+            return true;
+        case Family::Mazak:
+            // The unit the shop says its control reads (dwellUnits) [ASSUMPTION: the post warns that it is unknown].
+            if (d_.mazakDwellMilliseconds) {
+                if (w.point) {
+                    error(line_, "dwell-format", "P with a decimal point where the control reads integer milliseconds");
+                    return false;
+                }
+                s = w.value / 1000;
+                tol = 0.001;
+                return true;
+            }
+            s = w.value;
+            tol = 1 / pow10i(w.frac);
             return true;
         }
         return false;
@@ -686,6 +725,7 @@ private:
         std::vector<int> gs;
         std::vector<int> ms;
         std::map<char, Word> w;
+        std::optional<Word> secondT;
         for (const Word& word : b.words) {
             if (word.letter == 'G') {
                 const double v = word.value * 10;
@@ -706,6 +746,8 @@ private:
                     continue;
                 }
                 ms.push_back(static_cast<int>(word.value));
+            } else if (word.letter == 'T' && w.count('T') != 0 && d_.family == Family::Mazak && !secondT) {
+                secondT = word; // Mazak "T<n> T<m> M6" (checked below)
             } else {
                 if (w.count(word.letter) != 0) {
                     error(line_, "repeated-word", std::string("two ") + word.letter + " words in one block [N 3.3.5]");
@@ -728,7 +770,7 @@ private:
         };
         // M codes: Haas one per block [H1 p.11, p.19]; FANUC one [F1, ASSUMPTION]; RS274/NGC up to four of different
         // groups [N 3.3.5].
-        if (ms.size() > (d_.family == Family::Ngc ? 4u : 1u)) {
+        if (ms.size() > (d_.family == Family::Ngc ? 4u : 1u)) { // Mazak: one [ASSUMPTION]
             error(line_, "too-many-m", "more M codes in one block than this control takes");
         }
         for (const int mc : ms) {
@@ -771,7 +813,7 @@ private:
             error(line_, "word-context", "Q outside G83 / G73 [N 3.5.16.4]");
         }
         if (hasW('P')) {
-            bool ok = hasG(40) || hasG(541) || hasG(1540) || (hasG(1870) && !d_.haasClassic);
+            bool ok = hasG(40) || hasG(541) || hasG(1540) || (hasG(1870) && !d_.haasClassic) || hasG(50);
             if (cycleBlock) {
                 switch (effMotion) {
                 case 820:
@@ -796,7 +838,7 @@ private:
                                  : "P where this control has no use for it");
             }
         }
-        if (hasW('X') && hasG(40) && d_.family == Family::Ngc) {
+        if (hasW('X') && hasG(40) && d_.family != Family::Fanuc) {
             error(line_, "word-context", "G4 takes P, not X [N 3.5.4]");
         }
 
@@ -827,6 +869,20 @@ private:
             }
             selected_ = static_cast<int>(t.value);
         }
+        // Mazak "T<n> T<m> M6" [ASSUMPTION, M not read]: reading 0 mounts T<n> and pre-selects T<m>; reading 1 takes
+        // the last T word as the selection [N 3.7.3: the most recent T word takes effect].
+        const bool hasM6 = std::find(ms.begin(), ms.end(), 6) != ms.end();
+        if (secondT) {
+            if (!hasM6) {
+                error(line_, "repeated-word", "two T words without M6");
+            }
+            if (secondT->point || secondT->value < 0) {
+                error(line_, "bad-tool", "T must be a non-negative integer [N 3.7.3]");
+            }
+            if (d_.mazakReading == 1) {
+                selected_ = static_cast<int>(secondT->value);
+            }
+        }
         // 6. M6 [N 3.6.3]: the selected tool goes in, the spindle stops, the axes stay where they are.
         if (std::find(ms.begin(), ms.end(), 6) != ms.end()) {
             if (cyc_.active) {
@@ -840,7 +896,7 @@ private:
             }
             m_.tool = selected_;
             m_.spindle = 0;
-            if (d_.family == Family::Haas && !isHome(pos_.z)) {
+            if (m6RetractsZ_ && !isHome(pos_.z)) {
                 // Haas M06 retracts Z to machine zero itself [H1 p.19 per haas-ngc.md]. (RS274/NGC: the axes stay
                 // where they are [N 3.6.3]; FANUC: the builder's macro [F1, ASSUMPTION: no motion].)
                 Segment s;
@@ -855,6 +911,9 @@ private:
             }
             freshG43_ = false;
             approachReported_ = false;
+            if (secondT && d_.mazakReading == 0) {
+                selected_ = static_cast<int>(secondT->value); // the next tool
+            }
             inCut_ = false;
         }
         // 7. spindle [N 3.6.2]; FANUC M29 rigid tapping mode [F1, ASSUMPTION]
@@ -865,7 +924,7 @@ private:
                 m_.spindle = -1;
             } else if (mc == 5) {
                 m_.spindle = 0;
-            } else if (mc == 29 && d_.family == Family::Fanuc) {
+            } else if (mc == 29 && rigidM29_) {
                 m_.rigidTap = true;
             }
         }
@@ -969,8 +1028,10 @@ private:
             }
             std::string name = gName(g);
             if (g == 541 || g == 1540) {
-                // G54.1 P1-P48 (P300 with the option) [F1, ASSUMPTION]; G154 P1-P99 [H1 per haas-ngc.md]
-                if (!hasW('P') || w['P'].point || w['P'].value < 1 || w['P'].value > (g == 541 ? 300 : 99)) {
+                // G54.1 P1-P48 (P300 with the option) [F1, ASSUMPTION]; Mazak P1-P48 [ASSUMPTION, mazak-smooth.md];
+                // G154 P1-P99 [H1 per haas-ngc.md]
+                if (!hasW('P') || w['P'].point || w['P'].value < 1 ||
+                    w['P'].value > (g == 1540 ? 99 : (d_.family == Family::Mazak ? 48 : 300))) {
                     error(line_, "bad-wcs", name + " needs P with the offset number");
                 } else {
                     name += " P" + std::to_string(static_cast<int>(w['P'].value));
@@ -1004,6 +1065,10 @@ private:
             }
         }
 
+        // Mazak G05 P2 (high-speed mode on) / G05 P0 (off), G61.1 / G64: no motion [ASSUMPTION, M not read].
+        if (hasG(50) && (!hasW('P') || w['P'].point || (w['P'].value != 0 && w['P'].value != 2))) {
+            error(line_, "bad-g05", "G05 needs P2 or P0");
+        }
         const bool axisWords = hasW('X') || hasW('Y') || hasW('Z');
         // 19. home [N 3.5.8]
         if (home) {
@@ -1084,7 +1149,7 @@ private:
         if (mc == 1 || mc == 3 || mc == 4 || mc == 5 || mc == 6 || mc == 30) {
             return true; // [N table 7]; Haas [H1 p.19-21]
         }
-        return mc == 29 && d_.family == Family::Fanuc;
+        return mc == 29 && rigidM29_;
     }
 
     bool motionPreconditions()
@@ -1385,7 +1450,7 @@ private:
             motion_ = -1;
         }
         const bool named[3] = {w.count('X') != 0, w.count('Y') != 0, w.count('Z') != 0};
-        if (!named[0] && !named[1] && !named[2] && d_.family == Family::Fanuc) {
+        if (!named[0] && !named[1] && !named[2] && (d_.family == Family::Fanuc || d_.family == Family::Mazak)) {
             error(line_, "g28", "G28 without axis words [F1, ASSUMPTION]");
             return;
         }
@@ -1405,7 +1470,7 @@ private:
             push(s);
         }
         P3 to = mid;
-        const bool all = d_.family == Family::Ngc || (!named[0] && !named[1] && !named[2]);
+        const bool all = ngcRules_ || (!named[0] && !named[1] && !named[2]);
         if (all || named[0]) {
             to.x = kUnknown;
         }
@@ -1460,7 +1525,7 @@ private:
         cyc_.active = true;
         if (cyc_.code != code) {
             cyc_.code = code;
-            if (d_.family == Family::Ngc || !sameCycle) {
+            if (ngcRules_ || !sameCycle) {
                 // [N 3.5.16] Z must be given again unless the same cycle was already active; Q and P are not sticky
                 // at all in RS274/NGC (only R and Z are named sticky). FANUC / Haas: a new cycle code is given its
                 // data again [ASSUMPTION].
@@ -1509,7 +1574,7 @@ private:
                 if (cyc_.i <= 0 || cyc_.j < 0 || cyc_.k <= 0) {
                     error(line_, "cycle-words", "G83 I, J, K must be positive");
                 }
-            } else if (d_.family == Family::Ngc && cyc_.haveQ) {
+            } else if (ngcRules_ && cyc_.haveQ) {
                 error(line_, "cycle-sticky",
                       "G83 without Q on a repeated block: RS274/NGC names only R and Z sticky, and Q is required "
                       "[N 3.5.16, 3.5.16.4]");
@@ -1526,7 +1591,7 @@ private:
                 cyc_.pTol = tol;
                 cyc_.haveP = true;
             }
-        } else if ((code == 820 || code == 890) && d_.family == Family::Ngc && cyc_.haveP) {
+        } else if ((code == 820 || code == 890) && ngcRules_ && cyc_.haveP) {
             error(line_, "cycle-sticky",
                   gName(code) + " without P on a repeated block: RS274/NGC names only R and Z sticky, and P is "
                                 "required [N 3.5.16, 3.5.16.3, 3.5.16.10]");
@@ -1540,7 +1605,7 @@ private:
         // Where the hole is: FANUC / Haas drill only on a block with X or Y [ASSUMPTION; Haas Setting 28 decides a
         // block without]; RS274/NGC on any block with X, Y or Z [N 3.5.16].
         const bool xy = w.count('X') != 0 || w.count('Y') != 0;
-        if (!xy && !(d_.family == Family::Ngc && w.count('Z') != 0)) {
+        if (!xy && !(ngcRules_ && w.count('Z') != 0)) {
             error(line_, "cycle-words", "a canned-cycle block without X or Y (whether it drills is a control setting)");
             return;
         }
@@ -1554,7 +1619,7 @@ private:
         }
         // The level the tool returns to.
         double clear = cyc_.r;
-        if (d_.family == Family::Ngc) {
+        if (ngcRules_) {
             // [N 3.5.16, 3.5.20] G98: the Z the axis was at "just before the canned cycle started", if above R. Read
             // per block: in the example of [N 3.5.16.2] old Z is simply the current Z before the block [ASSUMPTION
             // where the text is ambiguous for a run of blocks].
@@ -1571,9 +1636,11 @@ private:
         // Spindle for tapping.
         int tapDir = 0;
         bool drives = false;
-        if (code == 840 || code == 740) {
-            tapDir = code == 840 ? 1 : -1;
-            drives = d_.family == Family::Haas || (d_.family == Family::Fanuc && m_.rigidTap);
+        if (code == 840 || code == 740 || code == 842 || code == 843) {
+            tapDir = code == 840 || code == 842 ? 1 : -1;
+            // The cycle drives the spindle: Haas G84 / G74 [H1 p.82]; G84 / G74 after M29 [F1, ASSUMPTION; Mazak
+            // ASSUMPTION]; Mazak G84.2 / G84.3 synchronous tapping [ASSUMPTION].
+            drives = d_.family == Family::Haas || (rigidM29_ && m_.rigidTap) || code == 842 || code == 843;
             if (!drives && m_.spindle != tapDir) {
                 // [N 3.5.16.5] the spindle must turn clockwise before G84; G74 the other way [F1, ASSUMPTION].
                 error(line_, "tap-spindle",
@@ -1626,7 +1693,7 @@ private:
         // Preliminary motion [N 3.5.16.1]: below R, first up to R (RS274/NGC); then X/Y at the current Z, then Z to R.
         // FANUC / Haas below a raised R plane (a run whose R changes upwards): X/Y at the current Z first, then up to
         // R, the order of cam.h's steps 1 and 3 [ASSUMPTION: neither F1 nor the cited H1 pages say].
-        if (pos_.z < cyc_.r && d_.family == Family::Ngc) {
+        if (pos_.z < cyc_.r && ngcRules_) {
             rapidTo(P3{pos_.x, pos_.y, cyc_.r});
         }
         inCut_ = false;
@@ -1660,7 +1727,7 @@ private:
                 }
                 if (depth < cyc_.r) {
                     if (code == 830) {
-                        rapidTo(P3{hole.x, hole.y, d_.family == Family::Ngc ? clear : cyc_.r});
+                        rapidTo(P3{hole.x, hole.y, ngcRules_ ? clear : cyc_.r});
                         rapidTo(P3{hole.x, hole.y, std::min(depth + d, cyc_.r)});
                     } else {
                         rapidTo(P3{hole.x, hole.y, std::min(depth + d, cyc_.r)});
@@ -1678,7 +1745,9 @@ private:
             break;
         }
         case 840:
-        case 740: {
+        case 740:
+        case 842:
+        case 843: {
             // [N 3.5.16.5] feed in, reverse the spindle, feed out. FANUC / Haas feed out to R and then rapid to the
             // initial level for G98 [ASSUMPTION; H1 p.82]; RS274/NGC feeds out to clear Z.
             if (drives) {
@@ -1687,7 +1756,7 @@ private:
             feedTo(bottom);
             dwell();
             m_.spindle = -tapDir;
-            if (d_.family == Family::Ngc) {
+            if (ngcRules_) {
                 feedTo(clear);
                 t_.segs.back().cycleReturn = true;
             } else {
@@ -1709,7 +1778,7 @@ private:
             if (code == 890) {
                 dwell();
             }
-            if (d_.family == Family::Ngc) {
+            if (ngcRules_) {
                 feedTo(clear);
                 t_.segs.back().cycleReturn = true;
             } else {

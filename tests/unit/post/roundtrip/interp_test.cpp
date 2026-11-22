@@ -211,6 +211,55 @@ TEST_CASE("interpreter: machine-level safety facts", "[post][roundtrip][interp]"
         hasCode(safety(program("M5\nM29 S500\nG99 G84 X0. Y0. Z-5. R2. F500.\nG80\n")), "safety-feed-spindle-stopped"));
 }
 
+TEST_CASE("interpreter: Mazak forms, read both ways", "[post][roundtrip][interp]")
+{
+    auto mazak = [](int reading) {
+        rtgc::Dialect d = dialect(rtgc::Family::Mazak);
+        d.mazakReading = reading;
+        return d;
+    };
+    // T<n> T<m> M6: reading 0 mounts T<n>; reading 1 takes the last T word [N 3.7.3].
+    const std::string twoT = "%\nG21\nG17 G40 G49 G80 G90 G94\nG91 G28 Z0.\nG90\nT5 T3 M6\nS1000 M3\nG0 G54 X0. Y0.\n"
+                             "G43 Z10. H5\nG1 Z-1. F100.\nG91 G28 Z0.\nG90\nM30\n%\n";
+    const auto a = rtgc::interpret(twoT, mazak(0));
+    const auto b = rtgc::interpret(twoT, mazak(1));
+    CHECK(a.errors.empty());
+    CHECK(feeds(a).front().state.tool == 5);
+    CHECK(feeds(b).front().state.tool == 3);
+    // G84.2: synchronous tapping drives the spindle (no M3 needed); G84.3 turns the other way.
+    const auto tap = rtgc::interpret(program("M5\nG99 G84.2 X0. Y0. Z-5. R2. F500.\nG80\n"), mazak(0));
+    CHECK(tap.errors.empty());
+    CHECK_FALSE(hasCode(tap.safety, "safety-feed-spindle-stopped"));
+    CHECK(feeds(tap).front().state.spindle == 1);
+    // No-motion modes; G05 needs P2 or P0; G54.1 P1-P48.
+    CHECK(rtgc::interpret(program("G61.1\nG64\nG05 P2\nG05 P0\n"), mazak(0)).errors.empty());
+    CHECK(hasCode(rtgc::interpret(program("G05 P1\n"), mazak(0)).errors, "bad-g05"));
+    CHECK(rtgc::interpret(program("G54.1 P48\n"), mazak(0)).errors.empty());
+    CHECK(hasCode(rtgc::interpret(program("G54.1 P49\n"), mazak(0)).errors, "bad-wcs"));
+    // Dwell P in the unit the shop states (dwellUnits).
+    rtgc::Dialect sec = mazak(0);
+    sec.mazakDwellMilliseconds = false;
+    CHECK(rtgc::interpret(program("G4 P300\n"), mazak(0)).segs.size() > 0);
+    CHECK(hasCode(rtgc::interpret(program("G4 P0.3\n"), mazak(0)).errors, "dwell-format"));
+    CHECK(rtgc::interpret(program("G4 P0.3\n"), sec).errors.empty());
+    // Integers: reading 0 counts increments, reading 1 takes the number.
+    CHECK(std::fabs(feeds(rtgc::interpret(program("G1 Z-1. F100.\nX10\n"), mazak(0))).back().to.x - 0.01) < 1e-12);
+    CHECK(feeds(rtgc::interpret(program("G1 Z-1. F100.\nX10\n"), mazak(1))).back().to.x == 10.0);
+    // M6 retracts Z in reading 1 only.
+    auto zAfterM6 = [&](int reading) {
+        const auto t = rtgc::interpret("%\nG21\nG90\nG0 G53 Z0.\nT1 M6\nS100 M3\nG0 X0. Y0.\nG43 Z5. H1\nT2 M6\n"
+                                       "G0 G53 Z0.\nM30\n%\n",
+                                       mazak(reading));
+        for (const rtgc::Segment& s : t.segs) {
+            if (s.line == 9) {
+                return s.to.z;
+            }
+        }
+        return 5.0;
+    };
+    CHECK(zAfterM6(0) == 5.0);
+    CHECK(zAfterM6(1) >= rtgc::kHomeZ);
+}
 TEST_CASE("the interpreter shares no code with src/post", "[post][roundtrip][interp]")
 {
     // gcode_interp.* include the standard library and the interpreter's own header only; roundtrip_compare.* add the
