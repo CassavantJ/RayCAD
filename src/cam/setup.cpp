@@ -3,14 +3,16 @@
 //
 // cam.h states the rules (frame, stock, corner numbering, rounding); this file follows them in this order:
 //   1. the WCS axes (rows of R) from the Z face, the X edge or the model axes: directions rounded to 2^-40 per
-//      component, then IEEE arithmetic and dmath::sqrt only, so the same model gives the same bits everywhere;
+//      component, then IEEE arithmetic and dmath::sqrt only, so the same model gives the same bits everywhere; the
+//      flips (Wcs::flipZ before X is chosen, Wcs::flipX after) are exact negations;
 //   2. the part box in the WCS orientation ("O": p -> R p, no translation): taken from the model box exactly when R
-//      only permutes and negates axes (the usual case, and cheap), else measured on the body rotated into O;
+//      only permutes and negates axes (the usual case, and cheap), else measured on the body rotated into O
+//      (kernel::boundsIn: the rotation as a location, nothing copied);
 //   3. everything after that in integer nanometres in O: part box, stock box, origin; the WCS is O shifted by the
 //      origin, so stockBounds and partBounds are whole nanometres in the WCS.
 // What it reads is what operationInputHash covers (state.cpp putSetup): the part and stock bodies by content, the
-// stock definition, the origin mode and corner, and the WCS references through the geometry of what they resolve to
-// (surface normal and orientation, curve direction, vertex point). Nothing else of the setup is read.
+// stock definition, the origin mode and corner, the flips, and the WCS references through the geometry of what they
+// resolve to (surface normal and orientation, curve direction, vertex point). Nothing else of the setup is read.
 #include "state.h"
 
 #include <algorithm>
@@ -262,6 +264,9 @@ Result<Axes> frameAxes(const CamSnapshot& snapshot, const Setup& setup, const na
         }
         z = snapped(*u);
     }
+    if (wcs.flipZ) {
+        z = mul(z, -1.0); // exact; X is chosen below for the reversed Z
+    }
 
     Vec3 x{};
     if (wcs.xEdge) {
@@ -300,6 +305,9 @@ Result<Axes> frameAxes(const CamSnapshot& snapshot, const Setup& setup, const na
         const Vec3 y = snappedSquareTo(unit(q).value_or(axis(2)), z);
         x = cross(y, z);
     }
+    if (wcs.flipX) {
+        x = mul(x, -1.0); // exact
+    }
     // Y = Z x X, then X again from Y and Z, so the three are orthonormal to rounding (exact for axis-aligned frames).
     const Vec3 y = unit(cross(z, x)).value_or(Vec3{});
     x = cross(y, z);
@@ -329,12 +337,6 @@ bool permutesAxes(const Axes& r)
 Xform rotationOf(const Axes& r)
 {
     return Xform{{r.x.x, r.x.y, r.x.z, 0.0, r.y.x, r.y.y, r.y.z, 0.0, r.z.x, r.z.y, r.z.z, 0.0}};
-}
-
-bool isIdentity(const Xform& xf)
-{
-    const Xform id = Xform::identity();
-    return std::equal(std::begin(xf.m), std::end(xf.m), std::begin(id.m));
 }
 
 // The box of `shape` in the WCS orientation O (p -> R p), or an error naming `what`.
@@ -373,12 +375,14 @@ Result<Box3> boundsIn(const kernel::Shape& shape, const Axes& r, const std::stri
         }
         return out;
     }
-    auto moved = kernel::transformed(shape, rotationOf(r));
-    if (!moved) {
+    // Measured with the rotation as a location (T-044): no copy of the body is moved and checked, so a tilted frame
+    // costs about what an axis-aligned one does (the live setup preview resolves on every change).
+    auto box = kernel::boundsIn(shape, rotationOf(r));
+    if (!box) {
         return failure(ErrorCode::KernelFailure,
-                       what + " could not be measured in the WCS orientation: " + moved.error().message);
+                       what + " could not be measured in the WCS orientation: " + box.error().message);
     }
-    return measured(kernel::bounds(moved->shape));
+    return measured(*box);
 }
 
 Box3 unite(const Box3& a, const Box3& b)
@@ -559,9 +563,8 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
             const Box3& s = out.stockBounds;
             Result<kernel::Shape> made = kernel::Shape{};
             if (stockBody != nullptr) {
-                if (isIdentity(out.wcsFromModel)) {
-                    made = stockBody->shape;
-                } else if (auto moved = kernel::transformed(stockBody->shape, out.wcsFromModel)) {
+                // kernel::transformed hands the identity back as the input shape itself.
+                if (auto moved = kernel::transformed(stockBody->shape, out.wcsFromModel)) {
                     made = moved->shape;
                 } else {
                     made = tl::unexpected(moved.error());
@@ -603,8 +606,11 @@ Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest& request, Jo
         geom.wcsFromModel = resolved->wcsFromModel;
         geom.stockBounds = resolved->stockBounds;
         for (const BodyId& id : setup.partBodies) {
-            geom.partShapes.push_back(detail::bodyOf(snapshot, id)->shape); // resolveSetup checked they are built
+            const naming::ResolverBody* body = detail::bodyOf(snapshot, id); // resolveSetup checked they are built
+            geom.partShapes.push_back(body->shape);
+            geom.partNames.push_back(body->map); // T-035: the thread pickup of hole recognition (holeOptionsFor)
         }
+        geom.holeThreads = snapshot.holeThreads;
         for (std::size_t i = 0; i < setup.fixtureBodies.size(); ++i) {
             const BodyId& id = setup.fixtureBodies[i];
             const naming::ResolverBody* body = detail::bodyOf(snapshot, id);

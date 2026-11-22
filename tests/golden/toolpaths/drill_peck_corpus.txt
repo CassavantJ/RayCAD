@@ -1,0 +1,10 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X28.75 Y16.5 Z30
+moves 6
+0 Rapid Approach X28.75 Y16.5 Z30
+1 CyclePeck Plunge X28.75 Y16.5 Z-2.98284 F180 R17 top15 clear30 return RPlane peck3 peckClear0
+2 CyclePeck Plunge X28.75 Y38.5 Z-2.98284 F180 R17 top15 clear30 return RPlane peck3 peckClear0
+3 CyclePeck Plunge X56.25 Y38.5 Z-2.98284 F180 R17 top15 clear30 return RPlane peck3 peckClear0
+4 CyclePeck Plunge X56.25 Y16.5 Z-2.98284 F180 R17 top15 clear30 return Initial peck3 peckClear0
+5 CycleCancel Retract X56.25 Y16.5 Z30

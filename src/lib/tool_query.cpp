@@ -9,6 +9,7 @@
 #include <cmath>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ray::lib::detail {
@@ -21,7 +22,7 @@ tl::unexpected<Error> bad(std::string message)
 
 class ExprParser {
 public:
-    ExprParser(std::string_view text, const std::map<std::string, double>& vars) : text_(text), vars_(vars) {}
+    ExprParser(std::string_view text, const QueryVars& vars) : text_(text), vars_(vars) {}
 
     Result<double> run()
     {
@@ -150,22 +151,26 @@ private:
         if (pos_ == start || std::isdigit(static_cast<unsigned char>(text_[start])) != 0) {
             return error("unexpected '" + std::string(1, c) + "'");
         }
-        const std::string name(text_.substr(start, pos_ - start));
+        const std::string_view name = text_.substr(start, pos_ - start);
         const auto it = vars_.find(name);
         if (it == vars_.end()) {
-            return error("unknown variable " + name);
+            return error("unknown variable $" + std::string(name));
+        }
+        const double* number = std::get_if<double>(&it->second);
+        if (number == nullptr) {
+            return error("$" + std::string(name) + " is a string, not a number");
         }
         --depth_;
-        return it->second;
+        return *number;
     }
 
     std::string_view text_;
-    const std::map<std::string, double>& vars_;
+    const QueryVars& vars_;
     std::size_t pos_ = 0;
     int depth_ = 0;
 };
 
-Result<double> numberOf(const json::Value& v, const std::map<std::string, double>& vars)
+Result<double> numberOf(const json::Value& v, const QueryVars& vars)
 {
     if (v.isNumber()) {
         return v.asNumber();
@@ -217,21 +222,31 @@ bool nearlyEqual(double a, double b)
     return std::fabs(a - b) <= 1e-6 * scale;
 }
 
-Result<std::string> plainString(const json::Value& v, std::string_view key)
+// The value of a string key: a literal, or the string variable "$name" stands for.
+Result<std::string> stringOf(const json::Value& v, std::string_view key, const QueryVars& vars)
 {
     if (!v.isString()) {
         return bad("\"" + std::string(key) + "\" must be a string");
     }
-    if (!v.asString().empty() && v.asString().front() == '$') {
-        return bad("\"" + std::string(key) + "\" names the variable " + v.asString() +
-                   "; query variables are numbers, so substitute it before querying");
+    const std::string& text = v.asString();
+    if (text.empty() || text.front() != '$') {
+        return text;
     }
-    return v.asString();
+    const std::string_view name = std::string_view(text).substr(1);
+    const auto it = vars.find(name);
+    if (it == vars.end()) {
+        return bad("\"" + std::string(key) + "\": unknown variable " + text);
+    }
+    const std::string* value = std::get_if<std::string>(&it->second);
+    if (value == nullptr) {
+        return bad("\"" + std::string(key) + "\": " + text + " is a number, not a string");
+    }
+    return *value;
 }
 
 } // namespace
 
-Result<double> evaluate(std::string_view expression, const std::map<std::string, double>& vars)
+Result<double> evaluate(std::string_view expression, const QueryVars& vars)
 {
     try {
         return ExprParser(expression, vars).run();
@@ -240,7 +255,7 @@ Result<double> evaluate(std::string_view expression, const std::map<std::string,
     }
 }
 
-Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const std::map<std::string, double>& vars)
+Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const QueryVars& vars)
 {
     auto parsed = json::parse(queryJson.empty() ? std::string_view("{}") : queryJson);
     if (!parsed) {
@@ -304,7 +319,7 @@ Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const std::ma
                 tests.push_back([get, want](const Tool& t) { return nearlyEqual(get(t), want); });
             }
         } else if (key == "threadSpec" || key == "bodyMaterial") {
-            auto text = plainString(v, key);
+            auto text = stringOf(v, key, vars);
             if (!text) {
                 return tl::unexpected<Error>(text.error());
             }
@@ -313,7 +328,7 @@ Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const std::ma
             tests.push_back(
                 [want, spec](const Tool& t) { return fold(spec ? t.threadSpec : t.bodyMaterial, spec) == want; });
         } else if (key == "material") {
-            auto text = plainString(v, key);
+            auto text = stringOf(v, key, vars);
             if (!text) {
                 return tl::unexpected<Error>(text.error());
             }
@@ -322,7 +337,7 @@ Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const std::ma
                 return bad("\"material\" must be a material id");
             }
         } else if (key == "opClass") {
-            auto text = plainString(v, key);
+            auto text = stringOf(v, key, vars);
             if (!text) {
                 return tl::unexpected<Error>(text.error());
             }

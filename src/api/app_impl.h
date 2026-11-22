@@ -128,10 +128,10 @@ public:
     const doc::CommandRegistry& commandTypes() const override { return *commands_; }
     IJobSystem& jobs() override { return *jobs_; }
     IUiDispatcher& dispatcher() override { return *dispatcher_; }
-    cam::OperationRegistry* operationTypes() override { return nullptr; }
-    lib::LibraryStack* libraries() override { return nullptr; }
-    cam::ICamEngine* cam() override { return nullptr; }
-    post::IPostEngine* posts() override { return nullptr; }
+    cam::OperationRegistry* operationTypes() override { return operationTypes_.get(); }
+    lib::LibraryStack* libraries() override { return libraries_.get(); }
+    cam::ICamEngine* cam() override { return cam_.get(); }
+    post::IPostEngine* posts() override { return posts_.get(); }
     OpenDocument* active() override;
     void setActive(OpenDocument*) override;
     std::vector<OpenDocument*> documents() override;
@@ -167,6 +167,10 @@ public:
     // document's command queue (registry.cpp).
     template <class T>
     JobHandle<T> deferJob(JobInfo info, std::function<Result<T>(JobContext&)> work);
+    // Any thread: registers a job started elsewhere (a toolpath of the CAM engine) like the app's own, so ~AppImpl
+    // cancels and waits for it. Not listed in activeJobs().
+    template <class T>
+    void adoptJob(JobHandle<T> handle, std::string title);
 
     // Any thread: the id of the active document, "" when none is open.
     std::string activeDocumentId() const;
@@ -229,6 +233,19 @@ public:
     std::shared_ptr<SettingsStore> settings() const { return settings_; }
     // Any thread: the state a new document starts from (the default unit system of the settings).
     doc::DocStatePtr newDocumentState() const;
+
+    // ---- CAM, libraries and posts (cam_wiring.cpp) ----
+    // Makes the operation registry, the library stack (and watches it), the CAM engine and the post engine.
+    Status initCam(const AppOptions& options);
+    // UI thread: the default library stack again from the settings (AppOptions::libraryRoots empty), else nothing.
+    void configureLibraries();
+    // The roots of the default stack now and how many of them are read-only (the built-in library first).
+    std::pair<std::vector<std::string>, std::size_t> defaultLibraryRoots() const;
+    // UI thread: cancels the toolpaths being generated for the operations of the state (a document closing) and makes
+    // the engine forget them (ICamEngine::forget), except operations another open document also has.
+    void cancelGenerations(const doc::DocStatePtr& state);
+    // ~AppImpl, after the app's jobs ended: the engine, the settings listener and the library stack go.
+    void shutdownCam();
 
     // ---- Recovery journal (recovery.cpp) ----
     Result<OpenDocument*> recoverWork(const RecoveryInfo& info, JobContext& ctx); // on a worker
@@ -306,6 +323,14 @@ private:
     std::string userDataDir_;
     std::unique_ptr<RecentFiles> recent_;
     std::shared_ptr<SettingsStore> settings_;
+    // CAM, libraries and posts (cam_wiring.cpp); destroyed before the job system and the dispatcher.
+    std::shared_ptr<cam::OperationRegistry> operationTypes_;
+    std::unique_ptr<lib::LibraryStack> libraries_;
+    std::vector<std::string> explicitLibraryRoots_; // AppOptions::libraryRoots
+    std::optional<std::string> builtinLibraryDir_;  // AppOptions::builtinLibraryDir
+    int librarySettingsListener_ = 0;
+    std::unique_ptr<cam::ICamEngine> cam_;
+    std::unique_ptr<post::IPostEngine> posts_;
 
     mutable std::mutex hookMutex_;
     ConfirmHook hook_;
@@ -335,6 +360,33 @@ template <class T>
 JobHandle<T> AppImpl::deferJob(JobInfo info, std::function<Result<T>(JobContext&)> work)
 {
     return trackJob<T>(std::move(info), std::move(work), true);
+}
+
+template <class T>
+void AppImpl::adoptJob(JobHandle<T> handle, std::string title)
+{
+    if (!handle.valid()) {
+        return;
+    }
+    std::uint64_t id = 0;
+    {
+        std::lock_guard<std::mutex> lock(jobsMutex_);
+        id = nextJobId_++;
+        TrackedJob job{id, std::move(title), -1, {}, false, {}, {}};
+        job.cancel = [handle]() mutable {
+            return handle.cancel();
+        };
+        job.wait = [handle]() mutable {
+            (void)handle.wait();
+        };
+        tracked_[id] = std::move(job);
+    }
+    std::shared_ptr<Alive> alive = alive_;
+    handle.then([this, alive, id](Result<T>) {
+        if (alive->ok.load()) {
+            jobEnded(id);
+        }
+    });
 }
 
 template <class T>

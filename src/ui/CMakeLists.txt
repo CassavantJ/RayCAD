@@ -38,7 +38,9 @@ add_library(ray_ui STATIC
     sketch/constraints.cpp
     model/model_util.h
     model/preview.h
-    model/preview.cpp)
+    model/preview.cpp
+    cam/setup_logic.h # T-044
+    cam/setup_logic.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -112,7 +114,9 @@ set(RAY_UI_QML_FILES
     qml/model/FeaturePanel.qml
     qml/model/FeatureLayer.qml
     qml/model/FeatureRow.qml
-    qml/model/ParameterTable.qml)
+    qml/model/ParameterTable.qml
+    qml/cam/SetupPanel.qml
+    qml/cam/CamTree.qml)
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -163,6 +167,10 @@ qt_add_qml_module(ray_ui
         model/feature_tree.cpp
         model/params.h
         model/params.cpp
+        cam/setup_tool.h
+        cam/setup_tool.cpp
+        cam/setup_tree.h
+        cam/setup_tree.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick
@@ -172,6 +180,7 @@ qt_add_qml_module(ray_ui
 # The generated type registrations include QML_ELEMENT headers by file name: sketch/ (T-092) must be on the path.
 target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sketch")
 target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/model") # T-098, likewise
+target_include_directories(ray_ui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/cam")   # T-044, likewise
 
 # The C++ that qmlcachegen generates from the QML is Qt's code, not ours: its warnings (MSVC C4702 "unreachable
 # code" inside Qt's inline headers) do not fail the build. Our own sources keep warnings as errors.

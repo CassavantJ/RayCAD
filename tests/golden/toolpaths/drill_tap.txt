@@ -1,0 +1,8 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X52 Y38 Z35
+moves 4
+0 Rapid Approach X52 Y38 Z35
+1 CycleTap Plunge X52 Y38 Z6 F500 R22 top20 clear35 return RPlane pitch1
+2 CycleTap Plunge X70 Y12 Z-3 F500 R22 top20 clear35 return Initial pitch1
+3 CycleCancel Retract X70 Y12 Z35

@@ -75,6 +75,9 @@ struct UserSettings {
     // ---- window ----
     std::optional<WindowGeometry> window;     // nullopt until the window was closed once
     std::map<std::string, PanelState> panels; // "model", "properties": every known panel is listed
+    // ---- library (the app's default library stack, api.h AppOptions::libraryRoots) ----
+    std::string userLibraryFolder;                 // "library.userFolder"; "" = <user data dir>/library
+    std::vector<std::string> sharedLibraryFolders; // "library.sharedFolders", lowest first
 
     int decimalsFor(UnitSystem system) const { return system == UnitSystem::Inch ? decimalsInch : decimalsMetric; }
     UnitFormat unitFormat(UnitSystem system) const { return UnitFormat{system, decimalsFor(system)}; }

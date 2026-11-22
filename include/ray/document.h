@@ -403,6 +403,8 @@ std::vector<Hash256> referencedObjects(const DocState&);
 // ---------- CAM (task T-032) ----------
 // The CAM engine's view of a snapshot and its build (cam::CamSnapshot): DocState::cam and BuildResult::bodies. Pass it
 // to cam::makeCamEngine; src/cam cannot read doc types itself (PLAN.md 1.1 and 15). A null build gives built = false.
+// Amended by T-035: holeThreads, the thread of every tapped hole feature (features/hole_feature.h holeThreadOf, its
+// expressions over the document's parameters), when the document has CAM state.
 cam::CamSnapshot camSnapshot(const DocStatePtr&, const BuildResultPtr&);
 
 // Canonical JSON: UTF-8, keys sorted, no insignificant whitespace, doubles printed with the

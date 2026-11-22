@@ -1,9 +1,10 @@
 {
-  "comment": "AISI/SAE 1018 low-carbon steel, cold drawn. Density 7.85 g/cm3: Wikipedia 'Carbon steel' (mild steel, approximately 7.85 g/cm3). Hardness 126 HB: typical value of public cold-drawn 1018 datasheets (MatWeb), not re-checked here. kc1.1 1700 N/mm2: approximate, ISO 513 group P (low-carbon steel) order of magnitude. Cutting data for this material are in the tools' presets.",
+  "comment": "AISI/SAE 1018 low-carbon steel, cold drawn. Density 7.85 g/cm3: Wikipedia 'Carbon steel' (mild steel, approximately 7.85 g/cm3). Hardness 126 HB: typical value of public cold-drawn 1018 datasheets (MatWeb), not re-checked here. kc1.1 1700 N/mm2: approximate, ISO 513 group P (low-carbon steel) order of magnitude. mc 0.21: approximate, the typical value of row 1, non-alloy steel below 0.25 % C, in the material group table 'according to DIN / ISO 513 and VDI 3323' (ISCAR catalogue page 'Material Groups'). Cutting data for this material are in the tools' presets.",
   "density": 7.85,
   "group": "Steel",
   "hardnessHb": 126,
   "id": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+  "mc": 0.21,
   "name": "1018 (cold drawn)",
   "schema": 1,
   "specificCuttingForce": 1700

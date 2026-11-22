@@ -41,6 +41,14 @@ struct ViewportInfo {
     // Closed-mesh checks for section caps still running on a worker (task T-023); a body is capped once its check
     // is done (the viewport then draws again by itself).
     std::uint32_t closedChecksPending = 0;
+    // Backplot segments drawn in the last drawn frame (task T-038): the ranges setBackplotRange shows, after display
+    // decimation (TierPreset::maxBackplotSegments) and level of detail (src/render/lines.h); highlights not counted.
+    std::uint64_t pathSegments = 0;
+    // Bytes of GPU buffers that hold backplot vertices (task T-038), all backplots and their levels of detail.
+    std::uint64_t pathGpuBytes = 0;
+    // Backplots whose levels of detail are still being built on a worker (task T-038); the full path is drawn until
+    // then, and the viewport draws again by itself when they are ready.
+    std::uint32_t pathLodsPending = 0;
 };
 
 // ---------- Section view and draft analysis (task T-023) ----------
@@ -70,7 +78,12 @@ Token draftToken(DraftClass);
 // specific kind the filter enables wins: vertex > edge > face > body. A face or body needs the cursor pixel itself.
 // Hits: Face and Edge carry the kernel index (FaceRange::face, EdgeRange::edge); an addLines item answers as Edge
 // with the segment index; Bodies answers kind Solid, subIndex 0. `point` is the world point under the pixel, read
-// from the ID buffer's depth (a vertex hit gives the vertex itself). moveIndex is 0 until backplots exist.
+// from the ID buffer's depth (a vertex hit gives the vertex itself). moveIndex is 0 except for Toolpath hits.
+// Toolpath (task T-038): a segment of a backplot within the tolerance answers kind Edge with subIndex and moveIndex
+// both its BackplotVertex::moveIndex (the full 32 bits). Only PickFilter::Toolpath finds backplots; with Edges as well,
+// the nearer of the two wins. Backplots never answer Faces or Bodies, and a face under a toolpath line is still found.
+// Zoomed out, where a level of detail draws one chord for several sub-pixel segments (src/render/lines.h), the hit
+// names the last move of that chord, which lies within half a pixel of the others.
 // Every visible item is pickable, see-through ones included, unless its PickMode says otherwise (below).
 constexpr int kPickTolerancePx = 6;
 

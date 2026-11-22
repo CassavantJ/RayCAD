@@ -16,6 +16,31 @@
 // kind does; cycle runs), Move is laid out as the 112-byte RCTP record (version 2), and kDefaultPeckClearanceNm /
 // peckClearanceNm are the one place the expansion fallback lives for src/sim and src/post.
 // Amended by T-048 (feeds and speeds): computeFeeds returns Result, FeedsInput and FeedsResult grew (see that section).
+// Amended by T-034 (hole recognition): recognizeHoles takes the setup frame, has an overload without a resolver, and
+// HoleSegment, RecognizedHole and HoleOptions grew (see that section).
+// Amended for the chip-thickness exponent (lib::Material::mc): PowerModel MillingKcMc and DrillingKcMc, and
+// FeedsResult::meanChipThicknessMm and specificCuttingForceNmm2.
+// Amended so closed documents do not leak: ICamEngine::forget (a no-op by default).
+// Amended by T-044 (CAM workspace, setups): Wcs::flipX and Wcs::flipZ, since the X edge's curve direction is not the
+// user's choice; resolveSetup and the input hash read them (a setup with neither keeps its hash).
+// Amended when the wave-1 CAM modules were joined (each also in docs/interfaces/cam.h):
+//  - Embedded<T> has no extraJson of its own: the library item carries its unknown keys (libraries.h extraJson), so
+//    an item embedded from a library keeps them;
+//  - embeddedJson / embedded*FromJson: an embedded item's JSON is the library's file format (lib::toJson), so a
+//    library file and the same item in a document are the same JSON. src/doc reads and writes embedded items through
+//    these, as it may use cam but not lib (PLAN.md 1.1);
+//  - operationInputHash takes the tool's and holder's geometry (geometryHash) and only the machine fields a generator
+//    reads; GenerateInput carries the items reduced to exactly that (generatorTool and friends);
+//  - default member initialisers for the plain structs (not Move, FeedsInput/FeedsResult, ResolvedGeometry,
+//    HoleSegment and RecognizedHole, which other tasks are changing).
+// Amended by T-035 (the drilling operation, the first operation type):
+//  - the thread of a tapped hole reaches generators: HoleThread moved up and grew its nominal diameter and thread
+//    depth; CamSnapshot::holeThreads (doc::camSnapshot fills it from the hole features); ResolvedGeometry carries the
+//    part bodies' element maps and those threads (resolveSetupGeometry), holeOptionsFor() turns them into the
+//    HoleOptions of recognizeHoles, and RecognizedHole carries the thread's nominal diameter and depth;
+//  - operationInputHash covers the threads of the hole features named on the setup's part bodies, so a thread edit
+//    (which changes no geometry: the thread is not modelled) makes the operations on that body stale;
+//  - registerBuiltinOperationTypes: the operation types src/cam ships ("drill"), which the app registers.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -31,8 +56,8 @@ namespace ray::doc { struct DocState; using DocStatePtr = std::shared_ptr<const 
 namespace ray::cam {
 
 // ---------- Setup ----------
-struct BoxStock      { double xNeg, xPos, yNeg, yPos, zNeg, zPos; };   // offsets beyond the part bounding box, in the WCS frame
-struct CylinderStock { double diameter, length; int axis; double endOffset; };
+struct BoxStock      { double xNeg = 0, xPos = 0, yNeg = 0, yPos = 0, zNeg = 0, zPos = 0; };   // offsets beyond the part bounding box, in the WCS frame
+struct CylinderStock { double diameter = 0, length = 0; int axis = 2; double endOffset = 0; };   // axis 0 x, 1 y, 2 z
 struct SolidStock    { BodyId body; };
 struct FromSetupStock{ SetupId previous; };                            // in-process stock carried from an earlier setup
 using StockDef = std::variant<BoxStock, CylinderStock, SolidStock, FromSetupStock>;
@@ -41,10 +66,15 @@ struct Wcs {
     // Orientation and origin are defined by references so they follow model edits.
     std::optional<naming::TopoRef> zFace;      // Z = outward normal of this planar face
     std::optional<naming::TopoRef> xEdge;      // X along this edge
-    enum class OriginMode { StockCorner, StockTopCenter, ModelPoint } originMode;
+    enum class OriginMode { StockCorner, StockTopCenter, ModelPoint } originMode = OriginMode::StockCorner;
     int stockCornerIndex = 0;                  // 0..7 when StockCorner
     std::optional<naming::TopoRef> originVertex;
     int workOffset = 1;                        // 1 => G54, 2 => G55 ...
+    // Added by T-044: X follows the X edge's curve direction (or the default rule), which the user cannot choose, so
+    // the setup can turn it round. flipX: X (and with it Y) reversed; flipZ: Z reversed, into the material (X stays as
+    // its rule gives it for that Z, Y = Z x X). Both false in documents written before them.
+    bool flipX = false;
+    bool flipZ = false;
 };
 
 struct Setup {
@@ -63,19 +93,19 @@ struct Setup {
 };
 
 // ---------- Operation ----------
-struct ToolRef { ToolId tool; HolderId holder; int toolNumber; int lengthOffset; int diameterOffset; double stickOut; };
+struct ToolRef { ToolId tool; HolderId holder; int toolNumber = 1; int lengthOffset = 1; int diameterOffset = 1; double stickOut = 0; };
 
 struct CuttingData {
-    double spindleRpm; bool clockwise = true;
-    double feedCut, feedPlunge, feedRamp, feedLeadIn, feedLeadOut;   // mm/min
-    enum class Coolant { Off, Flood, Mist, ThroughTool, Air } coolant;
+    double spindleRpm = 0; bool clockwise = true;
+    double feedCut = 0, feedPlunge = 0, feedRamp = 0, feedLeadIn = 0, feedLeadOut = 0;   // mm/min
+    enum class Coolant { Off, Flood, Mist, ThroughTool, Air } coolant = Coolant::Off;
 };
 
-struct Heights {           // all relative to the WCS Z of the referenced level
-    double clearance;      // rapid-safe plane between operations
-    double retract;        // rapid-safe plane inside an operation
-    double feedPlane;      // switch from rapid to feed
-    double top, bottom;    // machining range; may be driven by geometry references
+struct Heights {               // all relative to the WCS Z of the referenced level
+    double clearance = 0;      // rapid-safe plane between operations
+    double retract = 0;        // rapid-safe plane inside an operation
+    double feedPlane = 0;      // switch from rapid to feed
+    double top = 0, bottom = 0;    // machining range; may be driven by geometry references
 };
 
 struct Operation {
@@ -96,10 +126,10 @@ struct Operation {
 // A library item embedded in the document (PLAN.md 3.1 "embedded", libraries.h): the copy its operations and setups
 // use, so a file opens, generates and posts identically on a machine that does not have the library. It is taken
 // from the library on first use (the cam.* commands carry it in their arguments) and changes only by a command.
+// The item's unknown keys are its own extraJson (libraries.h), so they come along from the library.
 template <class T>
 struct Embedded {
     T item;
-    std::string extraJson;                     // unknown keys of the item's JSON, kept and written back
 };
 
 struct CamState {
@@ -113,6 +143,19 @@ struct CamState {
     bool empty() const { return setups.empty() && operations.empty() && tools.empty() && holders.empty() &&
                                 machines.empty() && materials.empty() && extraJson.empty(); }
 };
+
+// The JSON of an embedded item is the library's file format of the item (lib::toJson: canonical, its unknown keys
+// included), so a library file and the same item embedded in a document are the same JSON; and back (lib::toolFromJson
+// and the others: the item's schema is checked; FormatError, or FormatTooNew for a newer "schema", naming the first
+// problem). src/doc stores and reads embedded items through these, as it may use cam but not lib (PLAN.md 1.1).
+std::string embeddedJson(const Embedded<lib::Tool>&);
+std::string embeddedJson(const Embedded<lib::Holder>&);
+std::string embeddedJson(const Embedded<lib::MachineDef>&);
+std::string embeddedJson(const Embedded<lib::Material>&);
+Result<Embedded<lib::Tool>> embeddedToolFromJson(std::string_view);
+Result<Embedded<lib::Holder>> embeddedHolderFromJson(std::string_view);
+Result<Embedded<lib::MachineDef>> embeddedMachineFromJson(std::string_view);
+Result<Embedded<lib::Material>> embeddedMaterialFromJson(std::string_view);
 
 // ---------- Toolpath IR ----------
 // Coordinates are in the setup WCS, integer nanometres. This is the single source for backplot,
@@ -227,9 +270,9 @@ struct Toolpath {
     OperationId operation;
     Hash256 inputHash;               // hash of everything the generator consumed
     std::vector<Move> moves;
-    Nm startX, startY, startZ;
+    Nm startX = 0, startY = 0, startZ = 0;
     // maxEngagementDeg alone is a short spike (S5); p99 and air-cut length are what describe an adaptive path.
-    struct Stats { double cutLengthMm, rapidLengthMm; double minZ, maxZ; double maxEngagementDeg, p99EngagementDeg, airCutLengthMm; } stats;
+    struct Stats { double cutLengthMm = 0, rapidLengthMm = 0; double minZ = 0, maxZ = 0; double maxEngagementDeg = 0, p99EngagementDeg = 0, airCutLengthMm = 0; } stats;
     std::vector<std::string> warnings;   // includes generator failure flags: start point not found, uncleared area remains, lead failed
     // The RCTP format, canonical little-endian, the golden-file format (PLAN.md 3.6): "RCTP", u32 version
     // (kToolpathFormatVersion), operation id (16 bytes), inputHash (32 bytes), u64 move count, startX, startY, startZ
@@ -243,6 +286,14 @@ struct Toolpath {
 };
 
 // ---------- Generation ----------
+// The thread of a tapped hole feature as CAM reads it (T-097b; defined here, before its first use; the hole
+// recognition section says how it is picked up). Lengths in mm. Amended by T-035: nominalDiameter and depth.
+struct HoleThread {
+    std::string spec;              // the designation, "M6x1", "1/4-20 UNC", "M8x1-LH"
+    double pitch = 0;
+    double nominalDiameter = 0;    // the thread's major diameter; 0 when not known
+    double depth = 0;              // full-thread depth from the top of the tapped bore; 0: the whole tapped length
+};
 struct ResolvedGeometry {
     // Everything an operation needs, already resolved from references (resolveSetupGeometry, below). The shapes and
     // `selected` stay in the model frame (a SubId belongs to the shape it came from, and kernel::sliceAt, silhouette
@@ -256,7 +307,16 @@ struct ResolvedGeometry {
     Box3 stockBounds;
     // 2D in-process stock for rest-aware 2.5D ops: boundary loops of remaining material per Z level, if known.
     std::optional<std::vector<std::pair<double, std::vector<kernel::ProfileLoop>>>> stockSlices;
+    // Added by T-035: the element map of each part body (parallel to partShapes) and the threads of the document's
+    // tapped hole features (CamSnapshot::holeThreads), so a generator can read the thread of a hole it recognises
+    // (holeOptionsFor, in the hole recognition section). Empty maps where the caller has none.
+    std::vector<naming::ElementMap> partNames;
+    std::map<FeatureId, HoleThread> holeThreads;
 };
+// The engine hands a generator the embedded tool, holder and machine reduced to what the input hash covers
+// (generatorTool, generatorHolder, generatorMachine below): ids, names, vendor text, presets, comments and the
+// machine's post and controller fields are empty or zero there, so a generator cannot depend on what does not make
+// its operation stale. Cutting data is the operation's own (Operation::cutting).
 struct GenerateInput {
     const Operation& op;
     const lib::Tool& tool;
@@ -284,10 +344,13 @@ public:
 private:
     std::map<std::string, std::unique_ptr<IOperationType>, std::less<>> types_;
 };
+// Added by T-035: adds the operation types src/cam ships (src/cam/ops: "drill", which covers spot, drill, peck,
+// chipBreak, tap, bore and ream by its "cycle" parameter). The app calls it once at start-up (src/api).
+void registerBuiltinOperationTypes(OperationRegistry&);
 
 // ---------- Staleness / associativity ----------
 enum class OpStatus { UpToDate, Stale, Generating, Failed, ReferenceBroken, Suppressed };
-struct OpState { OpStatus status; std::string message; std::shared_ptr<const Toolpath> toolpath; };
+struct OpState { OpStatus status = OpStatus::Stale; std::string message; std::shared_ptr<const Toolpath> toolpath; };
 
 class ICamEngine {
 public:
@@ -299,6 +362,13 @@ public:
     // Operations run in parallel; each is internally deterministic and MUST be re-entrant (no shared globals, no
     // clock-driven branches). Cancellation is polled by iteration count, never by wall clock.
     virtual void generateAllStale(doc::DocStatePtr, doc::BuildResultPtr) = 0;
+    // Drops what the engine holds for these operations by id: the latest toolpath of each (shown while stale) and the
+    // record of a running generation. Called when their document closes, after their generations were cancelled; a
+    // generation that still ends later is filed in the cache by its input hash only. The cache by input hash is kept
+    // (bounded: CamEngineOptions::cacheEntries), so a document opened again finds toolpaths whose inputs it still has.
+    // Ids are not per document: the caller leaves out operations another open document has (a second copy of a file).
+    // The default does nothing (an engine without per-operation state).
+    virtual void forget(std::span<const OperationId>) {}
 };
 
 // ---------- The engine (task T-032) ----------
@@ -308,30 +378,47 @@ struct CamSnapshot {
     std::shared_ptr<const CamState> cam;        // null: the document has no CAM state
     bool built = false;                         // false: no build yet; every operation is Stale until there is one
     std::vector<naming::ResolverBody> bodies;   // the built bodies (BuildResult::bodies), sorted by id
+    // Added by T-035: the thread of every tapped hole feature of the document, by feature id (the TopoName::origin
+    // of the "hole.*" names on its faces). The document's thread is not modelled, so only this tells CAM about it.
+    std::map<FeatureId, HoleThread> holeThreads;
 };
 using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const doc::BuildResultPtr&)>;
 
 // The input hash of operation `op` (Toolpath::inputHash): BLAKE3 over everything its generator consumes, and nothing
 // else, so it changes exactly when the toolpath may change:
-//   the operation's type, params, tool stick-out, cutting data and heights; the embedded tool, holder and machine
-//   (their content, not their ids); each geometry reference as it resolves now (state, and the content of every
+//   the operation's type, params, tool stick-out, cutting data and heights; the embedded tool's and holder's geometry
+//   (lib::Tool::geometryHash, lib::Holder::geometryHash) and the machine fields a generator reads (generatorMachine:
+//   kind, axes, spindle speed range, rigid tapping); each geometry reference as it resolves now (state, and the content of every
 //   resolved element: surface, curve or point geometry); the setup's part and fixture bodies (each body's content
-//   hash, in setup order: GenerateInput carries the whole part shapes, so an edit anywhere on a part body counts);
+//   hash, in setup order: GenerateInput carries the whole part shapes, so an edit anywhere on a part body counts;
+//   with each part body, the CamSnapshot::holeThreads of the hole features named on its faces, by feature id);
 //   the stock (its definition; a solid stock's body content; a previous setup's stock and operation hashes for
-//   FromSetupStock) and the WCS (mode, corner, and its references as they resolve).
+//   FromSetupStock) and the WCS (mode, corner, the flips when either is set, and its references as they resolve).
 // Not in it: names, the template id, tool number and offset registers, program number and comment, post, work
-// offset, operation order, bodies the setup does not use, the document's other features, and anything of the
-// hardware tier (display tessellation is not part of a shape's content). Generators must not read Operation::name or templateId.
+// offset, operation order, bodies the setup does not use, the document's other features, the library items' ids,
+// names, vendor text, comments, presets (cutting data is the operation's), thread designation, body material and
+// unknown keys, the machine's power, torque, tool changer, controller, options, post properties and peck clearance
+// (lib::MachineDef::peckClearance: it changes how a cycle is expanded into plain moves, which the post host and the
+// backplot work out from the current machine when they run, not the toolpath, whose moves carry their own
+// cyclePeckClearance), and anything of the hardware tier (display tessellation is not part of a shape's content). Generators must not read Operation::name
+// or templateId.
 // Errors: ReferenceBroken when a geometry or WCS reference does not resolve usably (Broken; Repaired and not
 // confirmed; Split or Merged, which change what is machined and need review: naming.h postableWithoutReview), or a
 // body the operation needs is not built; NotFound when the operation, its setup or an embedded item it names is
 // missing; InvalidArgument for a FromSetupStock chain that does not lead to an earlier setup.
 Result<Hash256> operationInputHash(const CamSnapshot&, const naming::IResolver&, const OperationId& op);
+// The items as GenerateInput carries them: copies with only what the input hash covers. A tool keeps its type,
+// flutes, diameters, lengths, corner radius, tip and thread pitch; a holder its gauge length and segments; a machine
+// its kind, axes, minimum and maximum rpm and rigid tapping. Everything else is the default (an empty id and name).
+lib::Tool generatorTool(const lib::Tool&);
+lib::Holder generatorHolder(const lib::Holder&);
+lib::MachineDef generatorMachine(const lib::MachineDef&);
 
 // ---------- Setup resolution (task T-033) ----------
 // A setup's WCS frame and stock, and the ResolvedGeometry an operation is generated on. Pure functions of their
 // inputs; the input hash above covers everything they read (part, fixture and stock bodies, the stock definition,
-// the origin mode and corner, the WCS references as they resolve; Wcs::workOffset is G-code only and not read).
+// the origin mode and corner, the flips, the WCS references as they resolve; Wcs::workOffset is G-code only and not
+// read).
 //
 // Frame: right-handed and orthonormal; wcsFromModel maps a model point p to R p - o (rows of R: the WCS axes in model
 // coordinates, o: the origin in that orientation).
@@ -341,6 +428,9 @@ Result<Hash256> operationInputHash(const CamSnapshot&, const naming::IResolver&,
 //      within 45 degrees of model Z (|Z.z| >= cos 45), else the X that makes Y model +Z projected (seen from outside
 //      a side face, model up is WCS Y).
 //   Y  Z x X.
+//   Flips (T-044): with Wcs::flipZ, Z is reversed before X is chosen (so X follows the rule above for the reversed Z);
+//   with Wcs::flipX, X is reversed after it is chosen; Y is Z x X either way, so the frame stays right-handed. Both
+//   are exact negations: they change no bit but the sign.
 //   Each reference must resolve as the input hash requires (Exact, or a repair the user confirmed) to one element of
 //   its kind: zFace a face, xEdge an edge, originVertex a vertex.
 // Stock (stockBounds), axis-aligned in the WCS orientation, never in the model axes:
@@ -368,8 +458,8 @@ struct ResolvedSetup {
     kernel::Shape stockSolid;    // the stock solid in the WCS; null unless SetupResolveOptions::stockSolid
 };
 struct SetupResolveOptions { bool stockSolid = false; };
-// Cheap enough for a live preview when the frame is axis-aligned (the bounds then come from the model boxes); a
-// tilted frame measures each body moved into it. Errors: ReferenceBroken for a part, fixture or stock body that is
+// Cheap enough for a live preview: an axis-aligned frame takes the bounds from the model boxes, a tilted one measures
+// each body in it with kernel::boundsIn (T-044: no copy of the body is made). Errors: ReferenceBroken for a part, fixture or stock body that is
 // not built or a reference that does not resolve usably; InvalidArgument for a WCS or stock the setup cannot have
 // (above; also box or cylinder stock without part bodies); KernelFailure when a body cannot be measured or the stock
 // solid made; Cancelled.
@@ -387,7 +477,8 @@ struct GeometryRequest {
 using ResolveGeometryFn = std::function<Result<ResolvedGeometry>(const GeometryRequest&, JobContext&)>;
 // The engine's default: resolveSetup, then partShapes and fixtureShapes are the setup's bodies in order (model
 // frame), `selected` / `selectedShapeIndex` the operation's geometry references as they resolve (one entry per
-// resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty.
+// resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty; partNames
+// the part bodies' element maps and holeThreads the snapshot's (T-035).
 Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest&, JobContext&);
 
 struct CamEngineOptions {
@@ -409,15 +500,75 @@ std::unique_ptr<ICamEngine> makeCamEngine(IJobSystem& jobs, std::shared_ptr<cons
 // Entry falls back in order helix -> ramp along the cut -> pre-drill point (if given); if none fits, generation
 // fails with the minimum width needed (S5: upstream adaptive produced nothing for a slot 1.8 mm wider than the tool).
 enum class EntryKind : std::uint8_t { Helix, Ramp, PreDrill };
-struct LinkOptions { double maxStayDownDistance; bool allowRapidRetract; double leadRadius; double rampAngleDeg; double helixDiameter; double helixMinDiameter; std::vector<EntryKind> entryOrder; };
+struct LinkOptions { double maxStayDownDistance = 0; bool allowRapidRetract = false; double leadRadius = 0; double rampAngleDeg = 0; double helixDiameter = 0; double helixMinDiameter = 0; std::vector<EntryKind> entryOrder; };
 // Orders cut passes and inserts leads, ramps, retracts and links. Never rapids below feedPlane inside stock bounds.
 Result<std::vector<Move>> linkPasses(std::span<const std::vector<Move>> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&);
 
 // ---------- Hole recognition (v1: cylinders with planar/conical bottoms; full AFR is v2) ----------
-struct HoleSegment { double diameter, depth; bool conical; double coneAngleDeg; };
-struct RecognizedHole { naming::TopoRef axisFace; Vec3 top, axis; std::vector<HoleSegment> segments; bool through; std::string threadSpec; };
-Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId, Vec3 setupZ, JobContext&);
-std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);   // deterministic nearest-neighbour + 2-opt
+// Task T-034, src/cam/holes.cpp, which states every rule and tolerance. Amended by T-034: recognition takes the setup
+// frame (wcsFromModel, so positions come out in the WCS in nanometres, as the toolpath IR needs them) instead of setup
+// Z alone; a second overload without a resolver serves generators, which get shapes and SubIds but no resolver
+// (GenerateInput); HoleSegment and RecognizedHole carry what the drilling operation (T-035) needs; HoleOptions carries
+// the thread pickup from hole features (T-097b) and a size limit.
+//
+// A hole is a stack of coaxial concave faces along setup Z, open at the top to an up-facing plane with nothing above
+// it: cylinders (pieces of one cylinder merged, as STEP exporters split them), cones (countersinks, chamfers, drill
+// points) and planar steps; it ends in a flat floor, a cone (drill point) or by breaking out (through). Segments run
+// from the top down; planar steps between them are not segments.
+struct HoleSegment {
+    double diameter, depth; bool conical; double coneAngleDeg;   // cone: diameter at its top, included angle
+    // Added by T-034:
+    double bottomDiameter;    // the diameter at the segment's lower end: = diameter for a cylinder, 0 at a drill point
+    Nm zTop, zBottom;         // WCS Z of the segment's ends (a drill point's zBottom is its tip); depth = zTop - zBottom
+};
+enum class HoleBottom : std::uint8_t { Through, Flat, Conical };
+struct RecognizedHole {
+    naming::TopoRef axisFace;  // the main bore's wall (its lowest SubId); empty from the overload without a resolver
+    Vec3 top;                  // the WCS point (x, y, zTop) in mm
+    Vec3 axis;                 // the hole axis in the model frame, pointing out of the hole (unit)
+    std::vector<HoleSegment> segments;   // top down; at least one cylinder
+    bool through;              // == (bottom == HoleBottom::Through)
+    std::string threadSpec;    // the hole feature's thread designation ("M6x1"), empty when unknown or not tapped
+    // Added by T-034:
+    Nm x = 0, y = 0;           // the axis in the WCS
+    Nm zTop = 0, zBottom = 0;  // the top, and the lowest point (a drill point's tip; where a through hole breaks out)
+    HoleBottom bottom = HoleBottom::Through;
+    std::size_t bore = 0;      // index in segments of the main bore: the lowest cylinder, the drilled diameter
+    bool counterbored = false; // a cylinder above the bore is wider than it
+    bool countersunk = false;  // an entry cone (above the first cylinder) wider than a chamfer (holes.cpp, kChamferMax*)
+    bool chamfered = false;    // an entry cone no wider than a chamfer: an edge break, not a countersink
+    double threadPitch = 0;    // mm, with threadSpec; 0 when unknown
+    kernel::SubId axisSub{};   // the face axisFace names, in the shape passed
+    std::vector<kernel::SubId> faces;   // every face of the hole (walls, steps, floor) in the shape passed, sorted
+    // Added by T-035, with threadSpec (HoleThread): the thread's nominal diameter and full-thread depth, mm (0 unknown;
+    // a depth of 0 is the whole tapped length).
+    double threadNominalDiameter = 0, threadDepth = 0;
+};
+// Thread pickup (T-097b): the thread of the hole feature `feature`, which made the bore (TopoName::origin of a name
+// of role "hole.*" on the bore's faces, read through `names`); nullopt when the feature has none. HoleThread is
+// defined in the generation section.
+struct HoleOptions {
+    const naming::ElementMap* names = nullptr;   // the body's element map; null: no thread pickup
+    std::function<std::optional<HoleThread>(const FeatureId&)> threadOf;   // empty: no thread pickup
+    double maxDiameter = 0;   // > 0: holes whose bore is wider are not reported (circular pockets); 0: no limit
+};
+// Added by T-035: the thread pickup of part `part` of a ResolvedGeometry (its partNames entry and holeThreads), for
+// a generator; no pickup when the geometry has no element map for that part. The options point into `geom`, which
+// must outlive them.
+HoleOptions holeOptionsFor(const ResolvedGeometry& geom, std::size_t part);
+// Holes of `shape` (model frame) along Z of the frame wcsFromModel (a rigid move: the setup's ResolvedSetup), sorted
+// by (x, y, zTop) and then axisSub, so the result does not depend on face order. Deterministic. Errors:
+// InvalidArgument for a null shape or a frame that is not a rigid move; KernelFailure when a face or edge cannot be
+// read; Cancelled. Polls cancellation per face.
+Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const naming::IResolver&, BodyId,
+                                                   const Xform& wcsFromModel, JobContext&, const HoleOptions& = {});
+Result<std::vector<RecognizedHole>> recognizeHoles(const kernel::Shape&, const Xform& wcsFromModel, JobContext&,
+                                                   const HoleOptions& = {});
+// The visiting order of points `xy` from `start`: nearest neighbour (ties to the lower index), then 2-opt and Or-opt
+// improvement with a fixed pass bound, never longer than the nearest-neighbour tour. Deterministic: integer
+// nanometre coordinates (toNm of each value) and integer squared distances for every comparison. holes.cpp has the
+// complexity. A permutation of 0..xy.size()-1.
+std::vector<std::size_t> orderHolesShortestPath(std::span<const Vec2> xy, Vec2 start);
 
 // ---------- Feeds and speeds (task T-048, src/cam/feeds.cpp) ----------
 // Amended by T-048: computeFeeds returns Result (errors are values); FeedsInput can name the preset and replace its
@@ -450,13 +601,16 @@ struct FeedsInput {
 };
 
 enum class FeedsMode : std::uint8_t { Milling, Drilling, Tapping };
-// How power and torque were estimated. lib::Material has no chip-thickness exponent mc, so every model uses kc1.1
-// flat, which reads low for chips thinner than 1 mm (feeds.cpp, kc model).
+// How power and torque were estimated (feeds.cpp, kc model). With the material's chip-thickness exponent mc
+// (lib::Material::mc), milling and drilling take kc = kc1.1 hm^-mc at the mean chip thickness hm of the cut; without
+// it kc1.1 flat, which reads low for chips thinner than 1 mm. Taps always use kc1.1 flat.
 enum class PowerModel : std::uint8_t {
     Unknown,        // the material's kc1.1 is 0 (not known): power and torque are 0, their limits Unknown
     MillingKc11,    // P = ae ap vf kc1.1
     DrillingKc11,   // P = MRR kc1.1 (equal to vc f D kc / 240000 for solid drilling; an annulus when opening a hole)
-    TappingKc11     // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+    TappingKc11,    // torque = kc1.1 x thread volume per revolution / 2 pi (ISO 68-1 basic profile), power from it
+    MillingKcMc,    // P = ae ap vf kc, kc = kc1.1 hm^-mc
+    DrillingKcMc    // P = MRR kc, kc = kc1.1 hm^-mc
 };
 // One machine limit: the machine's value (0 = not known), what the cutting data asked for before this limit, and
 // what happened. Exceeded: the limit could not be met by changing rpm or feed (a tap's torque, a tap feed held up by
@@ -489,6 +643,8 @@ struct FeedsResult {
     double feedPerRevMm = 0;          // feed / rpm (taps: the pitch)
     double cuttingPowerKw = 0;        // at the cutting edges (tool wear factor in), before spindle efficiency
     PowerModel powerModel = PowerModel::Unknown;
+    double meanChipThicknessMm = 0;   // hm of the programmed feed (KcMc models; 0 otherwise)
+    double specificCuttingForceNmm2 = 0;   // the kc power and torque use (kc1.1 for the Kc11 models; 0 if unknown)
     bool tapFeedExact = true;         // taps: feedMicronPerMin x 1000 == pitch in nm x rpm, no rounding
     struct Limits { FeedsLimit maxRpm, minRpm, maxFeed, power, torque; } limits;
     std::vector<std::string> notes;   // user-presentable English, in a fixed order: defaults used, unknown limits, ...
@@ -500,7 +656,7 @@ struct FeedsResult {
 Result<FeedsResult> computeFeeds(const FeedsInput&);
 
 // ---------- Cycle time ----------
-struct CycleTime { double cutSec, rapidSec, toolChangeSec, totalSec; };
+struct CycleTime { double cutSec = 0, rapidSec = 0, toolChangeSec = 0, totalSec = 0; };
 CycleTime estimateCycleTime(std::span<const Toolpath* const>, const lib::MachineDef&);   // v1: trapezoidal accel per axis
 
 } // namespace ray::cam

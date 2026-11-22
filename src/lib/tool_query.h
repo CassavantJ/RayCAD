@@ -8,23 +8,28 @@
 //   "threadSpec"    equal ignoring case and spaces ("1/4-20 UNC" = "1/4-20unc");
 //   "bodyMaterial"  equal ignoring case;
 //   "material", "opClass"  the tool has a preset for that material id and/or op class (one preset for both).
-// Expressions: numbers, + - * /, unary minus, parentheses and variables such as feature.minWidth or $tool.pitch
-// (a leading '$' is ignored). Evaluated in double precision left to right, which is the same on every platform.
-// Any other key, a string that names a variable (variables are numbers only) or an expression that fails makes
-// the query malformed: InvalidArgument.
+// Variables (QueryVars, keys spelled without '$') are numbers or strings. The canonical spelling names them with a
+// '$': "$feature.minWidth", "$feature.threadSpec" (PLAN.md 3.6).
+//   Expressions (numeric fields): numbers, + - * /, unary minus, parentheses and number variables, written
+//   $feature.minWidth or, accepted as well, feature.minWidth. Evaluated in double precision left to right, which is
+//   the same on every platform.
+//   String keys ("threadSpec", "bodyMaterial", "material", "opClass"): a literal, or "$name" as the whole value for
+//   a string variable. Without the '$' the value is a literal, so "feature.threadSpec" matches a tool whose thread
+//   designation is that text.
+// Any other key, an unknown variable, a variable of the wrong type or an expression that fails makes the query
+// malformed: InvalidArgument naming the key.
 #pragma once
 #include <ray/libraries.h>
 
 #include <functional>
-#include <map>
 #include <string>
 #include <string_view>
 
 namespace ray::lib::detail {
 
-Result<double> evaluate(std::string_view expression, const std::map<std::string, double>& vars);
+Result<double> evaluate(std::string_view expression, const QueryVars& vars);
 
 using ToolPredicate = std::function<bool(const Tool&)>;
-Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const std::map<std::string, double>& vars);
+Result<ToolPredicate> compileToolQuery(std::string_view queryJson, const QueryVars& vars);
 
 } // namespace ray::lib::detail

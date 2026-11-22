@@ -87,6 +87,8 @@ void PaletteModel::refresh()
     std::vector<Row> rows;
     if (commands_) {
         auto add = [&](const Command& c, const QString& section) {
+            if (!commands_->inPalette(c))
+                return; // T-044: a command of another workspace
             Row r;
             r.command = c;
             r.section = section;

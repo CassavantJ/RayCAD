@@ -40,6 +40,7 @@
 #include "commands.h"
 
 #include "../features/feature_props.h"
+#include "../features/hole_feature.h"
 
 #include <ray/cam.h>
 
@@ -56,11 +57,45 @@ namespace ray::doc {
 
 // ---------- The CAM engine's view of a snapshot (document.h) ----------
 
+namespace {
+
+// The thread of every tapped hole feature (T-035): CAM recognises a hole from the solid and reads its thread through
+// the feature that made it, since the thread is not modelled. Expressions are evaluated over the document's
+// parameters; a feature whose props do not evaluate has no thread here (its rebuild reports the problem).
+std::map<FeatureId, cam::HoleThread> holeThreadsOf(const DocState& state)
+{
+    std::map<FeatureId, cam::HoleThread> out;
+    if (!state.cam) {
+        return out; // only CAM reads them
+    }
+    const bool anyHole = std::any_of(state.features.begin(), state.features.end(),
+                                     [](const Feature& f) { return f.type == features::kHoleType && !f.suppressed; });
+    if (!anyHole) {
+        return out;
+    }
+    auto params = evaluateParameters(state.parameters);
+    const std::map<std::string, double> none;
+    for (const Feature& f : state.features) {
+        if (f.type != features::kHoleType || f.suppressed) {
+            continue;
+        }
+        auto thread = features::holeThreadOf(f, params ? *params : none);
+        if (thread && *thread) {
+            const features::HoleThread& t = **thread;
+            out[f.id] = cam::HoleThread{t.designation, t.pitch, t.nominalDiameter, t.depth.value_or(0.0)};
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 cam::CamSnapshot camSnapshot(const DocStatePtr& state, const BuildResultPtr& build)
 {
     cam::CamSnapshot out;
     if (state) {
         out.cam = state->cam;
+        out.holeThreads = holeThreadsOf(*state);
     }
     if (build) {
         out.built = true;
@@ -717,7 +752,10 @@ std::string wcsSchema()
     return R"({"type":"object","additionalProperties":false,"description":"Work coordinate system","properties":{)"
            R"("origin":{"type":"object","required":["mode"],"properties":{"mode":{"enum":["stockCorner",)"
            R"("stockTopCenter","modelPoint"]},"corner":{"type":"integer","minimum":0,"maximum":7}}},)"
-           R"("workOffset":{"type":"integer","minimum":1,"maximum":99,"description":"1 is G54"},"zFace":)" +
+           R"("workOffset":{"type":"integer","minimum":1,"maximum":99,"description":"1 is G54"},)"
+           R"("flipX":{"type":"boolean","description":"Reverses X (and Y): X follows the X edge's curve direction"},)"
+           R"("flipZ":{"type":"boolean","description":"Reverses Z (into the material); X follows its rule for it"},)"
+           R"("zFace":)" +
            features::topoRefSchema() + R"(,"xEdge":)" + features::topoRefSchema() + R"(,"originVertex":)" +
            features::topoRefSchema() + "}}";
 }

@@ -159,6 +159,19 @@ std::vector<KeyDef> makeKeys()
         "Width of the properties panel; unset uses the theme's width", integerRange(100, 4000), Value());
     add("panels.properties.tab", "Right panel tab", "The tab the right panel shows: properties or measure",
         stringEnum({"properties", "measure"}), Value::string("properties"));
+    // ---- library (the app's library stack, api.h AppOptions::libraryRoots) ----
+    const auto folder = [] {
+        return Value::object(
+            {{"type", Value::string("string")}, {"minLength", Value::integer(1)}, {"maxLength", Value::integer(4096)}});
+    };
+    add("library.userFolder", "User library folder",
+        "The folder of your own tools, holders, materials and machines; unset uses the library folder in the user "
+        "data folder",
+        folder(), Value());
+    add("library.sharedFolders", "Shared library folders",
+        "Shop libraries, for example on a network drive, lowest first: a later one and the user library win by id",
+        Value::object({{"type", Value::string("array")}, {"maxItems", Value::integer(32)}, {"items", folder()}}),
+        Value::array());
     return k;
 }
 
@@ -550,6 +563,14 @@ UserSettings SettingsStore::Impl::typed() const
         p.width = optInt((base + ".width").c_str());
         s.panels[panel] = p;
     }
+    s.userLibraryFolder = str("library.userFolder");
+    if (const Value& shared = get("library.sharedFolders"); shared.isArray()) {
+        for (const Value& folderValue : shared.asArray()) {
+            if (folderValue.isString()) {
+                s.sharedLibraryFolders.push_back(folderValue.asString());
+            }
+        }
+    }
     return s;
 }
 
@@ -914,10 +935,11 @@ Status registerSettingsActions(IActionRegistry& actions, std::shared_ptr<Setting
         return st;
     }
 
-    Value value =
-        Value::object({{"type", Value::array({Value::string("string"), Value::string("number"),
-                                              Value::string("boolean"), Value::string("null")})},
-                       {"description", Value::string("The new value (\"default\" or null: back to the default)")}});
+    Value value = Value::object(
+        {{"type", Value::array({Value::string("string"), Value::string("number"), Value::string("boolean"),
+                                Value::string("null"), Value::string("array")})},
+         {"description", Value::string("The new value (\"default\" or null: back to the default; a "
+                                       "list for library.sharedFolders)")}});
     Value many = Value::object(
         {{"type", Value::string("object")},
          {"description", Value::string("Several settings at once, {\"key\": value, ...}; all or none are applied")}});

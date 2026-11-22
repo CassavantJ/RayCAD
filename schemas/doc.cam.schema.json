@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RayCAD CAM object",
-  "description": "The setups and operations of a document (PLAN.md 3.6), stored as canonical JSON in the objects table and named by hash in the manifest's \"cam\" key (doc.manifest.schema.json). The library items the document uses are separate objects named in the manifest's \"embedded\" key; their forms are in $defs (tool, holder, machine, material). Lengths are millimetres, feeds mm/min, tool angles degrees. Unknown keys are allowed and kept when an older RayCAD rewrites the document (PLAN.md 4.4). The definitions are self-contained (no $ref) so src/api's validator can check written objects against them (tests/unit/cam/engine_document_test.cpp).",
+  "description": "The setups and operations of a document (PLAN.md 3.6), stored as canonical JSON in the objects table and named by hash in the manifest's \"cam\" key (doc.manifest.schema.json). The library items the document uses are separate objects named in the manifest's \"embedded\" key; each is exactly the file of that item in a library folder (tool, holder, machine and material .schema.json; written by the library's codec), and $defs (tool, holder, machine, material) restate what those files always hold. Lengths are millimetres, feeds mm/min, tool angles degrees. Unknown keys are allowed and kept when an older RayCAD rewrites the document (PLAN.md 4.4). The definitions are self-contained (no $ref) so src/api's validator can check written objects against them (tests/unit/cam/engine_document_test.cpp).",
   "type": "object",
   "required": ["schema", "setups", "operations"],
   "properties": {
@@ -44,6 +44,8 @@
                 }
               },
               "workOffset": { "type": "integer", "minimum": 1, "description": "1 is G54." },
+              "flipX": { "type": "boolean", "description": "X (and Y) reversed. Written only when true; absent is false." },
+              "flipZ": { "type": "boolean", "description": "Z reversed, into the material. Written only when true; absent is false." },
               "zFace": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef (naming.h); Z is the face's outward normal." },
               "xEdge": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef; X runs along the edge." },
               "originVertex": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef; the origin for mode modelPoint." }
@@ -199,7 +201,8 @@
         "name": { "type": "string" }, "group": { "type": "string" },
         "hardnessHb": { "type": "number", "minimum": 0 },
         "specificCuttingForce": { "type": "number", "minimum": 0, "description": "N/mm2" },
-        "density": { "type": "number", "minimum": 0, "description": "g/cm3" }
+        "density": { "type": "number", "minimum": 0, "description": "g/cm3" },
+        "mc": { "type": "number", "minimum": 0, "exclusiveMaximum": 1, "description": "Optional chip thickness exponent; 0 or absent: not known" }
       }
     }
   }

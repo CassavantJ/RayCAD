@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -145,8 +146,12 @@ TEST_CASE("settings persist per user across app restarts", "[api][settings]")
     CHECK_THAT(text, ContainsSubstring(R"("units":{"newDocument":"metric"})"));
     CHECK_THAT(text, ContainsSubstring(R"("graphics":{"msaaSamples":2,"tier":"high"})"));
     CHECK_THAT(text, ContainsSubstring(R"("panels":{"model":{"open":false},"properties":{"width":333}})"));
-    // No temporary file is left behind (writes go through a temporary file that replaces settings.json).
-    CHECK(filesIn(ray::test::fsPath(user)).size() == 1);
+    // No temporary file is left behind (writes go through a temporary file that replaces settings.json). The app also
+    // made the user library folder there (api.h AppOptions::libraryRoots).
+    const auto inUser = filesIn(ray::test::fsPath(user));
+    CHECK(std::count_if(inUser.begin(), inUser.end(),
+                        [](const auto& p) { return !std::filesystem::is_directory(p); }) == 1);
+    CHECK(std::filesystem::is_directory(std::filesystem::path(ray::test::fsPath(user)) / "library"));
     {
         auto app = ray::api::makeHeadlessApp(ray::api::AppOptions{});
         REQUIRE(app);

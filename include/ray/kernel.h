@@ -1,6 +1,11 @@
 // RayCAD interface contract: kernel
 // Module: src/kernel   Depends on: core, OCCT (the ONLY module that includes OCCT headers)
 // Status: PLAN DRAFT, revision 2 (after spikes S3, S4, S9).
+// Amended by T-034 (hole recognition): faceSample, the outward normal of a face and its parameter bounds, which
+// SurfaceInfo cannot give (its axis is the axis of the surface's own frame, which may be left-handed, and a cylinder's
+// axis does not say on which side the material is).
+// Amended by T-044 (CAM workspace): boundsIn, the box of a shape in a rigid frame without moving a copy of it (the
+// setup preview measures the part in a tilted WCS on every change; transformed() copies and checks the whole body).
 //
 // Contract:
 //  - Shape is an immutable value handle. Every operation returns a new Shape plus a ShapeHistory.
@@ -82,11 +87,22 @@ Result<CurveInfo>   curveInfo(const Shape&, SubId edge);
 Result<Vec3>        vertexPoint(const Shape&, SubId vertex);
 std::vector<SubId>  adjacent(const Shape&, SubId of, SubKind wanted);   // sorted ascending
 Box3                bounds(const Shape&);
+// The box bounds(transformed(shape, frame).shape) would give, measured with the move applied as a location: nothing is
+// copied, checked or built, so it costs about what bounds() does. `frame` must be a rigid move (InvalidArgument
+// otherwise, as for transformed); the identity is allowed. T-044.
+Result<Box3>        boundsIn(const Shape&, const Xform& frame);
 struct MassProps { double volume, area; Vec3 centroid; };
 Result<MassProps>   massProps(const Shape&, double density = 1.0);
 struct Distance { double value; Vec3 p1, p2; };
 Result<Distance>    minDistance(const Shape&, SubId a, const Shape&, SubId b);
 Result<double>      minInternalCornerRadius(const Shape&, Vec3 toolAxis, JobContext&);
+// A point of the face's surface at the middle of the face's parameter bounds (for a trimmed face it may lie outside
+// the face) and the normal there pointing out of the material: dP/du x dP/dv, reversed for a face used reversed, so
+// right for left-handed surface frames too. uMin..vMax are the bounds (BRepTools::UVBounds); on a cylinder, cone,
+// sphere or torus u is the angle about the axis, so uMax - uMin is the angle the face spans. KernelFailure where the
+// surface has no normal at that point (a degenerate parametrisation).
+struct FaceSample { Vec3 point, normal; double uMin{}, uMax{}, vMin{}, vMax{}; };
+Result<FaceSample>  faceSample(const Shape&, SubId face);
 
 // ---------- Import / export ----------
 // Healing (spike S3): None leaves some B-spline faces unmeshable; Reader is the STEP reader's built-in fix
@@ -135,7 +151,7 @@ Result<OpResult> fillet (const Shape&, std::span<const SubId> edges, double radi
 Result<OpResult> chamfer(const Shape&, std::span<const SubId> edges, double distance, JobContext&);
 Result<OpResult> shell  (const Shape&, std::span<const SubId> openFaces, double thickness, JobContext&);   // v1.x
 Result<OpResult> draft  (const Shape&, std::span<const SubId> faces, Plane neutral, double angle, JobContext&); // v1.x
-Result<OpResult> transformed(const Shape&, const Xform&);
+Result<OpResult> transformed(const Shape&, const Xform&);   // rigid moves only; the identity returns the input shape
 Result<OpResult> splitBody(const Shape&, Plane, JobContext&);                                              // v1.x
 
 // ---------- Direct editing (works on history-free imported solids) ----------

@@ -7,7 +7,8 @@
 //
 // ID buffer: three RGBA8 colour attachments plus a depth buffer, single-sample, at the frame's size:
 //   0  ids    rgb = kernel face / edge index + 1 (or addLines segment + 1), little-endian; a = IdKind
-//   1  item   rgb = ItemId, little-endian
+//             (T-038) backplot segments: rgb = the low 24 bits of the move index itself, no + 1; a = IdKind::Path
+//   1  item   rgb = ItemId, little-endian; a = the high 8 bits of the move index for IdKind::Path (else 255)
 //   2  depth  rgb = round((0.5 * NDC z + 0.5) * (2^24 - 1)), little-endian
 // The faces are pushed back with the main pass's depth bias, so visible edges win over the faces they border.
 // T-023: everything beyond the section plane is discarded, and section caps are drawn as IdKind::Cap (their body),
@@ -57,7 +58,8 @@ private:
     Owned<QRhiTextureRenderTarget> rt_;
     Owned<QRhiRenderPassDescriptor> rp_;
     Owned<QRhiGraphicsPipeline> faces_, thinEdges_, segments_;
-    Owned<QRhiGraphicsPipeline> capStencil_, capFill_;       // T-023: section caps; null: caps are not drawn here
+    Owned<QRhiGraphicsPipeline> paths_;                // T-038: backplot segments; null: backplots are not pickable
+    Owned<QRhiGraphicsPipeline> capStencil_, capFill_; // T-023: section caps; null: caps are not drawn here
     QRhiShaderResourceBindings* pipelineBindings_ = nullptr; // what the pipelines were made against
     bool pipelinesTried_ = false;
 

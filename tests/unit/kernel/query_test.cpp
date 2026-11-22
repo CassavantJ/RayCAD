@@ -1,5 +1,5 @@
-// Geometry queries (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds, massProps,
-// minDistance, and their errors.
+// Geometry queries (task T-004): surfaceInfo, curveInfo, vertexPoint, adjacent, bounds, boundsIn (T-044),
+// massProps, minDistance, and their errors.
 #include <catch2/catch_test_macros.hpp>
 
 #include "kernel_test_util.h"
@@ -184,6 +184,68 @@ TEST_CASE("surfaceInfo of a cylinder", "[kernel][query][surface]")
     CHECK(planes == 2);
 }
 
+TEST_CASE("faceSample gives the outward normal and the parameter span", "[kernel][query][surface]")
+{
+    // Task T-034: hole recognition tells a hole (material outside the cylinder) from a boss by this normal.
+    JobContext ctx;
+    const Vec3 centre{20, 15, 5};
+    const Shape b = box(Vec3{0, 0, 0}, Vec3{40, 30, 10});
+    const Shape boss = take(makeCylinder(Vec3{20, 15, 0}, Vec3{0, 0, 1}, 4.0, 10.0));
+    const Shape drilled = take(boolean(BoolOp::Cut, b, boss, ctx)).shape;
+
+    SECTION("box faces: the normal points away from the centre, the point lies on the face's plane")
+    {
+        for (const SubId id : all(b, SubKind::Face)) {
+            const FaceSample s = take(faceSample(b, id));
+            const SurfaceInfo info = take(surfaceInfo(b, id));
+            CHECK(close(test::length(s.normal), 1.0, 1e-14));
+            CHECK(test::dot(s.normal, test::sub(info.centroid, centre)) > 0);
+            CHECK(std::abs(test::dot(test::sub(s.point, info.centroid), s.normal)) < 1e-9);
+        }
+    }
+    SECTION("a solid cylinder's side points away from its axis, a hole's wall towards it; both span a full turn")
+    {
+        for (const auto& [shape, sign] : {std::pair{&boss, 1.0}, std::pair{&drilled, -1.0}}) {
+            int walls = 0;
+            for (const SubId id : all(*shape, SubKind::Face)) {
+                const SurfaceInfo info = take(surfaceInfo(*shape, id));
+                if (info.type != SurfaceType::Cylinder)
+                    continue;
+                ++walls;
+                const FaceSample s = take(faceSample(*shape, id));
+                const Vec3 radial{s.point.x - 20, s.point.y - 15, 0};
+                CHECK(close(test::length(radial), 4.0, 1e-9));
+                CHECK(sign * test::dot(s.normal, radial) > 3.99);
+                CHECK(close(s.uMax - s.uMin, 2 * kPi, 1e-12));
+                CHECK(close(s.vMax - s.vMin, 10.0, 1e-9));
+            }
+            CHECK(walls == 1);
+        }
+    }
+    SECTION("chamfer faces, whose plane frames OCCT makes left-handed, still point out of the material")
+    {
+        std::vector<SubId> top;
+        for (const SubId id : all(b, SubKind::Edge)) {
+            const CurveInfo c = take(curveInfo(b, id));
+            if (std::abs(c.start.z - 10) < 1e-9 && std::abs(c.end.z - 10) < 1e-9)
+                top.push_back(id);
+        }
+        REQUIRE(top.size() == 4);
+        const Shape chamfered = take(chamfer(b, top, 2.0, ctx)).shape;
+        int slanted = 0;
+        for (const SubId id : all(chamfered, SubKind::Face)) {
+            const FaceSample s = take(faceSample(chamfered, id));
+            const SurfaceInfo info = take(surfaceInfo(chamfered, id));
+            CHECK(test::dot(s.normal, test::sub(info.centroid, centre)) > 0);
+            if (std::abs(s.normal.z) > 0.1 && std::abs(s.normal.z) < 0.9) {
+                ++slanted;
+                CHECK(s.normal.z > 0); // the chamfers face up and out
+            }
+        }
+        CHECK(slanted == 4);
+    }
+}
+
 TEST_CASE("curveInfo of lines and circles", "[kernel][query][curve]")
 {
     SECTION("box edges are lines")
@@ -361,6 +423,54 @@ TEST_CASE("bounds are tight and come from the geometry", "[kernel][query][bounds
     CHECK(after.max.z == before.max.z);
 }
 
+TEST_CASE("boundsIn measures a shape in a rigid frame as its moved copy would be measured", "[kernel][query][bounds]")
+{
+    // A rotation of 30 degrees about X and 20 about Z, with a shift: what cam::resolveSetup measures a part in.
+    const double a = kPi / 6, b = kPi / 9;
+    const double ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b);
+    // Rz(b) * Rx(a), rows.
+    const Xform frame{{cb, -sb * ca, sb * sa, 5.0, sb, cb * ca, -cb * sa, -7.0, 0.0, sa, ca, 11.0}};
+    const Shape shapes[] = {box(Vec3{-1, 2, -3}, Vec3{10, 20, 30}),
+                            take(makeCylinder(Vec3{1, 2, 3}, Vec3{0, 0, 1}, 5.0, 12.0)), take(testing::makeCutBody())};
+    for (const Shape& s : shapes) {
+        const Result<Box3> in = boundsIn(s, frame);
+        REQUIRE(in);
+        const Box3 moved = bounds(take(transformed(s, frame)).shape);
+        INFO("boundsIn " << in->min.x << " " << in->min.y << " " << in->min.z << " / " << in->max.x << " " << in->max.y
+                         << " " << in->max.z);
+        CHECK(close(in->min, moved.min, 1e-9));
+        CHECK(close(in->max, moved.max, 1e-9));
+    }
+    // The box's corners turned: the exact box of the eight turned corners (the faces are planes).
+    const Box3 boxIn = boundsIn(shapes[0], frame).value();
+    Box3 corners{Vec3{1e300, 1e300, 1e300}, Vec3{-1e300, -1e300, -1e300}};
+    for (int i = 0; i < 8; ++i) {
+        const Vec3 p{(i & 1) ? 10.0 : -1.0, (i & 2) ? 20.0 : 2.0, (i & 4) ? 30.0 : -3.0};
+        const double* m = frame.m;
+        const Vec3 q{m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3], m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+                     m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]};
+        corners.min = Vec3{std::min(corners.min.x, q.x), std::min(corners.min.y, q.y), std::min(corners.min.z, q.z)};
+        corners.max = Vec3{std::max(corners.max.x, q.x), std::max(corners.max.y, q.y), std::max(corners.max.z, q.z)};
+    }
+    CHECK(close(boxIn.min, corners.min, 1e-9));
+    CHECK(close(boxIn.max, corners.max, 1e-9));
+    // The identity is allowed: the shape's own bounds.
+    const Result<Box3> same = boundsIn(shapes[0], Xform::identity());
+    REQUIRE(same);
+    CHECK(close(same->min, Vec3{-1, 2, -3}, 1e-12));
+    CHECK(close(same->max, Vec3{10, 20, 30}, 1e-12));
+    // Not a rigid move, not finite, no shape: refused with a reason, never thrown.
+    const Xform scale{{2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    const Xform mirror{{-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    const Xform nan{{std::numeric_limits<double>::quiet_NaN(), 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    for (const Xform& bad : {scale, mirror, nan}) {
+        const Result<Box3> r = boundsIn(shapes[0], bad);
+        REQUIRE_FALSE(r);
+        CHECK(r.error().code == ErrorCode::InvalidArgument);
+    }
+    CHECK_FALSE(boundsIn(Shape{}, frame));
+}
+
 TEST_CASE("every query returns an error and never throws on bad input", "[kernel][query][errors]")
 {
     const Shape null;
@@ -432,10 +542,18 @@ TEST_CASE("every query returns an error and never throws on bad input", "[kernel
         REQUIRE_FALSE(corrupt.has_value());
         CHECK(corrupt.error().code == ErrorCode::FormatError);
     }
+    SECTION("faceSample")
+    {
+        CHECK(code(faceSample(null, face0)) == ErrorCode::KernelFailure);
+        CHECK(code(faceSample(b, SubId{SubKind::Face, 6})) == ErrorCode::InvalidArgument);
+        CHECK(code(faceSample(b, edge0)) == ErrorCode::InvalidArgument);
+        CHECK(code(faceSample(b, badKind)) == ErrorCode::InvalidArgument);
+    }
     SECTION("nothing throws")
     {
         for (const Shape* shape : {&null, &b})
             for (const SubId id : {face0, edge0, vertex0, badKind, SubId{SubKind::Face, 99}}) {
+                CHECK_NOTHROW(faceSample(*shape, id));
                 CHECK_NOTHROW(surfaceInfo(*shape, id));
                 CHECK_NOTHROW(curveInfo(*shape, id));
                 CHECK_NOTHROW(vertexPoint(*shape, id));

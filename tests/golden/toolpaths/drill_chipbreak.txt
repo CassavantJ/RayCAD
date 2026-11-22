@@ -1,0 +1,9 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X35 Y35 Z35
+moves 5
+0 Rapid Approach X35 Y35 Z35
+1 CycleChipBreak Plunge X35 Y35 Z-2.502152 F200 R22 top20 clear35 return RPlane peck1.5 peckClear0.3
+2 CycleChipBreak Plunge X52 Y38 Z4.497848 F200 R22 top20 clear35 return RPlane peck1.5 peckClear0.3
+3 CycleChipBreak Plunge X70 Y12 Z-2.502152 F200 R22 top20 clear35 return Initial peck1.5 peckClear0.3
+4 CycleCancel Retract X70 Y12 Z35

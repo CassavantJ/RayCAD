@@ -24,11 +24,11 @@ TEST_CASE("makeApp runs on the caller's dispatcher and job system", "[api][exter
         CHECK(&app->jobs() == jobs.get());
         CHECK(&app->dispatcher() == &ui);
         CHECK(app->userDataDir() == dir.file("user"));
-        // Not implemented before M2, and not a crash.
-        CHECK(app->cam() == nullptr);
-        CHECK(app->posts() == nullptr);
-        CHECK(app->operationTypes() == nullptr);
-        CHECK(app->libraries() == nullptr);
+        // CAM, the library stack and the post engine (M2), on the app's own dispatcher and job system.
+        CHECK(app->cam() != nullptr);
+        CHECK(app->posts() != nullptr);
+        CHECK(app->operationTypes() != nullptr);
+        CHECK(app->libraries() != nullptr);
 
         int opened = 0;
         app->subscribe([&](const ray::api::AppEvent& e) {

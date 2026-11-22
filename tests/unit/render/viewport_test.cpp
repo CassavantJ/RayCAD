@@ -452,12 +452,11 @@ TEST_CASE("captureImage works at any size and rejects bad sizes", "[render][view
 TEST_CASE("functions of later tasks are clear stubs", "[render][viewport][stubs]")
 {
     // (pick, pickRect and setHighlight are implemented by T-015: tests/unit/render/pick_test.cpp; the glass backdrop
-    // by T-016: tests/unit/render/backdrop_test.cpp.)
+    // by T-016: tests/unit/render/backdrop_test.cpp; backplots and the tool glyph by T-038:
+    // tests/unit/render/backplot_test.cpp.)
     auto vp = viewportOrSkip(64, 48);
     vp->setTheme(theme("graphite-dark"));
     CHECK(vp->addBackplot(nullptr) == 0);
-    const std::vector<Vec2> profile{{0, 0}, {5, 0}, {5, 20}};
-    CHECK(vp->addToolGlyph(profile, Token::Accent) == 0);
     vp->setSection(SectionPlane{Vec3{0, 0, 0}, Vec3{0, 0, 1}, true});
     REQUIRE(vp->renderNow().has_value());
 }

@@ -367,8 +367,9 @@ const std::vector<UiCommand>& allUiCommands()
 {
     static const std::vector<UiCommand> all = [] {
         std::vector<UiCommand> out;
-        for (const std::span<const UiCommand> table : {generalUiCommands(), measureUiCommands(), sectionUiCommands(),
-                                                       sketchUiCommands(), constraintUiCommands(), modelUiCommands()})
+        for (const std::span<const UiCommand> table :
+             {generalUiCommands(), measureUiCommands(), sectionUiCommands(), sketchUiCommands(), constraintUiCommands(),
+              modelUiCommands(), camSetupUiCommands(), camTreeUiCommands()})
             out.insert(out.end(), table.begin(), table.end());
         return out;
     }();
@@ -381,7 +382,34 @@ CommandCatalog::CommandCatalog(AppContext* context, SceneController* scene, Sele
 {
     if (context_) {
         connect(context_, &AppContext::sessionChanged, this, &CommandCatalog::sessionChanged);
+        // T-044: the palette lists the commands of the workspace shown (inPalette).
+        connect(context_, &AppContext::workspaceChanged, this, [this] {
+            ++revision_;
+            emit commandsChanged();
+        });
     }
+}
+
+CommandContext CommandCatalog::activeContext() const
+{
+    if (context_ && context_->workspace() == kCamWorkspace)
+        return CommandContext::Cam;
+    return contextProbe_ ? contextProbe_() : CommandContext::Model;
+}
+
+bool CommandCatalog::inPalette(const Command& command) const
+{
+    const bool cam = context_ && context_->workspace() == kCamWorkspace;
+    switch (command.context) {
+    case CommandContext::Global:
+        return true;
+    case CommandContext::Cam:
+        return cam;
+    case CommandContext::Model:
+    case CommandContext::Sketch:
+        return !cam;
+    }
+    return true;
 }
 
 CommandCatalog::~CommandCatalog()
