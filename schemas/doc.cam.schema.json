@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RayCAD CAM object",
+  "description": "The setups and operations of a document (PLAN.md 3.6), stored as canonical JSON in the objects table and named by hash in the manifest's \"cam\" key (doc.manifest.schema.json). The library items the document uses are separate objects named in the manifest's \"embedded\" key; their forms are in $defs (tool, holder, machine, material). Lengths are millimetres, feeds mm/min, tool angles degrees. Unknown keys are allowed and kept when an older RayCAD rewrites the document (PLAN.md 4.4). The definitions are self-contained (no $ref) so src/api's validator can check written objects against them (tests/unit/cam/engine_document_test.cpp).",
+  "type": "object",
+  "required": ["schema", "setups", "operations"],
+  "properties": {
+    "schema": { "const": 1, "description": "Version of this object's format." },
+    "setups": {
+      "type": "array",
+      "description": "Setups in program order.",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "partBodies", "fixtureBodies", "stock", "wcs", "machine", "post", "programNumber", "programComment", "operations"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+          "name": { "type": "string" },
+          "partBodies": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" } },
+          "fixtureBodies": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" } },
+          "stock": {
+            "type": "object",
+            "required": ["type"],
+            "description": "box: offsets beyond the part bounding box; cylinder; solid: a body; fromSetup: the stock an earlier setup leaves.",
+            "properties": {
+              "type": { "enum": ["box", "cylinder", "solid", "fromSetup"] },
+              "xNeg": { "type": "number", "minimum": 0 }, "xPos": { "type": "number", "minimum": 0 },
+              "yNeg": { "type": "number", "minimum": 0 }, "yPos": { "type": "number", "minimum": 0 },
+              "zNeg": { "type": "number", "minimum": 0 }, "zPos": { "type": "number", "minimum": 0 },
+              "diameter": { "type": "number", "exclusiveMinimum": 0 }, "length": { "type": "number", "exclusiveMinimum": 0 },
+              "endOffset": { "type": "number", "minimum": 0 }, "axis": { "enum": ["x", "y", "z"] },
+              "body": { "type": "string" }, "setup": { "type": "string" }
+            }
+          },
+          "wcs": {
+            "type": "object",
+            "required": ["origin", "workOffset"],
+            "properties": {
+              "origin": {
+                "type": "object",
+                "required": ["mode"],
+                "properties": {
+                  "mode": { "enum": ["stockCorner", "stockTopCenter", "modelPoint"] },
+                  "corner": { "type": "integer", "minimum": 0, "maximum": 7 }
+                }
+              },
+              "workOffset": { "type": "integer", "minimum": 1, "description": "1 is G54." },
+              "zFace": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef (naming.h); Z is the face's outward normal." },
+              "xEdge": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef; X runs along the edge." },
+              "originVertex": { "type": "object", "required": ["body", "kind", "names"], "description": "A TopoRef; the origin for mode modelPoint." }
+            }
+          },
+          "machine": { "type": ["string", "null"], "description": "Embedded machine id, or null for none yet." },
+          "post": { "type": "string", "description": "Post script file stem, e.g. haas-ngc." },
+          "programNumber": { "type": "integer", "minimum": 0 },
+          "programComment": { "type": "string" },
+          "operations": { "type": "array", "description": "Operation ids in machining order.", "items": { "type": "string" } }
+        }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "description": "Every operation, sorted by id; each is listed by exactly one setup.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "name", "tool", "cutting", "heights", "geometry", "params", "template", "suppressed"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+          "type": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$", "description": "Operation type, e.g. drill, pocket2d." },
+          "name": { "type": "string" },
+          "tool": {
+            "type": "object",
+            "required": ["tool", "holder", "number", "lengthOffset", "diameterOffset", "stickOut"],
+            "properties": {
+              "tool": { "type": "string", "description": "Embedded tool id." },
+              "holder": { "type": ["string", "null"], "description": "Embedded holder id, or null." },
+              "number": { "type": "integer", "minimum": 0 },
+              "lengthOffset": { "type": "integer", "minimum": 0 },
+              "diameterOffset": { "type": "integer", "minimum": 0 },
+              "stickOut": { "type": "number", "minimum": 0 }
+            }
+          },
+          "cutting": {
+            "type": "object",
+            "required": ["rpm", "clockwise", "feedCut", "feedPlunge", "feedRamp", "feedLeadIn", "feedLeadOut", "coolant"],
+            "properties": {
+              "rpm": { "type": "number", "exclusiveMinimum": 0 },
+              "clockwise": { "type": "boolean" },
+              "feedCut": { "type": "number", "exclusiveMinimum": 0 },
+              "feedPlunge": { "type": "number", "exclusiveMinimum": 0 },
+              "feedRamp": { "type": "number", "exclusiveMinimum": 0 },
+              "feedLeadIn": { "type": "number", "exclusiveMinimum": 0 },
+              "feedLeadOut": { "type": "number", "exclusiveMinimum": 0 },
+              "coolant": { "enum": ["off", "flood", "mist", "throughTool", "air"] }
+            }
+          },
+          "heights": {
+            "type": "object",
+            "required": ["clearance", "retract", "feedPlane", "top", "bottom"],
+            "properties": {
+              "clearance": { "type": "number" }, "retract": { "type": "number" }, "feedPlane": { "type": "number" },
+              "top": { "type": "number" }, "bottom": { "type": "number" }
+            }
+          },
+          "geometry": { "type": "array", "items": { "type": "object", "required": ["body", "kind", "names"] }, "description": "TopoRefs (naming.h) of what the operation machines." },
+          "params": { "type": "object", "description": "Type-specific; described by the operation type's own schema (IOperationType::paramsSchemaJson)." },
+          "template": { "type": "string", "description": "Shop template or rule that made it; empty when made by hand." },
+          "suppressed": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tool": {
+      "type": "object",
+      "required": ["schema", "id", "name", "type", "flutes", "diameter", "shankDiameter", "fluteLength", "shoulderLength", "overallLength", "presets"],
+      "properties": {
+        "schema": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "name": { "type": "string" }, "vendor": { "type": "string" }, "productId": { "type": "string" },
+        "type": { "enum": ["flatEndMill", "ballEndMill", "bullEndMill", "chamferMill", "faceMill", "spotDrill", "drill", "tap", "reamer", "boringBar", "threadMill", "engraveCutter"] },
+        "flutes": { "type": "integer", "minimum": 0 },
+        "diameter": { "type": "number", "exclusiveMinimum": 0 },
+        "shankDiameter": { "type": "number", "minimum": 0 }, "fluteLength": { "type": "number", "minimum": 0 },
+        "shoulderLength": { "type": "number", "minimum": 0 }, "overallLength": { "type": "number", "minimum": 0 },
+        "cornerRadius": { "type": "number", "minimum": 0 }, "tipAngle": { "type": "number", "minimum": 0 },
+        "tipDiameter": { "type": "number", "minimum": 0 }, "threadPitch": { "type": "number", "minimum": 0 },
+        "threadSpec": { "type": "string" }, "bodyMaterial": { "type": "string" },
+        "defaultToolNumber": { "type": "integer", "minimum": 0 },
+        "presets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "material": { "type": ["string", "null"] }, "opClass": { "type": "string" },
+              "surfaceSpeed": { "type": "number", "minimum": 0, "description": "m/min" },
+              "chipLoad": { "type": "number", "minimum": 0 }, "maxRadialFraction": { "type": "number", "minimum": 0 },
+              "maxAxialFraction": { "type": "number", "minimum": 0 }, "rampAngle": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "holder": {
+      "type": "object",
+      "required": ["schema", "id", "name", "gaugeLength", "segments"],
+      "properties": {
+        "schema": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "name": { "type": "string" }, "vendor": { "type": "string" },
+        "gaugeLength": { "type": "number", "minimum": 0 },
+        "segments": {
+          "type": "array",
+          "description": "Stacked cones and cylinders from the gauge line down.",
+          "items": {
+            "type": "object",
+            "required": ["height", "lowerDiameter", "upperDiameter"],
+            "properties": {
+              "height": { "type": "number", "minimum": 0 },
+              "lowerDiameter": { "type": "number", "minimum": 0 },
+              "upperDiameter": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "machine": {
+      "type": "object",
+      "required": ["schema", "id", "name", "kind", "axes", "spindle", "toolChanger", "control", "options", "postProperties"],
+      "properties": {
+        "schema": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "name": { "type": "string" }, "vendor": { "type": "string" }, "model": { "type": "string" },
+        "kind": { "enum": ["mill3", "mill4", "mill5", "lathe"] },
+        "axes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["letter", "min", "max", "rapid", "maxFeed", "accel"],
+            "properties": {
+              "letter": { "type": "string", "minLength": 1, "maxLength": 1 },
+              "min": { "type": "number" }, "max": { "type": "number" }, "rapid": { "type": "number" },
+              "maxFeed": { "type": "number" }, "accel": { "type": "number" }
+            }
+          }
+        },
+        "spindle": { "type": "object", "properties": { "maxRpm": { "type": "number" }, "minRpm": { "type": "number" }, "powerKw": { "type": "number" }, "torqueNm": { "type": "number" } } },
+        "toolChanger": { "type": "object", "properties": { "capacity": { "type": "integer" }, "changeSeconds": { "type": "number" } } },
+        "control": { "type": "object", "properties": { "dialect": { "type": "string" }, "defaultPost": { "type": "string" }, "rigidTapping": { "type": "boolean" }, "maxBlockNumber": { "type": "integer" }, "maxProgramNameLength": { "type": "integer" } } },
+        "options": { "type": "object", "properties": { "throughSpindleCoolant": { "type": "boolean" }, "probe": { "type": "boolean" }, "toolSetter": { "type": "boolean" } } },
+        "postProperties": { "type": "object", "description": "Machine-specific defaults of post properties." }
+      }
+    },
+    "material": {
+      "type": "object",
+      "required": ["schema", "id", "name"],
+      "properties": {
+        "schema": { "const": 1 },
+        "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+        "name": { "type": "string" }, "group": { "type": "string" },
+        "hardnessHb": { "type": "number", "minimum": 0 },
+        "specificCuttingForce": { "type": "number", "minimum": 0, "description": "N/mm2" },
+        "density": { "type": "number", "minimum": 0, "description": "g/cm3" }
+      }
+    }
+  }
+}

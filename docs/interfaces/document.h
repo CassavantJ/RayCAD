@@ -1,6 +1,7 @@
 // RayCAD interface contract: document model
 // Module: src/doc   Depends on: core, kernel, naming, sketch, cam (data types only)
-// Status: PLAN DRAFT.
+// Status: PLAN DRAFT. Amended by T-032: CAM state is stored (StateObjects), the CAM commands are built in, and
+// camSnapshot gives the CAM engine its view of a snapshot.
 //
 // Model: the document is a chain of immutable snapshots (DocState). The UI thread owns the
 // "current" pointer. Commands produce a new snapshot; workers read snapshots freely without locks.
@@ -15,7 +16,7 @@
 #include <optional>
 #include <variant>
 
-namespace ray::cam { struct CamState; }   // defined in cam.h
+namespace ray::cam { struct CamState; struct CamSnapshot; }   // defined in cam.h
 
 namespace ray::doc {
 
@@ -82,9 +83,14 @@ using DocStatePtr = std::shared_ptr<const DocState>;
 // A snapshot is stored as a manifest object that lists its feature objects by hash, so editing one feature
 // rewrites one small object plus the manifest. Hashes are BLAKE3 of the canonical JSON bytes.
 // stateHash() is the hash of `manifest`.
+// CAM (task T-032): a state whose `cam` is not empty also has a CAM object (setups and operations) and one object per
+// embedded library item, named by hash in the manifest's "cam" and "embedded" keys (PLAN.md 3.1); a state without CAM
+// state is written exactly as before. A document from before CAM opens with a null `cam`.
 struct StateObjects {
     std::string manifest;                                   // canonical JSON
-    std::vector<std::pair<Hash256, std::string>> features;  // each feature object, in history order
+    // Every other object of the snapshot: each feature object in history order, then the CAM object and the embedded
+    // library items (tools, holders, machines, materials, each by id), when there is CAM state.
+    std::vector<std::pair<Hash256, std::string>> features;
 };
 StateObjects serializeState(const DocState&);
 // `featureObject` returns the bytes stored under a hash. Malformed input returns FormatError and a newer
@@ -262,7 +268,8 @@ private:
     std::map<std::string, std::unique_ptr<ICommandHandler>, std::less<>> handlers_;
 };
 // Registers feature.add, feature.edit, feature.remove, feature.reorder, feature.suppress, feature.rollback,
-// param.set, body.set and document.import. Their argument objects are described by argsSchemaJson().
+// param.set, body.set and document.import, and the CAM commands cam.setup.*, cam.operation.* and cam.library.embed
+// (task T-032). Their argument objects are described by argsSchemaJson().
 Status registerBuiltinCommands(CommandRegistry&);
 // A registry holding just the built-in commands; null only when memory runs out.
 std::shared_ptr<const CommandRegistry> builtinCommandRegistry();
@@ -392,6 +399,11 @@ Result<Hash256> hashFile(const std::string& utf8Path, JobContext&);
 // Every object the state's features name (the BREP objects of import features), sorted and unique: what a save
 // must write as source objects, and what compaction must keep.
 std::vector<Hash256> referencedObjects(const DocState&);
+
+// ---------- CAM (task T-032) ----------
+// The CAM engine's view of a snapshot and its build (cam::CamSnapshot): DocState::cam and BuildResult::bodies. Pass it
+// to cam::makeCamEngine; src/cam cannot read doc types itself (PLAN.md 1.1 and 15). A null build gives built = false.
+cam::CamSnapshot camSnapshot(const DocStatePtr&, const BuildResultPtr&);
 
 // Canonical JSON: UTF-8, keys sorted, no insignificant whitespace, doubles printed with the
 // shortest round-trip representation, -0 written as 0. All hashing of JSON uses this form.

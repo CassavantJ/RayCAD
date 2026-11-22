@@ -69,7 +69,17 @@
     },
     "cam": {
       "$ref": "#/$defs/hash",
-      "description": "The CAM object (PLAN.md 3.6). Not written yet; kept unchanged when present."
+      "description": "The CAM object: setups and operations (PLAN.md 3.6, doc.cam.schema.json). Written only when the document has CAM state."
+    },
+    "embedded": {
+      "type": "object",
+      "description": "The library items the document uses, each a separate object named by hash and keyed by its id (PLAN.md 3.1, doc.cam.schema.json $defs). Written together with cam.",
+      "properties": {
+        "tools": { "$ref": "#/$defs/hashes" },
+        "holders": { "$ref": "#/$defs/hashes" },
+        "machines": { "$ref": "#/$defs/hashes" },
+        "materials": { "$ref": "#/$defs/hashes" }
+      }
     }
   },
   "$defs": {
@@ -80,6 +90,10 @@
     "hash": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "hashes": {
+      "type": "object",
+      "description": "Item id (a UUID) to the hash of the item's object."
     }
   }
 }

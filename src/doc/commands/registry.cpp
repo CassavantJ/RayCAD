@@ -76,6 +76,11 @@ Status registerBuiltinCommands(CommandRegistry& registry)
                 return added;
             }
         }
+        for (auto& handler : commands::makeCamCommandHandlers()) { // cam.setup.*, cam.operation.* (T-032)
+            if (auto added = registry.add(std::move(handler)); !added) {
+                return added;
+            }
+        }
         if (auto added = registry.add(features::makeImportCommandHandler()); !added) { // document.import (T-010)
             return added;
         }

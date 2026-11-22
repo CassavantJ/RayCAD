@@ -59,6 +59,16 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
     REQUIRE(registry != nullptr);
     // The model commands (T-009), document.import (T-010), and the parametric features and sketch editing (T-096).
     CHECK(registry->names() == std::vector<std::string>{"body.set",
+                                                        "cam.library.embed", // the CAM commands (T-032)
+                                                        "cam.operation.add",
+                                                        "cam.operation.edit",
+                                                        "cam.operation.remove",
+                                                        "cam.operation.reorder",
+                                                        "cam.operation.suppress",
+                                                        "cam.setup.add",
+                                                        "cam.setup.edit",
+                                                        "cam.setup.remove",
+                                                        "cam.setup.reorder",
                                                         "document.import",
                                                         "feature.add",
                                                         "feature.chamfer.add",
@@ -100,7 +110,8 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
         const ray::doc::ICommandHandler* handler = registry->find(name);
         REQUIRE(handler != nullptr);
         CHECK(handler->name() == name);
-        CHECK_FALSE(handler->changesToolpathsOrGcode());
+        // Only the CAM commands change what is posted (T-032); model edits only make operations stale.
+        CHECK(handler->changesToolpathsOrGcode() == name.starts_with("cam."));
         auto schema = ray::doc::json::parse(handler->argsSchemaJson());
         REQUIRE(schema);
         CHECK(schema->isObject());

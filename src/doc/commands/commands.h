@@ -12,5 +12,7 @@ namespace ray::doc::commands {
 std::vector<std::unique_ptr<ICommandHandler>> makeModelCommandHandlers();
 // param.rename, param.remove (task T-098, param_commands.cpp).
 std::vector<std::unique_ptr<ICommandHandler>> makeParamCommandHandlers();
+// cam.setup.*, cam.operation.*, cam.library.embed (task T-032, cam_commands.cpp).
+std::vector<std::unique_ptr<ICommandHandler>> makeCamCommandHandlers();
 
 } // namespace ray::doc::commands

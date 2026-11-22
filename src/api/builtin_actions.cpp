@@ -174,6 +174,21 @@ constexpr CommandText kCommandTexts[] = {
     // T-093
     {"sketch.dimension.place", "Move Dimension Label", "Moves where a sketch dimension's value label is shown",
      "Sketch"},
+    // T-032: setups, operations and the library items a document embeds.
+    {"cam.setup.add", "New Setup", "Adds a setup: the part bodies, fixtures, stock, work coordinates and machine",
+     "CAM"},
+    {"cam.setup.edit", "Edit Setup", "Changes a setup's bodies, stock, work coordinates, machine, post or program",
+     "CAM"},
+    {"cam.setup.remove", "Delete Setup", "Deletes a setup and its operations", "CAM"},
+    {"cam.setup.reorder", "Reorder Setup", "Moves a setup to another place in the program", "CAM"},
+    {"cam.operation.add", "New Operation", "Adds a machining operation to a setup", "CAM"},
+    {"cam.operation.edit", "Edit Operation",
+     "Changes an operation's tool, cutting data, heights, geometry or parameters", "CAM"},
+    {"cam.operation.remove", "Delete Operation", "Deletes an operation", "CAM"},
+    {"cam.operation.reorder", "Reorder Operation", "Moves an operation within its setup or to another setup", "CAM"},
+    {"cam.operation.suppress", "Suppress Operation", "Suppresses or unsuppresses an operation", "CAM"},
+    {"cam.library.embed", "Embed Library Items",
+     "Copies tools, holders, machines or materials into the document, or updates the copies it has", "CAM"},
 };
 
 std::string titleCase(std::string_view name)
