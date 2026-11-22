@@ -332,7 +332,7 @@ std::string Feature::describe() const
     s << " (" << num(b.min.x) << ", " << num(b.min.y) << ")..(" << num(b.max.x) << ", " << num(b.max.y) << ") floor Z "
       << num(floorZ) << " corner r " << num(cornerRadius);
     if (region.size() > 1) {
-        s << " with an island";
+        s << (kind == Kind::Boss ? " round a boss" : " with an island");
     }
     return s.str();
 }

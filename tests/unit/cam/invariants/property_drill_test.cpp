@@ -164,3 +164,27 @@ TEST_CASE("invariant property: drill, a short stick-out is refused or kept clear
     }
     CHECK(o.failures.empty());
 }
+
+// PRODUCT GAP (task T-035, src/cam/ops/drill*), found by T-058 and pinned here, not fixed: the drill type lists
+// "clockwise" among the cutting data it reads (schemas/ops/drill.schema.json x-cuttingUsed) but never reads it, so a
+// spindle set to turn counter-clockwise with a right-hand drill gives a toolpath instead of a refusal (COMMON.md, M3:
+// "refuse, with a message naming the cause, rather than emit a doubtful toolpath"). The checker's spindle rule finds
+// it. Marked [!mayfail]: it reports the gap on every run without failing the suite; when the drill refuses, it passes.
+TEST_CASE("PRODUCT GAP T-035: drilling with the spindle turning backwards is not refused",
+          "[cam][invariants][property][product-gap][!mayfail]")
+{
+    PropertyPlugin p = drillPlugin();
+    p.fixed["cycle"] = "\"drill\"";
+    const auto adjust = p.adjust;
+    p.adjust = [adjust](PropertyCase& c) {
+        adjust(c);
+        c.op.cutting.clockwise = false;
+    };
+    p.minGenerated = 0;
+    const PropertyOutcome o = runProperty(p, seedsFor("drill-ccw", 2));
+    for (const std::string& f : o.failures) {
+        UNSCOPED_INFO(f);
+    }
+    CHECK(o.generated == 0); // the operation should refuse
+    CHECK(o.failures.empty());
+}

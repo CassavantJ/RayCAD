@@ -128,8 +128,9 @@ static PropertyPlugin plugin() { PropertyPlugin p; p.type = "pocket2d"; p.tools 
 RAY_INVARIANT_PROPERTY_TESTS("pocket2d", plugin())
 ```
 
-That defines the quick test (12 fixed seeds, quick tier) and the slow one (200 seeds, `[.slow]`, ctest
-`ray_cam_invariants_slow` in the slow tier). What to set:
+That defines the quick test (12 fixed seeds; ctest `ray_cam_invariants_property`, quick tier) and the slow one (200
+seeds, `[.slow]`; ctest `ray_cam_invariants_slow`, slow tier). The checker's own cases are ctest
+`ray_cam_invariants_tests`. What to set:
 
 - `type`: the registered name. `tools`: the tool types the case may draw. `needs`: feature kinds every random part
   must have (`Pocket`, `Slot`, `Holes`, `Step` (an open edge), `Boss`). `geometry`: the faces the operation is given
@@ -152,5 +153,11 @@ shows broken types being reported.
 ## Resolution and time
 
 Part grid 0.25 mm, refined to 0.001 mm only where a contact is undecided (along walls the tool finishes); stock grid
-0.1 mm; mesh chord 0.001 mm. `RAY_INVARIANTS_TIMING=1` prints where the time goes. Measured times are in the task
-report (T-058).
+0.1 mm; mesh chord 0.001 mm. `RAY_INVARIANTS_TIMING=1` prints where the time goes (part mesh, part grid, stock grid,
+the moves, the region claims).
+
+Measured on the development PC in Release (Windows, MSVC), each test alone: `ray_cam_invariants_property` (drill and
+the reference facing type on 12 seeds each, plus the harness's own cases) about 10 s, of which a random case costs
+0.25 to 0.4 s (building the part with the kernel about 0.05 s, meshing 0.05 s, the part grid 0.1 s, the stock grid
+0.07 s, the moves and claims the rest); `ray_cam_invariants_tests` about 9 s; `ray_cam_invariants_slow` (200 seeds per
+type) about 140 s. MSVC Debug: about 95 s and 85 s for the two quick ones.

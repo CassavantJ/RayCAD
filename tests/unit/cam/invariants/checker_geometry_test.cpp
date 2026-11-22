@@ -345,3 +345,54 @@ TEST_CASE("invariants: engagement within its limit", "[cam][invariants][geometry
     onlyThis(tight, "engagement");
     CHECK(std::abs(find(tight, "engagement")->measured - 48.2) < 10);
 }
+
+TEST_CASE("invariants: the tool as radius at height, by type", "[cam][invariants][geometry]")
+{
+    const auto tool = [](lib::ToolType type, double d) {
+        lib::Tool t = flatMill(d, 12);
+        t.type = type;
+        return t;
+    };
+    const double eps = 1e-9;
+    lib::Tool bull = tool(lib::ToolType::BullEndMill, 10);
+    bull.cornerRadius = 2;
+    const ToolProfile b = makeProfile(bull, nullptr, 0);
+    CHECK(std::abs(b.radiusAt(0) - 3) < eps);
+    CHECK(std::abs(b.radiusAt(1) - (3 + std::sqrt(3.0))) < eps);
+    CHECK(std::abs(b.radiusAt(2) - 5) < eps);
+    CHECK(std::abs(b.hlow(4.5, 0, 2) - (2 - std::sqrt(4 - 1.5 * 1.5))) < eps); // the corner's height at radius 4.5
+    const ToolProfile ball = makeProfile(tool(lib::ToolType::BallEndMill, 6), nullptr, 0);
+    CHECK(ball.radiusAt(0) == 0);
+    CHECK(std::abs(ball.radiusAt(3) - 3) < eps);
+    lib::Tool drill = tool(lib::ToolType::Drill, 6);
+    drill.tipAngleDeg = 118;
+    const ToolProfile dr = makeProfile(drill, nullptr, 0);
+    const double point = 3 / std::tan(59 * kPi / 180);
+    CHECK(std::abs(dr.radiusAt(point / 2) - 1.5) < 1e-9);
+    CHECK(std::abs(dr.radiusAt(point) - 3) < 1e-9);
+    lib::Tool chamfer = tool(lib::ToolType::ChamferMill, 10);
+    chamfer.tipAngleDeg = 90;
+    chamfer.tipDiameter = 1;
+    const ToolProfile ch = makeProfile(chamfer, nullptr, 0);
+    CHECK(std::abs(ch.radiusAt(0) - 0.5) < eps);
+    CHECK(std::abs(ch.radiusAt(2) - 2.5) < eps);
+    CHECK(std::abs(ch.radiusAt(4.5) - 5) < eps);
+    lib::Tool thread = tool(lib::ToolType::ThreadMill, 10);
+    thread.threadPitch = 1.5;
+    thread.shoulderLength = 30;
+    const ToolProfile th = makeProfile(thread, nullptr, 0);
+    CHECK(std::abs(th.radiusAt(6) - 5) < eps);                   // the teeth
+    CHECK(std::abs(th.radiusAt(20) - (5 - 0.6134 * 1.5)) < eps); // the neck clears the thread
+    CHECK(std::abs(th.maxRadius(Zone::Cutting) - 5) < eps);
+    // A collet chuck 30 mm above the tip: nose 24 mm, taper to 32 at 70, flange 44 from 70 to the gauge line at 90.
+    lib::Holder holder;
+    holder.segments = {lib::HolderSegment{20, 44, 44}, lib::HolderSegment{40, 24, 32}};
+    holder.gaugeLength = 60;
+    const ToolProfile h = makeProfile(flatMill(10, 12), &holder, 30);
+    CHECK(h.zoneBottom(Zone::Body) == 12);
+    CHECK(h.zoneBottom(Zone::Holder) == 30);
+    CHECK(std::abs(h.radiusAt(29) - 5) < eps);
+    CHECK(std::abs(h.radiusAt(50) - 14) < eps);
+    CHECK(std::abs(h.radiusAt(80) - 22) < eps);
+    CHECK(std::abs(h.radiusAt(1000) - 22) < eps);
+}
