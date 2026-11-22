@@ -19,6 +19,8 @@ Item {
 
     readonly property var values: CamSetup.values
     readonly property string stock: values["stock"] !== undefined ? values["stock"] : "box"
+    // The view cube's axis triad: a square of 2 control heights in the bottom left corner of the view (ViewCube.qml).
+    readonly property real triadSpace: Theme.controlHeight * 2 + Theme.panelGap
     readonly property real labelWidth: Theme.controlHeight * 3.6
     readonly property real fieldWidth: Theme.controlHeight * 5.5
 
@@ -61,6 +63,93 @@ Item {
         Label {
             objectName: "setupFieldError." + fieldRow.key
             visible: fieldRow.erroneous
+            x: root.labelWidth + Theme.spacingS
+            width: root.fieldWidth
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+            font: Theme.smallFont
+            color: Theme.error
+            text: CamSetup.message
+        }
+    }
+
+    // One side of an OffsetRow: the side's sign and its field.
+    component OffsetHalf: Row {
+        id: half
+        property string key
+        property string sign // "−" or "+"
+        property string accessibleName
+        property real signWidth
+        property real fieldWidth
+        spacing: Theme.spacingXs
+        Label {
+            objectName: "setupSign." + half.key
+            width: half.signWidth
+            height: field.height
+            horizontalAlignment: Text.AlignHCenter
+            secondary: true
+            elide: Text.ElideNone
+            text: half.sign
+            Accessible.ignored: true
+        }
+        TextField {
+            id: field
+            objectName: "setupInput." + half.key
+            width: half.fieldWidth
+            text: root.values[half.key] !== undefined ? String(root.values[half.key]) : ""
+            invalid: CamSetup.messageField === half.key && CamSetup.message !== ""
+            Accessible.name: half.accessibleName
+            onTextEdited: CamSetup.setValue(half.key, text)
+            Keys.onReturnPressed: CamSetup.commit()
+            Keys.onEnterPressed: CamSetup.commit()
+            Keys.onEscapePressed: CamSetup.cancel()
+        }
+    }
+
+    // The box stock's two offsets along one axis on one row: "Offset X   − [field]  + [field]".
+    component OffsetRow: Column {
+        id: offsetRow
+        property string axis // "X", "Y", "Z"
+        readonly property string negKey: axis.toLowerCase() + "Neg"
+        readonly property string posKey: axis.toLowerCase() + "Pos"
+        readonly property bool erroneous: CamSetup.message !== ""
+                                          && (CamSetup.messageField === negKey || CamSetup.messageField === posKey)
+        readonly property real signWidth: Theme.spacingM
+        readonly property real halfWidth: (root.fieldWidth - 2 * signWidth - 3 * Theme.spacingXs) / 2
+        objectName: "setupOffsets." + axis
+        spacing: Theme.spacingXs / 2
+
+        Row {
+            spacing: Theme.spacingS
+            Label {
+                objectName: "setupOffsetLabel." + offsetRow.axis
+                width: root.labelWidth
+                anchors.verticalCenter: parent.verticalCenter
+                secondary: true
+                text: qsTr("Offset %1").arg(offsetRow.axis)
+            }
+            Row {
+                spacing: Theme.spacingXs
+                OffsetHalf {
+                    key: offsetRow.negKey
+                    sign: "−"
+                    signWidth: offsetRow.signWidth
+                    fieldWidth: offsetRow.halfWidth
+                    accessibleName: qsTr("Offset on the minus %1 side").arg(offsetRow.axis)
+                }
+                OffsetHalf {
+                    key: offsetRow.posKey
+                    sign: "+"
+                    signWidth: offsetRow.signWidth
+                    fieldWidth: offsetRow.halfWidth
+                    accessibleName: qsTr("Offset on the plus %1 side").arg(offsetRow.axis)
+                }
+            }
+        }
+        Label {
+            objectName: "setupFieldError." + (CamSetup.messageField === offsetRow.posKey ? offsetRow.posKey
+                                                                                        : offsetRow.negKey)
+            visible: offsetRow.erroneous
             x: root.labelWidth + Theme.spacingS
             width: root.fieldWidth
             wrapMode: Text.Wrap
@@ -125,7 +214,10 @@ Item {
             objectName: "setupPickText." + pickRow.mode
             width: root.fieldWidth - pickButton.width - clearButton.width - 2 * Theme.spacingXs
             anchors.verticalCenter: parent.verticalCenter
-            elide: Text.ElideRight
+            // In full, on two lines if it must (a long body name).
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+            maximumLineCount: 2
             text: pickRow.pickedText
         }
         ToolButton {
@@ -196,7 +288,9 @@ Item {
         x: 0
         y: root.topInset
         width: column.implicitWidth + 2 * Theme.spacingM
-        height: Math.min(root.height - root.topInset, column.implicitHeight + 2 * Theme.spacingM)
+        // Clear of the view's axis triad in the bottom left corner (ViewCube.qml), which would otherwise show its
+        // labels under the panel's edge; the panel scrolls when the window is too short for it.
+        height: Math.min(root.height - root.topInset - root.triadSpace, column.implicitHeight + 2 * Theme.spacingM)
         clip: true
 
         Flickable {
@@ -230,10 +324,15 @@ Item {
                     label: qsTr("Name")
                 }
 
-                // Part and fixture bodies.
+                // Part and fixture bodies: a heading, then each body by name with its role in this setup.
                 Column {
                     objectName: "setupBodies"
                     spacing: Theme.spacingXs
+                    Label {
+                        objectName: "setupBodiesHeading"
+                        text: qsTr("Bodies")
+                        font: Theme.strongFont
+                    }
                     Repeater {
                         model: CamSetup.active ? CamSetup.bodies : []
                         delegate: Row {
@@ -241,12 +340,25 @@ Item {
                             required property var modelData
                             required property int index
                             spacing: Theme.spacingS
+                            leftPadding: Theme.spacingM
+                            // The body's name, indented under the heading; a long one is elided, in full on hover.
                             Label {
-                                width: root.labelWidth
+                                id: bodyName
+                                objectName: "setupBodyName." + bodyRow.index
+                                width: root.labelWidth - Theme.spacingM
                                 anchors.verticalCenter: parent.verticalCenter
                                 secondary: true
-                                elide: Text.ElideRight
+                                elide: Text.ElideMiddle
                                 text: bodyRow.modelData.name
+                                readonly property bool hovered: nameHover.hovered
+                                readonly property bool pressed: false
+                                HoverHandler {
+                                    id: nameHover
+                                }
+                                HoverToolTip {
+                                    target: bodyName
+                                    text: bodyName.truncated ? bodyRow.modelData.name : ""
+                                }
                             }
                             ComboBox {
                                 id: roleCombo
@@ -257,7 +369,7 @@ Item {
                                 model: [
                                     { value: "part", text: qsTr("Part") },
                                     { value: "fixture", text: qsTr("Fixture") },
-                                    { value: "none", text: qsTr("Not used") }
+                                    { value: "none", text: qsTr("Ignore") }
                                 ]
                                 // Set once the model is there (a binding would read indexOfValue before it is).
                                 readonly property string role: bodyRow.modelData.role
@@ -304,40 +416,22 @@ Item {
                     key: "stock"
                     label: qsTr("Stock")
                     choices: [
-                        { value: "box", text: qsTr("Box around the part") },
+                        { value: "box", text: qsTr("Box") },
                         { value: "cylinder", text: qsTr("Cylinder") },
                         { value: "solid", text: qsTr("Solid body") }
                     ]
                 }
-                FieldRow {
+                OffsetRow {
                     visible: root.stock === "box"
-                    key: "xNeg"
-                    label: qsTr("Offset -X")
+                    axis: "X"
                 }
-                FieldRow {
+                OffsetRow {
                     visible: root.stock === "box"
-                    key: "xPos"
-                    label: qsTr("Offset +X")
+                    axis: "Y"
                 }
-                FieldRow {
+                OffsetRow {
                     visible: root.stock === "box"
-                    key: "yNeg"
-                    label: qsTr("Offset -Y")
-                }
-                FieldRow {
-                    visible: root.stock === "box"
-                    key: "yPos"
-                    label: qsTr("Offset +Y")
-                }
-                FieldRow {
-                    visible: root.stock === "box"
-                    key: "zNeg"
-                    label: qsTr("Offset -Z")
-                }
-                FieldRow {
-                    visible: root.stock === "box"
-                    key: "zPos"
-                    label: qsTr("Offset +Z")
+                    axis: "Z"
                 }
                 ChoiceRow {
                     visible: root.stock === "cylinder"
@@ -447,11 +541,16 @@ Item {
                     objectName: "setupPreviewState"
                     secondary: true
                     font: Theme.smallFont
+                    // The preview's state, else the next step still missing, else that OK would do it.
                     text: CamSetup.previewStatus === "building" ? qsTr("Building the preview…")
                           : CamSetup.previewStatus === "failed" ? qsTr("The preview shows the last values that worked")
-                          : CamSetup.pickMode === "face" ? qsTr("Click the top face of the part")
-                          : CamSetup.pickMode === "edge" ? qsTr("Click a straight edge for X")
-                          : CamSetup.pickMode === "vertex" ? qsTr("Click a vertex for the origin")
+                          : root.values["origin"] === "modelPoint" && !CamSetup.hasVertex
+                            ? qsTr("Click a vertex for the origin")
+                          : CamSetup.pickMode === "face" && !CamSetup.hasZFace ? qsTr("Click the top face of the part")
+                          : CamSetup.pickMode === "edge" && !CamSetup.hasXEdge ? qsTr("Click a straight edge for X")
+                          : CamSetup.canCommit
+                            ? (CamSetup.editing ? qsTr("Ready: Apply changes the setup")
+                                                : qsTr("Ready: OK adds the setup"))
                           : ""
                     visible: text !== ""
                 }

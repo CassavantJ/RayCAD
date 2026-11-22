@@ -432,6 +432,84 @@ QString freeMarker(const Window& w, const QString& prefer = {})
     return best;
 }
 
+// The status line under OK and Cancel.
+QString statusLine(const Window& w)
+{
+    QQuickItem* line = w.find(QStringLiteral("setupPreviewState"));
+    REQUIRE(line != nullptr);
+    return line->isVisible() ? line->property("text").toString() : QString();
+}
+
+// The box of the glyph pixels (differing from the corner's colour) of `item` in a window grab, in device pixels.
+QRect inkBox(const Window& w, const QImage& img, QQuickItem* item)
+{
+    const qreal dpr = img.devicePixelRatio();
+    const QPointF tl = item->mapToScene(QPointF(0, 0)) * dpr;
+    const QRect r(tl.toPoint(), QSize(int(item->width() * dpr), int(item->height() * dpr)));
+    const QColor bg = img.pixelColor(r.topLeft());
+    QRect box;
+    for (int y = r.top(); y <= r.bottom(); ++y) {
+        for (int x = r.left(); x <= r.right(); ++x) {
+            const QColor c = img.pixelColor(x, y);
+            const int d =
+                std::abs(c.red() - bg.red()) + std::abs(c.green() - bg.green()) + std::abs(c.blue() - bg.blue());
+            if (d > 90)
+                box = box.united(QRect(x, y, 1, 1));
+        }
+    }
+    (void)w;
+    return box;
+}
+
+// The panel's text reads as it should: every label in full (body names elide, with the name on hover), the
+// offsets' signs drawn whole, the bodies under their heading with their role, and the panel clear of the view's
+// axis triad (whose labels would show under its edge).
+void checkPanelLayout(const Window& w)
+{
+    QQuickItem* panel = w.shown(QStringLiteral("setupPanel"));
+    std::vector<QQuickItem*> items{panel};
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        for (QQuickItem* c : items[i]->childItems())
+            items.push_back(c);
+    }
+    for (QQuickItem* item : items) {
+        const QVariant truncated = item->property("truncated");
+        if (!truncated.isValid() || !item->isVisible() || item->objectName() == QStringLiteral("label") ||
+            item->objectName().startsWith(QStringLiteral("setupBodyName.")))
+            continue; // not text, hidden, a combo box's own text, or a body name (elided on purpose)
+        INFO("label '" << item->property("text").toString().toStdString() << "' (" << item->objectName().toStdString()
+                       << ")");
+        CHECK_FALSE(truncated.toBool());
+    }
+    // Bodies: a heading, then each body by its name with its role as the value.
+    CHECK(w.shown(QStringLiteral("setupBodiesHeading"))->property("text").toString() == QStringLiteral("Bodies"));
+    CHECK(w.shown(QStringLiteral("setupBodyName.0"))->property("text").toString() == w.host->scene()->bodyName(0));
+    CHECK(w.shown(QStringLiteral("setupBodyRole.0"))->property("displayText").toString() == QStringLiteral("Part"));
+    // The offsets: "Offset X" and so on, with a whole minus and plus sign before each field.
+    const QImage img = w.grab();
+    for (const char* axis : {"X", "Y", "Z"}) {
+        CHECK(w.shown(QStringLiteral("setupOffsetLabel.%1").arg(QLatin1String(axis)))->property("text").toString() ==
+              QStringLiteral("Offset %1").arg(QLatin1String(axis)));
+        const QString lower = QString::fromLatin1(axis).toLower();
+        const QRect plus = inkBox(w, img, w.shown(QStringLiteral("setupSign.%1Pos").arg(lower)));
+        const QRect minus = inkBox(w, img, w.shown(QStringLiteral("setupSign.%1Neg").arg(lower)));
+        INFO("axis " << axis << ": plus ink " << plus.width() << " x " << plus.height() << ", minus ink "
+                     << minus.width() << " x " << minus.height());
+        REQUIRE(!plus.isEmpty());
+        REQUIRE(!minus.isEmpty());
+        // A plus is about as wide as it is tall (a lost bar would leave a thin stroke); a minus is wide and flat.
+        CHECK(plus.width() * 10 >= plus.height() * 7);
+        CHECK(plus.height() * 10 >= plus.width() * 7);
+        CHECK(minus.width() >= 2 * minus.height());
+    }
+    // Clear of the view cube's axis triad in the bottom left corner.
+    QQuickItem* triad = w.find(QStringLiteral("axisTriad"));
+    REQUIRE(triad != nullptr);
+    const double panelBottom = panel->mapToScene(QPointF(0, panel->height())).y();
+    const double triadTop = triad->mapToScene(QPointF(0, 0)).y();
+    CHECK(panelBottom <= triadTop);
+}
+
 std::string jsonText(const QJsonObject& o)
 {
     return QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString();
@@ -480,6 +558,9 @@ TEST_CASE("a setup on an imported part in four interactions", "[cam][e2e]")
     CHECK(w.tool()->markers().size() == 9);
     CHECK(w.tool()->triadLabels().size() == 3);
     CHECK(w.stateHash() == before); // the preview commits nothing
+    // The status line names the next step.
+    CHECK(statusLine(w) == QStringLiteral("Click the top face of the part"));
+    checkPanelLayout(w);
 
     // 2. The top face, clicked in the view.
     const QPointF topAt = topPoint(w, topZ);
@@ -490,6 +571,12 @@ TEST_CASE("a setup on an imported part in four interactions", "[cam][e2e]")
     const api::cam_setup::Preview& p = *w.tool()->lastPreview();
     CHECK(p.z.z == Approx(1.0));
     CHECK(p.origin.z == Approx(topZ)); // corner 0 is on the top of the stock, which is the part's top
+    // The face is picked: the status line follows (OK would add the setup now), and no longer asks for the face.
+    CHECK(w.find(QStringLiteral("setupPickText.face"))
+              ->property("text")
+              .toString()
+              .startsWith(QStringLiteral("Face of")));
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the setup"); }, 10000));
 
     // 3. The default stock is accepted as it is; an origin marker on it is clicked.
     const QString key = freeMarker(w, QStringLiteral("corner2"));

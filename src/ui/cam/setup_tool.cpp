@@ -730,7 +730,7 @@ QString SetupToolModel::zFaceText() const
 QString SetupToolModel::xEdgeText() const
 {
     if (xEdge_.isEmpty())
-        return trs("None: from the Z face");
+        return trs("None: from Z");
     return trs("Edge of %1").arg(bodyName(xEdgeBody_));
 }
 
