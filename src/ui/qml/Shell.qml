@@ -103,8 +103,20 @@ FocusScope {
         Viewport {
             id: viewport
             anchors.fill: parent
-            // viewportHost fills the shell, so viewportArea's geometry is already in this item's coordinates.
-            frameRect: Qt.rect(viewportArea.x, viewportArea.y, viewportArea.width, viewportArea.height)
+            // viewportHost fills the shell, so viewportArea's geometry is already in this item's coordinates. Fit and
+            // the standard views frame the model in the part of it that nothing covers: below the selection filter bar
+            // (shown while there are bodies) and beside the current workspace's panels (coverLeft, coverRight: the CAM
+            // setup and operation panels, the G-code viewer). Opening or closing a panel moves no camera.
+            frameRect: {
+                const loader = workspaceLoaders.count > AppContext.workspace ? workspaceLoaders.itemAt(AppContext.workspace)
+                                                                            : null
+                const ws = loader ? loader.item : null
+                const left = ws && ws.coverLeft !== undefined ? ws.coverLeft : 0
+                const right = ws && ws.coverRight !== undefined ? ws.coverRight : 0
+                const top = Scene.bodyCount > 0 ? Theme.controlHeight + 2 * Theme.spacingXs + Theme.panelGap : 0
+                return Qt.rect(viewportArea.x + left, viewportArea.y + top,
+                               Math.max(0, viewportArea.width - left - right), Math.max(0, viewportArea.height - top))
+            }
         }
         // T-022: measurement labels over the model (same geometry as the view item).
         MeasureOverlay {
@@ -156,6 +168,7 @@ FocusScope {
             z: 1
 
             Repeater {
+                id: workspaceLoaders
                 model: AppContext.workspaceNames.length
                 delegate: Loader {
                     required property int index
@@ -179,14 +192,20 @@ FocusScope {
                 id: camWorkspace
                 Item {
                     objectName: "camWorkspace"
+                    // What its panels cover of the view, from the left and the right edge: the view frames the model
+                    // in the rest (Fit, frameRect below).
+                    readonly property real coverLeft: Math.max(setupPanelHost.coverLeft, operationPanelHost.coverLeft)
+                    readonly property real coverRight: gcodeViewHost.coverRight
                     // T-044: cam/SetupPanel.qml (and its markers and labels over the view).
                     SetupPanel {
+                        id: setupPanelHost
                         anchors.fill: parent
                         view: viewport.view
                     }
                     // T-045: cam/OperationPanel.qml, in the same place (one of the two is open at a time). The tool
                     // library (T-046) and posting (T-047) go here beside them.
                     OperationPanel {
+                        id: operationPanelHost
                         anchors.fill: parent
                         view: viewport.view
                     }
@@ -194,6 +213,7 @@ FocusScope {
                     readonly property int toolpathsShown: CamToolpaths.shownCount
                     // T-047: the G-code viewer on the right, and the post dialog over everything.
                     GcodeView {
+                        id: gcodeViewHost
                         anchors.fill: parent
                     }
                     PostDialog {}

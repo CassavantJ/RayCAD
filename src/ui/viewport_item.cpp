@@ -509,6 +509,25 @@ render::Camera ViewportItem::framed(const render::Camera& cam, const Box3& box) 
     return render::panCamera(out, frame.center().x() - w / 2, frame.center().y() - h / 2, heightPx());
 }
 
+void ViewportItem::frameBox(const Box3& box)
+{
+    animateTo(framed(camera(), box));
+}
+
+bool ViewportItem::inFrame(const std::vector<Vec3>& points, double margin) const
+{
+    const QRectF whole(0, 0, std::max(1.0, width()), std::max(1.0, height()));
+    QRectF frame = frameRect_.isEmpty() ? whole : frameRect_.intersected(whole);
+    frame = frame.adjusted(margin, margin, -margin, -margin);
+    const render::Camera cam = camera();
+    for (const Vec3& p : points) {
+        const auto v = nav::project(cam, p, width(), height());
+        if (!v || !frame.contains(*v))
+            return false;
+    }
+    return true;
+}
+
 Box3 ViewportItem::contentBounds() const
 {
     const std::optional<Box3> box = front_->sceneBounds();
@@ -557,6 +576,32 @@ void ViewportItem::fitAll()
     if (!box)
         return;
     animateTo(framed(camera(), *box));
+}
+
+bool ViewportItem::fitIfCovered()
+{
+    // The bodies shown (not the overlays drawn with them: a triad, a toolpath, its labels).
+    std::optional<Box3> box;
+    if (scene_) {
+        std::vector<render::PickHit> bodies;
+        for (int i = 0; i < scene_->bodyCount(); ++i) {
+            if (const render::ItemId item = scene_->itemForBody(i); item != 0)
+                bodies.push_back(render::PickHit{item, kernel::SubKind::Solid, 0, Vec3{}, 0});
+        }
+        box = scene_->boundsOf(bodies);
+    }
+    if (!box)
+        box = front_->sceneBounds();
+    if (!box)
+        return false;
+    std::vector<Vec3> corners;
+    for (int k = 0; k < 8; ++k)
+        corners.push_back(Vec3{(k & 1) ? box->max.x : box->min.x, (k & 2) ? box->max.y : box->min.y,
+                               (k & 4) ? box->max.z : box->min.z});
+    if (inFrame(corners))
+        return false;
+    animateTo(framed(camera(), *box));
+    return true;
 }
 
 void ViewportItem::fitSelection()

@@ -129,10 +129,17 @@ public:
     void setFrameRect(const QRectF& rect);
     // `camera` turned to frame `box` in frameRect, keeping its view direction.
     render::Camera framed(const render::Camera& camera, const Box3& box) const;
+    // Frames `box` in frameRect (a transition, as Fit), keeping the view direction.
+    void frameBox(const Box3& box);
+    // Whether every point projects into frameRect (inset by `margin` pixels) in front of the camera.
+    bool inFrame(const std::vector<Vec3>& points, double margin = 0) const;
 
     // ---- navigation (QML, the view cube, keyboard and tests) ----
     Q_INVOKABLE void fitAll();
     Q_INVOKABLE void fitSelection();
+    // After a panel opened or closed: Fit, but only when what is shown no longer lies wholly in frameRect (a panel
+    // came over it); the camera stays where it is while it does. True when it framed.
+    Q_INVOKABLE bool fitIfCovered();
     // "front", "back", "left", "right", "top", "bottom", "iso".
     Q_INVOKABLE bool setStandardView(const QString& name);
     // Look along a direction (eye to target), framing everything: view cube edges and corners.

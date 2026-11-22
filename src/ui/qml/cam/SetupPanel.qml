@@ -22,7 +22,29 @@ Item {
     // The view cube's axis triad: a square of 2 control heights in the bottom left corner of the view (ViewCube.qml).
     readonly property real triadSpace: Theme.controlHeight * 2 + Theme.panelGap
     readonly property real labelWidth: Theme.controlHeight * 3.6
-    readonly property real fieldWidth: Theme.controlHeight * 5.5
+    // The field column grows to show every choice of its lists in full (a machine's long name), up to what the view
+    // can spare; only past that a list's text is elided (in full in its tooltip and its open list).
+    readonly property real baseFieldWidth: Theme.controlHeight * 5.5
+    readonly property real maxFieldWidth: Math.max(baseFieldWidth, root.width * 0.6 - labelWidth - Theme.spacingS
+                                                                   - 2 * Theme.spacingM)
+    readonly property real fieldWidth: Math.min(maxFieldWidth, Math.max(baseFieldWidth, comboNeed))
+    property var combos: []
+    readonly property real comboNeed: {
+        let w = 0
+        for (const c of combos) {
+            if (c && c.visible)
+                w = Math.max(w, c.naturalWidth)
+        }
+        return w
+    }
+    // How much of the view the panel covers from the left edge (0 while closed): Fit frames the model beside it.
+    readonly property real coverLeft: panel.visible ? panel.x + panel.width + Theme.panelGap : 0
+    function addCombo(c) {
+        combos = combos.concat([c])
+    }
+    function removeCombo(c) {
+        combos = combos.filter(x => x !== c)
+    }
 
     Binding {
         target: CamSetup
@@ -185,11 +207,16 @@ Item {
             id: combo
             objectName: "setupCombo." + choiceRow.key
             width: root.fieldWidth
+            widthLimit: root.maxFieldWidth
             model: choiceRow.choices
             textRole: "text"
             valueRole: "value"
             Accessible.name: choiceRow.label
-            Component.onCompleted: choiceRow.sync()
+            Component.onCompleted: {
+                choiceRow.sync()
+                root.addCombo(combo)
+            }
+            Component.onDestruction: root.removeCombo(combo)
             onActivated: CamSetup.setValue(choiceRow.key, currentValue)
         }
     }
@@ -248,6 +275,7 @@ Item {
         property string key
         objectName: "setupCheck." + key
         x: root.labelWidth + Theme.spacingS - Theme.spacingXs
+        width: Math.min(implicitWidth, root.fieldWidth + Theme.spacingXs)
         checked: root.values[key] === true
         onToggled: CamSetup.setValue(key, checked)
     }
@@ -364,6 +392,7 @@ Item {
                                 id: roleCombo
                                 objectName: "setupBodyRole." + bodyRow.index
                                 width: root.fieldWidth
+                                widthLimit: root.maxFieldWidth
                                 textRole: "text"
                                 valueRole: "value"
                                 model: [
@@ -379,7 +408,11 @@ Item {
                                         currentIndex = i
                                 }
                                 onRoleChanged: sync()
-                                Component.onCompleted: Qt.callLater(sync)
+                                Component.onCompleted: {
+                                    Qt.callLater(sync)
+                                    root.addCombo(roleCombo)
+                                }
+                                Component.onDestruction: root.removeCombo(roleCombo)
                                 Accessible.name: qsTr("Role of %1").arg(bodyRow.modelData.name)
                                 onActivated: CamSetup.setBodyRole(bodyRow.modelData.id, currentValue)
                             }
@@ -569,6 +602,24 @@ Item {
         sequence: "Esc"
         enabled: CamSetup.active && !Session.jobActive
         onActivated: CamSetup.cancel()
+    }
+
+    // ---------- over the view: the current setup's work offset at its WCS origin, while the panel is closed ----------
+    Text {
+        objectName: "setupWcsLabel"
+        parent: root.view ? root.view : root
+        visible: !CamSetup.active && CamSetup.wcsLabel.text !== undefined
+        // Left of the origin, clear of the axes (X and Y run right in the usual views).
+        x: (CamSetup.wcsLabel.x !== undefined ? CamSetup.wcsLabel.x : 0) - width - Theme.spacingXs
+        y: (CamSetup.wcsLabel.y !== undefined ? CamSetup.wcsLabel.y : 0) - height / 2
+        text: CamSetup.wcsLabel.text !== undefined ? CamSetup.wcsLabel.text : ""
+        font: Theme.strongFont
+        color: Theme.textPrimary
+        style: Text.Outline
+        styleColor: Theme.panelBg
+        textFormat: Text.PlainText
+        Accessible.role: Accessible.StaticText
+        Accessible.name: qsTr("Work offset %1").arg(text)
     }
 
     // ---------- over the view: origin markers and the triad's labels ----------

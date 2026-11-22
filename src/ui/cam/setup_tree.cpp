@@ -147,6 +147,26 @@ SetupTreeModel* SetupTreeModel::create(QQmlEngine* qml, QJSEngine*)
     return model; // owned by the engine
 }
 
+void SetupTreeModel::setSetupTool(SetupToolModel* tool)
+{
+    if (tool_) {
+        disconnect(this, nullptr, tool_, nullptr);
+        disconnect(tool_, nullptr, this, nullptr);
+    }
+    tool_ = tool;
+    if (!tool_)
+        return;
+    const auto show = [this] {
+        if (tool_)
+            tool_->showWcsOf(currentSetup());
+    };
+    connect(this, &SetupTreeModel::currentChanged, tool_, show);
+    connect(this, &SetupTreeModel::changed, tool_, show);
+    // A setup just added or changed by the panel becomes the current row (its WCS and toolpaths in the view).
+    connect(tool_, &SetupToolModel::committed, this, [this](const QString& id) { selectWhenListed(id); });
+    show();
+}
+
 void SetupTreeModel::setCommands(CommandCatalog* commands)
 {
     commands_ = commands;

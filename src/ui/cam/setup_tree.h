@@ -80,7 +80,8 @@ public:
     ~SetupTreeModel() override;
     static SetupTreeModel* create(QQmlEngine* qml, QJSEngine* js);
     void setCommands(CommandCatalog* commands);
-    void setSetupTool(SetupToolModel* tool) { tool_ = tool; }
+    // The setup panel: it shows the WCS of the current row's setup while it is closed (SetupToolModel::showWcsOf).
+    void setSetupTool(SetupToolModel* tool);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role) const override;
