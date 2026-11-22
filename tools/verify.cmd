@@ -16,6 +16,9 @@ rem   QT_ROOT_DIR                 required: the Qt 6.12 kit folder, e.g. C:\Qt\6
 rem   VCPKG_DEFAULT_BINARY_CACHE  optional: vcpkg's binary cache folder (built packages kept between build trees)
 rem   RAY_VCPKG_INSTALL_OPTIONS   optional: more options for vcpkg install, e.g. --x-buildtrees-root=C:\vb when the
 rem                               checkout's path is too long for OpenCASCADE's build tree. Not part of CI.
+rem   RAY_TEST_SCREEN             optional: a display device name such as DISPLAY3. The tests that show windows put
+rem                               them on that screen instead of the primary one, and fail if a window touches the
+rem                               primary screen (README, "Which tests to run"). Not set in CI.
 rem tools\win-env.cmd sets up Visual Studio's compiler, CMake and Ninja; it is called here, and VCPKG_ROOT is kept
 rem as given (Visual Studio's own environment script points it at the vcpkg that ships with Visual Studio).
 rem

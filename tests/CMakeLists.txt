@@ -45,6 +45,7 @@ add_subdirectory(unit/post) # T-039
 add_subdirectory(unit/cycles) # canned cycles: backplot and post host agree
 add_subdirectory(lint)
 add_subdirectory(apps)
+add_subdirectory(ui/screen) # RAY_TEST_SCREEN, for the window tests below
 add_subdirectory(ui/controls)
 add_subdirectory(ui/viewport)
 add_subdirectory(ui/start)
@@ -66,6 +67,18 @@ foreach(_target IN ITEMS ray_render_tests ray_ui_controls_tests ray_ui_viewport_
                          ray_ui_palette_tests ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests
                          ray_ui_section_tests ray_ui_sketch_tests ray_ui_model_tests)
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support/driver_threads_listener.cpp")
+endforeach()
+
+# ---------- The screen the windows go on ----------
+# RAY_TEST_SCREEN (ui/screen/test_screen.h; README, "Which tests to run"): every test that shows a window puts its
+# windows, and those of the raycad.exe it starts, on the screen the variable names instead of the primary one, and
+# fails if one touches the primary screen. Unset (CI), nothing changes. The render tests draw offscreen (their own
+# QRhi, no window) and raycad_smoke is placed by support/run_with_driver_priority.py.
+foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_start_tests ray_ui_palette_tests
+                         ray_ui_settings_tests ray_ui_glass_tests ray_ui_measure_tests ray_ui_section_tests
+                         ray_ui_sketch_tests ray_ui_model_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/screen/test_screen_listener.cpp")
+    target_link_libraries(${_target} PRIVATE ray_ui_test_screen)
 endforeach()
 
 # ---------- Sanitizer run options for every test ----------

@@ -5,6 +5,8 @@
 // Requires a QGuiApplication.
 #pragma once
 
+#include "test_screen.h"
+
 #include <QtQuick/QQuickWindow>
 #include <QtQuick/QSGRendererInterface>
 #include <QtTest/QTest>
@@ -18,6 +20,7 @@ inline bool rhiSceneGraph()
     static const bool rhi = [] {
         QQuickWindow probe;
         probe.resize(64, 64);
+        ray::test::screen::placeBeforeShow(probe); // RAY_TEST_SCREEN: on that screen
         probe.show();
         if (!QTest::qWaitForWindowExposed(&probe))
             return false;

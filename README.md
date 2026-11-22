@@ -135,7 +135,21 @@ the randomised naming blocks are disabled (they would take hours there); ctest l
 each in an MSVC Debug build): `ctest --preset windows-msvc-debug-ci`. Tests timed against the wall clock (cancel latencies, UI-thread stalls, start-up and drag
 benchmarks) run alone. Tests that show a window take turns (the `desktop` resource lock: windows on one
 desktop share the keyboard focus, the pointer and the screen), and a test that sets the system clipboard
-holds the `clipboard` lock.
+holds the `clipboard` lock. The tests that show a window are also labelled `desktop`: `ctest --preset <config>-quick
+-L desktop` runs just them, `-LE desktop` everything else.
+
+To keep those windows off your primary monitor while you work, set `RAY_TEST_SCREEN` to the name of another
+screen before running ctest or `tools\verify.cmd`: on Windows its display device name, such as `DISPLAY3`
+(`\\.\DISPLAY3`, any case), elsewhere Qt's name of it (the output name, such as `DP-1`). Every window the tests
+create, popups, dialogs and the `raycad` the start-up tests launch included, is then laid out on that screen before
+it is first shown, and a test fails if any window of it touches the primary screen; each test process prints a line
+(`RAY_TEST_SCREEN: windows on ...`) saying how many windows it showed. A name is used rather than a number because it
+stays with the same monitor output whatever order the screens are listed in. A value that names no screen, or the
+primary one, stops each window test at once with a list of the screens. Unset or empty, nothing changes (CI leaves
+it unset). It does not stop a test window from taking the keyboard focus when it opens, and the pointer still
+matters: pick a screen the pointer is not resting on, since a test window that opens or grows under it gets real
+hover events (the viewport then picks under it, which the glass resize test counts as leaked GPU resources).
+`tests/ui/screen/test_screen.h` says how it works.
 
 The lints can also be run on their own, without building:
 
