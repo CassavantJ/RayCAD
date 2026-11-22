@@ -608,13 +608,15 @@ def machines():
             "machine.",
         },
         {
-            "schema": 1, "id": "machine.vmc.mazak-eia", "name": "Generic Mazak VMC, EIA/ISO programs (VC-Ez 20 class)",
+            # T-042: was machine.vmc.mazak-eia (same id); the Mazak post is now per control generation.
+            "schema": 1, "id": "machine.vmc.mazak-smooth",
+            "name": "Generic Mazak VMC, MAZATROL Smooth, EIA/ISO programs (VC-Ez 20 class)",
             "vendor": "", "model": "", "kind": "mill3", "verified": False,
             "axes": axes(1050, 510, 635, 0, 0, False),
             "spindle": {"maxRpm": 12000, "minRpm": 0, "powerKw": 18, "torqueNm": 0},
             "toolChanger": {"capacity": 30, "changeSeconds": 0},
-            "control": {"dialect": "mazak-eia", "defaultPost": "mazak-eia", "rigidTapping": False, "maxBlockNumber": 0,
-                        "maxProgramNameLength": 0},
+            "control": {"dialect": "mazak-smooth", "defaultPost": "mazak-smooth", "rigidTapping": False,
+                        "maxBlockNumber": 0, "maxProgramNameLength": 0},
             "options": {"throughSpindleCoolant": False, "probe": False, "toolSetter": False},
             "postProperties": {},
             "comment": "Published catalogue values of the Mazak VC-Ez 20 (Mazak Corporation product page 'VC-Ez 20', "
@@ -623,7 +625,29 @@ def machines():
             "Centers VC-Ez') gives MAZATROL SmoothEz as standard and SmoothG as an option. Whether the control runs "
             "EIA/ISO programs is not stated there: check the control's options. Rapids, cutting feed, torque, tool change time, "
             "acceleration and rigid tapping are not stated there: 0 / false = unknown. Axis directions are not "
-            "stated; travels are given from 0. Not verified on a real machine.",
+            "stated; travels are given from 0. Post: mazak-smooth (MAZATROL Smooth family, EIA/ISO; written without "
+            "a Mazak manual, see docs/post_review/mazak-smooth.md). Not verified on a real machine.",
+        },
+        {
+            "schema": 1, "id": "machine.vmc.mazak-matrix",
+            "name": "Generic Mazak VMC, MAZATROL Matrix, EIA/ISO programs (VCN-530C class)",
+            "vendor": "", "model": "", "kind": "mill3", "verified": False,
+            "axes": axes(1049.02, 530.352, 510.032, 35999.42, 0, False),
+            "spindle": {"maxRpm": 12000, "minRpm": 0, "powerKw": 11.19, "torqueNm": 0},
+            "toolChanger": {"capacity": 30, "changeSeconds": 0},
+            "control": {"dialect": "mazak-matrix", "defaultPost": "mazak-matrix", "rigidTapping": False,
+                        "maxBlockNumber": 0, "maxProgramNameLength": 0},
+            "options": {"throughSpindleCoolant": False, "probe": False, "toolSetter": False},
+            "postProperties": {},
+            "comment": "Mazak no longer publishes Matrix-generation machines on mazak.com, so these values are from "
+            "a used-machine dealer listing, not from Mazak: Surplus Record listing 1058083 (surplusrecord.com, "
+            "'Mazak #Nexus-530C-II TT, CNC vertical machining center, Mazatrol Matrix Nexus 2 Control', 2014): "
+            "travels from its description 41.3 x 20.88 x 20.08 in (1049.02 x 530.352 x 510.032 mm; its title says "
+            "20.8 for Y and Z), 12000 rpm, 15 hp 30 min rating (11.19 kW), CAT-40, 30 tools, rapid 1417.3 in/min "
+            "(35999.42 mm/min). Torque, cutting feed, tool change time, acceleration and rigid tapping are not "
+            "stated there: 0 / false = unknown. Axis directions are not "
+            "stated; travels are given from 0. Post: mazak-matrix (MAZATROL Matrix family, EIA/ISO; written without "
+            "a Mazak manual, see docs/post_review/mazak-matrix.md). Not verified on a real machine.",
         },
     ]
 

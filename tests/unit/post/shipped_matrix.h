@@ -24,7 +24,23 @@ namespace ray::post::test::shipped {
 
 using cam::MoveKind;
 using cam::MoveRole;
+// The shipped posts the T-043 interpreter has a dialect for: roundtrip/ iterates these (kPosts, goldenRuns()).
 inline constexpr const char* kPosts[] = {"generic-iso", "fanuc", "haas-ngc", "haas-classic"};
+// Shipped posts with no interpreter dialect yet (T-042, Mazak; the interpreter is extended for them separately).
+// Every other shipped-post test covers them: shipped_posts_test.cpp iterates allPosts() and goldenRuns(true).
+inline constexpr const char* kPostsWithoutInterpreter[] = {"mazak-smooth", "mazak-matrix"};
+
+inline std::vector<std::string> allPosts()
+{
+    std::vector<std::string> out(std::begin(kPosts), std::end(kPosts));
+    out.insert(out.end(), std::begin(kPostsWithoutInterpreter), std::end(kPostsWithoutInterpreter));
+    return out;
+}
+
+inline bool isMazak(const std::string& post)
+{
+    return post.rfind("mazak", 0) == 0;
+}
 
 inline std::string shippedPost(const std::string& id)
 {
@@ -61,6 +77,12 @@ inline lib::MachineDef machineFor(const std::string& post)
     } else if (post == "haas-classic") {
         m.name = "Test VMC (Haas classic)";
         m.controlDialect = "haas-classic";
+    } else if (post == "mazak-smooth") {
+        m.name = "Test VMC (Mazak Smooth)";
+        m.controlDialect = "mazak-smooth";
+    } else if (post == "mazak-matrix") {
+        m.name = "Test VMC (Mazak Matrix)";
+        m.controlDialect = "mazak-matrix";
     } else {
         m.name = "Test VMC (ISO)";
         m.controlDialect = "generic-iso";
@@ -486,7 +508,7 @@ inline std::map<std::string, std::string> postProperties(const std::string& post
     if (feature == "06-coolant") {
         // The codes a post has no default for (FANUC and generic: through and air; Haas: mist), as a shop would set
         // them. They are examples for the golden, not codes from a manual.
-        if (post == "fanuc" || post == "generic-iso") {
+        if (post == "fanuc" || post == "generic-iso" || isMazak(post)) {
             out["coolantCodes"] = "flood=M8/M9 mist=M7/M9 through=M88/M89 air=M83/M84";
         } else {
             out["coolantCodes"] = "flood=M08/M09 mist=M07/M09 through=M88/M89 air=M83/M84";
@@ -534,6 +556,22 @@ inline std::vector<Extra> extras()
          },
          {{"peckReduction", "true"}}},
         {"haas-ngc", "32-arcs-r", arcsXY, {{"arcFormat", "R"}}},
+        // Mazak (T-042): the tapping forms, the high-speed mode codes, the pre-select forms and the dwell unit, all
+        // properties because none could be read in a Mazak document.
+        {"mazak-smooth", "30-tap-g84-2", [] { return tapping(true); }, {{"tapping", "G84.2"}}},
+        {"mazak-smooth", "31-tap-plain-g84", [] { return tapping(true); }, {{"tapping", "plainG84"}}},
+        {"mazak-smooth", "32-high-speed-g61-1", arcsXY, {{"highSpeedMode", "G61.1"}}},
+        {"mazak-smooth", "33-preselect-same-block", toolChange, {{"toolPreselect", "sameBlock"}}},
+        {"mazak-smooth",
+         "34-dwell-seconds",
+         [] {
+             return cycleProgram(1134, "Mazak: dwell P in seconds", "drill_drill", drillTool(5, "5 mm drill"), 4, 2000);
+         },
+         {{"dwellUnits", "seconds"}}},
+        {"mazak-matrix", "30-tap-g84-2", [] { return tapping(true); }, {{"tapping", "G84.2"}}},
+        {"mazak-matrix", "31-tap-plain-g84", [] { return tapping(true); }, {{"tapping", "plainG84"}}},
+        {"mazak-matrix", "32-high-speed-g05-p2", arcsXY, {{"highSpeedMode", "G05P2"}}},
+        {"mazak-matrix", "33-preselect-separate-t", toolChange, {{"toolPreselect", "separateT"}}},
         // The classic control documents G187 with E only: E is written, the level is warned about and not posted.
         {"haas-classic", "30-g187-smoothing", realistic, {{"smoothing", "finish"}, {"smoothingCorner", "0.05"}}},
         {"haas-classic",
@@ -552,10 +590,16 @@ struct Run {
     Program program;
 };
 
-inline std::vector<Run> goldenRuns()
+// Every golden run of the posts with an interpreter dialect (kPosts), or of every shipped post (allPosts()).
+inline std::vector<Run> goldenRuns(bool allShipped = false)
 {
     std::vector<Run> runs;
-    for (const char* post : kPosts) {
+    std::vector<std::string> posts(std::begin(kPosts), std::end(kPosts));
+    if (allShipped) {
+        posts = allPosts();
+    }
+    for (const std::string& postId : posts) {
+        const char* post = postId.c_str();
         auto add = [&](const std::string& name, const std::function<Program()>& make,
                        const std::map<std::string, std::string>& props) {
             for (const UnitSystem u : {UnitSystem::Metric, UnitSystem::Inch}) {

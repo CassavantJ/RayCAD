@@ -1,0 +1,1 @@
+post property highSpeedMode = G61.1: the code form is [unverified] for the MAZATROL Smooth control; check it in the machine's EIA/ISO programming manual before running the program

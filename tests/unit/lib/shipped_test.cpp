@@ -58,7 +58,7 @@ TEST_CASE("the shipped library has what PLAN.md T-031 asks for", "[lib][shipped]
     CHECK(tools.size() <= 75);
     CHECK(library.holders().size() == 8);
     REQUIRE(materials.size() == 8);
-    REQUIRE(machines.size() == 3);
+    REQUIRE(machines.size() == 4); // T-042: one Mazak machine per Mazak post (Smooth, Matrix)
     for (const auto& m : machines) {
         CHECK_FALSE(m.verified);
         CHECK(m.kind == ray::lib::MachineDef::Kind::Mill3Axis);
@@ -126,7 +126,8 @@ TEST_CASE("the shipped library has what PLAN.md T-031 asks for", "[lib][shipped]
 
 TEST_CASE("the shipped posts are in the library and the machines name them", "[lib][shipped]")
 {
-    // T-040 / T-041: the four shipped posts; the posts themselves are tested in tests/unit/post (shipped_posts_test).
+    // T-040 / T-041 / T-042: the shipped posts; the posts themselves are tested in tests/unit/post
+    // (shipped_posts_test).
     auto opened = ray::lib::ILibrary::open(kRoot);
     REQUIRE(opened);
     std::set<std::string> stems;
@@ -134,14 +135,13 @@ TEST_CASE("the shipped posts are in the library and the machines name them", "[l
         const std::string name = std::filesystem::path(path).filename().string();
         stems.insert(name.substr(0, name.size() - std::string(".post.js").size()));
     }
-    for (const char* post : {"generic-iso", "fanuc", "haas-ngc", "haas-classic"}) {
+    for (const char* post : {"generic-iso", "fanuc", "haas-ngc", "haas-classic", "mazak-smooth", "mazak-matrix"}) {
         INFO(post);
         CHECK(stems.count(post) == 1);
     }
     for (const auto& m : (*opened)->machines()) {
         INFO(m.name);
-        // mazak-eia is task T-042, blocked on the control-generation question (PLAN.md section 15, question 2).
-        CHECK((stems.count(m.defaultPost) == 1 || m.defaultPost == "mazak-eia"));
+        CHECK(stems.count(m.defaultPost) == 1);
     }
 }
 

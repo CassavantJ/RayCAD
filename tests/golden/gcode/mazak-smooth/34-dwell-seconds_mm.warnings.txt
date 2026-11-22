@@ -1,0 +1,1 @@
+dwell posted as P in seconds (property dwellUnits): the dwell unit is [unverified] for the MAZATROL Smooth control; check it before running the program
