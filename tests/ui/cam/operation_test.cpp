@@ -61,6 +61,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QScreen>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlComponent>
 #include <QtQuick/QQuickItem>
@@ -1581,6 +1582,18 @@ Rectangle {
     QQuickItem* flick = Window::findItem(root, QStringLiteral("hyphenFlick"));
     REQUIRE(flick != nullptr);
     INFO("device pixel ratio " << w.window()->effectiveDevicePixelRatio());
+    {
+        // Distance-field text where any screen has a fractional ratio, native text elsewhere (app_host.cpp).
+        std::string ratios;
+        bool fractional = false;
+        for (const QScreen* s : QGuiApplication::screens()) {
+            ratios += " " + s->name().toStdString() + "=" + std::to_string(s->devicePixelRatio());
+            fractional = fractional || std::abs(s->devicePixelRatio() - std::round(s->devicePixelRatio())) > 1e-3;
+        }
+        INFO("screens" << ratios);
+        CHECK(QQuickWindow::textRenderType() ==
+              (fractional ? QQuickWindow::QtTextRendering : QQuickWindow::NativeTextRendering));
+    }
     int lost = 0;
     for (const double contentY : {0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 4.0 / 3.0, 5.0 / 3.0, 7.0}) {
         flick->setProperty("contentY", contentY);
