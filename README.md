@@ -146,7 +146,9 @@ it is first shown, and a test fails if any window of it touches the primary scre
 (`RAY_TEST_SCREEN: windows on ...`) saying how many windows it showed. A name is used rather than a number because it
 stays with the same monitor output whatever order the screens are listed in. A value that names no screen, or the
 primary one, stops each window test at once with a list of the screens. Unset or empty, nothing changes (CI leaves
-it unset). It does not stop a test window from taking the keyboard focus when it opens.
+it unset). It does not stop a test window from taking the keyboard focus when it opens, and the pointer still
+matters: pick a screen the pointer is not resting on, since a test window that opens or grows under it gets real
+hover events (the viewport then picks under it, which the glass resize test counts as leaked GPU resources).
 `tests/ui/screen/test_screen.h` says how it works.
 
 The lints can also be run on their own, without building:
