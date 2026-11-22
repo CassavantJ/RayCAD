@@ -649,6 +649,7 @@ std::optional<Box3> elementBox(const kernel::Shape& shape, SubId element)
 
 // ---------------------------------------------------------------- Probe
 struct Probe::Impl {
+    Impl(const kernel::Shape& s, SubId e) : shape(s), element(e) {}
     const kernel::Shape& shape;
     SubId element;
     bool readable = false;
@@ -662,7 +663,7 @@ struct Probe::Impl {
     double radius = 0;
 };
 
-Probe::Probe(const kernel::Shape& shape, SubId element) : impl_(new Impl{shape, element})
+Probe::Probe(const kernel::Shape& shape, SubId element) : impl_(new Impl(shape, element))
 {
     try {
         switch (element.kind) {

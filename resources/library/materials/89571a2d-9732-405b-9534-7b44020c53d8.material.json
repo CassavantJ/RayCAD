@@ -1,9 +1,10 @@
 {
-  "comment": "AISI 4140 chromium-molybdenum steel, annealed (Wikipedia '41xx steel'). Density 7.85 g/cm3 as for carbon steel (Wikipedia 'Carbon steel'); hardness 197 HB: typical value of public annealed 4140 datasheets (MatWeb), not re-checked here. kc1.1 2000 N/mm2: approximate, ISO 513 group P (alloy steel). Cutting data for this material are in the tools' presets.",
+  "comment": "AISI 4140 chromium-molybdenum steel, annealed (Wikipedia '41xx steel'). Density 7.85 g/cm3 as for carbon steel (Wikipedia 'Carbon steel'); hardness 197 HB: typical value of public annealed 4140 datasheets (MatWeb), not re-checked here. kc1.1 2000 N/mm2: approximate, ISO 513 group P (alloy steel). mc 0.24: approximate, the typical value of row 6, low alloy steel, annealed, in the material group table 'according to DIN / ISO 513 and VDI 3323' (ISCAR catalogue page 'Material Groups'). Cutting data for this material are in the tools' presets.",
   "density": 7.85,
   "group": "Steel",
   "hardnessHb": 197,
   "id": "89571a2d-9732-405b-9534-7b44020c53d8",
+  "mc": 0.24,
   "name": "4140 (annealed)",
   "schema": 1,
   "specificCuttingForce": 2000

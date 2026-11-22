@@ -9,10 +9,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 
 using namespace libtest;
 using ray::lib::LibraryStack;
@@ -351,4 +353,107 @@ TEST_CASE("one watch over the whole stack merges a change on the UI thread and c
     } // the stack goes with its watch threads; anything still queued finds it gone
     dispatcher.runUntil([] { return false; }, std::chrono::milliseconds(100));
     ray::lib::detail::setWatchIntervalMs(5000);
+}
+
+TEST_CASE("roots read in the background join the stack on the UI thread; a slow one does not hold it up",
+          "[lib][stack][background]")
+{
+    TempDir builtin;
+    TempDir user;
+    TempDir slowShare;
+    TempDir parent;
+    saveAll(builtin.dir(), {sampleTool(1)});
+    saveAll(user.dir(), {sampleTool(2)});
+    saveAll(slowShare.dir(), {sampleTool(3)});
+    const std::string unreachable = parent.path("no such share");
+    ray::test::TestDispatcher dispatcher;
+    auto jobs = ray::makeJobSystem(dispatcher, 4);
+    REQUIRE(jobs);
+    // The slow share blocks its read until released (or cancelled).
+    std::atomic<bool> release{false};
+    std::atomic<int> blocked{0};
+    std::atomic<int> cancelled{0};
+    ray::lib::detail::setBackgroundReadHook([&](const std::string& dir, const ray::CancelToken& cancel) {
+        if (dir != slowShare.dir()) {
+            return;
+        }
+        ++blocked;
+        while (!release.load()) {
+            if (cancel.cancelled()) {
+                ++cancelled;
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+    {
+        LibraryStack stack;
+        stack.watch(dispatcher);
+        int calls = 0;
+        stack.subscribe([&calls] { ++calls; });
+        const auto start = std::chrono::steady_clock::now();
+        stack.setRootsInBackground({builtin.dir(), slowShare.dir(), unreachable, user.dir()}, 1, *jobs, 1,
+                                   std::chrono::milliseconds(300));
+        const auto took = std::chrono::steady_clock::now() - start;
+        CHECK(took < std::chrono::seconds(5)); // the bounded wait, not the slow share
+        // The built-in library is there at once; the user library and the unreachable share were read within the wait
+        // (local folders), the slow share is still loading and adds nothing yet.
+        CHECK(stack.tool(ray::ToolId{fixedId(1)}) != nullptr);
+        auto roots = stack.roots();
+        REQUIRE(roots.size() == 4);
+        CHECK(roots[0].open);
+        CHECK_FALSE(roots[0].writable);
+        CHECK(roots[1].loading);
+        CHECK_FALSE(roots[1].open);
+        CHECK(stack.library(1) == nullptr);
+        CHECK(stack.tool(ray::ToolId{fixedId(3)}) == nullptr);
+        CHECK(blocked.load() == 1);
+        if (!roots[3].loading) { // a heavily loaded machine may not have read them within the wait: then below
+            CHECK(stack.tool(ray::ToolId{fixedId(2)}) != nullptr);
+        }
+        CHECK(dispatcher.runUntil(
+            [&] {
+                const auto now = stack.roots();
+                return !now[2].loading && !now[3].loading;
+            },
+            std::chrono::milliseconds(10000)));
+        CHECK(stack.tool(ray::ToolId{fixedId(2)}) != nullptr);
+        roots = stack.roots();
+        CHECK_FALSE(roots[2].open); // the unreachable share: an issue, not a hang
+        const auto issues = stack.issues();
+        REQUIRE(issues.size() == 1);
+        CHECK(issues[0].file == unreachable);
+        // The slow share arrives when its read ends: merged on the UI thread, the listeners called, watched.
+        const int before = calls;
+        release = true;
+        CHECK(dispatcher.runUntil([&] { return stack.tool(ray::ToolId{fixedId(3)}) != nullptr; },
+                                  std::chrono::milliseconds(10000)));
+        CHECK(calls > before);
+        roots = stack.roots();
+        CHECK(roots[1].open);
+        CHECK_FALSE(roots[1].loading);
+        CHECK(roots[1].writable);
+        CHECK(stack.library(1) != nullptr);
+        CHECK(stack.rootOf(ray::lib::ItemKind::Tool, fixedId(3)) == std::optional<std::size_t>(1));
+
+        // New roots while a read is blocked: the read is cancelled and its result dropped.
+        release = false;
+        blocked = 0;
+        stack.setRootsInBackground({builtin.dir(), slowShare.dir()}, 1, *jobs, 1, std::chrono::milliseconds(50));
+        REQUIRE(dispatcher.runUntil([&] { return blocked.load() == 1; }, std::chrono::milliseconds(10000)));
+        stack.setRoots({builtin.dir()}, 1);
+        CHECK(dispatcher.runUntil([&] { return cancelled.load() == 1; }, std::chrono::milliseconds(10000)));
+        dispatcher.runUntil([] { return false; }, std::chrono::milliseconds(100));
+        CHECK(stack.roots().size() == 1);
+        CHECK(stack.tool(ray::ToolId{fixedId(3)}) == nullptr);
+
+        // Destroyed while a read is blocked: the read is cancelled, nothing is left running.
+        blocked = 0;
+        stack.setRootsInBackground({builtin.dir(), slowShare.dir()}, 1, *jobs, 1, std::chrono::milliseconds(0));
+        REQUIRE(dispatcher.runUntil([&] { return blocked.load() == 1; }, std::chrono::milliseconds(10000)));
+    }
+    CHECK(dispatcher.runUntil([&] { return cancelled.load() == 2; }, std::chrono::milliseconds(10000)));
+    dispatcher.runUntil([] { return false; }, std::chrono::milliseconds(100)); // queued continuations find it gone
+    jobs.reset();
+    ray::lib::detail::setBackgroundReadHook({});
 }

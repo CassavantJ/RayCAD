@@ -39,11 +39,24 @@
 //                      the band height 5H/8, ISO 68-1 / ASME B1.1 basic profile). It assumes a full-depth thread from
 //                      a basic-minor-diameter hole: an upper bound. Power: P = T 2 pi n / 60000 / eta.
 //
-// KC MODEL. Specific cutting force depends on chip thickness, kc = kc1.1 hm^-mc (Sandvik Coromant, "Milling formulas
-// and definitions"). lib::Material has kc1.1 only, no mc, so kc1.1 is used flat (PowerModel *Kc11). With hm well
-// below 1 mm (every shipped preset) the true kc is higher: for mc = 0.25 and hm = 0.05 mm about 2.1 x kc1.1, so power
-// and torque here read low and their limits act late. A material with mc would use kc1.1 hm^-mc; dmath has no pow,
-// but for the common mc = 0.25 it is 1 / sqrt(sqrt(hm)).
+// KC MODEL. Specific cutting force depends on chip thickness: kc = kc1.1 hm^-mc, kc1.1 the force for a 1 mm x 1 mm
+// chip, hm the mean chip thickness in mm, mc the material's exponent (Sandvik Coromant, "Milling formulas and
+// definitions" and "Drilling formulas and definitions"; the kc1 and mc of ISO 513 / VDI 3323 material groups). With a
+// material's mc (lib::Material::mc > 0), milling and drilling use it (PowerModel *KcMc):
+//   Milling            hm = fz sin(kr) (1 - cos phi) / phi = fz sin(kr) 2 ae / (Deff phi), phi = arccos(1 - 2 ae /
+//   Deff)
+//                      the engagement angle (radians; ae >= Deff: phi = pi); the mean of fz sin(kr) sin(theta) over the
+//                      arc, Sandvik's hm = sin(kr) 360 ae fz / (pi Deff arccos(1 - 2 ae / Deff)). Face mills (a cut
+//                      centred on the cutter, as above): hm = fz (ae / D) / arcsin(ae / D). sin(kr) = 1 / leadThinning.
+//   Drilling           hm = fz sin(kr), kr half the point angle (Tool::tipAngleDeg; 90 deg when it is 0).
+//   Power and torque then grow as vf^(1 - mc) at a fixed rpm, so step 7 below repeats its proportional reduction until
+//   the limits hold (each repeat leaves an excess ratio r at r^mc).
+// mc is used as k / 256, k = mc x 256 rounded (at most 255): h^(k/256) is a product of repeated square roots of h,
+// which dmath::sqrt computes exactly (IEEE), so kc is identical on every platform without a pow. A published
+// two-decimal mc is at most 0.002 off, under 1 % of kc for chips down to 0.01 mm. Without mc, kc1.1 is used flat
+// (PowerModel *Kc11): with hm well below 1 mm the true kc is higher (for mc 0.25 and hm 0.05 mm about 2.1 x kc1.1),
+// so power and torque read low. Taps always use kc1.1 flat: a tap's chip thickness depends on its chamfer length,
+// which lib::Tool does not hold.
 //
 // ORDER OF LIMITS (deterministic; every step is recorded in FeedsResult::limits)
 //   Milling and drilling (only rpm and feed change; engagement is the operation's):
@@ -99,6 +112,11 @@ constexpr std::int64_t kMaxTapRpmStep = 10;
 constexpr double kIsoMinorDiameterPerPitch = 1.0825317547305482;
 // ISO 68-1 basic profile: the internal thread's groove fills 7/16 of the band between D1 and D.
 constexpr double kTapGrooveFraction = 7.0 / 16.0;
+// mc is used in steps of 1 / kMcSteps (KC MODEL): 2^8, the number of repeated square roots.
+constexpr int kMcSteps = 256;
+// Step 7 with mc: the most repeats of the proportional power and torque reduction (each takes the excess ratio r to
+// r^mc, mc < 1; 64 leave less than 1 um/min, which step 8 then removes).
+constexpr int kMaxLimitRepeats = 64;
 // Slack for rounding down values that are whole numbers in exact arithmetic but may land one ulp below.
 constexpr double kRpmSlack = 1e-9;
 constexpr double kFeedSlackUm = 1e-6;
@@ -111,6 +129,31 @@ Error invalid(std::string message)
 bool finite(double v)
 {
     return std::isfinite(v);
+}
+
+// k of mc = k / kMcSteps: mc x kMcSteps rounded half up, 0 for mc not above 0 (or not finite), at most kMcSteps - 1.
+int mcSteps(double mc)
+{
+    if (!std::isfinite(mc) || !(mc > 0)) {
+        return 0;
+    }
+    const double k = std::floor(mc * kMcSteps + 0.5);
+    return k >= kMcSteps ? kMcSteps - 1 : static_cast<int>(k);
+}
+
+// h^(k / kMcSteps) for h > 0, 0 <= k < kMcSteps: h^(1/2), h^(1/4), ... by repeated dmath::sqrt, multiplied in over the
+// bits of k from the highest (bit 128 is h^(128/256) = h^(1/2)).
+double powSteps(double h, int k)
+{
+    double out = 1;
+    double root = h;
+    for (int bit = kMcSteps / 2; bit >= 1; bit /= 2) {
+        root = dmath::sqrt(root);
+        if ((k & bit) != 0) {
+            out *= root;
+        }
+    }
+    return out;
 }
 
 // A machine value: positive and finite is a known limit; 0 (or anything else) is not known.
@@ -417,21 +460,55 @@ Result<FeedsResult> millOrDrill(const FeedsInput& in, FeedsResult r)
     if (r.limits.maxFeed.state == LimitState::Applied)
         vf = feedLimit;
 
-    // 7. Power and torque, per mm/min of feed at this rpm.
-    const double kc = in.material.specificCuttingForceNmm2;
+    // 7. Power and torque at a feed, at this rpm (KC MODEL: kc1.1 flat, or kc1.1 hm^-mc).
+    const double kc11 = in.material.specificCuttingForceNmm2;
     const double section = r.mode == FeedsMode::Milling
                                ? ae * ap
                                : (solid ? kPi / 4 * deff * deff : kPi / 4 * (d * d - (d - 2 * ae) * (d - 2 * ae)));
     const double mrrPerFeed = section / 1000; // cm3/min per mm/min
-    const bool kcKnown = known(kc);
-    r.powerModel = !kcKnown ? PowerModel::Unknown
-                            : (r.mode == FeedsMode::Milling ? PowerModel::MillingKc11 : PowerModel::DrillingKc11);
-    const double pcPerFeed = kcKnown ? mrrPerFeed * kc * kToolWearFactor / 60000 : 0; // kW per mm/min
+    const bool kcKnown = known(kc11);
+    const int mcK = kcKnown ? mcSteps(in.material.mc) : 0;
+    const bool chipModel = mcK > 0;
+    const bool milling = r.mode == FeedsMode::Milling;
+    r.powerModel = !kcKnown  ? PowerModel::Unknown
+                   : milling ? (chipModel ? PowerModel::MillingKcMc : PowerModel::MillingKc11)
+                             : (chipModel ? PowerModel::DrillingKcMc : PowerModel::DrillingKc11);
+    // Mean chip thickness per mm of programmed chip load.
+    double hmPerFz = 1;
+    if (milling && tool.type == lib::ToolType::FaceMill) {
+        const double s = std::min(1.0, ae / deff);
+        hmPerFz = s / dmath::asin(s);
+    } else if (milling) {
+        const double e = std::min(ae, deff);
+        const double phi = dmath::acos(1 - 2 * e / deff);
+        hmPerFz = (2 * e / deff) / phi / r.leadThinningFactor;
+    } else if (tool.tipAngleDeg > 0 && tool.tipAngleDeg < 180) {
+        hmPerFz = dmath::sin(tool.tipAngleDeg / 2 * kPi / 180);
+    }
+    auto kcAt = [&](double feed) {
+        if (!chipModel) {
+            return kc11;
+        }
+        const double h = hmPerFz * feed / (n * z);
+        return h > 0 ? kc11 / powSteps(h, mcK) : kc11;
+    };
+    auto cuttingPower = [&](double feed) {                                             // kW
+        return kcKnown ? mrrPerFeed * kcAt(feed) * kToolWearFactor / 60000 * feed : 0; // as kc1.1 flat always was
+    };
     auto motorPower = [&](double feed) {
-        return pcPerFeed * feed / kSpindleEfficiency;
+        return cuttingPower(feed) / kSpindleEfficiency;
     };
     auto torque = [&](double feed) {
-        return pcPerFeed * feed * 60000 / (2 * kPi * n);
+        return cuttingPower(feed) * 60000 / (2 * kPi * n);
+    };
+    // The factor that brings the power and torque at `feed` to the known limits (1 when neither is over).
+    auto limitScale = [&](double feed) {
+        double scale = 1;
+        if (known(machine.spindlePowerKw) && motorPower(feed) > machine.spindlePowerKw)
+            scale = std::min(scale, machine.spindlePowerKw / motorPower(feed));
+        if (known(machine.spindleTorqueNm) && torque(feed) > machine.spindleTorqueNm)
+            scale = std::min(scale, machine.spindleTorqueNm / torque(feed));
+        return scale;
     };
     if (kcKnown) {
         const double p = motorPower(vf);
@@ -440,12 +517,13 @@ Result<FeedsResult> millOrDrill(const FeedsInput& in, FeedsResult r)
                  known(machine.spindlePowerKw) && p > machine.spindlePowerKw);
         setLimit(r.limits.torque, machine.spindleTorqueNm, t,
                  known(machine.spindleTorqueNm) && t > machine.spindleTorqueNm);
-        double scale = 1;
-        if (r.limits.power.state == LimitState::Applied)
-            scale = std::min(scale, machine.spindlePowerKw / p);
-        if (r.limits.torque.state == LimitState::Applied)
-            scale = std::min(scale, machine.spindleTorqueNm / t);
-        vf *= scale;
+        // Proportional to vf with kc1.1 flat: one step. With mc they grow as vf^(1 - mc): repeat (KC MODEL).
+        for (int i = 0; i < (chipModel ? kMaxLimitRepeats : 1); ++i) {
+            const double scale = limitScale(vf);
+            if (scale >= 1)
+                break;
+            vf *= scale;
+        }
     } else { // not checked: Unknown, with the machine's values for the panel
         r.limits.power.machine = known(machine.spindlePowerKw) ? machine.spindlePowerKw : 0;
         r.limits.torque.machine = known(machine.spindleTorqueNm) ? machine.spindleTorqueNm : 0;
@@ -480,9 +558,11 @@ Result<FeedsResult> millOrDrill(const FeedsInput& in, FeedsResult r)
     r.effectiveChipLoadMm = r.chipLoadMm / r.chipThinningFactor;
     r.actualSurfaceSpeedMMin = kPi * deff * n / 1000;
     r.mrrCm3Min = mrrPerFeed * r.feedMmMin;
-    r.cuttingPowerKw = pcPerFeed * r.feedMmMin;
+    r.cuttingPowerKw = cuttingPower(r.feedMmMin);
     r.powerKw = kcKnown ? motorPower(r.feedMmMin) : 0;
     r.torqueNm = kcKnown ? torque(r.feedMmMin) : 0;
+    r.meanChipThicknessMm = chipModel ? hmPerFz * r.chipLoadMm : 0;
+    r.specificCuttingForceNmm2 = kcKnown ? kcAt(r.feedMmMin) : 0;
     r.limitedByRpm = r.limits.maxRpm.state == LimitState::Applied;
     r.limitedByMinRpm = r.limits.minRpm.state == LimitState::Applied;
     r.limitedByFeed = r.limits.maxFeed.state == LimitState::Applied;
@@ -625,6 +705,7 @@ Result<FeedsResult> tap(const FeedsInput& in, FeedsResult r)
     r.mrrCm3Min = volumePerRev * r.rpm / 1000;
     r.torqueNm = torqueNm;
     r.powerKw = kcKnown ? motorPower(n) : 0;
+    r.specificCuttingForceNmm2 = kcKnown ? kc : 0;
     r.cuttingPowerKw = r.powerKw * kSpindleEfficiency;
     r.limitedByRpm = r.limits.maxRpm.state == LimitState::Applied;
     r.limitedByMinRpm = r.limits.minRpm.state == LimitState::Applied;
@@ -708,7 +789,10 @@ Result<FeedsResult> computeFeeds(const FeedsInput& in)
     if (result->powerModel == PowerModel::Unknown) {
         result->notes.emplace_back("The material's specific cutting force is not known: power and torque are not "
                                    "estimated.");
-    } else {
+    } else if (result->powerModel == PowerModel::TappingKc11) {
+        result->notes.emplace_back("Tapping power and torque use kc1.1 without a chip-thickness correction (a tap's "
+                                   "chip thickness depends on its chamfer, which the tool does not record).");
+    } else if (result->powerModel == PowerModel::MillingKc11 || result->powerModel == PowerModel::DrillingKc11) {
         result->notes.emplace_back("Power and torque use kc1.1 without a chip-thickness correction (the material has "
                                    "no mc), so they read low for thin chips.");
     }

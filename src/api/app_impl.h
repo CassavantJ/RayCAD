@@ -241,7 +241,8 @@ public:
     void configureLibraries();
     // The roots of the default stack now and how many of them are read-only (the built-in library first).
     std::pair<std::vector<std::string>, std::size_t> defaultLibraryRoots() const;
-    // UI thread: cancels the toolpaths being generated for the operations of the state (a document closing).
+    // UI thread: cancels the toolpaths being generated for the operations of the state (a document closing) and makes
+    // the engine forget them (ICamEngine::forget), except operations another open document also has.
     void cancelGenerations(const doc::DocStatePtr& state);
     // ~AppImpl, after the app's jobs ended: the engine, the settings listener and the library stack go.
     void shutdownCam();
