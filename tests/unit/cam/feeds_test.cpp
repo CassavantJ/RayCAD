@@ -1382,7 +1382,7 @@ TEST_CASE("feeds: every shipped preset on every shipped machine, pinned", "[cam]
             }
         }
     }
-    CHECK(count == 2784); // 696 presets x 4 machines
+    CHECK(count == 2944); // 736 presets x 4 machines
     // The rpm and feed of every combination, the values that reach toolpaths: identical on every platform. Changes
     // only when the library, the formulas or the constants of feeds.cpp change (then review and update this).
     // Re-pinned when the shipped inch tap pitches became exact (25.4 / TPI to 6 decimals instead of 4): the rounded
@@ -1390,7 +1390,9 @@ TEST_CASE("feeds: every shipped preset on every shipped machine, pinned", "[cam]
     // their feed (tapFeedExact false) and 32 TPI taps move to the rpm step of 4.
     // Re-pinned for T-042: a fourth shipped machine (the Mazak Matrix VMC; the Mazak Smooth machine kept its id and
     // values, only its name and post changed), so 696 more combinations enter the hash.
-    CHECK(h.finish().hex() == "0f77768f2aa059496f47c3085f18b8ff15688d39f1a1a3ac28d59410568bfc7d");
+    // Re-pinned for T-057: five more shipped drills (the reamers' pre-drills C, 5.8 and 9.8 mm, and the clearance
+    // drills H and 6.6 mm), 40 presets, 160 more combinations; the other tools are unchanged.
+    CHECK(h.finish().hex() == "a1adb5d3106582b45c158d081b8fc8152a7fac65876791e4d4c15cfd37fbb9a5");
 }
 
 // Not a test: a table of the shipped presets that hit a limit on every shipped machine (run by hand with
