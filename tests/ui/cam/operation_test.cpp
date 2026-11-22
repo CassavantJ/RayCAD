@@ -2,9 +2,12 @@
 // application session:
 //
 //   - a drill operation by the UI on a part with holes: the type from the registry's list, a library tool from the
-//     searchable list (embedded in the same step), holes picked by any of their faces (a face that is no hole and a
-//     hole picked twice refused with the reason in the status line), "Use calculated" from computeFeeds, the toolpath
+//     tool library's picker (embedded in the same step), holes picked by any of their faces (a face that is no hole and
+//     a hole picked twice refused with the reason in the status line), "Use calculated" from computeFeeds, the toolpath
 //     preview and its backplot in the view, OK with no confirmation, the tree up to date; undo and redo
+//   - the tool picker (ToolPicker.qml): the types the cycle calls for (x-toolTypes), every tool on request, a tool
+//     written into the library folder or saved there while the panel is open shows at once, the tool library manager
+//     from the picker, the library tool embedded on OK as the library has it then
 //   - editing: a parameter changes the preview, a field that does not matter is hidden until it does, Esc changes
 //     nothing, Apply (Enter) is one undo step
 //   - progress: a generation started from the panel shows its progress there and in the tree, which follows the
@@ -26,6 +29,7 @@
 #include "cam/operation_view.h"
 #include "cam/setup_tool.h"
 #include "cam/setup_tree.h"
+#include "cam/tools_model.h"
 #include "engine_test_util.h" // the CAM engine tests' test-only operation type and library JSON (tests/unit/cam)
 #include "files.h"
 #include "palette_commands.h"
@@ -39,10 +43,12 @@
 #include "viewport_navigation.h"
 
 #include <ray_api/cam_operation.h>
+#include <ray_api/cam_tools.h>
 #include <ray_api/viewer.h>
 
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -69,6 +75,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -303,6 +310,8 @@ struct Window {
         inView(field);
         field->forceActiveFocus();
         QMetaObject::invokeMethod(field, "selectAll");
+        if (text.isEmpty())
+            QTest::keyClick(window(), Qt::Key_Backspace);
         for (const QChar c : text)
             QTest::keyClick(window(), c.toLatin1());
         QCoreApplication::processEvents();
@@ -491,32 +500,49 @@ void newOperation(const Window& w, int setupRow = 0)
     w.shown(QStringLiteral("operationPanel"));
 }
 
-// Chooses a tool in the panel's list by searching for its name and clicking its row.
+// The list of the panel's tool picker (qml/cam/ToolPicker.qml, the tool library's).
+ui::ToolListModel* pickerList(const Window& w)
+{
+    QQuickItem* view = w.shown(QStringLiteral("toolPickerView"));
+    auto* list = qobject_cast<ui::ToolListModel*>(view->property("model").value<QObject*>());
+    REQUIRE(list != nullptr);
+    return list;
+}
+
+// The type names the picker lists now.
+std::set<QString> pickerTypes(const Window& w)
+{
+    ui::ToolListModel* list = pickerList(w);
+    std::set<QString> out;
+    for (int i = 0; i < list->count(); ++i)
+        out.insert(list->get(i).value(QStringLiteral("type")).toString());
+    return out;
+}
+
+// The picker's row of a tool (the document's copy first), or -1.
+int pickerRow(const Window& w, const QString& id)
+{
+    ui::ToolListModel* list = pickerList(w);
+    const int row = list->rowOf(QStringLiteral("document"), id);
+    return row >= 0 ? row : list->rowOf(QStringLiteral("library"), id);
+}
+
+// Chooses a tool in the panel's picker by searching for its name and clicking its row.
 void chooseTool(const Window& w, const QString& id, const QString& search)
 {
-    w.typeInto(QStringLiteral("operationToolSearch"), search);
+    w.typeInto(QStringLiteral("toolPickerSearch"), search);
     int row = -1;
-    const bool listed = QTest::qWaitFor(
-        [&] {
-            const QVariantList tools = w.op()->tools();
-            for (int i = 0; i < tools.size(); ++i) {
-                if (tools[i].toMap().value(QStringLiteral("id")).toString() == id)
-                    row = i;
-            }
-            return row >= 0;
-        },
-        5000);
+    const bool listed = QTest::qWaitFor([&] { return (row = pickerRow(w, id)) >= 0; }, 5000);
     INFO("tool " << id.toStdString() << " after searching '" << search.toStdString() << "'");
     REQUIRE(listed);
     // The list scrolls to the row (it shows a few at a time), which must be the tool's (the list follows the search).
-    QQuickItem* list = w.shown(QStringLiteral("operationToolListView"));
+    QQuickItem* view = w.shown(QStringLiteral("toolPickerView"));
     QQuickItem* item = nullptr;
     const bool shown = QTest::qWaitFor(
         [&] {
-            QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4 /* Contain */));
-            item = w.find(QStringLiteral("operationToolRow.%1").arg(row));
-            return item != nullptr && item->isVisible() &&
-                   item->property("modelData").toMap().value(QStringLiteral("id")).toString() == id;
+            QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4 /* Contain */));
+            item = w.find(QStringLiteral("toolPickerRow.%1").arg(row));
+            return item != nullptr && item->isVisible() && item->property("itemId").toString() == id;
         },
         5000);
     REQUIRE(shown);
@@ -621,10 +647,15 @@ void checkPanelLayout(const Window& w)
             items.push_back(c);
     }
     int texts = 0;
+    // The tool picker's rows are the tool library's (ToolPicker.qml): a long name elides there, in full in the row's
+    // accessible name; the panel's own labels never do.
+    QQuickItem* picker = w.find(QStringLiteral("operationToolPicker"));
+    REQUIRE(picker != nullptr);
     for (QQuickItem* item : items) {
         const QVariant truncated = item->property("truncated");
         if (!truncated.isValid() || !item->isVisible() || item->property("text").toString().isEmpty() ||
-            item->objectName() == QStringLiteral("placeholder") || item->objectName() == QStringLiteral("label"))
+            item->objectName() == QStringLiteral("placeholder") || item->objectName() == QStringLiteral("label") ||
+            picker->isAncestorOf(item))
             continue;
         ++texts;
         INFO("label '" << item->property("text").toString().toStdString() << "' (" << item->objectName().toStdString()
@@ -776,9 +807,9 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
     CHECK(statusLine(w) == QStringLiteral("Choose a tool"));
     CHECK_FALSE(w.shown(QStringLiteral("operationOk"))->isEnabled());
 
-    // The tool: the list offers drills for the drill cycle; search, click.
-    for (const QVariant& t : w.op()->tools())
-        CHECK(t.toMap().value(QStringLiteral("detail")).toString().endsWith(QStringLiteral("drill")));
+    // The tool: the library's picker offers drills for the drill cycle; search, click.
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    CHECK(pickerTypes(w) == std::set<QString>{QStringLiteral("drill")});
     chooseTool(w, kDrill6, QStringLiteral("6 mm HSS"));
     CHECK(w.shown(QStringLiteral("operationToolText"))->property("text").toString() ==
           QStringLiteral("6 mm HSS-Co jobber drill"));
@@ -889,6 +920,122 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
     w.checkNoWarnings();
 }
 
+TEST_CASE("the panel's tool picker: the types by cycle, the library as it changes, the tool library one click away",
+          "[cam][e2e][t045][picker]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate);
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    lib::LibraryStack* stack = w.host->app()->libraries();
+    const auto roots = stack->roots();
+    std::optional<std::size_t> mine; // My library: the last writable root
+    for (std::size_t i = 0; i < roots.size(); ++i) {
+        if (roots[i].writable)
+            mine = i;
+    }
+    REQUIRE(mine.has_value());
+    const lib::Tool* drill6 = stack->tool(ToolId{Uuid::fromString(kDrill6.toStdString())});
+    REQUIRE(drill6 != nullptr);
+    // A drill written into My library's folder while no panel is open: opening the panel reads the folders again.
+    lib::Tool fresh = *drill6;
+    fresh.id = ToolId{Uuid::generate()};
+    fresh.name = "Picker test drill";
+    fresh.diameter = 6.1;
+    const QString freshId = QString::fromStdString(fresh.id.value.toString());
+    {
+        const QString dir = QString::fromStdString(roots[*mine].dir) + QStringLiteral("/tools");
+        REQUIRE(QDir().mkpath(dir));
+        QFile f(dir + QStringLiteral("/") + freshId + QStringLiteral(".tool.json"));
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray::fromStdString(api::cam_tools::toolJson(fresh)));
+    }
+    newOperation(w);
+    w.typeInto(QStringLiteral("toolPickerSearch"), QStringLiteral("picker test"));
+    REQUIRE(QTest::qWaitFor([&] { return pickerRow(w, freshId) >= 0; }, 10000));
+    w.typeInto(QStringLiteral("toolPickerSearch"), QString());
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 1; }, 5000));
+
+    // The types follow the cycle (x-toolTypes of the drill schema); "Show every tool" lifts the filter.
+    CHECK(pickerTypes(w) == std::set<QString>{QStringLiteral("drill")});
+    stepDown(w, QStringLiteral("schemaCombo.cycle"), // spot, [drill], peck, chipBreak, tap
+             [&] { return w.op()->form()->valueOf(QStringLiteral("cycle")).toString() == QStringLiteral("tap"); });
+    REQUIRE(QTest::qWaitFor([&] { return pickerTypes(w) == std::set<QString>{QStringLiteral("tap")}; }, 5000));
+    w.op()->form()->setValue(QStringLiteral("cycle"), QStringLiteral("spot"));
+    REQUIRE(QTest::qWaitFor([&] { return pickerTypes(w).count(QStringLiteral("spotDrill")) == 1; }, 5000));
+    for (const QString& t : pickerTypes(w)) {
+        INFO("type " << t.toStdString());
+        CHECK((t == QStringLiteral("spotDrill") || t == QStringLiteral("drill") || t == QStringLiteral("chamferMill")));
+    }
+    w.click(QStringLiteral("operationShowAllTools"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->showAllTools(); }, 5000));
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() == pickerList(w)->total(); }, 5000));
+    CHECK(pickerTypes(w).count(QStringLiteral("flatEndMill")) == 1);
+    w.click(QStringLiteral("operationShowAllTools"));
+    w.op()->form()->setValue(QStringLiteral("cycle"), QStringLiteral("drill"));
+    REQUIRE(QTest::qWaitFor([&] { return pickerTypes(w) == std::set<QString>{QStringLiteral("drill")}; }, 5000));
+
+    // The new drill, chosen from the picker: the panel reads it from the library (its name, its feeds).
+    chooseTool(w, freshId, QStringLiteral("picker test"));
+    CHECK(w.shown(QStringLiteral("operationToolText"))->property("text").toString() ==
+          QStringLiteral("Picker test drill"));
+    CHECK(w.find(QStringLiteral("toolPickerRow.0"))->property("itemId").toString() == freshId);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->calculated().value(QStringLiteral("available")).toBool(); }, 5000));
+    // Changed in the library while the panel is open (a save in the manager, another program's through the watch):
+    // the picker and the panel follow, through the stack's listeners.
+    lib::Tool renamed = fresh;
+    renamed.name = "Picker test drill, reground";
+    REQUIRE(stack->library(*mine)->save(renamed));
+    stack->remerge();
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return w.shown(QStringLiteral("operationToolText"))->property("text").toString() ==
+                   QStringLiteral("Picker test drill, reground");
+        },
+        5000));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const int row = pickerRow(w, freshId);
+            return row >= 0 && pickerList(w)->get(row).value(QStringLiteral("name")).toString() ==
+                                   QStringLiteral("Picker test drill, reground");
+        },
+        5000));
+    lib::Tool another = fresh;
+    another.id = ToolId{Uuid::generate()};
+    another.name = "Picker test drill two";
+    REQUIRE(stack->library(*mine)->save(another));
+    stack->remerge();
+    REQUIRE(
+        QTest::qWaitFor([&] { return pickerRow(w, QString::fromStdString(another.id.value.toString())) >= 0; }, 5000));
+
+    // The tool library one click away, over the panel; closing it leaves the panel as it was.
+    auto* tools = w.singleton<ui::ToolLibraryModel>("CamTools");
+    w.click(QStringLiteral("toolPickerOpenLibrary"));
+    REQUIRE(QTest::qWaitFor([&] { return tools->shown(); }, 5000));
+    w.shown(QStringLiteral("toolLibraryClose"));
+    CHECK(w.op()->active());
+    w.shotsBothThemes(QStringLiteral("t045_picker_library"));
+    tools->hide();
+    REQUIRE(QTest::qWaitFor([&] { return !tools->shown(); }, 5000));
+    CHECK(w.op()->active());
+    CHECK(w.op()->toolId() == freshId);
+
+    // OK: the library tool is embedded in the same undo step, as the library has it now.
+    pickHole(w, 0);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    w.click(QStringLiteral("operationUseCalculated"));
+    w.previewed("ok");
+    const std::size_t undoBefore = w.undoCount();
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active() && w.undoCount() == undoBefore + 1; }, kTimeoutMs));
+    const doc::DocStatePtr state = w.document()->state();
+    REQUIRE(state->cam->tools.count(fresh.id) == 1);
+    CHECK(state->cam->tools.at(fresh.id).item.name == "Picker test drill, reground");
+    CHECK(state->cam->operations.begin()->second.tool.tool == fresh.id);
+    w.checkNoWarnings();
+}
+
 TEST_CASE("editing an operation: the preview follows a parameter, relevance, Esc, Apply", "[cam][e2e][t045]")
 {
     RAY_REQUIRE_RHI();
@@ -989,8 +1136,8 @@ TEST_CASE("generation shows its progress in the panel and in the tree, which fol
     CHECK(w.find(QStringLiteral("operationSection.geometry"))->isVisible() == false); // it takes no geometry
     CHECK(w.shown(QStringLiteral("schemaInput.steps"))->property("text").toString() == QStringLiteral("3"));
     // Any tool suits it; typed speed and feed (the user's own).
-    w.shown(QStringLiteral("operationToolRow.0"));
-    w.click(QStringLiteral("operationToolRow.0"));
+    w.shown(QStringLiteral("toolPickerRow.0"));
+    w.click(QStringLiteral("toolPickerRow.0"));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->toolId().isEmpty(); }, 5000));
     w.typeInto(QStringLiteral("operationInput.rpm"), QStringLiteral("2000"));
     w.typeInto(QStringLiteral("operationInput.feedCut"), QStringLiteral("8"));
@@ -1070,8 +1217,7 @@ TEST_CASE("validation: a parameter out of range and a tap that does not fit the 
     // Tap: the cycle, then the M8 tap, whose thread is not the hole's.
     stepDown(w, QStringLiteral("schemaCombo.cycle"), // spot, [drill], peck, chipBreak, tap
              [&] { return w.op()->form()->valueOf(QStringLiteral("cycle")).toString() == QStringLiteral("tap"); });
-    for (const QVariant& t : w.op()->tools())
-        CHECK(t.toMap().value(QStringLiteral("detail")).toString().endsWith(QStringLiteral("tap"))); // taps on offer
+    REQUIRE(QTest::qWaitFor([&] { return pickerTypes(w) == std::set<QString>{QStringLiteral("tap")}; }, 5000));
     chooseTool(w, kTapM8, QStringLiteral("M8x1.25"));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->holeCount() == 1; }, kTimeoutMs));
     pickHole(w, 0);

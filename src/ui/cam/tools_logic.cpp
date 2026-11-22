@@ -496,6 +496,8 @@ std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& 
         const Entry& e = entries[static_cast<std::size_t>(i)];
         if (!filter.type.isEmpty() && !e.holder && e.type != filter.type)
             continue;
+        if (!filter.types.isEmpty() && !e.holder && !filter.types.contains(e.type))
+            continue;
         if (filter.minDiameter >= 0 && e.diameter < filter.minDiameter - 1e-9)
             continue;
         if (filter.maxDiameter >= 0 && e.diameter > filter.maxDiameter + 1e-9)

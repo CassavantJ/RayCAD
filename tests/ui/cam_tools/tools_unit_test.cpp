@@ -325,6 +325,17 @@ TEST_CASE("the filter is deterministic whatever the input order", "[tools][filte
     CHECK(m.size() == 5); // i = 0, 12, 24, 36, 48
     for (int r : m)
         CHECK(entries[static_cast<std::size_t>(r)].type == QStringLiteral("drill"));
+    // Several types at once (an operation type's x-toolTypes, the operation panel's picker): any of them.
+    toolsui::Filter several;
+    several.types = {QStringLiteral("drill"), QStringLiteral("tap")};
+    const auto s = toolsui::filterEntries(entries, several);
+    CHECK(s.size() == 40); // i % 3 == 0 or 2
+    for (int r : s)
+        CHECK(entries[static_cast<std::size_t>(r)].type != QStringLiteral("flatEndMill"));
+    several.type = QStringLiteral("tap"); // both apply
+    for (int r : toolsui::filterEntries(entries, several))
+        CHECK(entries[static_cast<std::size_t>(r)].type == QStringLiteral("tap"));
+    CHECK(toolsui::filterEntries(entries, several).size() == 20);
 }
 
 TEST_CASE("the editor's values are checked against the tool schema, every problem by field", "[tools][fields]")

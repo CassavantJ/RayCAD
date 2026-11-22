@@ -1,6 +1,6 @@
 // The non-visual part of the operation panel (task T-045) besides the parameter form (operation_form.h): what the
 // panel reads from a type's schema annotations (x-geometry, x-heightsUsed, x-cuttingUsed, x-toolTypes;
-// docs/operation_types.md), the feeds read-out in the display units, the tool list's order, and the cam.operation.add
+// docs/operation_types.md), the feeds read-out in the display units, and the cam.operation.add
 // / edit arguments. Display and input only (src/ui is not deterministic code, PLAN.md 8).
 #pragma once
 
@@ -65,20 +65,6 @@ QString limitStateText(cam::LimitState state);
 bool matchesRecord(const cam::CalculatedFeeds& record, double rpm, double feedCut, double feedPlunge, double feedRamp,
                    const QStringList& used);
 QJsonObject calculatedJson(const cam::CalculatedFeeds& record);
-
-// ---------- Tools ----------
-// The order of the tool list: those of the document first, then those of the types wanted, then by diameter and name.
-struct ToolRow {
-    QString id, name, type;
-    double diameter = 0;
-    int flutes = 0;
-    bool embedded = false; // in the document already
-    bool suits = true;     // of a type x-toolTypes offers (or any)
-};
-void sortTools(std::vector<ToolRow>& rows);
-// Whether a row matches the search text: every word in its name, type or diameter text.
-bool toolMatches(const ToolRow& row, const QString& search, bool inch);
-QString toolDetail(const ToolRow& row, bool inch); // "⌀6 mm, 2 flutes, drill"
 
 // ---------- Arguments ----------
 struct OperationInput {

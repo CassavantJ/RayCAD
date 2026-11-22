@@ -11,6 +11,7 @@
 #include "operation_view.h"
 #include "setup_tool.h"
 #include "setup_tree.h"
+#include "tools_model.h"
 
 #include <ray_api/cam_setup.h>
 #include <ray_api/feature_edit.h>
@@ -164,6 +165,9 @@ OperationToolModel::OperationToolModel(SceneController* scene, SelectionModel* s
 
 OperationToolModel::~OperationToolModel()
 {
+    *alive_ = false;
+    if (api::IApp* a = app(); a != nullptr && a->libraries() == stackSubscribed_ && stackListener_ != 0)
+        stackSubscribed_->unsubscribe(stackListener_);
     if (commands_) {
         commands_->setUiHandler(QStringLiteral("cam.opTool."), {});
         commands_->setUiHandler(QStringLiteral("cam.operation.add"), {});
@@ -188,6 +192,7 @@ OperationToolModel* OperationToolModel::create(QQmlEngine* qml, QJSEngine*)
     SetupTreeModel* tree = nullptr;
     SetupToolModel* setupTool = nullptr;
     ToolpathDisplay* display = nullptr;
+    ToolLibraryModel* tools = nullptr;
     if (qml != nullptr) {
         const QString uri = QStringLiteral("RayCad.Ui");
         scene = qml->singletonInstance<SceneController*>(uri, QStringLiteral("Scene"));
@@ -199,6 +204,7 @@ OperationToolModel* OperationToolModel::create(QQmlEngine* qml, QJSEngine*)
         tree = qml->singletonInstance<SetupTreeModel*>(uri, QStringLiteral("CamTreeModel"));
         setupTool = qml->singletonInstance<SetupToolModel*>(uri, QStringLiteral("CamSetup"));
         display = qml->singletonInstance<ToolpathDisplay*>(uri, QStringLiteral("CamToolpaths"));
+        tools = qml->singletonInstance<ToolLibraryModel*>(uri, QStringLiteral("CamTools"));
     }
     auto* model = new OperationToolModel(scene, selection, session, context);
     model->setCommands(commands);
@@ -206,6 +212,7 @@ OperationToolModel* OperationToolModel::create(QQmlEngine* qml, QJSEngine*)
     model->setTree(tree);
     model->setSetupTool(setupTool);
     model->setDisplay(display);
+    model->setTools(tools);
     model->subscribe();
     return model; // owned by the engine
 }
@@ -258,6 +265,7 @@ doc::Document* OperationToolModel::liveDoc() const
 void OperationToolModel::subscribe()
 {
     unsubscribe();
+    subscribeLibrary();
     api::IApp* a = app();
     api::OpenDocument* od = a != nullptr ? a->active() : nullptr;
     if (od == nullptr || !od->document)
@@ -288,6 +296,37 @@ void OperationToolModel::unsubscribe()
     docListener_ = previewListener_ = 0;
     docId_.clear();
     ++docGeneration_;
+}
+
+void OperationToolModel::subscribeLibrary()
+{
+    api::IApp* a = app();
+    lib::LibraryStack* s = a != nullptr ? a->libraries() : nullptr;
+    if (s == stackSubscribed_)
+        return;
+    // The old stack went with its app (a listener left in it is never called again); a new one is listened to.
+    stackSubscribed_ = s;
+    stackListener_ = 0;
+    if (s != nullptr) {
+        std::weak_ptr<bool> alive = alive_;
+        stackListener_ = s->subscribe([this, alive] {
+            if (auto live = alive.lock(); live && *live)
+                onLibraryChanged();
+        });
+    }
+}
+
+// The library changed (its watch, a refresh, a save in the manager): the holders and materials on offer, and the chosen
+// tool's feeds, follow. The picker's list follows by itself (CamTools listens too).
+void OperationToolModel::onLibraryChanged()
+{
+    if (!active() || committing_)
+        return;
+    loadOptions();
+    emit optionsChanged();
+    emit toolChanged();
+    updateFeeds();
+    schedulePreview(); // a library tool or holder not embedded yet goes into the preview as the library has it now
 }
 
 const cam::Setup* OperationToolModel::setupOf(const doc::DocState& state) const
@@ -471,7 +510,6 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
     queuedPick_.reset();
     toolId_.clear();
     holderId_.clear();
-    toolSearch_.clear();
     showAllTools_ = false;
     record_.reset();
     loadedRecord_.reset();
@@ -499,7 +537,12 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
         form_->setLengthFormat([units](double mm) { return units ? units->formatLength(mm) : QString(); });
     }
     applyType(type, false);
+    subscribeLibrary();
     loadOptions();
+    // The library folders may have changed since the watch last looked: read them again on a worker (the picker and
+    // this panel follow when the stack's listeners are called).
+    if (tools_)
+        tools_->refresh();
     std::vector<QJsonObject> refs;
     if (editing_) {
         const cam::Operation& op = state->cam->operations.at(*id_);
@@ -744,41 +787,15 @@ void OperationToolModel::loadOperation(const doc::DocState& state, const cam::Op
     exact_[QStringLiteral("rpm")] = {values_.value(QStringLiteral("rpm")).toString(), op.cutting.spindleRpm};
 }
 
-// The tools (the document's and the library's), holders and materials on offer.
+// The holders and materials on offer (the document's and the library's); the tools are the picker's (CamTools).
 void OperationToolModel::loadOptions()
 {
-    toolItems_.clear();
     holderList_.clear();
-    holderJson_.clear();
     materialItems_.clear();
     doc::Document* d = liveDoc();
     const doc::DocStatePtr state = d ? d->state() : nullptr;
     api::IApp* a = app();
     lib::LibraryStack* stack = a ? a->libraries() : nullptr;
-    std::set<QString> seen;
-    const auto addTool = [&](const lib::Tool& t, bool embedded) {
-        const QString id = idText(t.id.value);
-        if (!seen.insert(id).second)
-            return;
-        ToolItem item;
-        item.tool = t;
-        item.embedded = embedded;
-        item.row.id = id;
-        item.row.name = qs(t.name);
-        item.row.type = qs(api::cam_operation::toolTypeName(t.type));
-        item.row.diameter = t.diameter;
-        item.row.flutes = t.flutes;
-        item.row.embedded = embedded;
-        toolItems_.push_back(std::move(item));
-    };
-    if (state && state->cam) {
-        for (const auto& [id, t] : state->cam->tools)
-            addTool(t.item, true);
-    }
-    if (stack != nullptr) {
-        for (const lib::Tool& t : stack->tools())
-            addTool(t, false);
-    }
     holderList_.push_back(QVariantMap{{QStringLiteral("id"), QString()}, {QStringLiteral("name"), trs("None")}});
     std::set<QString> holders;
     if (state && state->cam) {
@@ -791,7 +808,6 @@ void OperationToolModel::loadOptions()
     if (stack != nullptr) {
         for (const lib::Holder& h : stack->holders()) {
             const QString id = idText(h.id.value);
-            holderJson_[id] = api::cam_operation::holderJson(h);
             if (holders.insert(id).second)
                 holderList_.push_back(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("name"), qs(h.name)}});
         }
@@ -1020,56 +1036,36 @@ std::optional<double> OperationToolModel::length(const QString& key, QString* er
 }
 
 // ---------- tools ----------
-const OperationToolModel::ToolItem* OperationToolModel::chosenTool() const
+std::optional<lib::Tool> OperationToolModel::chosenTool() const
 {
-    for (const ToolItem& t : toolItems_) {
-        if (t.row.id == toolId_)
-            return &t;
+    if (toolId_.isEmpty())
+        return std::nullopt;
+    const ToolId id{Uuid::fromString(toolId_.toStdString())};
+    if (doc::Document* d = liveDoc()) {
+        const doc::DocStatePtr state = d->state();
+        if (state->cam) {
+            if (const auto it = state->cam->tools.find(id); it != state->cam->tools.end())
+                return it->second.item;
+        }
     }
-    return nullptr;
+    api::IApp* a = app();
+    lib::LibraryStack* stack = a ? a->libraries() : nullptr;
+    if (const lib::Tool* t = stack ? stack->tool(id) : nullptr)
+        return *t;
+    return std::nullopt;
 }
 
 QString OperationToolModel::toolText() const
 {
-    const ToolItem* t = chosenTool();
-    if (t == nullptr)
+    const std::optional<lib::Tool> t = chosenTool();
+    if (!t)
         return toolId_.isEmpty() ? trs("No tool chosen") : trs("A tool that is not in the library");
-    return t->row.name;
+    return qs(t->name);
 }
 
-QVariantList OperationToolModel::tools() const
+QStringList OperationToolModel::toolTypes() const
 {
-    QVariantList out;
-    if (!active())
-        return out;
-    const QStringList wanted = camui::toolTypesFor(schema_, form_->params());
-    std::vector<camui::ToolRow> rows;
-    for (const ToolItem& t : toolItems_) {
-        camui::ToolRow row = t.row;
-        row.suits = wanted.isEmpty() || wanted.contains(row.type);
-        if (!showAllTools_ && !row.suits && row.id != toolId_)
-            continue;
-        if (!camui::toolMatches(row, toolSearch_, inch()))
-            continue;
-        rows.push_back(std::move(row));
-    }
-    camui::sortTools(rows);
-    for (const camui::ToolRow& r : rows)
-        out.push_back(QVariantMap{{QStringLiteral("id"), r.id},
-                                  {QStringLiteral("name"), r.name},
-                                  {QStringLiteral("detail"), camui::toolDetail(r, inch())},
-                                  {QStringLiteral("embedded"), r.embedded},
-                                  {QStringLiteral("suits"), r.suits},
-                                  {QStringLiteral("current"), r.id == toolId_}});
-    return out;
-}
-
-void OperationToolModel::setToolSearch(const QString& text)
-{
-    if (text == toolSearch_)
-        return;
-    toolSearch_ = text;
-    emit toolsChanged();
+    return active() ? camui::toolTypesFor(schema_, form_->params()) : QStringList();
 }
 
 void OperationToolModel::setShowAllTools(bool all)
@@ -1137,7 +1133,7 @@ void OperationToolModel::updateFeeds()
         emit feedsChanged();
         return;
     }
-    const ToolItem* tool = chosenTool();
+    const std::optional<lib::Tool> tool = chosenTool();
     const lib::Material* material = nullptr;
     for (const lib::Material& m : materialItems_) {
         if (idText(m.id.value) == materialId_)
@@ -1154,12 +1150,12 @@ void OperationToolModel::updateFeeds()
     }
     const bool in = inch();
     calculated_.insert(QStringLiteral("available"), false);
-    if (tool == nullptr || material == nullptr) {
-        calculated_.insert(QStringLiteral("error"), tool == nullptr ? trs("Choose a tool to calculate the feeds")
-                                                                    : trs("Choose a material to calculate the feeds"));
+    if (!tool || material == nullptr) {
+        calculated_.insert(QStringLiteral("error"), !tool ? trs("Choose a tool to calculate the feeds")
+                                                          : trs("Choose a material to calculate the feeds"));
     } else {
         api::cam_operation::FeedsRequest req;
-        req.tool = tool->tool;
+        req.tool = *tool;
         req.material = *material;
         req.machine = machine;
         req.opType = type_.toStdString();
@@ -1501,23 +1497,23 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
         return fail(trs("Choose a tool"), QStringLiteral("tool"));
     in.tool = toolId_;
     in.holder = holderId_;
-    const ToolItem* tool = chosenTool();
+    // A library tool or holder the document does not have yet is embedded in the same step: the tool library's
+    // "library" member (ToolLibraryModel::libraryArgsFor, as the picker's API says).
     const bool toolEmbedded =
         state->cam && state->cam->tools.count(ToolId{Uuid::fromString(toolId_.toStdString())}) != 0;
-    if (!toolEmbedded) {
-        if (tool == nullptr)
+    const bool holderEmbedded =
+        holderId_.isEmpty() ||
+        (state->cam && state->cam->holders.count(HolderId{Uuid::fromString(holderId_.toStdString())}) != 0);
+    if (!toolEmbedded || !holderEmbedded) {
+        if (!tools_)
+            return fail(trs("The tool library is not available"), QStringLiteral("tool"));
+        const QJsonObject library = QJsonObject::fromVariantMap(tools_->libraryArgsFor(toolId_, holderId_));
+        in.libraryTools = library.value(QStringLiteral("tools")).toArray();
+        in.libraryHolders = library.value(QStringLiteral("holders")).toArray();
+        if (!toolEmbedded && in.libraryTools.isEmpty())
             return fail(trs("The tool is in neither the document nor the library"), QStringLiteral("tool"));
-        in.libraryTools.push_back(jsonObject(api::cam_operation::toolJson(tool->tool)));
-    }
-    if (!holderId_.isEmpty()) {
-        const bool embedded =
-            state->cam && state->cam->holders.count(HolderId{Uuid::fromString(holderId_.toStdString())}) != 0;
-        if (!embedded) {
-            const auto it = holderJson_.find(holderId_);
-            if (it == holderJson_.end())
-                return fail(trs("The holder is in neither the document nor the library"), QStringLiteral("holder"));
-            in.libraryHolders.push_back(jsonObject(it->second));
-        }
+        if (!holderEmbedded && in.libraryHolders.isEmpty())
+            return fail(trs("The holder is in neither the document nor the library"), QStringLiteral("holder"));
     }
     const QString stickOut = values_.value(QStringLiteral("stickOut")).toString().trimmed();
     if (!stickOut.isEmpty()) {

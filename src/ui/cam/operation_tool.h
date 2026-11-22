@@ -6,8 +6,12 @@
 //   Open         start() / startFor(setup) a new operation (the type chosen from the registry's list; the CAM
 //                tree's "New operation" on a setup row, the cam.opTool.new command); edit(op) an existing one (the
 //                tree's double-click, operationEditRequested).
-//   Sections     Tool (a searchable list: the document's tools first, then the types x-toolTypes offers, every tool
-//                behind "Show every tool"; holder, stick-out, tool number); Geometry (x-geometry: hole picks a hole by
+//   Sections     Tool (the tool library's picker, qml/cam/ToolPicker.qml over CamTools' catalog: the document's tools
+//                first, the types x-toolTypes offers for the current params, every tool behind "Show every tool", and
+//                the tool library manager one click away; the list follows the library as it changes (the stack's
+//                listeners, and a rescan of its folders on a worker when the panel opens); a library tool is embedded
+//                in the same undo step as the operation, ToolLibraryModel::libraryArgsFor; holder, stick-out, tool
+//                number); Geometry (x-geometry: hole picks a hole by
 //                any of its faces, face and edge pick those; a list with remove; a wrong pick is refused with the
 //                reason in the status line); Heights (x-heightsUsed); Parameters (the schema form); Feeds and speeds
 //                (x-cuttingUsed; computeFeeds for the tool, the setup's material and machine, with the limit that
@@ -58,6 +62,7 @@ class SelectionModel;
 class Session;
 class SetupTreeModel;
 class SetupToolModel;
+class ToolLibraryModel;
 class ToolpathDisplay;
 class UnitsObject;
 
@@ -86,11 +91,11 @@ class OperationToolModel : public QObject {
     // The heights the type uses [{key, label, hint}] and the cutting members it uses.
     Q_PROPERTY(QVariantList heights READ heights NOTIFY typeChanged)
     Q_PROPERTY(QStringList cutting READ cutting NOTIFY typeChanged)
-    // Tool: the chosen one ("" none), its text, the list as filtered [{id, name, detail, embedded, suits}].
+    // Tool: the chosen one ("" none) and its text; the tool types x-toolTypes offers for the current params (empty:
+    // any), which the picker shows unless showAllTools.
     Q_PROPERTY(QString toolId READ toolId NOTIFY toolChanged)
     Q_PROPERTY(QString toolText READ toolText NOTIFY toolChanged)
-    Q_PROPERTY(QVariantList tools READ tools NOTIFY toolsChanged)
-    Q_PROPERTY(QString toolSearch READ toolSearch WRITE setToolSearch NOTIFY toolsChanged)
+    Q_PROPERTY(QStringList toolTypes READ toolTypes NOTIFY toolsChanged)
     Q_PROPERTY(bool showAllTools READ showAllTools WRITE setShowAllTools NOTIFY toolsChanged)
     Q_PROPERTY(QVariantList holders READ holders NOTIFY optionsChanged) // [{id, name}], "" first (none)
     Q_PROPERTY(QString holderId READ holderId NOTIFY toolChanged)
@@ -132,6 +137,7 @@ public:
     void setTree(SetupTreeModel* tree);
     void setSetupTool(SetupToolModel* tool) { setupTool_ = tool; }
     void setDisplay(ToolpathDisplay* display) { display_ = display; }
+    void setTools(ToolLibraryModel* tools) { tools_ = tools; }
 
     bool active() const { return id_.has_value(); }
     bool editing() const { return editing_; }
@@ -148,9 +154,7 @@ public:
     QStringList cutting() const { return cutting_; }
     QString toolId() const { return toolId_; }
     QString toolText() const;
-    QVariantList tools() const;
-    QString toolSearch() const { return toolSearch_; }
-    void setToolSearch(const QString& text);
+    QStringList toolTypes() const;
     bool showAllTools() const { return showAllTools_; }
     void setShowAllTools(bool all);
     QVariantList holders() const;
@@ -229,15 +233,12 @@ private:
         std::uint32_t element = 0;
         QString text;
     };
-    struct ToolItem {
-        camui::ToolRow row;
-        lib::Tool tool;
-        bool embedded = false;
-    };
     api::IApp* app() const;
     doc::Document* liveDoc() const;
     void subscribe();
     void unsubscribe();
+    void subscribeLibrary();
+    void onLibraryChanged();
     void onDocumentChanged();
     void open(const SetupId& setup, const std::optional<OperationId>& existing, const QString& type);
     void close();
@@ -264,7 +265,8 @@ private:
     void setStoredLength(const QString& key, double mm);
     bool isExactText(const QString& key, const QString& text) const;
     std::optional<double> length(const QString& key, QString* error) const;
-    const ToolItem* chosenTool() const;
+    // The chosen tool: the document's copy, else the library's.
+    std::optional<lib::Tool> chosenTool() const;
     const cam::Setup* setupOf(const doc::DocState& state) const;
     void mapError(const QString& message);
 
@@ -277,7 +279,12 @@ private:
     QPointer<SetupTreeModel> tree_;
     QPointer<SetupToolModel> setupTool_;
     QPointer<ToolpathDisplay> display_;
+    QPointer<ToolLibraryModel> tools_;
     SchemaFormModel* form_ = nullptr;
+    // The library stack listened to (the app's; a new session's stack is listened to anew).
+    lib::LibraryStack* stackSubscribed_ = nullptr;
+    int stackListener_ = 0;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     // The document observed.
     std::string docId_;
@@ -297,14 +304,11 @@ private:
     QVariantMap values_;
     std::map<QString, QString> fieldErrors_; // from the API, by key
     QString toolId_, holderId_;
-    std::vector<ToolItem> toolItems_;
     // A field's text as it was written from a stored or calculated value, and that value: while the text is unchanged
     // it reads as exactly that value (no round trip through the display unit's rounding).
     std::map<QString, std::pair<QString, double>> exact_;
-    std::map<QString, QString> fullText_;       // a stored length's text in full precision, which reads exactly too
-    std::map<QString, std::string> holderJson_; // library holders by id
+    std::map<QString, QString> fullText_; // a stored length's text in full precision, which reads exactly too
     QVariantList holderList_;
-    QString toolSearch_;
     bool showAllTools_ = false;
     std::vector<Pick> picks_;
     bool picking_ = false;

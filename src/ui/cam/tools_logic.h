@@ -63,6 +63,7 @@ struct Entry {
 struct Filter {
     QString text;            // words, all must match (case-insensitive)
     QString type;            // "" any, else the file format's type name
+    QStringList types;       // empty any, else one of these type names (an operation type's x-toolTypes)
     double minDiameter = -1; // mm; < 0: no bound
     double maxDiameter = -1;
     QString material; // "" any, else a material id

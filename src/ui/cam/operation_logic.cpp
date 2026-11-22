@@ -301,37 +301,6 @@ QJsonObject calculatedJson(const cam::CalculatedFeeds& r)
     return o;
 }
 
-// ---------- Tools ----------
-void sortTools(std::vector<ToolRow>& rows)
-{
-    std::stable_sort(rows.begin(), rows.end(), [](const ToolRow& a, const ToolRow& b) {
-        if (a.embedded != b.embedded)
-            return a.embedded;
-        if (a.suits != b.suits)
-            return a.suits;
-        if (a.diameter != b.diameter)
-            return a.diameter < b.diameter;
-        if (a.name != b.name)
-            return a.name < b.name;
-        return a.id < b.id;
-    });
-}
-
-QString toolDetail(const ToolRow& row, bool inch)
-{
-    const QString d = inch ? trimmed(row.diameter / 25.4, 4) + QStringLiteral(" in")
-                           : trimmed(row.diameter, 3) + QStringLiteral(" mm");
-    const QString flutes = row.flutes == 1 ? tr("1 flute") : tr("%1 flutes").arg(row.flutes);
-    return tr("⌀%1, %2, %3").arg(d, flutes, row.type);
-}
-
-bool toolMatches(const ToolRow& row, const QString& search, bool inch)
-{
-    const QString hay = (row.name + QLatin1Char(' ') + toolDetail(row, inch)).toLower();
-    const QStringList words = search.toLower().split(QLatin1Char(' '), Qt::SkipEmptyParts);
-    return std::all_of(words.begin(), words.end(), [&](const QString& w) { return hay.contains(w); });
-}
-
 // ---------- Arguments ----------
 QJsonObject operationArgs(const OperationInput& in, bool adding)
 {

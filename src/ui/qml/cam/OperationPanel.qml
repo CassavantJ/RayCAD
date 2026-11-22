@@ -260,84 +260,16 @@ Item {
                         text: CamOperation.toolText
                     }
                 }
-                TextField {
-                    objectName: "operationToolSearch"
-                    x: root.labelWidth + Theme.spacingS
-                    width: root.fieldWidth
-                    iconName: "search"
-                    placeholderText: qsTr("Search tools")
-                    text: CamOperation.toolSearch
-                    Accessible.name: qsTr("Search tools")
-                    onTextEdited: CamOperation.toolSearch = text
-                    Keys.onEscapePressed: CamOperation.cancel()
-                }
-                // The tools: the document's first, then those the type is made for.
-                Rectangle {
-                    objectName: "operationToolList"
-                    x: root.labelWidth + Theme.spacingS
-                    width: root.fieldWidth
-                    height: Math.min(toolList.contentHeight, Theme.rowHeight * 2 * 4.5) + 2
-                    radius: Theme.radiusSmall
-                    color: "transparent"
-                    border.width: Theme.borderWidth
-                    border.color: Theme.controlBorder
-                    clip: true
-                    ListView {
-                        id: toolList
-                        objectName: "operationToolListView"
-                        anchors.fill: parent
-                        anchors.margins: 1
-                        boundsBehavior: Flickable.StopAtBounds
-                        model: CamOperation.tools
-                        ScrollBar.vertical: ScrollBar {}
-                        delegate: Rectangle {
-                            id: toolRow
-                            required property var modelData
-                            required property int index
-                            objectName: "operationToolRow." + index
-                            width: toolList.width
-                            height: toolColumn.implicitHeight + Theme.spacingXs * 2
-                            readonly property bool hovered: toolMouse.containsMouse
-                            color: modelData.current ? Theme.selectionFill : hovered ? Theme.controlBgHover : "transparent"
-                            Accessible.role: Accessible.ListItem
-                            Accessible.name: modelData.name
-                            Column {
-                                id: toolColumn
-                                x: Theme.spacingS
-                                y: Theme.spacingXs
-                                width: parent.width - 2 * Theme.spacingS
-                                Label {
-                                    width: parent.width
-                                    wrapMode: Text.Wrap
-                                    elide: Text.ElideNone
-                                    text: toolRow.modelData.name
-                                    color: toolRow.modelData.suits ? Theme.textPrimary : Theme.textSecondary
-                                }
-                                Label {
-                                    width: parent.width
-                                    secondary: true
-                                    font: Theme.smallFont
-                                    wrapMode: Text.Wrap
-                                    elide: Text.ElideNone
-                                    text: toolRow.modelData.detail
-                                          + (toolRow.modelData.embedded ? "  ·  " + qsTr("in this document") : "")
-                                }
-                            }
-                            MouseArea {
-                                id: toolMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: CamOperation.chooseTool(toolRow.modelData.id)
-                            }
-                        }
-                    }
-                    Label {
-                        anchors.centerIn: parent
-                        visible: toolList.count === 0
-                        secondary: true
-                        font: Theme.smallFont
-                        text: qsTr("No tool matches")
-                    }
+                // The tool library's picker: the document's tools first, then the library's of the types the
+                // operation's parameters call for (x-toolTypes); a library tool is embedded when OK commits.
+                ToolPicker {
+                    id: toolPicker
+                    objectName: "operationToolPicker"
+                    width: root.contentWidth
+                    visibleRows: 3.5
+                    toolTypes: CamOperation.active && !CamOperation.showAllTools ? CamOperation.toolTypes : []
+                    currentId: CamOperation.toolId
+                    onPicked: (toolId, origin) => CamOperation.chooseTool(toolId)
                 }
                 CheckBox {
                     objectName: "operationShowAllTools"
@@ -744,6 +676,15 @@ Item {
                 text: CamOperation.statusLine
                 visible: text !== ""
             }
+        }
+    }
+
+    // A panel that opens starts with an empty tool search.
+    Connections {
+        target: CamOperation
+        function onActiveChanged() {
+            if (CamOperation.active)
+                toolPicker.clearSearch()
         }
     }
 

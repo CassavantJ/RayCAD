@@ -995,7 +995,12 @@ TEST_CASE("picking a library tool for an operation embeds it; the document's too
         picker->setParentItem(w.window()->contentItem());
         picker->setZ(100);
         QSignalSpy picked(picker, SIGNAL(picked(QString, QString)));
-        w.typeInto(QStringLiteral("toolPickerSearch"), QStringLiteral("jobber 135"));
+        // This picker's own search (the operation panel has a picker too, hidden while it is closed).
+        QQuickItem* search = Window::findItem(picker, QStringLiteral("toolPickerSearch"));
+        REQUIRE(search != nullptr);
+        search->forceActiveFocus();
+        w.type(QStringLiteral("jobber 135"));
+        CHECK(search->property("text").toString() == QStringLiteral("jobber 135"));
         w.key(Qt::Key_Down);
         w.key(Qt::Key_Return);
         REQUIRE(picked.count() == 1);

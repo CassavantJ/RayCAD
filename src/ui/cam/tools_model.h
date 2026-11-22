@@ -1,5 +1,6 @@
 // The tool library manager (task T-046): the `CamTools` QML singleton behind qml/cam/ToolLibrary.qml, and the
-// `ToolList` list model that the manager and the tool picker (qml/cam/ToolPicker.qml) each make for their own filter.
+// `ToolList` list model that the manager and the tool picker (qml/cam/ToolPicker.qml; the operation panel's tool
+// chooser) each make for their own filter.
 //
 //   Browse     every tool and holder of the library stack (IApp::libraries: the built-in library, read-only, then the
 //              shared folders, then the user's own library, "My library") with the root each comes from, and the open
@@ -39,6 +40,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 #include <QtCore/QVariantList>
 #include <QtCore/QVariantMap>
 #include <QtQml/QQmlEngine>
@@ -306,6 +308,8 @@ class ToolListModel : public QAbstractListModel, public QQmlParserStatus {
     Q_PROPERTY(QString kind READ kind WRITE setKind NOTIFY filterChanged) // "tools" (default) or "holders"
     Q_PROPERTY(QString text READ text WRITE setText NOTIFY filterChanged)
     Q_PROPERTY(QString type READ type WRITE setType NOTIFY filterChanged)
+    // Several types at once (an operation type's x-toolTypes); empty for any. Applies together with `type`.
+    Q_PROPERTY(QStringList types READ types WRITE setTypes NOTIFY filterChanged)
     // Diameter bounds as typed, in the display unit ("" for none); a bound that does not read is ignored and named in
     // diameterProblem.
     Q_PROPERTY(QString minDiameter READ minDiameter WRITE setMinDiameter NOTIFY filterChanged)
@@ -348,6 +352,8 @@ public:
     void setText(const QString& text);
     QString type() const { return type_; }
     void setType(const QString& type);
+    QStringList types() const { return types_; }
+    void setTypes(const QStringList& types);
     QString minDiameter() const { return min_; }
     void setMinDiameter(const QString& text);
     QString maxDiameter() const { return max_; }
@@ -381,6 +387,7 @@ private:
     QMetaObject::Connection sourceConnection_;
     bool holders_ = false;
     QString text_, type_, min_, max_, material_, diameterProblem_;
+    QStringList types_;
     toolsui::SortKey sort_ = toolsui::SortKey::Diameter;
     bool includeDocument_ = true;
     std::vector<int> rows_;

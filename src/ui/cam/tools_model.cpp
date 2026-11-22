@@ -1727,6 +1727,15 @@ void ToolListModel::setType(const QString& type)
     refilter();
 }
 
+void ToolListModel::setTypes(const QStringList& types)
+{
+    if (types == types_)
+        return;
+    types_ = types;
+    emit filterChanged();
+    refilter();
+}
+
 void ToolListModel::setMinDiameter(const QString& text)
 {
     if (text == min_)
@@ -1799,6 +1808,7 @@ void ToolListModel::refilter()
     toolsui::Filter f;
     f.text = text_;
     f.type = type_;
+    f.types = types_;
     f.material = material_;
     f.sort = sort_;
     QStringList bad;

@@ -389,19 +389,6 @@ TEST_CASE("the panel's logic: heights, feeds in display units, records, tools an
     CHECK_FALSE(matchesRecord(r, 1001, 200, 100, 150, cuttingKeys()));
     CHECK(limitStateText(cam::LimitState::Applied) == QStringLiteral("Applied"));
 
-    // Tools: the document's first, then those that suit, then by diameter.
-    std::vector<ToolRow> rows = {{"a", "Big drill", "drill", 10, 2, false, true},
-                                 {"b", "Small mill", "flatEndMill", 3, 2, false, false},
-                                 {"c", "Small drill", "drill", 3, 2, false, true},
-                                 {"d", "Old drill", "drill", 12, 2, true, true}};
-    sortTools(rows);
-    CHECK(rows[0].id == QStringLiteral("d"));
-    CHECK(rows[1].id == QStringLiteral("c"));
-    CHECK(rows[2].id == QStringLiteral("a"));
-    CHECK(rows[3].id == QStringLiteral("b"));
-    CHECK(toolMatches(rows[1], QStringLiteral("small 3 mm"), false));
-    CHECK_FALSE(toolMatches(rows[1], QStringLiteral("big"), false));
-
     // Arguments: the members the commands take; the library items in the same step; the record when it changed.
     OperationInput in;
     in.id = QStringLiteral("c0000000-0000-4000-8000-000000000001");
