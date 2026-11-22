@@ -7,8 +7,8 @@
 //     refused with the reason; flip X turns the frame; editing a setup from the tree; Esc and leaving the workspace
 //     change nothing; undo and redo; closing the document while a preview runs
 //   - each status badge (up to date, stale, generating with progress, failed, broken reference, suppressed) against
-//     the engine with the CAM engine tests' test-only operation type, following a model edit in the Model workspace
-//     and undo
+//     the engine with the CAM engine tests' test-only operation type (and one here that reports progress while it
+//     waits), following a model edit in the Model workspace and undo
 //   - [wallclock] the preview's latency on a large corpus part, axis-aligned and tilted, with the UI-thread watchdog
 //
 // Screenshots: with RAY_T044_SHOTS set to a folder, the window is saved there in both themes.
@@ -399,14 +399,16 @@ QPointF topPoint(const Window& w, double z)
 {
     const Box3 b = kernel::bounds(w.host->scene()->body(0)->shape);
     // Between the rows of holes (y = 80/3 and 160/3), off the holes' columns.
+    std::optional<QPointF> found;
     for (const double fx : {0.92, 0.85, 0.75, 0.08, 0.15}) {
         const Vec3 p{b.min.x + fx * (b.max.x - b.min.x), (b.min.y + b.max.y) / 2, z};
         const QPointF s = w.sceneOf(p);
-        if (w.freeOfPanel(s))
-            return s;
+        if (!found && w.freeOfPanel(s))
+            found = s;
     }
-    FAIL("every candidate point of the top face is under the panel");
-    return {};
+    INFO("a point of the top face that the panel does not cover");
+    REQUIRE(found.has_value());
+    return found.value_or(QPointF());
 }
 
 // A marker the panel does not cover; its key.
@@ -597,6 +599,17 @@ TEST_CASE("the live preview, picks, flips, editing, Esc, workspaces, undo and re
         CHECK(w.centreOf(ok) == okAt);
         w.previewed();
         CHECK(w.centreOf(ok) == okAt);
+
+        // Cylinder stock: a first cylinder is sized round the part, along Z, and previewed.
+        w.tool()->setValue(QStringLiteral("stock"), QStringLiteral("cylinder"));
+        CHECK(!w.tool()->values().value(QStringLiteral("diameter")).toString().isEmpty());
+        w.previewed();
+        const Box3 cyl = w.tool()->lastPreview()->resolved.stockBounds;
+        const Box3 part = w.tool()->lastPreview()->resolved.partBounds;
+        CHECK(cyl.max.x - cyl.min.x == Approx(cyl.max.y - cyl.min.y)); // round across Z
+        CHECK(cyl.max.x - cyl.min.x >= std::hypot(part.max.x - part.min.x, part.max.y - part.min.y) - 1e-6);
+        w.tool()->setValue(QStringLiteral("stock"), QStringLiteral("box"));
+        w.previewed();
 
         // Esc: the panel closes and the document is as it was.
         QTest::keyClick(w.window(), Qt::Key_Escape);
