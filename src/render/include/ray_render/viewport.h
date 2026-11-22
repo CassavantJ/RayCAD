@@ -82,6 +82,8 @@ Token draftToken(DraftClass);
 // Toolpath (task T-038): a segment of a backplot within the tolerance answers kind Edge with subIndex and moveIndex
 // both its BackplotVertex::moveIndex (the full 32 bits). Only PickFilter::Toolpath finds backplots; with Edges as well,
 // the nearer of the two wins. Backplots never answer Faces or Bodies, and a face under a toolpath line is still found.
+// Zoomed out, where a level of detail draws one chord for several sub-pixel segments (src/render/lines.h), the hit
+// names the last move of that chord, which lies within half a pixel of the others.
 // Every visible item is pickable, see-through ones included, unless its PickMode says otherwise (below).
 constexpr int kPickTolerancePx = 6;
 

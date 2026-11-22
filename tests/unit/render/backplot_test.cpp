@@ -316,6 +316,15 @@ std::vector<PickHit> pickRectAt(IViewport& vp, int x0, int y0, int x1, int y1, s
     return *got;
 }
 
+// Waits for the viewport's levels of detail, then draws a frame with them. (The frame the viewport asks for when they
+// are ready may come after the wait returns, and renderNow alone keeps the last picture when nothing else changed.)
+void waitForLods(IOffscreenViewport& vp)
+{
+    REQUIRE(processEventsUntil([&] { return vp.info().pathLodsPending == 0; }, 60000));
+    vp.requestFrame();
+    REQUIRE(vp.renderNow().has_value());
+}
+
 std::shared_ptr<const Theme> withMetric(const std::shared_ptr<const Theme>& base, const char* name, double value)
 {
     auto copy = std::make_shared<Theme>(*base);
@@ -834,8 +843,7 @@ TEST_CASE("backplots over the display limit are decimated, large ones split into
     vp->setCamera(topCamera(0.5));          // close enough for full detail (no level of detail fits)
     const ItemId id = vp->addBackplot(bp);
     REQUIRE(id != 0);
-    REQUIRE(processEventsUntil([&] { return vp->info().pathLodsPending == 0; }, 60000));
-    REQUIRE(vp->renderNow().has_value());
+    waitForLods(*vp);
     CHECK(vp->info().pathSegments == segments);
     // Two chunks share one vertex; the levels of detail (one chunk each here) come on top.
     std::uint64_t lodBytes = 0;
@@ -1164,8 +1172,7 @@ TEST_CASE("the viewport draws a level of detail when zoomed out and every segmen
     vp->setPreset(presetFor(Tier::Low));
     const ItemId id = vp->addBackplot(bp);
     vp->setCamera(standardViewCamera(StandardView::Iso, bp->bounds, 320.0 / 240.0, true));
-    REQUIRE(processEventsUntil([&] { return vp->info().pathLodsPending == 0; }, 60000));
-    REQUIRE(vp->renderNow().has_value());
+    waitForLods(*vp);
     const ViewportInfo far = vp->info();
     INFO("segments drawn zoomed out: " << far.pathSegments);
     CHECK(far.pathSegments * 4 < 200'000);
@@ -1222,7 +1229,7 @@ TEST_CASE("a level of detail looks like the full path", "[render][backplot][lod]
             vp->setPreset(presetFor(Tier::Low));
             vp->addBackplot(bp);
             vp->setCamera(cam);
-            REQUIRE(processEventsUntil([&] { return vp->info().pathLodsPending == 0; }, 60000));
+            waitForLods(*vp);
             const Image lod = capture(*vp, w, h);
             const std::uint64_t drawn = vp->info().pathSegments;
             auto bgView = viewportOrSkip(w, h, software);
@@ -1250,6 +1257,9 @@ TEST_CASE("2 M backplot segments against the 500k-triangle baseline", "[render][
     const auto bp = spiralBackplot(kSegments);
     REQUIRE(rd::validateBackplot(*bp).has_value());
     REQUIRE(rd::backplotSegmentCount(*bp) == kSegments);
+    // The same mesh as ray_render_frame_stats (viewport_test.cpp): OpenCASCADE's sphere meshed to 500k triangles, with
+    // its per-face vertices and its edges. A UV sphere made directly draws in about 60 % of the time on WARP and would
+    // be a harder bar than the plan's baseline scene; meshing this one takes most of this test's time.
     const auto sphere = meshOf(kernel::testing::makeSphere(Vec3{0, 0, 0}, 50), 0.0008, 1.0 * kPi / 180);
     REQUIRE(sphere->indices.size() / 3 >= 500'000);
     const TierPreset low = presetFor(Tier::Low);
@@ -1271,7 +1281,7 @@ TEST_CASE("2 M backplot segments against the 500k-triangle baseline", "[render][
             }
             paths->addBackplot(bp);
             mesh->addMesh(sphere, Xform::identity(), kModel);
-            REQUIRE(processEventsUntil([&] { return paths->info().pathLodsPending == 0; }, 60000));
+            waitForLods(*paths);
             Camera pathCam = standardViewCamera(StandardView::Iso, bp->bounds, 16.0 / 9.0, true);
             Camera meshCam =
                 standardViewCamera(StandardView::Iso, Box3{Vec3{-50, -50, -50}, Vec3{50, 50, 50}}, 16.0 / 9.0, true);
