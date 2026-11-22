@@ -333,26 +333,12 @@ Status putReference(Hasher& h, const CamSnapshot& snapshot, const naming::IResol
     return {};
 }
 
+// The tool and holder by their geometry, the machine by the fields a generator reads (cam.h generatorMachine), so a
+// rename, a comment or another material's cutting data does not make an operation stale.
 void putTool(Hasher& h, const Embedded<lib::Tool>& e)
 {
-    const lib::Tool& t = e.item;
     h.str("tool");
-    h.str(t.name).str(t.vendor).str(t.productId);
-    h.i64(static_cast<std::int64_t>(t.type)).i64(t.flutes);
-    h.f64(t.diameter).f64(t.shankDiameter).f64(t.fluteLength).f64(t.shoulderLength).f64(t.overallLength);
-    h.f64(t.cornerRadius).f64(t.tipAngleDeg).f64(t.tipDiameter).f64(t.threadPitch);
-    h.str(t.threadSpec).str(t.bodyMaterial).i64(t.defaultToolNumber);
-    h.i64(static_cast<std::int64_t>(t.presets.size()));
-    for (const lib::ToolPreset& p : t.presets) {
-        put(h, p.material.value);
-        h.str(p.opClass);
-        h.f64(p.surfaceSpeedMMin)
-            .f64(p.chipLoadMm)
-            .f64(p.maxRadialFraction)
-            .f64(p.maxAxialFraction)
-            .f64(p.rampAngleDeg);
-    }
-    h.str(e.extraJson);
+    put(h, e.item.geometryHash());
 }
 
 void putHolder(Hasher& h, const Embedded<lib::Holder>* e)
@@ -362,38 +348,15 @@ void putHolder(Hasher& h, const Embedded<lib::Holder>* e)
         h.i64(0);
         return;
     }
-    const lib::Holder& holder = e->item;
     h.i64(1);
-    h.str(holder.name).str(holder.vendor).f64(holder.gaugeLength);
-    h.i64(static_cast<std::int64_t>(holder.segments.size()));
-    for (const lib::HolderSegment& s : holder.segments) {
-        h.f64(s.height).f64(s.lowerDiameter).f64(s.upperDiameter);
-    }
-    h.str(e->extraJson);
+    put(h, e->item.geometryHash());
 }
 
 void putMachine(Hasher& h, const Embedded<lib::MachineDef>& e)
 {
-    const lib::MachineDef& m = e.item;
+    // The canonical JSON of the generator's view: whatever that view keeps is hashed, and nothing else.
     h.str("machine");
-    h.str(m.name).str(m.vendor).str(m.model).i64(static_cast<std::int64_t>(m.kind));
-    h.i64(static_cast<std::int64_t>(m.axes.size()));
-    for (const lib::AxisDef& a : m.axes) {
-        h.i64(a.letter).f64(a.minTravel).f64(a.maxTravel).f64(a.rapidMmMin).f64(a.maxFeedMmMin).f64(a.accelMmS2);
-    }
-    h.f64(m.maxRpm).f64(m.minRpm).f64(m.spindlePowerKw).f64(m.spindleTorqueNm);
-    h.i64(m.toolCapacity).f64(m.toolChangeSec);
-    h.str(m.controlDialect).str(m.defaultPost);
-    putFlag(h, m.rigidTapping);
-    putFlag(h, m.throughSpindleCoolant);
-    putFlag(h, m.hasProbe);
-    putFlag(h, m.hasToolSetter);
-    h.i64(m.maxBlockNumber).i64(m.maxProgramNameLength);
-    h.i64(static_cast<std::int64_t>(m.postPropertyOverrides.size()));
-    for (const auto& [key, value] : m.postPropertyOverrides) {
-        h.str(key).str(value);
-    }
-    h.str(e.extraJson);
+    h.str(lib::toJson(generatorMachine(e.item)));
 }
 
 Status putBody(Hasher& h, const CamSnapshot& snapshot, const BodyId& id, const std::string& what)
@@ -509,7 +472,7 @@ Result<Hash256> operationHash(const CamSnapshot& snapshot, const naming::IResolv
     }
 
     Hasher h;
-    h.str("raycad.cam.operation-input.v1");
+    h.str("raycad.cam.operation-input.v2");
     h.str(op.type);
     h.str(op.paramsJson);
     // Tool: what it is, how far it sticks out, and what holds it (tool number and offset registers are G-code only).
@@ -569,6 +532,110 @@ Result<Hash256> operationInputHash(const CamSnapshot& snapshot, const naming::IR
     } catch (...) {
         return failure(ErrorCode::Internal, "Unexpected failure while hashing an operation");
     }
+}
+
+// ---------- What a generator receives ----------
+
+lib::Tool generatorTool(const lib::Tool& t)
+{
+    lib::Tool out;
+    out.type = t.type;
+    out.flutes = t.flutes;
+    out.diameter = t.diameter;
+    out.shankDiameter = t.shankDiameter;
+    out.fluteLength = t.fluteLength;
+    out.shoulderLength = t.shoulderLength;
+    out.overallLength = t.overallLength;
+    out.cornerRadius = t.cornerRadius;
+    out.tipAngleDeg = t.tipAngleDeg;
+    out.tipDiameter = t.tipDiameter;
+    out.threadPitch = t.threadPitch;
+    return out;
+}
+
+lib::Holder generatorHolder(const lib::Holder& h)
+{
+    lib::Holder out;
+    out.gaugeLength = h.gaugeLength;
+    out.segments = h.segments;
+    return out;
+}
+
+lib::MachineDef generatorMachine(const lib::MachineDef& m)
+{
+    lib::MachineDef out;
+    out.kind = m.kind;
+    out.axes = m.axes;
+    out.maxRpm = m.maxRpm;
+    out.minRpm = m.minRpm;
+    out.rigidTapping = m.rigidTapping;
+    return out;
+}
+
+namespace detail {
+
+Result<GeneratorItems> generatorItemsOf(const CamState& state, const Setup& setup, const Operation& op)
+{
+    auto items = itemsOf(state, setup, op);
+    if (!items) {
+        return tl::unexpected(items.error());
+    }
+    GeneratorItems out;
+    out.tool = generatorTool(*items->tool);
+    if (items->holder != nullptr) {
+        out.holder = generatorHolder(*items->holder);
+    }
+    out.machine = generatorMachine(*items->machine);
+    return out;
+}
+
+} // namespace detail
+
+// ---------- Embedded items as JSON ----------
+
+namespace {
+template <class T, class Read>
+Result<Embedded<T>> embeddedFrom(std::string_view text, Read read)
+{
+    auto item = read(text);
+    if (!item) {
+        return tl::unexpected(item.error());
+    }
+    return Embedded<T>{std::move(*item)};
+}
+} // namespace
+
+std::string embeddedJson(const Embedded<lib::Tool>& e)
+{
+    return lib::toJson(e.item);
+}
+std::string embeddedJson(const Embedded<lib::Holder>& e)
+{
+    return lib::toJson(e.item);
+}
+std::string embeddedJson(const Embedded<lib::MachineDef>& e)
+{
+    return lib::toJson(e.item);
+}
+std::string embeddedJson(const Embedded<lib::Material>& e)
+{
+    return lib::toJson(e.item);
+}
+Result<Embedded<lib::Tool>> embeddedToolFromJson(std::string_view text)
+{
+    return embeddedFrom<lib::Tool>(text, &lib::toolFromJson);
+}
+Result<Embedded<lib::Holder>> embeddedHolderFromJson(std::string_view text)
+{
+    return embeddedFrom<lib::Holder>(text, &lib::holderFromJson);
+}
+Result<Embedded<lib::MachineDef>> embeddedMachineFromJson(std::string_view text)
+{
+    return embeddedFrom<lib::MachineDef>(text, &lib::machineFromJson);
+}
+Result<Embedded<lib::Material>> embeddedMaterialFromJson(std::string_view text)
+{
+    return embeddedFrom<lib::Material>(text, &lib::materialFromJson);
 }
 
 } // namespace ray::cam

@@ -36,6 +36,14 @@ struct GenerateItems {
     const lib::MachineDef* machine = nullptr;
 };
 Result<GenerateItems> itemsOf(const CamState& state, const Setup& setup, const Operation& op);
+// The same reduced to what the input hash covers (cam.h generatorTool, generatorHolder, generatorMachine): the copies
+// the engine hands a generator in GenerateInput.
+struct GeneratorItems {
+    lib::Tool tool;
+    std::optional<lib::Holder> holder; // empty when the operation has none
+    lib::MachineDef machine;
+};
+Result<GeneratorItems> generatorItemsOf(const CamState& state, const Setup& setup, const Operation& op);
 
 // "'Rough pocket'" or the id when the name is empty: how messages name an operation or a setup.
 std::string label(const Operation& op);

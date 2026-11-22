@@ -86,6 +86,14 @@ doc::DocStatePtr camDocument()
     return state;
 }
 
+// `text` with the first `from` removed or replaced; the test fails if there is none.
+std::string replacedOnce(std::string text, const std::string& from, const std::string& to)
+{
+    const auto at = text.find(from);
+    REQUIRE(at != std::string::npos);
+    return text.replace(at, from.size(), to);
+}
+
 } // namespace
 
 TEST_CASE("CAM commands undo and redo with the rest of the document", "[cam][engine][document]")
@@ -225,7 +233,7 @@ TEST_CASE("CAM state is saved with the document and read back; a document withou
     CHECK(read->cam->tools.at(ToolId{Uuid::fromString(id('d', 2))}).item.defaultToolNumber == 2);
     const auto& machine = read->cam->machines.at(MachineId{Uuid::fromString(id('9', 1))}).item;
     CHECK(machine.postPropertyOverrides.at("useG187") == "true");
-    CHECK(machine.postPropertyOverrides.at("mode") == "fast");
+    CHECK(machine.postPropertyOverrides.at("mode") == "\"fast\""); // JSON text, as libraries.h says
     CHECK(std::holds_alternative<cam::FromSetupStock>(read->cam->setups[1].stock));
     CHECK(doc::serializeState(*read).manifest == objects.manifest);
 
@@ -331,7 +339,7 @@ TEST_CASE("a CAM object of a newer format is FormatTooNew; unknown keys are kept
         CHECK(camHashOf(again.manifest) == hashText(edited).hex());
         CHECK(again.manifest == manifest);
         CHECK(read->cam->extraJson == R"({"aFuture":{"x":1}})");
-        CHECK(read->cam->tools.begin()->second.extraJson == R"({"aCoating":"TiAlN"})");
+        CHECK(read->cam->tools.begin()->second.item.extraJson == R"({"aCoating":"TiAlN"})");
         CHECK(read->cam->setups[0].extraJson == R"({"aSetupKey":true})");
         // Stored again, every edited object comes back byte for byte.
         const Objects againObjects = objectsOf(again);
@@ -348,6 +356,61 @@ TEST_CASE("a CAM object of a newer format is FormatTooNew; unknown keys are kept
         REQUIRE_FALSE(read);
         CHECK(read.error().code == ErrorCode::FormatError);
     }
+}
+
+TEST_CASE("an embedded item is stored as the JSON of its library file, comment and unknown keys included",
+          "[cam][engine][document]")
+{
+    // A tool as a library file holds it: a comment (its own and a preset's) and keys of a newer RayCAD.
+    lib::Tool tool;
+    tool.id = ToolId{Uuid::fromString(id('d', 7))};
+    tool.name = "6 mm 3FL";
+    tool.type = lib::ToolType::FlatEndMill;
+    tool.flutes = 3;
+    tool.diameter = 6;
+    tool.shankDiameter = 6;
+    tool.fluteLength = 20;
+    tool.shoulderLength = 25;
+    tool.overallLength = 60;
+    tool.comment = "Generic; values from the maker's catalogue";
+    tool.extraJson = R"({"aCoating":"TiAlN","zFuture":{"k":[1,2]}})";
+    lib::ToolPreset preset;
+    preset.material = MaterialId{Uuid::fromString(id('9', 40))};
+    preset.opClass = "rough";
+    preset.surfaceSpeedMMin = 250;
+    preset.chipLoadMm = 0.05;
+    preset.maxRadialFraction = 0.1;
+    preset.maxAxialFraction = 1;
+    preset.rampAngleDeg = 2;
+    preset.comment = "starting values";
+    tool.presets.push_back(preset);
+    const std::string fileJson = lib::toJson(tool); // what a library folder's file holds, without whitespace
+
+    auto state = camDocument();
+    state = exec(state, command("cam.library.embed", R"({"tools":[)" + fileJson + "]}"));
+    const auto& embedded = state->cam->tools.at(tool.id).item;
+    CHECK(embedded.comment == tool.comment);
+    CHECK(embedded.extraJson == tool.extraJson);
+    CHECK(embedded.presets.at(0).comment == "starting values");
+    CHECK(cam::embeddedJson(state->cam->tools.at(tool.id)) == fileJson);
+    // Stored, the object is those bytes; read back, it is the same item.
+    const doc::StateObjects objects = doc::serializeState(*state);
+    bool found = false;
+    for (const auto& [hash, bytes] : objects.features) {
+        found = found || bytes == fileJson;
+    }
+    CHECK(found);
+    auto read = readBack(objects.manifest, objectsOf(objects));
+    REQUIRE(read);
+    CHECK(lib::toJson(read->cam->tools.at(tool.id).item) == fileJson);
+    CHECK(read->stateHash() == state->stateHash());
+
+    // Arguments are checked by the library's schema: a tool without a flute length is refused, naming the field.
+    const Error e =
+        applyFails(state, command("cam.library.embed",
+                                  R"({"tools":[)" + replacedOnce(fileJson, R"("fluteLength":20,)", "") + "]}"));
+    CHECK(e.code == ErrorCode::InvalidArgument);
+    CHECK_THAT(e.message, ContainsSubstring("'tools[0]'") && ContainsSubstring("fluteLength"));
 }
 
 TEST_CASE("the stored CAM objects match schemas/doc.cam.schema.json", "[cam][engine][document][schema]")

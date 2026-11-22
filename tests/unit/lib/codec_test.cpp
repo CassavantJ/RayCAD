@@ -65,6 +65,167 @@ TEST_CASE("Tool::contentHash follows the tool's content", "[lib][codec]")
     CHECK(a.contentHash() == b.contentHash());
 }
 
+TEST_CASE("geometryHash is the shape alone", "[lib][codec]")
+{
+    const auto a = sampleTool(1);
+    auto b = sampleTool(1);
+    CHECK(a.geometryHash() == b.geometryHash());
+    // Not the shape: none of these changes it.
+    b.id = ray::ToolId{fixedId(2)};
+    b.name = "renamed";
+    b.vendor = "Acme";
+    b.productId = "X-1";
+    b.comment = "from the catalogue";
+    b.extraJson = R"({"coating":"TiAlN"})";
+    b.presets[0].surfaceSpeedMMin = 251;
+    b.presets.pop_back();
+    b.bodyMaterial = "HSS";
+    b.threadSpec = "M8x1.25";
+    b.defaultToolNumber = 7;
+    CHECK(a.geometryHash() == b.geometryHash());
+    CHECK(a.contentHash() != b.contentHash());
+    // The shape: each of these does.
+    for (int field = 0; field < 11; ++field) {
+        INFO("field " << field);
+        auto c = sampleTool(1);
+        switch (field) {
+        case 0:
+            c.type = ray::lib::ToolType::BallEndMill;
+            break;
+        case 1:
+            c.flutes = 4;
+            break;
+        case 2:
+            c.diameter += 0.001;
+            break;
+        case 3:
+            c.shankDiameter += 0.001;
+            break;
+        case 4:
+            c.fluteLength += 0.001;
+            break;
+        case 5:
+            c.shoulderLength += 0.001;
+            break;
+        case 6:
+            c.overallLength += 0.001;
+            break;
+        case 7:
+            c.cornerRadius = 0.5;
+            break;
+        case 8:
+            c.tipAngleDeg = 118;
+            break;
+        case 9:
+            c.tipDiameter = 0.2;
+            break;
+        default:
+            c.threadPitch = 1.5;
+            break;
+        }
+        CHECK(c.geometryHash() != a.geometryHash());
+    }
+
+    const auto h = sampleHolder(1);
+    auto g = sampleHolder(1);
+    g.name = "renamed";
+    g.vendor = "Acme";
+    g.comment = "measured";
+    g.id = ray::HolderId{fixedId(2)};
+    CHECK(h.geometryHash() == g.geometryHash());
+    g.segments[1].upperDiameter += 0.01;
+    CHECK(h.geometryHash() != g.geometryHash());
+    g = sampleHolder(1);
+    g.gaugeLength += 0.01;
+    CHECK(h.geometryHash() != g.geometryHash());
+}
+
+TEST_CASE("comments and unknown keys round-trip, at any depth of nested objects", "[lib][codec]")
+{
+    auto tool = sampleTool(1);
+    tool.comment = "Generic 6 mm end mill";
+    tool.presets[0].comment = "Starting values";
+    tool.extraJson = R"({"coating":"TiAlN","future":{"x":[1,2]}})";
+    const std::string text = ray::lib::toJson(tool);
+    CHECK(text.find(R"("comment":"Generic 6 mm end mill")") != std::string::npos);
+    CHECK(text.find(R"("comment":"Starting values")") != std::string::npos);
+    CHECK(text.find(R"("coating":"TiAlN")") != std::string::npos);
+    auto back = ray::lib::toolFromJson(text);
+    REQUIRE(back);
+    CHECK(back->comment == "Generic 6 mm end mill");
+    CHECK(back->presets[0].comment == "Starting values");
+    CHECK(back->presets[1].comment.empty());
+    CHECK(back->extraJson == R"({"coating":"TiAlN","future":{"x":[1,2]}})");
+    CHECK(ray::lib::toJson(*back) == text);
+    // Without a comment there is no "comment" key, so an item without one is written as before.
+    CHECK(ray::lib::toJson(sampleTool(1)).find("comment") == std::string::npos);
+
+    // A machine with unknown keys inside its nested objects.
+    std::string machine = ray::lib::toJson(sampleMachine(4));
+    machine.replace(machine.find("\"maxRpm\""), 0, "\"gearRanges\":2,");
+    machine.replace(machine.find("\"model\""), 0, "\"comment\":\"Published values\",\"futureTop\":true,");
+    auto m = ray::lib::machineFromJson(machine);
+    REQUIRE(m);
+    CHECK(m->comment == "Published values");
+    CHECK(m->extraJson == R"({"futureTop":true,"spindle":{"gearRanges":2}})");
+    auto parsed = ray::lib::json::parse(machine);
+    REQUIRE(parsed);
+    CHECK(ray::lib::toJson(*m) == ray::lib::json::write(*parsed));
+    // A known key in extraJson does not override the field.
+    m->extraJson = R"({"name":"other","x":1})";
+    CHECK(ray::lib::machineFromJson(ray::lib::toJson(*m))->name == "Machine 4");
+
+    auto material = sampleMaterial(3);
+    material.comment = "ASM handbook";
+    CHECK(ray::lib::materialFromJson(ray::lib::toJson(material))->comment == "ASM handbook");
+    auto holder = sampleHolder(2);
+    holder.comment = "measured";
+    CHECK(ray::lib::holderFromJson(ray::lib::toJson(holder))->comment == "measured");
+    auto tmpl = sampleTemplate(5);
+    tmpl.comment = "shop standard";
+    tmpl.extraJson = R"({"owner":"jo"})";
+    auto t = ray::lib::templateFromJson(ray::lib::toJson(tmpl));
+    REQUIRE(t);
+    CHECK(t->comment == "shop standard");
+    CHECK(t->extraJson == R"({"owner":"jo"})");
+}
+
+TEST_CASE("default-constructed items hold their defaults", "[lib][codec]")
+{
+    // Default-initialised (not value-initialised): without member defaults these would be indeterminate.
+    ray::lib::Tool tool;
+    CHECK(tool.type == ray::lib::ToolType::FlatEndMill);
+    CHECK(tool.flutes == 0);
+    CHECK(tool.diameter == 0);
+    CHECK(tool.shankDiameter == 0);
+    CHECK(tool.fluteLength == 0);
+    CHECK(tool.shoulderLength == 0);
+    CHECK(tool.overallLength == 0);
+    ray::lib::ToolPreset preset;
+    CHECK(preset.surfaceSpeedMMin == 0);
+    CHECK(preset.chipLoadMm == 0);
+    CHECK(preset.rampAngleDeg == 0);
+    ray::lib::Holder holder;
+    CHECK(holder.gaugeLength == 0);
+    ray::lib::HolderSegment segment;
+    CHECK(segment.height == 0);
+    ray::lib::Material material;
+    CHECK(material.hardnessHb == 0);
+    CHECK(material.densityGcm3 == 0);
+    ray::lib::AxisDef axis;
+    CHECK(axis.letter == 'X');
+    CHECK(axis.maxTravel == 0);
+    ray::lib::MachineDef machine;
+    CHECK(machine.kind == ray::lib::MachineDef::Kind::Mill3Axis);
+    CHECK(machine.maxRpm == 0);
+    CHECK(machine.toolCapacity == 0);
+    CHECK_FALSE(machine.rigidTapping);
+    CHECK_FALSE(machine.hasProbe);
+    CHECK(machine.maxBlockNumber == 0);
+    ray::lib::ShopRule rule;
+    CHECK(rule.priority == 0);
+}
+
 TEST_CASE("readers report the first problem and refuse newer formats", "[lib][codec]")
 {
     auto bad = ray::lib::toolFromJson("{\"schema\":1}");

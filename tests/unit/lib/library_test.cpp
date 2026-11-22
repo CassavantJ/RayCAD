@@ -1,5 +1,6 @@
 // ILibrary on a plain folder: tolerant reading, atomic saves, edits by other processes, rescans and watching.
 #include "fileio.h"
+#include "json.h"
 #include "lib_test_util.h"
 #include "library_internal.h"
 #include "test_dispatcher.h"
@@ -235,14 +236,20 @@ TEST_CASE("an edit made on disk by another process is detected and save returns 
     {
         Process edit = Process::spawnHelper({"rewrite", file, "\"Tool 1\"", "\"Tool Y\"", "1"});
         REQUIRE(edit.wait() == 0);
-        auto st = library->remove("tool", fixedId(1));
+        auto st = library->remove(ray::lib::ItemKind::Tool, fixedId(1));
         REQUIRE_FALSE(st);
         CHECK(st.error().code == ErrorCode::Locked);
-        REQUIRE(library->remove("tool", fixedId(1)));
+        REQUIRE(library->remove(ray::lib::ItemKind::Tool, fixedId(1)));
         CHECK_FALSE(exists(file));
         CHECK(library->tools().empty());
-        CHECK(library->remove("tool", fixedId(1)).error().code == ErrorCode::NotFound);
-        CHECK(library->remove("spaceship", fixedId(1)).error().code == ErrorCode::InvalidArgument);
+        CHECK(library->remove(ray::lib::ItemKind::Tool, fixedId(1)).error().code == ErrorCode::NotFound);
+        CHECK(library->remove(static_cast<ray::lib::ItemKind>(99), fixedId(1)).error().code ==
+              ErrorCode::InvalidArgument);
+        // Each kind is removed from its own folder.
+        REQUIRE(library->save(sampleHolder(1)));
+        CHECK(library->remove(ray::lib::ItemKind::Tool, fixedId(1)).error().code == ErrorCode::NotFound);
+        REQUIRE(library->remove(ray::lib::ItemKind::Holder, fixedId(1)));
+        CHECK(library->holders().empty());
     }
 }
 
@@ -293,7 +300,7 @@ TEST_CASE("rescans find edits even when size and time stamp do not change", "[li
         REQUIRE(other->save(sampleTool(2)));
         CHECK(library->refresh());
         CHECK(library->tools().size() == 2);
-        REQUIRE(other->remove("tool", fixedId(1)));
+        REQUIRE(other->remove(ray::lib::ItemKind::Tool, fixedId(1)));
         CHECK(library->refresh());
         CHECK(library->tools().size() == 1);
     }
@@ -335,7 +342,29 @@ TEST_CASE("a malformed library.json is an issue", "[lib]")
     writeFile(dir.path("library.json"), "{\"schema\": 1}");
     auto library = openLibrary(dir.dir());
     CHECK(hasIssueFor(*library, dir.path("library.json")));
+    CHECK(library->name().empty());
     writeFile(dir.path("library.json"), "{\"schema\": 1, \"name\": \"Shop\"}");
     library->refresh();
     CHECK(library->issues().empty());
+    CHECK(library->name() == "Shop"); // the display name (LibraryStack::roots)
+}
+
+TEST_CASE("a comment and unknown keys of a file survive reading and saving through the item", "[lib]")
+{
+    TempDir dir;
+    auto library = openLibrary(dir.dir());
+    auto tool = sampleTool(1);
+    tool.comment = "Catalogue page 12";
+    tool.extraJson = R"({"coating":"TiAlN","future":{"x":1}})";
+    REQUIRE(library->save(tool));
+    const std::string saved = readFile(toolFile(dir.dir(), fixedId(1)));
+    CHECK(saved.find("\"coating\": \"TiAlN\"") != std::string::npos);
+    CHECK(saved.find("\"comment\": \"Catalogue page 12\"") != std::string::npos);
+    // Read back, the item carries both; its toJson is the file without whitespace.
+    const auto read = library->tools().at(0);
+    CHECK(read.comment == "Catalogue page 12");
+    CHECK(read.extraJson == R"({"coating":"TiAlN","future":{"x":1}})");
+    auto parsed = ray::lib::json::parse(saved);
+    REQUIRE(parsed);
+    CHECK(ray::lib::toJson(read) == ray::lib::json::write(*parsed));
 }

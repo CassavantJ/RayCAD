@@ -3,6 +3,7 @@
 
 #include "schema.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <set>
@@ -109,6 +110,23 @@ std::string fmt(double d)
     return json::write(Value::number(d));
 }
 
+// The known members, the comment when there is one, then the item's unknown keys (known keys win).
+Value finish(Value::Object members, const std::string& comment, const std::string& extraJson)
+{
+    if (!comment.empty()) {
+        members.push_back({"comment", str(comment)});
+    }
+    Value known = Value::object(std::move(members));
+    if (extraJson.empty()) {
+        return known;
+    }
+    auto extra = json::parse(extraJson);
+    if (!extra || !extra->isObject()) {
+        return known; // not an object: nothing a reader would have put there
+    }
+    return mergeUnknownKeys(*extra, std::move(known));
+}
+
 } // namespace
 
 const KindInfo& kindInfo(Kind kind)
@@ -170,29 +188,36 @@ Value toValue(const Tool& t)
             {"maxAxialFraction", num(p.maxAxialFraction)},
             {"rampAngle", num(p.rampAngleDeg)},
         }));
+        if (!p.comment.empty()) {
+            Value::Object members = presets.back().asObject();
+            members.push_back({"comment", str(p.comment)});
+            presets.back() = Value::object(std::move(members));
+        }
     }
-    return Value::object({
-        {"schema", num(kFormatVersion)},
-        {"id", uuid(t.id.value)},
-        {"name", str(t.name)},
-        {"vendor", str(t.vendor)},
-        {"productId", str(t.productId)},
-        {"type", str(std::string(toolTypeName(t.type)))},
-        {"flutes", num(t.flutes)},
-        {"diameter", num(t.diameter)},
-        {"shankDiameter", num(t.shankDiameter)},
-        {"fluteLength", num(t.fluteLength)},
-        {"shoulderLength", num(t.shoulderLength)},
-        {"overallLength", num(t.overallLength)},
-        {"cornerRadius", num(t.cornerRadius)},
-        {"tipAngle", num(t.tipAngleDeg)},
-        {"tipDiameter", num(t.tipDiameter)},
-        {"threadPitch", num(t.threadPitch)},
-        {"threadSpec", str(t.threadSpec)},
-        {"bodyMaterial", str(t.bodyMaterial)},
-        {"defaultToolNumber", num(t.defaultToolNumber)},
-        {"presets", Value::array(std::move(presets))},
-    });
+    return finish(
+        {
+            {"schema", num(kFormatVersion)},
+            {"id", uuid(t.id.value)},
+            {"name", str(t.name)},
+            {"vendor", str(t.vendor)},
+            {"productId", str(t.productId)},
+            {"type", str(std::string(toolTypeName(t.type)))},
+            {"flutes", num(t.flutes)},
+            {"diameter", num(t.diameter)},
+            {"shankDiameter", num(t.shankDiameter)},
+            {"fluteLength", num(t.fluteLength)},
+            {"shoulderLength", num(t.shoulderLength)},
+            {"overallLength", num(t.overallLength)},
+            {"cornerRadius", num(t.cornerRadius)},
+            {"tipAngle", num(t.tipAngleDeg)},
+            {"tipDiameter", num(t.tipDiameter)},
+            {"threadPitch", num(t.threadPitch)},
+            {"threadSpec", str(t.threadSpec)},
+            {"bodyMaterial", str(t.bodyMaterial)},
+            {"defaultToolNumber", num(t.defaultToolNumber)},
+            {"presets", Value::array(std::move(presets))},
+        },
+        t.comment, t.extraJson);
 }
 
 Value toValue(const Holder& h)
@@ -205,27 +230,31 @@ Value toValue(const Holder& h)
             {"upperDiameter", num(s.upperDiameter)},
         }));
     }
-    return Value::object({
-        {"schema", num(kFormatVersion)},
-        {"id", uuid(h.id.value)},
-        {"name", str(h.name)},
-        {"vendor", str(h.vendor)},
-        {"gaugeLength", num(h.gaugeLength)},
-        {"segments", Value::array(std::move(segments))},
-    });
+    return finish(
+        {
+            {"schema", num(kFormatVersion)},
+            {"id", uuid(h.id.value)},
+            {"name", str(h.name)},
+            {"vendor", str(h.vendor)},
+            {"gaugeLength", num(h.gaugeLength)},
+            {"segments", Value::array(std::move(segments))},
+        },
+        h.comment, h.extraJson);
 }
 
 Value toValue(const Material& m)
 {
-    return Value::object({
-        {"schema", num(kFormatVersion)},
-        {"id", uuid(m.id.value)},
-        {"name", str(m.name)},
-        {"group", str(m.group)},
-        {"hardnessHb", num(m.hardnessHb)},
-        {"specificCuttingForce", num(m.specificCuttingForceNmm2)},
-        {"density", num(m.densityGcm3)},
-    });
+    return finish(
+        {
+            {"schema", num(kFormatVersion)},
+            {"id", uuid(m.id.value)},
+            {"name", str(m.name)},
+            {"group", str(m.group)},
+            {"hardnessHb", num(m.hardnessHb)},
+            {"specificCuttingForce", num(m.specificCuttingForceNmm2)},
+            {"density", num(m.densityGcm3)},
+        },
+        m.comment, m.extraJson);
 }
 
 Value toValue(const MachineDef& m)
@@ -253,39 +282,41 @@ Value toValue(const MachineDef& m)
         // A value that is not JSON text is kept as a string, so nothing a caller put there is lost.
         properties.push_back({key, parsed ? std::move(*parsed) : str(text)});
     }
-    return Value::object({
-        {"schema", num(kFormatVersion)},
-        {"id", uuid(m.id.value)},
-        {"name", str(m.name)},
-        {"vendor", str(m.vendor)},
-        {"model", str(m.model)},
-        {"kind", str(std::string(kind))},
-        {"verified", boolean(m.verified)},
-        {"axes", Value::array(std::move(axes))},
-        {"spindle", Value::object({
-                        {"maxRpm", num(m.maxRpm)},
-                        {"minRpm", num(m.minRpm)},
-                        {"powerKw", num(m.spindlePowerKw)},
-                        {"torqueNm", num(m.spindleTorqueNm)},
-                    })},
-        {"toolChanger", Value::object({
-                            {"capacity", num(m.toolCapacity)},
-                            {"changeSeconds", num(m.toolChangeSec)},
+    return finish(
+        {
+            {"schema", num(kFormatVersion)},
+            {"id", uuid(m.id.value)},
+            {"name", str(m.name)},
+            {"vendor", str(m.vendor)},
+            {"model", str(m.model)},
+            {"kind", str(std::string(kind))},
+            {"verified", boolean(m.verified)},
+            {"axes", Value::array(std::move(axes))},
+            {"spindle", Value::object({
+                            {"maxRpm", num(m.maxRpm)},
+                            {"minRpm", num(m.minRpm)},
+                            {"powerKw", num(m.spindlePowerKw)},
+                            {"torqueNm", num(m.spindleTorqueNm)},
                         })},
-        {"control", Value::object({
-                        {"dialect", str(m.controlDialect)},
-                        {"defaultPost", str(m.defaultPost)},
-                        {"rigidTapping", boolean(m.rigidTapping)},
-                        {"maxBlockNumber", num(m.maxBlockNumber)},
-                        {"maxProgramNameLength", num(m.maxProgramNameLength)},
-                    })},
-        {"options", Value::object({
-                        {"throughSpindleCoolant", boolean(m.throughSpindleCoolant)},
-                        {"probe", boolean(m.hasProbe)},
-                        {"toolSetter", boolean(m.hasToolSetter)},
-                    })},
-        {"postProperties", Value::object(std::move(properties))},
-    });
+            {"toolChanger", Value::object({
+                                {"capacity", num(m.toolCapacity)},
+                                {"changeSeconds", num(m.toolChangeSec)},
+                            })},
+            {"control", Value::object({
+                            {"dialect", str(m.controlDialect)},
+                            {"defaultPost", str(m.defaultPost)},
+                            {"rigidTapping", boolean(m.rigidTapping)},
+                            {"maxBlockNumber", num(m.maxBlockNumber)},
+                            {"maxProgramNameLength", num(m.maxProgramNameLength)},
+                        })},
+            {"options", Value::object({
+                            {"throughSpindleCoolant", boolean(m.throughSpindleCoolant)},
+                            {"probe", boolean(m.hasProbe)},
+                            {"toolSetter", boolean(m.hasToolSetter)},
+                        })},
+            {"postProperties", Value::object(std::move(properties))},
+        },
+        m.comment, m.extraJson);
 }
 
 Value toValue(const OpTemplate& t)
@@ -294,17 +325,19 @@ Value toValue(const OpTemplate& t)
         auto parsed = json::parse(text.empty() ? std::string_view("{}") : std::string_view(text));
         return parsed ? std::move(*parsed) : Value::string(text); // not an object: the schema check refuses it
     };
-    return Value::object({
-        {"schema", num(kFormatVersion)},
-        {"id", uuid(t.id)},
-        {"name", str(t.name)},
-        {"opType", str(t.opType)},
-        {"featureKind", str(t.featureKind)},
-        {"material", t.material ? uuid(t.material->value) : Value()},
-        {"machine", t.machine ? uuid(t.machine->value) : Value()},
-        {"toolQuery", objectText(t.toolQueryJson)},
-        {"params", objectText(t.paramsJson)},
-    });
+    return finish(
+        {
+            {"schema", num(kFormatVersion)},
+            {"id", uuid(t.id)},
+            {"name", str(t.name)},
+            {"opType", str(t.opType)},
+            {"featureKind", str(t.featureKind)},
+            {"material", t.material ? uuid(t.material->value) : Value()},
+            {"machine", t.machine ? uuid(t.machine->value) : Value()},
+            {"toolQuery", objectText(t.toolQueryJson)},
+            {"params", objectText(t.paramsJson)},
+        },
+        t.comment, t.extraJson);
 }
 
 // ---------- checks ----------
@@ -384,6 +417,7 @@ Result<Tool> decodeTool(const Value& v)
             preset.maxRadialFraction = numberOr(p, "maxRadialFraction");
             preset.maxAxialFraction = numberOr(p, "maxAxialFraction");
             preset.rampAngleDeg = numberOr(p, "rampAngle");
+            preset.comment = stringOr(p, "comment");
             if (!seen.insert({*material, preset.opClass}).second) {
                 return bad("/presets/" + std::to_string(i) + ": a second preset for the same material and opClass");
             }
@@ -402,6 +436,8 @@ Result<Tool> decodeTool(const Value& v)
     if (t.type == ToolType::Tap && t.threadPitch <= 0) {
         return bad("/threadPitch: a tap needs its thread pitch");
     }
+    t.comment = stringOr(v, "comment");
+    t.extraJson = unknownKeysOf(v, toValue(t));
     return t;
 }
 
@@ -419,6 +455,8 @@ Result<Holder> decodeHolder(const Value& v)
     for (const Value& s : v.find("segments")->asArray()) {
         h.segments.push_back({numberOr(s, "height"), numberOr(s, "lowerDiameter"), numberOr(s, "upperDiameter")});
     }
+    h.comment = stringOr(v, "comment");
+    h.extraJson = unknownKeysOf(v, toValue(h));
     return h;
 }
 
@@ -435,6 +473,8 @@ Result<Material> decodeMaterial(const Value& v)
     m.hardnessHb = numberOr(v, "hardnessHb");
     m.specificCuttingForceNmm2 = numberOr(v, "specificCuttingForce");
     m.densityGcm3 = numberOr(v, "density");
+    m.comment = stringOr(v, "comment");
+    m.extraJson = unknownKeysOf(v, toValue(m));
     return m;
 }
 
@@ -504,6 +544,8 @@ Result<MachineDef> decodeMachine(const Value& v)
     for (const Member& p : objectOr(v, "postProperties").asObject()) {
         m.postPropertyOverrides.emplace(p.key, json::write(p.value));
     }
+    m.comment = stringOr(v, "comment");
+    m.extraJson = unknownKeysOf(v, toValue(m));
     return m;
 }
 
@@ -534,6 +576,8 @@ Result<OpTemplate> decodeTemplate(const Value& v)
     }
     t.toolQueryJson = json::write(*v.find("toolQuery"));
     t.paramsJson = json::write(*v.find("params"));
+    t.comment = stringOr(v, "comment");
+    t.extraJson = unknownKeysOf(v, toValue(t));
     return t;
 }
 
@@ -544,11 +588,42 @@ Value mergeUnknownKeys(const Value& raw, Value known)
     }
     Value::Object members = known.asObject();
     for (const Member& m : raw.asObject()) {
-        if (!known.find(m.key)) {
+        auto it = std::find_if(members.begin(), members.end(), [&](const Member& k) { return k.key == m.key; });
+        if (it == members.end()) {
             members.push_back(m);
+        } else if (it->value.isObject() && m.value.isObject()) {
+            it->value = mergeUnknownKeys(m.value, std::move(it->value));
         }
     }
     return Value::object(std::move(members));
+}
+
+namespace {
+Value unknownMembers(const Value& original, const Value& known)
+{
+    Value::Object out;
+    for (const Member& m : original.asObject()) {
+        const Value* k = known.find(m.key);
+        if (k == nullptr) {
+            out.push_back(m);
+        } else if (m.value.isObject() && k->isObject()) {
+            Value nested = unknownMembers(m.value, *k);
+            if (!nested.asObject().empty()) {
+                out.push_back(Member{m.key, std::move(nested)});
+            }
+        }
+    }
+    return Value::object(std::move(out));
+}
+} // namespace
+
+std::string unknownKeysOf(const Value& original, const Value& known)
+{
+    if (!original.isObject() || !known.isObject()) {
+        return {};
+    }
+    Value extras = unknownMembers(original, known);
+    return extras.asObject().empty() ? std::string() : json::write(extras);
 }
 
 } // namespace ray::lib::detail
@@ -622,6 +697,29 @@ Hash256 Tool::contentHash() const
     Hasher hasher;
     hasher.bytes(std::as_bytes(std::span<const char>(bytes.data(), bytes.size())));
     return hasher.finish();
+}
+
+// The shape alone (libraries.h). Each hash starts with its own tag and version, so a tool and a holder never hash
+// alike, and the field list can change in a later version without colliding with this one.
+Hash256 Tool::geometryHash() const
+{
+    Hasher h;
+    h.str("raycad.lib.tool-geometry.v1");
+    h.str(detail::toolTypeName(type)).i64(flutes);
+    h.f64(diameter).f64(shankDiameter).f64(fluteLength).f64(shoulderLength).f64(overallLength);
+    h.f64(cornerRadius).f64(tipAngleDeg).f64(tipDiameter).f64(threadPitch);
+    return h.finish();
+}
+
+Hash256 Holder::geometryHash() const
+{
+    Hasher h;
+    h.str("raycad.lib.holder-geometry.v1");
+    h.f64(gaugeLength).i64(static_cast<std::int64_t>(segments.size()));
+    for (const HolderSegment& s : segments) {
+        h.f64(s.height).f64(s.lowerDiameter).f64(s.upperDiameter);
+    }
+    return h.finish();
 }
 
 } // namespace ray::lib

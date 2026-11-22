@@ -136,6 +136,7 @@ struct State {
     std::vector<std::string> posts;
     std::optional<LibraryIssue> manifestIssue;
     std::optional<Hash256> manifestHash;
+    std::string name; // library.json "name"
 };
 
 class FolderLibrary final : public ILibrary {
@@ -205,12 +206,20 @@ public:
     Status save(const MachineDef& x) override { return saveItem(Kind::Machine, toValue(x)); }
     Status save(const OpTemplate& x) override { return saveItem(Kind::Template, toValue(x)); }
 
-    Status remove(std::string_view kindName, const Uuid& id) override
+    std::string name() const override
     {
-        const auto kind = kindFromName(kindName);
+        const std::lock_guard<std::mutex> lock(dataMutex_);
+        return state_.name;
+    }
+
+    Status remove(ItemKind which, const Uuid& id) override
+    {
+        const auto kind =
+            static_cast<std::size_t>(which) < kAllKinds.size() ? std::optional<Kind>(which) : std::nullopt;
         if (!kind) {
-            return fail(ErrorCode::InvalidArgument, "Unknown library item kind '" + std::string(kindName) + "'");
+            return fail(ErrorCode::InvalidArgument, "Unknown library item kind");
         }
+        const std::string_view kindName = kindInfo(*kind).name;
         try {
             const std::lock_guard<std::mutex> io(ioMutex_);
             const KindState& ks = state_.kinds[static_cast<std::size_t>(*kind)];
@@ -432,6 +441,9 @@ private:
                 LibraryIssue{path, "/: library.json needs \"schema\" (a number) and \"name\" (a string)"};
         } else if (version->asNumber() > kFormatVersion) {
             next.manifestIssue = LibraryIssue{path, "/schema: this library was written by a newer RayCAD"};
+        }
+        if (name != nullptr && name->isString()) {
+            next.name = name->asString();
         }
     }
 

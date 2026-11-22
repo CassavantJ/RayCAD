@@ -28,6 +28,9 @@ std::string resolveUserDataDir(const std::optional<std::string>& option);
 
 std::int64_t unixNowMs();
 
+// The folder of the running executable (UTF-8), or "" when the platform does not say (program_dir.cpp).
+std::string programDir();
+
 // The recent-files list in <dir>/recent-files.json: [{"openedMs":n,"path":"..."}], most recent first.
 // Thread-safe. A missing or unreadable file is an empty list; write errors are logged, never fatal.
 class RecentFiles {

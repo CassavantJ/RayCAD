@@ -1,5 +1,5 @@
-// Helpers of the CAM state and engine tests (task T-032): a test-only operation type, library items as JSON (the
-// in-memory stand-in for the library of T-030), and CAM command builders.
+// Helpers of the CAM state and engine tests (task T-032): a test-only operation type, library items as JSON (in the
+// library's file format, which embedded items are: cam.h embeddedJson), and CAM command builders.
 //
 // The operation type "test.op" makes a toolpath of one rapid and one feed move to the heights of the operation, and
 // counts its runs. Its params steer it: {"mode": "block"} waits until the gate opens (polling cancellation every
@@ -112,7 +112,7 @@ inline std::string id(char kind, std::uint64_t n)
 
 inline std::string toolJson(std::uint64_t n, double diameter = 6.0)
 {
-    return R"({"id":")" + id('d', n) + R"(","name":"Tool )" + std::to_string(n) +
+    return R"({"schema":1,"id":")" + id('d', n) + R"(","name":"Tool )" + std::to_string(n) +
            R"(","type":"flatEndMill","flutes":3,"diameter":)" + std::to_string(diameter) +
            R"(,"shankDiameter":6,"fluteLength":20,"shoulderLength":25,"overallLength":60,"defaultToolNumber":)" +
            std::to_string(n) + "}";
@@ -120,17 +120,17 @@ inline std::string toolJson(std::uint64_t n, double diameter = 6.0)
 
 inline std::string holderJson(std::uint64_t n)
 {
-    return R"({"id":")" + id('e', n) + R"(","name":"Holder )" + std::to_string(n) +
+    return R"({"schema":1,"id":")" + id('e', n) + R"(","name":"Holder )" + std::to_string(n) +
            R"(","gaugeLength":40,"segments":[{"height":40,"lowerDiameter":30,"upperDiameter":40}]})";
 }
 
 inline std::string machineJson(std::uint64_t n, double maxRpm = 12000)
 {
-    return R"({"id":")" + id('9', n) + R"(","name":"Mill )" + std::to_string(n) +
+    return R"({"schema":1,"id":")" + id('9', n) + R"(","name":"Mill )" + std::to_string(n) +
            R"(","kind":"mill3","axes":[{"letter":"X","min":0,"max":500,"rapid":20000,"maxFeed":10000,"accel":3000}],)"
            R"("spindle":{"maxRpm":)" +
            std::to_string(maxRpm) +
-           R"(,"powerKw":7.5},"control":{"dialect":"generic-iso","defaultPost":"generic-iso","rigidTapping":true},)"
+           R"(,"powerKw":7.5},"toolChanger":{"capacity":20},"control":{"dialect":"generic-iso","defaultPost":"generic-iso","rigidTapping":true},)"
            R"("postProperties":{"useG187":true,"mode":"fast"}})";
 }
 
