@@ -480,13 +480,19 @@ QString searchText(const lib::Holder& h)
         .toLower();
 }
 
-std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& filter)
+std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& filter, const std::vector<int>* order)
 {
     static const QRegularExpression space(QStringLiteral("\\s+"));
     const QStringList words = filter.text.toLower().split(space, Qt::SkipEmptyParts);
+    // The order is total (ties end at the id), so filtering the sorted list is sorting the filtered one.
+    std::vector<int> sorted;
+    if (order == nullptr || order->size() != entries.size()) {
+        sorted = sortEntries(entries, filter.sort);
+        order = &sorted;
+    }
     std::vector<int> out;
     out.reserve(entries.size());
-    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+    for (const int i : *order) {
         const Entry& e = entries[static_cast<std::size_t>(i)];
         if (!filter.type.isEmpty() && !e.holder && e.type != filter.type)
             continue;
@@ -500,9 +506,23 @@ std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& 
             continue;
         out.push_back(i);
     }
-    const auto typeRank = [](const Entry& e) {
-        const auto t = api::cam_tools::toolTypeFromName(e.type.toStdString());
-        return t ? static_cast<int>(*t) : 99;
+    return out;
+}
+
+std::vector<int> sortEntries(const std::vector<Entry>& entries, SortKey sort)
+{
+    std::vector<int> out(entries.size());
+    for (std::size_t i = 0; i < out.size(); ++i)
+        out[i] = static_cast<int>(i);
+    std::vector<int> ranks(entries.size(), 99);
+    if (sort == SortKey::Type) {
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            const auto t = api::cam_tools::toolTypeFromName(entries[i].type.toStdString());
+            ranks[i] = t ? static_cast<int>(*t) : 99;
+        }
+    }
+    const auto typeRank = [&](const Entry& e) {
+        return ranks[static_cast<std::size_t>(&e - entries.data())];
     };
     const auto byName = [](const Entry& a, const Entry& b) {
         const int c = a.name.compare(b.name, Qt::CaseInsensitive);
@@ -518,7 +538,7 @@ std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& 
         const Entry& b = entries[static_cast<std::size_t>(ib)];
         if (a.document != b.document)
             return a.document;
-        switch (filter.sort) {
+        switch (sort) {
         case SortKey::Name:
             break;
         case SortKey::Type:

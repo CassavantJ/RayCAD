@@ -384,6 +384,10 @@ private:
     toolsui::SortKey sort_ = toolsui::SortKey::Diameter;
     bool includeDocument_ = true;
     std::vector<int> rows_;
+    std::vector<int> order_; // the catalog sorted for sort_ (of revision orderRevision_)
+    int orderRevision_ = -1;
+    bool orderHolders_ = false;
+    toolsui::SortKey orderSort_ = toolsui::SortKey::Diameter;
     bool refiltering_ = false;
     int total_ = 0;
     int filterRuns_ = 0;

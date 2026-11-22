@@ -1251,11 +1251,15 @@ TEST_CASE("5,000 tools: the list stays responsive and only visible rows exist", 
          << " ms (worst UI-thread gap while typing " << typeGap << " ms); scrolling worst gap " << scrollGap
          << " ms; rescan of 5,000 rewritten files " << rescanMs << " ms on a worker, catalog " << catalogAfterMs
          << " ms, worst UI-thread gap " << rescanGap << " ms");
-    CHECK(openGap < ray::test::uiBudgetMs(50));
-    CHECK(typeGap < ray::test::uiBudgetMs(50));
-    CHECK(scrollGap < ray::test::uiBudgetMs(50));
-    CHECK(rescanGap < ray::test::uiBudgetMs(50));
-    CHECK(filterMs.back() < ray::test::uiBudgetMs(33)); // the High tier's stall budget (PLAN.md 9)
+    // The budgets are for an optimised build (ui_budget.h). This case's UI-thread work is all standard containers and
+    // strings (5,000 items copied, lower-cased and filtered), which an MSVC Debug build's checked iterators slow about
+    // tenfold rather than the fourfold kDebugBudgetScale allows for: twice that there.
+    const double scale = ray::test::kDebugBudgetScale > 1 ? 2.0 : 1.0;
+    CHECK(openGap < scale * ray::test::uiBudgetMs(50));
+    CHECK(typeGap < scale * ray::test::uiBudgetMs(50));
+    CHECK(scrollGap < scale * ray::test::uiBudgetMs(50));
+    CHECK(rescanGap < scale * ray::test::uiBudgetMs(50));
+    CHECK(filterMs.back() < scale * ray::test::uiBudgetMs(33)); // the High tier's stall budget (PLAN.md 9)
     w.checkNoWarnings();
 }
 

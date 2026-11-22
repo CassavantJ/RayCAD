@@ -285,6 +285,9 @@ TEST_CASE("the filter is deterministic whatever the input order", "[tools][filte
         f.maxDiameter = 9;
         const auto expected = ids(entries, toolsui::filterEntries(entries, f));
         REQUIRE(!expected.empty());
+        // Filtering the list sorted once (what a list does on every key stroke) gives the same.
+        const std::vector<int> order = toolsui::sortEntries(entries, key);
+        CHECK(ids(entries, toolsui::filterEntries(entries, f, &order)) == expected);
         std::mt19937 rng(7);
         for (int round = 0; round < 5; ++round) {
             auto shuffled = entries;

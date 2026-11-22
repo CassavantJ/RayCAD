@@ -1822,7 +1822,15 @@ void ToolListModel::refilter()
     if (source_) {
         const std::vector<toolsui::Entry>& all = source_->entries(holders_);
         total_ = static_cast<int>(all.size());
-        rows_ = toolsui::filterEntries(all, f);
+        // Sorted once per catalog, list and key; a key stroke only filters.
+        if (orderRevision_ != source_->revision() || orderHolders_ != holders_ || orderSort_ != sort_ ||
+            order_.size() != all.size()) {
+            order_ = toolsui::sortEntries(all, sort_);
+            orderRevision_ = source_->revision();
+            orderHolders_ = holders_;
+            orderSort_ = sort_;
+        }
+        rows_ = toolsui::filterEntries(all, f, &order_);
         if (!includeDocument_)
             std::erase_if(rows_, [&all](int i) { return all[static_cast<std::size_t>(i)].document; });
     }

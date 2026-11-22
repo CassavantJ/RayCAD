@@ -73,8 +73,12 @@ struct Filter {
 // comment; lower case.
 QString searchText(const lib::Tool& tool, const QString& typeTitle);
 QString searchText(const lib::Holder& holder);
-// The indices of `entries` that pass, in display order.
-std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& filter);
+// Every index of `entries` in display order for the key: the document's first, then by the key, ties by name, then id.
+std::vector<int> sortEntries(const std::vector<Entry>& entries, SortKey sort);
+// The indices of `entries` that pass, in display order. `order`: sortEntries(entries, filter.sort) made before (a
+// list filters again on every key stroke without sorting again); null to sort here.
+std::vector<int> filterEntries(const std::vector<Entry>& entries, const Filter& filter,
+                               const std::vector<int>* order = nullptr);
 
 // ---------- Fields ----------
 // Kinds: "text", "multiline", "choice", "int", "length", "angle", "fraction", "speed".
