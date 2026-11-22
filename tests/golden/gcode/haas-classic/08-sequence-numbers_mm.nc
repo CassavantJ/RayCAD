@@ -1,0 +1,45 @@
+%
+O01108 (Matrix: sequence numbers on every block)
+(Document post matrix setup Op 1 top)
+(Machine Test VMC Haas classic)
+(T1 D10. flatEndMill 10 mm end mill)
+(T2 D6. flatEndMill 6 mm end mill)
+N10 G21
+N20 G17 G40 G49 G80 G90 G94
+(First tool)
+N30 G00 G53 G49 Z0.
+(T1 10 mm end mill in CAT40 ER32)
+N40 T1 M06
+N50 T2
+N60 G21
+N70 G00 G90 G54 G17 X0. Y0.
+N80 S6000 M03
+N90 G43 H1 Z25.
+N100 M08
+N110 X10. Y10.
+N120 Z2.
+N130 G01 Z-1. F200.
+N140 X40. F800.
+N150 G00 Z25.
+N160 G00 G53 G49 Z0.
+N170 M05
+N180 M09
+(Second tool)
+(T2 6 mm end mill in CAT40 ER32)
+N190 T2 M06
+N200 G21
+N210 G00 G90 G54 G17 X0. Y0.
+N220 S6000 M03
+N230 G43 H2 Z25.
+N240 M08
+N250 X10. Y30.
+N260 Z2.
+N270 G01 Z-1. F200.
+N280 X40. F800.
+N290 G00 Z25.
+N300 G00 G53 G49 Z0.
+N310 M05
+N320 M09
+N330 G00 G53 Y0.
+N340 M30
+%

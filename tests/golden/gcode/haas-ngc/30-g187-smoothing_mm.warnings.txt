@@ -1,0 +1,1 @@
+section 4 (Chip-break drill): the peck clearance 0.3 is not posted; the control takes it from Setting 22 [H1 p.77, p.95]

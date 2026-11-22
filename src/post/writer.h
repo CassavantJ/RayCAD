@@ -40,7 +40,8 @@ public:
     // Joins the non-empty words with one space; nothing is written when all are empty. With sequence numbers on,
     // the line starts with "N<n>".
     bool block(std::span<const std::string_view> words);
-    // "(" + sanitizeComment(text) + ")"; nothing when the sanitised text is empty.
+    // "(" + sanitizeComment(text) + ")", cut to the format's commentMaxLength (trailing space dropped); nothing when
+    // the sanitised text is empty.
     bool comment(std::string_view text);
     // The text as given, one line per "\n"-separated part ("\r" before a "\n" is dropped).
     bool raw(std::string_view text);
@@ -55,10 +56,27 @@ public:
     // True, with `word` set, when the value rounded to the format differs from the last one written for that letter
     // (A to Z, upper case).
     bool axis(char letter, std::int64_t n, std::string& word);
-    // Feed word, mm/min with 1 decimal or inch/min with 2; true with `word` set when it changed.
-    bool feed(std::int64_t n, std::string& word);
-    // prefix + the number, always.
-    void word(std::string_view prefix, std::int64_t n, const NumberFormat& format, std::string& word) const;
+    // Feed word, mm/min with 1 decimal or inch/min with 2; true with `word` set when it changed. `decimals` >= 0 writes
+    // this one word with that many decimals instead (a tapping feed); a word with other decimals than the last one
+    // counts as changed.
+    bool feed(std::int64_t n, std::string& word, int decimals = -1);
+    // prefix + the number, always. `trailing` applies the output's trailing-zero style (setFormat) to `format`.
+    void word(std::string_view prefix, std::int64_t n, const NumberFormat& format, std::string& word,
+              bool trailing = false) const;
+
+    // ---------- Output format (post_api.d.ts, out.setFormat; T-040) ----------
+    // How the digits after the decimal point end: "trim" X12. X12.5 (the default), "one" X12.0 X12.5 (at least one
+    // digit), "all" X12.000 X12.500 (every decimal). A decimal point is written in every style.
+    enum class Trailing : std::uint8_t { Trim, One, All };
+    struct Format {
+        int axisDecimals = 3; // 0..6
+        int feedDecimals = 1; // 0..6
+        Trailing trailing = Trailing::Trim;
+        std::size_t commentMaxLength = 0; // characters inside the parentheses; 0 = no limit
+    };
+    const Format& format() const { return format_; }
+    // Sets the format and forgets every axis and the feed (their rounded values change with the decimals).
+    void setFormat(const Format& f);
     // Forgets every modal group, every axis and the feed, so that the next word of each is written.
     void resetAll();
     // Forgets one thing: "feed", "axes" (every axis), a single upper-case letter A to Z (that axis), or a modal
@@ -80,6 +98,10 @@ public:
     void setSequenceStart(std::int64_t start); // also restarts the count
     void setSequenceIncrement(std::int64_t increment) { sequence_.increment = increment; }
     void setSequenceOnlyOnToolChange(bool on) { sequence_.onlyOnToolChange = on; }
+    // The highest N number before the numbers wrap to start: MachineDef::maxBlockNumber, or what the post sets
+    // (out.sequence.max, T-040); 0 = no limit.
+    std::int64_t sequenceMax() const { return options_.maxBlockNumber; }
+    void setSequenceMax(std::int64_t max) { options_.maxBlockNumber = max; }
     // Set by the engine before onSectionStart of a section with toolChanged; the next block takes the number.
     void setToolChangeBlockPending(bool pending) { toolChangePending_ = pending; }
 
@@ -104,6 +126,7 @@ public:
 
 private:
     bool emit(std::string_view line);
+    void applyTrailing(std::string& word, const NumberFormat& f) const;
 
     WriterOptions options_;
     NumberFormat coordinate_{};
@@ -119,7 +142,9 @@ private:
     std::array<std::int64_t, 26> axisLast_{};
     std::array<bool, 26> axisSet_{};
     std::int64_t feedLast_ = 0;
+    int feedLastDecimals_ = 0;
     bool feedSet_ = false;
+    Format format_;
     std::vector<std::pair<std::string, std::string>> modal_; // few groups: a linear search beats a map
 
     Sequence sequence_;

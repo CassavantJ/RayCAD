@@ -578,7 +578,9 @@ def machines():
             "control": {"dialect": "haas-ngc", "defaultPost": "haas-ngc", "rigidTapping": True, "maxBlockNumber": 0,
                         "maxProgramNameLength": 0},
             "options": {"throughSpindleCoolant": False, "probe": False, "toolSetter": False},
-            "postProperties": {"useG187": True},
+            # The shipped Haas posts' G187 smoothing level (T-041): medium is also the control's factory default for
+            # Setting 191, so the machine runs as it would without the word.
+            "postProperties": {"smoothing": "medium"},
             "comment": "Published catalogue values of the Haas VF-2 (Haas Automation, VF-2 specifications page, "
             "haascnc.com). X travel 762 mm, 8100 rpm, 22.4 kW, 122 N m, rapids 25.4 m/min, cutting feed 16.5 m/min "
             "(650 in/min), 20 tools, 4.2 s tool change and rigid tapping are the values recorded from that page in "

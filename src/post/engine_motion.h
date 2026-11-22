@@ -28,6 +28,10 @@ struct MotionCaps {
     double maxArcDegrees = 360.0;               // (0, 360]
     std::array<bool, kCycleKindCount> cycles{}; // canned cycles the post emits itself
     bool cutterComp = false;
+    // Planes (cam::ArcPlane order XY, XZ, YZ) the control cuts arcs in, and helical arcs in (capabilities.arcPlanes,
+    // helicalPlanes; T-040). An arc in another plane is replaced by lines like an arc with arcs "none".
+    std::array<bool, 3> arcPlanes{true, true, true};
+    std::array<bool, 3> helicalPlanes{true, true, true};
 };
 
 // Constants of the host's own arc linearisation, in nanometres.
@@ -86,7 +90,8 @@ public:
 // Cycles it does not declare are expanded into Rapid, Linear and Dwell events with exactly the motion of cam.h
 // (steps 1 to 4, a dwell at the bottom when the move has one, zero-length rapids left out), the same as the backplot.
 // Arcs: split into equal pieces of at most maxArcDegrees (with arcs "R", every piece under 180 degrees); with arcs
-// "none", or a helical arc and helical off, replaced by lines within kLinearizeToleranceNm.
+// "none", an arc in a plane not in arcPlanes, or a helical arc with helical off or its plane not in helicalPlanes,
+// replaced by lines within kLinearizeToleranceNm.
 Result<bool> expandSection(const cam::Toolpath& path, const lib::MachineDef* machine, const MotionCaps& caps,
                            MotionSink& sink);
 

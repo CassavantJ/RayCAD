@@ -7,6 +7,7 @@
 #include <cmath>
 #include <new>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace ray::post::detail {
@@ -204,8 +205,17 @@ JSValue jsFeed(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     if (!numberArg(ctx, argv[0], "feed", 1.0, micro)) {
         return JS_EXCEPTION;
     }
+    int decimals = -1;
+    if (argc > 1 && !JS_IsUndefined(argv[1])) {
+        double d = 0;
+        if (!JS_IsNumber(argv[1]) || JS_ToFloat64(ctx, &d, argv[1]) || std::floor(d) != d || d < 0 ||
+            d > fmt::kMaxDecimals) {
+            return JS_ThrowRangeError(ctx, "out.feed(value, decimals): decimals must be a whole number from 0 to 6");
+        }
+        decimals = static_cast<int>(d);
+    }
     std::string word;
-    if (!sessionOf(ctx).writer().feed(micro, word)) {
+    if (!sessionOf(ctx).writer().feed(micro, word, decimals)) {
         return JS_NULL;
     }
     return newString(ctx, word);
@@ -284,7 +294,8 @@ JSValue jsWord(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
         return JS_ThrowTypeError(ctx, "out.word: the letter must be at most 8 characters, without spaces");
     }
     NumberFormat format = s.writer().coordinateFormat();
-    if (argc > 2 && !JS_IsUndefined(argv[2]) && !formatArg(ctx, argv[2], format)) {
+    const bool ownFormat = argc > 2 && !JS_IsUndefined(argv[2]);
+    if (ownFormat && !formatArg(ctx, argv[2], format)) {
         return JS_EXCEPTION;
     }
     std::int64_t micro = 0;
@@ -292,8 +303,68 @@ JSValue jsWord(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
         return JS_EXCEPTION;
     }
     std::string word;
-    s.writer().word(prefix, micro, format, word);
+    // Without a format of its own the word is a coordinate: the output's trailing-zero style applies (setFormat).
+    s.writer().word(prefix, micro, format, word, !ownFormat);
     return newString(ctx, word);
+}
+
+// out.setFormat({ axisDecimals, feedDecimals, trailingZeros, commentMaxLength }): every key optional, the others keep
+// their value. Forgets the axes and the feed (writer.h).
+JSValue jsSetFormat(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
+{
+    Writer& w = sessionOf(ctx).writer();
+    if (argc < 1 || !JS_IsObject(argv[0])) {
+        return JS_ThrowTypeError(ctx, "out.setFormat: an object such as { axisDecimals: 3 } is needed");
+    }
+    Writer::Format f = w.format();
+    auto whole = [&](const char* key, double lo, double hi, auto& target) -> bool {
+        JSValue v = JS_GetPropertyStr(ctx, argv[0], key);
+        if (JS_IsException(v)) {
+            return false;
+        }
+        if (JS_IsUndefined(v)) {
+            return true;
+        }
+        double d = 0;
+        const bool ok = JS_IsNumber(v) && !JS_ToFloat64(ctx, &d, v) && std::floor(d) == d && d >= lo && d <= hi;
+        JS_FreeValue(ctx, v);
+        if (!ok) {
+            JS_ThrowRangeError(ctx, "out.setFormat: %s must be a whole number from %d to %d", key, static_cast<int>(lo),
+                               static_cast<int>(hi));
+            return false;
+        }
+        target = static_cast<std::remove_reference_t<decltype(target)>>(d);
+        return true;
+    };
+    if (!whole("axisDecimals", 0, fmt::kMaxDecimals, f.axisDecimals) ||
+        !whole("feedDecimals", 0, fmt::kMaxDecimals, f.feedDecimals) ||
+        !whole("commentMaxLength", 0, 1000, f.commentMaxLength)) {
+        return JS_EXCEPTION;
+    }
+    JSValue t = JS_GetPropertyStr(ctx, argv[0], "trailingZeros");
+    if (JS_IsException(t)) {
+        return JS_EXCEPTION;
+    }
+    if (!JS_IsUndefined(t)) {
+        CStrings strings(ctx);
+        std::string_view name;
+        const bool isString = JS_IsString(t) && strings.add(t, name);
+        JS_FreeValue(ctx, t);
+        if (isString && name == "trim") {
+            f.trailing = Writer::Trailing::Trim;
+        } else if (isString && name == "one") {
+            f.trailing = Writer::Trailing::One;
+        } else if (isString && name == "all") {
+            f.trailing = Writer::Trailing::All;
+        } else {
+            if (!JS_HasException(ctx)) {
+                JS_ThrowTypeError(ctx, "out.setFormat: trailingZeros must be \"trim\", \"one\" or \"all\"");
+            }
+            return JS_EXCEPTION;
+        }
+    }
+    w.setFormat(f);
+    return JS_UNDEFINED;
 }
 
 JSValue jsResetModal(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
@@ -343,10 +414,12 @@ JSValue jsFail(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     return s.throwStop(Stop::Fail, std::string(text));
 }
 
-// out.sequence: accessors over Writer::Sequence. magic 0 enabled, 1 start, 2 increment, 3 onlyOnToolChange.
+// out.sequence: accessors over Writer::Sequence. magic 0 enabled, 1 start, 2 increment, 3 onlyOnToolChange, 4 max
+// (the wrap limit, writer.h sequenceMax; T-040).
 JSValue jsSequenceGet(JSContext* ctx, JSValueConst, int, JSValueConst*, int magic)
 {
-    const Writer::Sequence& seq = sessionOf(ctx).writer().sequence();
+    const Writer& w = sessionOf(ctx).writer();
+    const Writer::Sequence& seq = w.sequence();
     switch (magic) {
     case 0:
         return JS_NewBool(ctx, seq.enabled);
@@ -354,6 +427,8 @@ JSValue jsSequenceGet(JSContext* ctx, JSValueConst, int, JSValueConst*, int magi
         return JS_NewFloat64(ctx, static_cast<double>(seq.start));
     case 2:
         return JS_NewFloat64(ctx, static_cast<double>(seq.increment));
+    case 4:
+        return JS_NewFloat64(ctx, static_cast<double>(w.sequenceMax()));
     default:
         return JS_NewBool(ctx, seq.onlyOnToolChange);
     }
@@ -378,13 +453,15 @@ JSValue jsSequenceSet(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv
         return JS_UNDEFINED;
     }
     double d = 0;
-    const double lowest = magic == 1 ? 0.0 : 1.0;
+    const double lowest = magic == 1 || magic == 4 ? 0.0 : 1.0;
     if (!JS_IsNumber(argv[0]) || JS_ToFloat64(ctx, &d, argv[0]) || std::floor(d) != d || d < lowest || d > 1.0e9) {
-        return JS_ThrowRangeError(ctx, "out.sequence: start (0 or more) and increment (1 or more) must be whole "
-                                       "numbers up to 1e9");
+        return JS_ThrowRangeError(ctx, "out.sequence: start and max (0 or more) and increment (1 or more) must be "
+                                       "whole numbers up to 1e9");
     }
     if (magic == 1) {
         w.setSequenceStart(static_cast<std::int64_t>(d));
+    } else if (magic == 4) {
+        w.setSequenceMax(static_cast<std::int64_t>(d));
     } else {
         w.setSequenceIncrement(static_cast<std::int64_t>(d));
     }
@@ -422,8 +499,9 @@ void installWriterFunctions(JSContext* ctx, JSValueConst out)
     addFunction(ctx, out, "resetModal", &guarded<&jsResetModal>, 0);
     addFunction(ctx, out, "warn", &guarded<&jsWarn>, 1);
     addFunction(ctx, out, "fail", &guarded<&jsFail>, 1);
+    addFunction(ctx, out, "setFormat", &guarded<&jsSetFormat>, 1);
     JSValue seq = JS_NewObject(ctx);
-    static constexpr std::array<const char*, 4> kFields = {"enabled", "start", "increment", "onlyOnToolChange"};
+    static constexpr std::array<const char*, 5> kFields = {"enabled", "start", "increment", "onlyOnToolChange", "max"};
     for (std::size_t i = 0; i < kFields.size(); ++i) {
         const JSAtom a = JS_NewAtom(ctx, kFields[i]);
         const int magic = static_cast<int>(i);
