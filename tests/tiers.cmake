@@ -22,6 +22,9 @@
 #                  the timed test cases wait for an idle machine.
 #   RESOURCE_LOCK  tests that need a resource of the whole desktop session hold a lock on it: "desktop" (the windows
 #                  on the screen, the active window and the pointer) and "clipboard" (they set the system clipboard and read it back).
+#                  The tests with the desktop lock, and the [wallclock] splits of their suites, also get the label
+#                  desktop: `ctest -L desktop` runs every test that shows a window, `-LE desktop` none of them.
+#                  RAY_TEST_SCREEN puts their windows on a screen other than the primary one (README).
 # Every name listed below must exist: a renamed test fails the configure instead of quietly leaving its tier.
 
 # The randomised naming blocks and the other suites over about 90 s in Release that routine changes do not need.
@@ -220,5 +223,12 @@ foreach(_entry IN LISTS RAY_TEST_LOCKS)
     # runs from the start beside the long tests instead of after them.
     if(_lock STREQUAL "desktop")
         ray_tier_set(${_test} SET COST 10000)
+        # The label desktop selects every test that shows a window (ctest -L desktop, -LE desktop): these, and the
+        # [wallclock] split of such a suite (alone anyway, so without the lock; it shows windows too: the warm-start
+        # cases start raycad.exe).
+        ray_tier_set(${_test} APPEND LABELS desktop)
+        if("${_test}_wallclock" IN_LIST RAY_ALL_TESTS)
+            ray_tier_set(${_test}_wallclock APPEND LABELS desktop)
+        endif()
     endif()
 endforeach()
