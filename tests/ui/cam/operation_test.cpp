@@ -275,7 +275,6 @@ struct Window {
             target = std::clamp(contentY + y - h / 3, 0.0, maxY);
         flick->setProperty("contentY", target);
         QCoreApplication::processEvents();
-        grab();
     }
     void click(QQuickItem* item) const
     {
@@ -505,8 +504,33 @@ void chooseTool(const Window& w, const QString& id, const QString& search)
         5000);
     INFO("tool " << id.toStdString() << " after searching '" << search.toStdString() << "'");
     REQUIRE(listed);
-    w.click(w.shown(QStringLiteral("operationToolRow.%1").arg(row)));
+    // The list scrolls to the row (it shows a few at a time), which must be the tool's (the list follows the search).
+    QQuickItem* list = w.shown(QStringLiteral("operationToolListView"));
+    QQuickItem* item = nullptr;
+    const bool shown = QTest::qWaitFor(
+        [&] {
+            QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4 /* Contain */));
+            item = w.find(QStringLiteral("operationToolRow.%1").arg(row));
+            return item != nullptr && item->isVisible() &&
+                   item->property("modelData").toMap().value(QStringLiteral("id")).toString() == id;
+        },
+        5000);
+    REQUIRE(shown);
+    w.click(item);
     REQUIRE(QTest::qWaitFor([&] { return w.op()->toolId() == id; }, 5000));
+}
+
+// Steps a list (a combo box with the keyboard focus) down until `done` holds, as the arrow key does.
+void stepDown(const Window& w, const QString& objectName, const std::function<bool()>& done)
+{
+    QQuickItem* combo = w.shown(objectName);
+    w.inView(combo);
+    combo->forceActiveFocus();
+    for (int i = 0; i < 12 && !done(); ++i) {
+        QTest::keyClick(w.window(), Qt::Key_Down);
+        QTest::qWait(30);
+    }
+    REQUIRE(QTest::qWaitFor(done, 5000));
 }
 
 // Picks hole `i` of the panel's holes by a face that is not its bore wall (any face of a hole picks it), as a click
@@ -828,15 +852,17 @@ TEST_CASE("editing an operation: the preview follows a parameter, relevance, Esc
     CHECK(w.stateHash() == before);
     // A field that does not matter yet is hidden: the depth, until the depth is given as a value.
     CHECK_FALSE(w.find(QStringLiteral("schemaRow.depth"))->isVisible());
-    QQuickItem* depthFrom = w.shown(QStringLiteral("schemaCombo.depthFrom"));
-    w.inView(depthFrom);
-    depthFrom->forceActiveFocus();
-    QTest::keyClick(w.window(), Qt::Key_Down); // the next choice: "A value"
+    stepDown(w, QStringLiteral("schemaCombo.depthFrom"), [&] {
+        return w.op()->form()->valueOf(QStringLiteral("depthFrom")).toString() == QStringLiteral("value");
+    });
     REQUIRE(QTest::qWaitFor([&] { return w.find(QStringLiteral("schemaRow.depth"))->isVisible(); }, 5000));
     CHECK(w.op()->form()->valueOf(QStringLiteral("depthFrom")).toString() == QStringLiteral("value"));
     w.shotsBothThemes(QStringLiteral("t045_edit_drill"));
 
-    // Esc: the panel closes and the document is as it was.
+    // Esc: the panel closes and the document is as it was. (While a job of the session runs, Esc cancels that job
+    // first, as everywhere in the shell: wait for the preview of the last change.)
+    w.previewed("ok");
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->property("jobActive").toBool(); }, kTimeoutMs));
     QTest::keyClick(w.window(), Qt::Key_Escape);
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
     CHECK(w.stateHash() == before);
@@ -867,19 +893,7 @@ TEST_CASE("generation shows its progress in the panel and in the tree, which fol
     ct::Gate::instance().open = false;
     newOperation(w);
     // The type from the list: the test type that reports progress while it waits.
-    QQuickItem* type = w.shown(QStringLiteral("operationCombo.type"));
-    const QVariantList types = w.op()->types();
-    int index = -1;
-    for (int i = 0; i < types.size(); ++i) {
-        if (types[i].toMap().value(QStringLiteral("name")).toString() == QStringLiteral("ui.progress"))
-            index = i;
-    }
-    REQUIRE(index >= 0);
-    w.inView(type);
-    type->forceActiveFocus();
-    for (int i = type->property("currentIndex").toInt(); i < index; ++i)
-        QTest::keyClick(w.window(), Qt::Key_Down);
-    REQUIRE(QTest::qWaitFor([&] { return w.op()->type() == QStringLiteral("ui.progress"); }, 5000));
+    stepDown(w, QStringLiteral("operationCombo.type"), [&] { return w.op()->type() == QStringLiteral("ui.progress"); });
     CHECK(w.find(QStringLiteral("operationSection.geometry"))->isVisible() == false); // it takes no geometry
     CHECK(w.shown(QStringLiteral("schemaInput.steps"))->property("text").toString() == QStringLiteral("3"));
     // Any tool suits it; typed speed and feed (the user's own).
@@ -962,13 +976,8 @@ TEST_CASE("validation: a parameter out of range and a tap that does not fit the 
 
     newOperation(w);
     // Tap: the cycle, then the M8 tap, whose thread is not the hole's.
-    QQuickItem* cycle = w.shown(QStringLiteral("schemaCombo.cycle"));
-    w.inView(cycle);
-    cycle->forceActiveFocus();
-    for (int i = 0; i < 3; ++i) // spot, [drill] -> peck -> chipBreak -> tap
-        QTest::keyClick(w.window(), Qt::Key_Down);
-    REQUIRE(QTest::qWaitFor(
-        [&] { return w.op()->form()->valueOf(QStringLiteral("cycle")).toString() == QStringLiteral("tap"); }, 5000));
+    stepDown(w, QStringLiteral("schemaCombo.cycle"), // spot, [drill], peck, chipBreak, tap
+             [&] { return w.op()->form()->valueOf(QStringLiteral("cycle")).toString() == QStringLiteral("tap"); });
     for (const QVariant& t : w.op()->tools())
         CHECK(t.toMap().value(QStringLiteral("detail")).toString().endsWith(QStringLiteral("tap"))); // taps on offer
     chooseTool(w, kTapM8, QStringLiteral("M8x1.25"));
@@ -1128,6 +1137,9 @@ TEST_CASE("the UI thread stays within its budget while previews build", "[cam][s
     w.click(QStringLiteral("operationUseCalculated"));
     w.previewed("ok");
 
+    // The field in view first: scrolling the panel is not what is measured.
+    w.inView(w.shown(QStringLiteral("schemaInput.breakthrough")));
+    QTest::qWait(200);
     QElapsedTimer clock;
     qint64 last = 0, worst = 0;
     QTimer tick;

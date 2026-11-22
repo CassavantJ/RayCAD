@@ -251,6 +251,7 @@ Item {
                     clip: true
                     ListView {
                         id: toolList
+                        objectName: "operationToolListView"
                         anchors.fill: parent
                         anchors.margins: 1
                         boundsBehavior: Flickable.StopAtBounds

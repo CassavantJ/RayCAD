@@ -31,12 +31,14 @@ QJsonObject object(const char* json)
 
 QVariantMap fieldOf(const SchemaFormModel& form, const QString& key)
 {
+    QVariantMap out;
     for (const QVariant& v : form.fields()) {
         if (v.toMap().value(QStringLiteral("key")).toString() == key)
-            return v.toMap();
+            out = v.toMap();
     }
-    FAIL("no field " << key.toStdString());
-    return {};
+    INFO("field " << key.toStdString());
+    CHECK_FALSE(out.isEmpty());
+    return out;
 }
 
 // A document with a parameter, read through the app's evaluator (the expressions the feature panels take).
