@@ -40,7 +40,9 @@ add_library(ray_ui STATIC
     model/preview.h
     model/preview.cpp
     cam/setup_logic.h # T-044
-    cam/setup_logic.cpp)
+    cam/setup_logic.cpp
+    cam/tools_logic.h # T-046
+    cam/tools_logic.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -116,7 +118,11 @@ set(RAY_UI_QML_FILES
     qml/model/FeatureRow.qml
     qml/model/ParameterTable.qml
     qml/cam/SetupPanel.qml
-    qml/cam/CamTree.qml)
+    qml/cam/CamTree.qml
+    qml/cam/ToolLibrary.qml # T-046
+    qml/cam/ToolProfile.qml
+    qml/cam/ToolFields.qml
+    qml/cam/ToolPicker.qml)
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -171,6 +177,8 @@ qt_add_qml_module(ray_ui
         cam/setup_tool.cpp
         cam/setup_tree.h
         cam/setup_tree.cpp
+        cam/tools_model.h # T-046
+        cam/tools_model.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick

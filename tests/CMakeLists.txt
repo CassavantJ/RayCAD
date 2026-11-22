@@ -58,6 +58,7 @@ add_subdirectory(ui/dispatch)
 add_subdirectory(ui/sketch)
 add_subdirectory(ui/model) # T-098
 add_subdirectory(ui/cam) # T-044
+add_subdirectory(ui/cam_tools) # T-046 (sets up its own screen and driver-thread listeners)
 # (Keep every add_subdirectory above this line: the sanitizer options below reach only the tests defined so far.)
 
 # ---------- Graphics driver threads ----------

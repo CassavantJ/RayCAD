@@ -12,6 +12,8 @@ add_library(ray_api STATIC
     feature_edit.cpp
     include/ray_api/cam_setup.h # the CAM workspace's setup preview and helpers (T-044)
     cam_setup.cpp
+    include/ray_api/cam_tools.h # the tool library manager's item formats and checked saves (T-046)
+    cam_tools.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

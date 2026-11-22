@@ -53,6 +53,7 @@ std::span<const UiCommand> constraintUiCommands(); // sketch/constraints_model.c
 std::span<const UiCommand> modelUiCommands();      // model/feature_tools.cpp: model.*
 std::span<const UiCommand> camSetupUiCommands();   // cam/setup_tool.cpp: cam.tool.* (T-044)
 std::span<const UiCommand> camTreeUiCommands();    // cam/setup_tree.cpp: cam.tree.* (T-044)
+std::span<const UiCommand> camToolsUiCommands();   // cam/tools_model.cpp: cam.toolLibrary.* (T-046)
 // All of the above, in that order.
 const std::vector<UiCommand>& allUiCommands();
 
