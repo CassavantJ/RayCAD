@@ -1,6 +1,7 @@
 // Feeds and speeds (cam.h computeFeeds, task T-048).
 //
-//  - 43 hand-calculated cases (40 to 42 with the chip-thickness exponent mc). Each states its inputs and the arithmetic, step by step, with the rules of
+//  - 43 hand-calculated cases (40 to 42 with the chip-thickness exponent mc). Each states its inputs and the
+//  arithmetic, step by step, with the rules of
 //    src/cam/feeds.cpp: n = 1000 vc / (pi Deff) rounded down to a whole rpm; vf = n fz z x thinning, rounded down to a
 //    whole um/min; Q = ae ap vf / 1000 (drilling: pi/4 D^2 vf / 1000); Pc = Q kc W / 60000 with the tool wear factor
 //    W = 1.2; motor power P = Pc / 0.8; torque T = Pc 60000 / (2 pi n). The expected values were worked out by hand
@@ -685,9 +686,9 @@ TEST_CASE("feeds hand 40: kc from mc at the mean chip thickness, milling", "[cam
     // phi = arccos(1 - 2 x 2 / 10) = arccos(0.6) = 0.92729521800161 rad.
     // hm = fz (2 ae / D) / phi = 0.0625 x 0.4 / 0.92729521800161 = 0.026960130403645.
     // kc = 2000 x 0.026960130403645^-0.25 = 2000 / 0.405210... = 4935.7084537093.
-    // Pc = (2 x 10 x 795.75 / 1000) x 4935.7084537093 x 1.2 / 60000 = 15.915 x 4935.7084537093 x 2e-5 = 1.5710360008157;
-    // P = 1.5710360008157 / 0.8 = 1.9637950010196 kW; T = 1.5710360008157 x 60000 / (2 pi 3183) = 4.7132543884098 N m.
-    // kc1.1 flat would give Pc = 0.6366 kW: about 2.5 times less.
+    // Pc = (2 x 10 x 795.75 / 1000) x 4935.7084537093 x 1.2 / 60000 = 15.915 x 4935.7084537093 x 2e-5
+    // = 1.5710360008157; P = 1.5710360008157 / 0.8 = 1.9637950010196 kW; T = 1.5710360008157 x 60000 / (2 pi 3183)
+    // = 4.7132543884098 N m. kc1.1 flat would give Pc = 0.6366 kW: about 2.5 times less.
     auto r = run(tool(lib::ToolType::FlatEndMill, 10, 4, "rough", 100, 0.05), materialMc(2000, 0.25), machine(kBig), 2,
                  10, "pocket2d");
     CHECK(r.powerModel == PowerModel::MillingKcMc);
@@ -742,8 +743,8 @@ TEST_CASE("feeds hand 42: a power limit with mc lowers the feed to the largest o
 {
     // Hand 40's cut on a spindle of 1 kW (other limits as kBig). P grows as vf^(1 - mc) = vf^0.75, so the feed is not
     // simply scaled by 1 / 1.963795: the largest whole um/min with P <= 1 kW, found by bisection on
-    // P(f) = (2 x 10 x f / 1000) x 2000 hm(f)^-0.25 x 1.2 / 60000 / 0.8, hm(f) = f / (3183 x 4) x 0.4 / 0.92729521800161,
-    // is f = 323580 um/min: P(323.580) = 0.99999981 kW, P(323.581) = 1.0000021 kW.
+    // P(f) = (2 x 10 x f / 1000) x 2000 hm(f)^-0.25 x 1.2 / 60000 / 0.8, hm(f) = f / (3183 x 4) x 0.4 /
+    // 0.92729521800161, is f = 323580 um/min: P(323.580) = 0.99999981 kW, P(323.581) = 1.0000021 kW.
     Limits limits = kBig;
     limits.powerKw = 1;
     auto r = run(tool(lib::ToolType::FlatEndMill, 10, 4, "rough", 100, 0.05), materialMc(2000, 0.25), machine(limits),
@@ -881,7 +882,8 @@ TEST_CASE("feeds hand 37 (library): M6x1 tap in 304 on the Haas", "[cam][feeds][
     CHECK(r.limits.torque.state == LimitState::NotReached);
 }
 
-TEST_CASE("feeds hand 37b (library): shipped inch taps carry 25.4 / TPI to the nanometre", "[cam][feeds][hand][shipped]")
+TEST_CASE("feeds hand 37b (library): shipped inch taps carry 25.4 / TPI to the nanometre",
+          "[cam][feeds][hand][shipped]")
 {
     // The starter library writes inch pitches with 6 decimals (tools/gen_library.py), so toNm gives 25.4 / TPI rounded
     // to the nearest nm; 4 decimals made #8-32 0.7937 and 1/2-13 1.9538 mm.
@@ -895,8 +897,9 @@ TEST_CASE("feeds hand 37b (library): shipped inch taps carry 25.4 / TPI to the n
     CHECK(r.rpm == 684);
     CHECK(r.feedMicronPerMin == 542925);
     CHECK(r.tapFeedExact);
-    // tool.tap.1-2-13unc: D 12.7, P = 25.4 / 13 = 1.953846 mm = 1953846 nm; gcd(1953846, 1000) = 2, step 500 > 10: plain
-    // rpm. n = 9000 / (pi 12.7) = 225.57 -> 225. feed = 1953846 x 225 / 1000 = 439615.35 -> 439615 um/min (not exact).
+    // tool.tap.1-2-13unc: D 12.7, P = 25.4 / 13 = 1.953846 mm = 1953846 nm; gcd(1953846, 1000) = 2, step 500 > 10:
+    // plain rpm. n = 9000 / (pi 12.7) = 225.57 -> 225. feed = 1953846 x 225 / 1000 = 439615.35 -> 439615 um/min (not
+    // exact).
     const lib::Tool& tap1213 = s.tool("7ff37b22-17c4-4849-a50c-d66f0f571508");
     CHECK(toNm(tap1213.threadPitch) == 1953846);
     r = run(tap1213, s.material(k1018), s.machine(kHaas), 0, 0, "drill");

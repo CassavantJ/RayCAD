@@ -288,8 +288,8 @@ Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, c
         }
     }
     const std::string type = typeArg != nullptr && typeArg->isString() ? typeArg->asString()
-                             : current != nullptr                     ? current->type
-                                                                      : std::string();
+                             : current != nullptr                      ? current->type
+                                                                       : std::string();
     const cam::IOperationType* opType = types->find(type);
     if (opType == nullptr) {
         return command;
@@ -355,8 +355,7 @@ Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const do
         }
         auto done = app.bridge().call<std::optional<Value>>(
             [&app, &entry, &prepared, &given, &check, &ctx, &now, last]() -> Result<std::optional<Value>> {
-                const bool stale =
-                    entry.od.document->state() != prepared->before || (check && prepared->before != now);
+                const bool stale = entry.od.document->state() != prepared->before || (check && prepared->before != now);
                 if (stale && !last) {
                     return std::optional<Value>(); // changed meanwhile: prepare again (still cancellable)
                 }

@@ -605,7 +605,8 @@ TEST_CASE("forget releases what the engine holds for closed operations; their to
     const auto state = exec(f.state, opAdd(2, 1, 1));
     const auto edited = exec(state, opEdit(R"("cutting":{"rpm":9999})")); // c1 with other inputs
 
-    // c1's toolpath, then c2's: c1's leaves the one-entry cache, and only its "latest" entry (shown while stale) holds it.
+    // c1's toolpath, then c2's: c1's leaves the one-entry cache, and only its "latest" entry (shown while stale) holds
+    // it.
     generated(state, 1);
     std::weak_ptr<const Toolpath> first = statusOf(state, 1).toolpath;
     const std::vector<std::byte> firstBytes = first.lock()->serialize();

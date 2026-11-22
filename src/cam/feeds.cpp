@@ -43,7 +43,8 @@
 // chip, hm the mean chip thickness in mm, mc the material's exponent (Sandvik Coromant, "Milling formulas and
 // definitions" and "Drilling formulas and definitions"; the kc1 and mc of ISO 513 / VDI 3323 material groups). With a
 // material's mc (lib::Material::mc > 0), milling and drilling use it (PowerModel *KcMc):
-//   Milling            hm = fz sin(kr) (1 - cos phi) / phi = fz sin(kr) 2 ae / (Deff phi), phi = arccos(1 - 2 ae / Deff)
+//   Milling            hm = fz sin(kr) (1 - cos phi) / phi = fz sin(kr) 2 ae / (Deff phi), phi = arccos(1 - 2 ae /
+//   Deff)
 //                      the engagement angle (radians; ae >= Deff: phi = pi); the mean of fz sin(kr) sin(theta) over the
 //                      arc, Sandvik's hm = sin(kr) 360 ae fz / (pi Deff arccos(1 - 2 ae / Deff)). Face mills (a cut
 //                      centred on the cutter, as above): hm = fz (ae / D) / arcsin(ae / D). sin(kr) = 1 / leadThinning.
@@ -491,7 +492,7 @@ Result<FeedsResult> millOrDrill(const FeedsInput& in, FeedsResult r)
         const double h = hmPerFz * feed / (n * z);
         return h > 0 ? kc11 / powSteps(h, mcK) : kc11;
     };
-    auto cuttingPower = [&](double feed) { // kW
+    auto cuttingPower = [&](double feed) {                                             // kW
         return kcKnown ? mrrPerFeed * kcAt(feed) * kToolWearFactor / 60000 * feed : 0; // as kc1.1 flat always was
     };
     auto motorPower = [&](double feed) {
