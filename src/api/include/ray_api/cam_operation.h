@@ -69,13 +69,13 @@ Result<cam::FeedsResult> computeFeeds(const FeedsRequest& request);
 // stores), and what it is.
 struct Hole {
     BodyId body;
-    std::uint32_t boreFace = 0;          // RecognizedHole::axisSub
-    std::vector<std::uint32_t> faces;    // every face of the hole, sorted
-    double diameter = 0, depth = 0;      // the bore, mm (depth: top to lowest point)
+    std::uint32_t boreFace = 0;       // RecognizedHole::axisSub
+    std::vector<std::uint32_t> faces; // every face of the hole, sorted
+    double diameter = 0, depth = 0;   // the bore, mm (depth: top to lowest point)
     bool through = false;
-    std::string threadSpec;              // the hole feature's thread, "" when not tapped or not known
-    Vec3 top{};                          // the hole's top centre, model frame
-    double x = 0, y = 0;                 // the axis in the WCS, mm
+    std::string threadSpec; // the hole feature's thread, "" when not tapped or not known
+    Vec3 top{};             // the hole's top centre, model frame
+    double x = 0, y = 0;    // the axis in the WCS, mm
 };
 // Every hole of setup `setup`'s part bodies in `state` as `build` resolves it. The errors of resolveSetup and
 // recognizeHoles (ReferenceBroken, KernelFailure, Cancelled); NotFound when the state has no such setup. Kernel work:

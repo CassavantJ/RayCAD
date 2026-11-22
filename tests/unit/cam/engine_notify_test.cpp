@@ -228,11 +228,11 @@ TEST_CASE("validate runs the type's check on a worker: errors, warnings, blocked
 {
     Env e;
     // A valid operation that is not generated: Stale, no error, the type's warnings.
-    const doc::DocStatePtr warned = exec(
-        e.state, command("cam.operation.add", R"({"id":")" + id('c', 2) + R"(","setup":")" + id('a', 1) +
-                                                  R"(","type":"warn.op","name":"Warned","tool":{"tool":")" + id('d', 1) +
-                                                  R"("},"cutting":)" + kCutting + R"(,"heights":)" + kHeights +
-                                                  R"(,"params":{"warn":true}})"));
+    const doc::DocStatePtr warned =
+        exec(e.state, command("cam.operation.add", R"({"id":")" + id('c', 2) + R"(","setup":")" + id('a', 1) +
+                                                       R"(","type":"warn.op","name":"Warned","tool":{"tool":")" +
+                                                       id('d', 1) + R"("},"cutting":)" + kCutting + R"(,"heights":)" +
+                                                       kHeights + R"(,"params":{"warn":true}})"));
     auto v = e.wait(e.engine->validate(warned, e.build, opId(2)));
     REQUIRE(v);
     CHECK(v->status == OpStatus::Stale);
@@ -282,7 +282,8 @@ TEST_CASE("validate runs the type's check on a worker: errors, warnings, blocked
     CHECK(e.wait(e.engine->validate(e.state, e.build, opId(9))).error().code == ErrorCode::NotFound);
 }
 
-TEST_CASE("a preview is generated on a worker, cached by input hash and never the operation's own", "[cam][engine][t045]")
+TEST_CASE("a preview is generated on a worker, cached by input hash and never the operation's own",
+          "[cam][engine][t045]")
 {
     Env e;
     REQUIRE(e.wait(e.engine->generate(e.state, e.build, opId(1))));
@@ -344,15 +345,15 @@ TEST_CASE("the setup's material and the calculated-feeds record: stored, checked
     const Error notEmbedded = applyFails(
         e.state, command("cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","material":")" + id('7', 1) + R"("})"));
     CHECK_THAT(notEmbedded.message, ContainsSubstring("which is not embedded"));
-    doc::DocStatePtr s = exec(e.state, command("cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","material":")" +
-                                                                     id('7', 1) + R"(","library":{"materials":[)" +
-                                                                     materialJson(1) + "]}}"));
+    doc::DocStatePtr s =
+        exec(e.state, command("cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","material":")" + id('7', 1) +
+                                                    R"(","library":{"materials":[)" + materialJson(1) + "]}}"));
     REQUIRE(s->cam->setups.front().material == MaterialId{Uuid::fromString(id('7', 1))});
     CHECK(hashOf(s) == plain);
 
     // The record of "Use calculated".
-    const std::string record = R"({"tool":")" + id('d', 1) + R"(","material":")" + id('7', 1) +
-                               R"(","machine":")" + id('9', 1) +
+    const std::string record = R"({"tool":")" + id('d', 1) + R"(","material":")" + id('7', 1) + R"(","machine":")" +
+                               id('9', 1) +
                                R"(","opClass":"drill","surfaceSpeed":null,"chipLoad":0.05,"rpm":1200,"feedCut":180,)"
                                R"("feedPlunge":90,"feedRamp":135})";
     s = exec(s, opEdit(R"("calculatedFeeds":)" + record));

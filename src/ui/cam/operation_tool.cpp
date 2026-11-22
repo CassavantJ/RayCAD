@@ -216,9 +216,11 @@ void OperationToolModel::setCommands(CommandCatalog* commands)
     if (!commands_)
         return;
     QPointer<OperationToolModel> self(this);
-    const CommandCatalog::UiHandler handler{
-        [self](const QString& id) { return self ? self->commandReason(id) : trs("The operation panel is not available"); },
-        [self](const QString& id) { return self && self->runCommand(id); }};
+    const CommandCatalog::UiHandler handler{[self](const QString& id) {
+                                                return self ? self->commandReason(id)
+                                                            : trs("The operation panel is not available");
+                                            },
+                                            [self](const QString& id) { return self && self->runCommand(id); }};
     commands_->setUiHandler(QStringLiteral("cam.opTool."), handler);
     commands_->setUiHandler(QStringLiteral("cam.operation.add"), handler);
 }
@@ -311,6 +313,8 @@ void OperationToolModel::onDocumentChanged()
     if (state == previewBase_)
         return; // a rebuild of the same state finished
     loadOptions();
+    emit optionsChanged();
+    emit toolsChanged();
     previewBusy_ = false;
     schedulePreview();
 }
@@ -514,6 +518,7 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
     emit valuesChanged();
     emit toolChanged();
     emit toolsChanged();
+    emit optionsChanged();
     emit picksChanged();
     emit statusChanged();
     schedulePreview();
@@ -648,9 +653,11 @@ void OperationToolModel::defaults(const doc::DocState& state)
     nameSerial_ = n;
     values_[QStringLiteral("name")] = QStringLiteral("%1 %2").arg(typeTitle()).arg(n);
     const bool in = inch();
-    const std::pair<const char*, double> heights[] = {
-        {"clearance", in ? 15.24 : 15.0}, {"retract", in ? 5.08 : 5.0}, {"feedPlane", in ? 2.54 : 2.0},
-        {"top", 0.0},                     {"bottom", 0.0}};
+    const std::pair<const char*, double> heights[] = {{"clearance", in ? 15.24 : 15.0},
+                                                      {"retract", in ? 5.08 : 5.0},
+                                                      {"feedPlane", in ? 2.54 : 2.0},
+                                                      {"top", 0.0},
+                                                      {"bottom", 0.0}};
     for (const auto& [key, mm] : heights) {
         values_[QLatin1String(key)] = lengthText(mm);
         exact_[QLatin1String(key)] = {values_.value(QLatin1String(key)).toString(), mm};
@@ -864,10 +871,11 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
                 p.text = self->holeText(h);
             } else {
                 p.element = index >= 0 ? static_cast<std::uint32_t>(index) : 0;
-                p.text = index >= 0 ? trs("%1 %2").arg(self->geometry_.kind == QLatin1String("edge") ? trs("Edge")
-                                                                                                       : trs("Face"))
-                                          .arg(index)
-                                    : trs("A reference that does not resolve");
+                p.text = index >= 0
+                             ? trs("%1 %2")
+                                   .arg(self->geometry_.kind == QLatin1String("edge") ? trs("Edge") : trs("Face"))
+                                   .arg(index)
+                             : trs("A reference that does not resolve");
             }
             self->picks_.push_back(std::move(p));
         }
@@ -917,8 +925,7 @@ QVariantMap OperationToolModel::fieldMessages() const
     const bool in = inch();
     const auto exact = [&](const QString& key, const QString& text) -> std::optional<double> {
         const auto it = exact_.find(key);
-        return it != exact_.end() && it->second.first == text ? std::optional<double>(it->second.second)
-                                                              : std::nullopt;
+        return it != exact_.end() && it->second.first == text ? std::optional<double>(it->second.second) : std::nullopt;
     };
     check(QStringLiteral("rpm"), [&](const QString& t, QString* e) {
         return exact(QStringLiteral("rpm"), t) ? std::optional<double>(1) : camui::readRpm(t, expr, e);
@@ -979,8 +986,8 @@ std::optional<double> OperationToolModel::length(const QString& key, QString* er
     const QString text = values_.value(key).toString();
     if (const auto it = exact_.find(key); it != exact_.end() && it->second.first == text)
         return it->second.second;
-    return camui::readNumber(text, camui::Unit::Length, inch() ? QStringLiteral("in") : QStringLiteral("mm"),
-                             exprFn(), error);
+    return camui::readNumber(text, camui::Unit::Length, inch() ? QStringLiteral("in") : QStringLiteral("mm"), exprFn(),
+                             error);
 }
 
 // ---------- tools ----------
@@ -1137,8 +1144,9 @@ void OperationToolModel::updateFeeds()
             calculated_.insert(QStringLiteral("rpm"), camui::rpmText(f.rpm));
             calculated_.insert(QStringLiteral("feed"), camui::feedText(f.feedMmMin, in));
             calculated_.insert(QStringLiteral("chipLoad"),
-                               f.mode == cam::FeedsMode::Tapping ? trs("pitch %1").arg(camui::chipLoadText(f.feedPerRevMm, in))
-                                                                 : camui::chipLoadText(f.chipLoadMm, in));
+                               f.mode == cam::FeedsMode::Tapping
+                                   ? trs("pitch %1").arg(camui::chipLoadText(f.feedPerRevMm, in))
+                                   : camui::chipLoadText(f.chipLoadMm, in));
             calculated_.insert(QStringLiteral("surfaceSpeed"), camui::surfaceSpeedText(f.surfaceSpeedMMin, in));
             calculated_.insert(QStringLiteral("actualSurfaceSpeed"),
                                camui::surfaceSpeedText(f.actualSurfaceSpeedMMin, in));
@@ -1156,16 +1164,18 @@ void OperationToolModel::updateFeeds()
                 {QT_TRANSLATE_NOOP("ray::ui::OperationToolModel", "Power"), &f.limits.power},
                 {QT_TRANSLATE_NOOP("ray::ui::OperationToolModel", "Torque"), &f.limits.torque}};
             for (const auto& [name, limit] : named) {
-                limits.push_back(QVariantMap{{QStringLiteral("name"), trs(name)},
-                                             {QStringLiteral("state"), camui::limitStateText(limit->state)},
-                                             {QStringLiteral("applied"), limit->state == cam::LimitState::Applied ||
-                                                                             limit->state == cam::LimitState::Exceeded}});
+                limits.push_back(
+                    QVariantMap{{QStringLiteral("name"), trs(name)},
+                                {QStringLiteral("state"), camui::limitStateText(limit->state)},
+                                {QStringLiteral("applied"), limit->state == cam::LimitState::Applied ||
+                                                                limit->state == cam::LimitState::Exceeded}});
                 if (limit->state == cam::LimitState::Applied || limit->state == cam::LimitState::Exceeded)
                     limited << trs(name);
             }
             calculated_.insert(QStringLiteral("limits"), limits);
-            calculated_.insert(QStringLiteral("limited"), limited.isEmpty() ? trs("No machine limit applied")
-                                                                            : trs("Limited by: %1").arg(limited.join(QStringLiteral(", "))));
+            calculated_.insert(QStringLiteral("limited"),
+                               limited.isEmpty() ? trs("No machine limit applied")
+                                                 : trs("Limited by: %1").arg(limited.join(QStringLiteral(", "))));
             QStringList notes;
             for (const std::string& n : f.notes)
                 notes << qs(n);
@@ -1191,9 +1201,9 @@ void OperationToolModel::updateFeeds()
         if (record_ && rpm && cut &&
             camui::matchesRecord(*record_, *rpm, *cut, value("feedPlunge", true).value_or(*cut),
                                  value("feedRamp", true).value_or(*cut), cutting_)) {
-            const bool sameInputs = idText(record_->tool.value) == toolId_ &&
-                                    (record_->material.value == Uuid{} ? QString() : idText(record_->material.value)) ==
-                                        materialId_;
+            const bool sameInputs =
+                idText(record_->tool.value) == toolId_ &&
+                (record_->material.value == Uuid{} ? QString() : idText(record_->material.value)) == materialId_;
             state2 = sameInputs || !feeds_ ? QStringLiteral("calculated") : QStringLiteral("offer");
         }
     }
@@ -1222,8 +1232,8 @@ void OperationToolModel::useCalculated()
     const double plunge = cut * camui::kPlungeFraction;
     const double ramp = cut * camui::kRampFraction;
     const bool in = inch();
-    const std::pair<const char*, double> written[] = {{"feedCut", cut},    {"feedPlunge", plunge}, {"feedRamp", ramp},
-                                                      {"feedLeadIn", cut}, {"feedLeadOut", cut}};
+    const std::pair<const char*, double> written[] = {
+        {"feedCut", cut}, {"feedPlunge", plunge}, {"feedRamp", ramp}, {"feedLeadIn", cut}, {"feedLeadOut", cut}};
     values_[QStringLiteral("rpm")] = cText(f.rpm);
     exact_[QStringLiteral("rpm")] = {values_.value(QStringLiteral("rpm")).toString(), f.rpm};
     for (const auto& [key, mm] : written) {
@@ -1267,7 +1277,8 @@ QVariantList OperationToolModel::picks() const
 {
     QVariantList out;
     for (std::size_t i = 0; i < picks_.size(); ++i)
-        out.push_back(QVariantMap{{QStringLiteral("index"), static_cast<int>(i)}, {QStringLiteral("text"), picks_[i].text}});
+        out.push_back(
+            QVariantMap{{QStringLiteral("index"), static_cast<int>(i)}, {QStringLiteral("text"), picks_[i].text}});
     return out;
 }
 
@@ -1279,8 +1290,7 @@ QString OperationToolModel::holeText(const api::cam_operation::Hole& h) const
                   : QLocale::c().toString(mm, 'g', 6) + QStringLiteral(" mm");
     };
     const QString at = trs("X%1 Y%2").arg(QLocale::c().toString(h.x, 'g', 6), QLocale::c().toString(h.y, 'g', 6));
-    const QString what = !h.threadSpec.empty() ? qs(h.threadSpec)
-                                               : trs("⌀%1").arg(len(h.diameter));
+    const QString what = !h.threadSpec.empty() ? qs(h.threadSpec) : trs("⌀%1").arg(len(h.diameter));
     return h.through ? trs("%1 through at %2").arg(what, at) : trs("%1, %2 deep, at %3").arg(what, len(h.depth), at);
 }
 
@@ -1305,7 +1315,8 @@ void OperationToolModel::applyPickMode()
     using render::PickFilter;
     std::uint8_t mask = filterSaved_ ? savedFilter_ : selection_->filterMask();
     if (picking_)
-        mask = static_cast<std::uint8_t>(geometry_.kind == QLatin1String("edge") ? PickFilter::Edges : PickFilter::Faces);
+        mask =
+            static_cast<std::uint8_t>(geometry_.kind == QLatin1String("edge") ? PickFilter::Edges : PickFilter::Faces);
     selection_->setFilterMask(mask);
 }
 
@@ -1331,7 +1342,8 @@ void OperationToolModel::onSelectionChanged()
 {
     if (!active() || !picking_ || !selection_ || !scene_)
         return;
-    const kernel::SubKind kind = geometry_.kind == QLatin1String("edge") ? kernel::SubKind::Edge : kernel::SubKind::Face;
+    const kernel::SubKind kind =
+        geometry_.kind == QLatin1String("edge") ? kernel::SubKind::Edge : kernel::SubKind::Face;
     const std::vector<SelectionEntry>& entries = selection_->entries();
     for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
         if (it->pending || !it->sub || it->sub->kind != kind)
@@ -1403,10 +1415,10 @@ void OperationToolModel::addPick(const QString& body, std::uint32_t element, con
     const std::uint64_t serial = ++pickSerial_;
     pickPending_ = true;
     emit statusChanged();
-    const QJsonObject args{{QStringLiteral("body"), body},
-                           {QStringLiteral("kind"), kind == kernel::SubKind::Edge ? QStringLiteral("edge")
-                                                                                  : QStringLiteral("face")},
-                           {QStringLiteral("index"), static_cast<int>(element)}};
+    const QJsonObject args{
+        {QStringLiteral("body"), body},
+        {QStringLiteral("kind"), kind == kernel::SubKind::Edge ? QStringLiteral("edge") : QStringLiteral("face")},
+        {QStringLiteral("index"), static_cast<int>(element)}};
     JobHandle<api::ActionResult> ref = a->actions().invoke("model.reference", jsonText(args), api::Caller::User);
     QPointer<OperationToolModel> self(this);
     ref.then([self, serial, body, element, text](Result<api::ActionResult> res) {
@@ -1460,7 +1472,8 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
     in.tool = toolId_;
     in.holder = holderId_;
     const ToolItem* tool = chosenTool();
-    const bool toolEmbedded = state->cam && state->cam->tools.count(ToolId{Uuid::fromString(toolId_.toStdString())}) != 0;
+    const bool toolEmbedded =
+        state->cam && state->cam->tools.count(ToolId{Uuid::fromString(toolId_.toStdString())}) != 0;
     if (!toolEmbedded) {
         if (tool == nullptr)
             return fail(trs("The tool is in neither the document nor the library"), QStringLiteral("tool"));
@@ -1494,7 +1507,8 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
     }
     // Geometry.
     if (geometry_.needsOne() && picks_.empty())
-        return fail(geometryPrompt().isEmpty() ? trs("Pick what to machine") : geometryPrompt(), QStringLiteral("geometry"));
+        return fail(geometryPrompt().isEmpty() ? trs("Pick what to machine") : geometryPrompt(),
+                    QStringLiteral("geometry"));
     for (const Pick& p : picks_)
         in.geometry.push_back(p.ref);
     // Heights: those the type uses, the others from them (docs/operation_types.md).
@@ -1557,8 +1571,8 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
         *slot = *v;
         return true;
     };
-    if (!feed("feedPlunge", &in.feedPlunge) || !feed("feedRamp", &in.feedRamp) ||
-        !feed("feedLeadIn", &in.feedLeadIn) || !feed("feedLeadOut", &in.feedLeadOut))
+    if (!feed("feedPlunge", &in.feedPlunge) || !feed("feedRamp", &in.feedRamp) || !feed("feedLeadIn", &in.feedLeadIn) ||
+        !feed("feedLeadOut", &in.feedLeadOut))
         return std::nullopt;
     in.coolant = values_.value(QStringLiteral("coolant")).toString();
     if (in.coolant.isEmpty())
@@ -1659,7 +1673,9 @@ bool OperationToolModel::canCommit() const
 
 bool OperationToolModel::previewBusy() const
 {
-    const auto running = [](const auto& job) { return job.valid() && !job.done(); };
+    const auto running = [](const auto& job) {
+        return job.valid() && !job.done();
+    };
     return pickPending_ || previewTimer_.isActive() || previewBusy_ || previewPending_ || running(validateJob_) ||
            running(previewJob_) || running(backplotJob_) || running(holesJob_) || committing_;
 }

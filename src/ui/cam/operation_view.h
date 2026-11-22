@@ -100,7 +100,8 @@ private:
     QTimer timer_;
     std::map<OperationId, Item> items_;
     // Backplots by toolpath (the toolpath is held too, so its address is not reused while it is a key).
-    std::map<const cam::Toolpath*, std::pair<std::shared_ptr<const cam::Toolpath>, std::shared_ptr<const sim::Backplot>>>
+    std::map<const cam::Toolpath*,
+             std::pair<std::shared_ptr<const cam::Toolpath>, std::shared_ptr<const sim::Backplot>>>
         cache_;
     JobHandle<std::shared_ptr<const Built>> job_;
     std::uint64_t serial_ = 0;

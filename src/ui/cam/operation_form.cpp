@@ -21,12 +21,20 @@ QString tr(const char* text)
 // The keywords a property may have (docs/operation_types.md). x- annotations other than the form's are ignored.
 const std::set<QString>& propertyKeywords()
 {
-    static const std::set<QString> keys = {
-        QStringLiteral("type"),         QStringLiteral("enum"),           QStringLiteral("title"),
-        QStringLiteral("description"),  QStringLiteral("default"),        QStringLiteral("minimum"),
-        QStringLiteral("maximum"),      QStringLiteral("exclusiveMinimum"), QStringLiteral("exclusiveMaximum"),
-        QStringLiteral("minLength"),    QStringLiteral("maxLength"),      QStringLiteral("pattern"),
-        QStringLiteral("$comment"),     QStringLiteral("examples")};
+    static const std::set<QString> keys = {QStringLiteral("type"),
+                                           QStringLiteral("enum"),
+                                           QStringLiteral("title"),
+                                           QStringLiteral("description"),
+                                           QStringLiteral("default"),
+                                           QStringLiteral("minimum"),
+                                           QStringLiteral("maximum"),
+                                           QStringLiteral("exclusiveMinimum"),
+                                           QStringLiteral("exclusiveMaximum"),
+                                           QStringLiteral("minLength"),
+                                           QStringLiteral("maxLength"),
+                                           QStringLiteral("pattern"),
+                                           QStringLiteral("$comment"),
+                                           QStringLiteral("examples")};
     return keys;
 }
 
@@ -65,8 +73,8 @@ FormField parseProperty(const QString& key, const QJsonValue& value)
     if (f.title.isEmpty())
         f.title = key;
     f.description = p.value(QStringLiteral("description")).toString();
-    f.defaultValue = p.contains(QStringLiteral("default")) ? p.value(QStringLiteral("default"))
-                                                           : QJsonValue(QJsonValue::Undefined);
+    f.defaultValue =
+        p.contains(QStringLiteral("default")) ? p.value(QStringLiteral("default")) : QJsonValue(QJsonValue::Undefined);
     for (auto it = p.begin(); it != p.end(); ++it) {
         if (it.key().startsWith(QLatin1String("x-")) || propertyKeywords().count(it.key()) != 0)
             continue;
@@ -200,17 +208,17 @@ FormSchema parseFormSchema(const QString& schemaJson)
     // x-relevantWhen names choices or booleans of this schema, with their values.
     for (FormField& f : out.fields) {
         for (const auto& [other, values] : f.relevantWhen) {
-            const auto it = std::find_if(out.fields.begin(), out.fields.end(),
-                                         [&](const FormField& g) { return g.key == other; });
-            if (it == out.fields.end() ||
-                (it->kind != FormField::Kind::Enum && it->kind != FormField::Kind::Boolean)) {
+            const auto it =
+                std::find_if(out.fields.begin(), out.fields.end(), [&](const FormField& g) { return g.key == other; });
+            if (it == out.fields.end() || (it->kind != FormField::Kind::Enum && it->kind != FormField::Kind::Boolean)) {
                 out.problems << tr("'%1' depends on '%2', which is not a choice or a switch of this operation")
                                     .arg(f.title, other);
                 continue;
             }
             for (const QJsonValue& v : values) {
-                const bool ok = it->kind == FormField::Kind::Enum ? it->enumValues.contains(v.toString()) && v.isString()
-                                                                  : v.isBool();
+                const bool ok = it->kind == FormField::Kind::Enum
+                                    ? it->enumValues.contains(v.toString()) && v.isString()
+                                    : v.isBool();
                 if (!ok)
                     out.problems << tr("'%1' depends on a value '%2' that '%3' cannot have")
                                         .arg(f.title, v.toVariant().toString(), it->title);
@@ -250,7 +258,8 @@ QString numberText(double value, Unit unit, const QString& lengthUnit)
 ExprFn plainExprFn()
 {
     return [](const QString& expression, int kind, QString* error) -> std::optional<double> {
-        static const QRegularExpression re(QStringLiteral(R"(^\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*([a-z]*)\s*$)"));
+        static const QRegularExpression re(
+            QStringLiteral(R"(^\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*([a-z]*)\s*$)"));
         const QRegularExpressionMatch m = re.match(expression);
         if (!m.hasMatch()) {
             *error = tr("'%1' is not a number").arg(expression.trimmed());
@@ -444,7 +453,9 @@ std::optional<QJsonValue> SchemaFormModel::read(const FormField& f, QString* err
             *error = tr("Must be a whole number");
             return std::nullopt;
         }
-        const auto limit = [&](double x) { return camui::numberText(x, f.unit, lengthUnit_); };
+        const auto limit = [&](double x) {
+            return camui::numberText(x, f.unit, lengthUnit_);
+        };
         if (f.minimum && *v < *f.minimum) {
             *error = tr("Must be at least %1").arg(limit(*f.minimum));
             return std::nullopt;
@@ -549,7 +560,12 @@ QJsonObject SchemaFormModel::params() const
 
 QVariantList SchemaFormModel::fields() const
 {
-    QVariantList out;
+    // Each row of SchemaForm.qml reads the list: it is made once per change.
+    if (fieldsRevision_ == revision_)
+        return fieldsCache_;
+    QVariantList& out = fieldsCache_;
+    out.clear();
+    fieldsRevision_ = revision_;
     for (const FormField& f : schema_.fields) {
         QVariantMap m;
         m.insert(QStringLiteral("key"), f.key);
@@ -589,13 +605,27 @@ QVariantList SchemaFormModel::fields() const
         m.insert(QStringLiteral("message"), messageOf(f.key));
         const bool hasDefault = !f.defaultValue.isUndefined();
         m.insert(QStringLiteral("hasDefault"), hasDefault);
-        m.insert(QStringLiteral("isDefault"), !hasDefault || f.kind == FormField::Kind::Unsupported ||
-                                                  valueOf(f.key) == f.defaultValue);
+        // A text that does not read is not the default (reset is what brings it back).
+        QString unused;
+        const auto now = f.kind == FormField::Kind::Unsupported ? std::optional<QJsonValue>() : read(f, &unused);
+        m.insert(QStringLiteral("isDefault"),
+                 !hasDefault || f.kind == FormField::Kind::Unsupported || (now && *now == f.defaultValue));
         m.insert(QStringLiteral("defaultText"), hasDefault ? textOf(f, f.defaultValue).toString() : QString());
         m.insert(QStringLiteral("reason"), f.reason);
         out.push_back(m);
     }
     return out;
+}
+
+QVariantList SchemaFormModel::choicesOf(const QString& key) const
+{
+    QVariantList choices;
+    if (const FormField* f = field(key)) {
+        for (qsizetype i = 0; i < f->enumValues.size(); ++i)
+            choices.push_back(QVariantMap{{QStringLiteral("value"), f->enumValues[i]},
+                                          {QStringLiteral("text"), f->enumTitles.value(i, f->enumValues[i])}});
+    }
+    return choices;
 }
 
 void SchemaFormModel::setValue(const QString& key, const QVariant& value)

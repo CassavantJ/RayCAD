@@ -20,8 +20,12 @@ namespace {
 render::MeshStyle styleOf(bool stale, bool dim)
 {
     // The edge token is the path's: PathCut keeps the colours by move type, any other draws it all in that token.
-    return render::MeshStyle{render::Token::ModelFace, stale ? render::Token::PathStale : render::Token::PathCut,
-                             dim ? 0.35f : 1.0f, true, false, std::nullopt};
+    return render::MeshStyle{render::Token::ModelFace,
+                             stale ? render::Token::PathStale : render::Token::PathCut,
+                             dim ? 0.35f : 1.0f,
+                             true,
+                             false,
+                             std::nullopt};
 }
 
 } // namespace

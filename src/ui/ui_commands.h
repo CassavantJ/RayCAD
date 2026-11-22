@@ -45,14 +45,14 @@ constexpr bool contextsOverlap(CommandContext a, CommandContext b)
 }
 
 // Each table is defined in the file that runs its commands.
-std::span<const UiCommand> generalUiCommands();    // palette_commands.cpp: ui.*, view.*, selection.*
-std::span<const UiCommand> measureUiCommands();    // measure_model.cpp: measure.tool, measure.pin, ...
-std::span<const UiCommand> sectionUiCommands();    // section_model.cpp: view.section.*, view.draft.*
-std::span<const UiCommand> sketchUiCommands();     // sketch/sketch_mode.cpp: sketch.mode.*, sketch.tool.*
-std::span<const UiCommand> constraintUiCommands(); // sketch/constraints_model.cpp: sketch.constrain.*
-std::span<const UiCommand> modelUiCommands();      // model/feature_tools.cpp: model.*
-std::span<const UiCommand> camSetupUiCommands();   // cam/setup_tool.cpp: cam.tool.* (T-044)
-std::span<const UiCommand> camTreeUiCommands();    // cam/setup_tree.cpp: cam.tree.* (T-044)
+std::span<const UiCommand> generalUiCommands();      // palette_commands.cpp: ui.*, view.*, selection.*
+std::span<const UiCommand> measureUiCommands();      // measure_model.cpp: measure.tool, measure.pin, ...
+std::span<const UiCommand> sectionUiCommands();      // section_model.cpp: view.section.*, view.draft.*
+std::span<const UiCommand> sketchUiCommands();       // sketch/sketch_mode.cpp: sketch.mode.*, sketch.tool.*
+std::span<const UiCommand> constraintUiCommands();   // sketch/constraints_model.cpp: sketch.constrain.*
+std::span<const UiCommand> modelUiCommands();        // model/feature_tools.cpp: model.*
+std::span<const UiCommand> camSetupUiCommands();     // cam/setup_tool.cpp: cam.tool.* (T-044)
+std::span<const UiCommand> camTreeUiCommands();      // cam/setup_tree.cpp: cam.tree.* (T-044)
 std::span<const UiCommand> camOperationUiCommands(); // cam/operation_tool.cpp: cam.opTool.* (T-045)
 // All of the above, in that order.
 const std::vector<UiCommand>& allUiCommands();

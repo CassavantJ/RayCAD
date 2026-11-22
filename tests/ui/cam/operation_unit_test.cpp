@@ -185,7 +185,8 @@ TEST_CASE("drill's form: order, choices, relevance and tools by cycle", "[cam][t
     CHECK(toolTypesFor(schema, form.params()) == QStringList{QStringLiteral("tap")});
     form.setValue(QStringLiteral("cycle"), QStringLiteral("spot"));
     CHECK(toolTypesFor(schema, form.params()).contains(QStringLiteral("spotDrill")));
-    CHECK(heightsUsed(schema) == QStringList({QStringLiteral("clearance"), QStringLiteral("retract"), QStringLiteral("top")}));
+    CHECK(heightsUsed(schema) ==
+          QStringList({QStringLiteral("clearance"), QStringLiteral("retract"), QStringLiteral("top")}));
     CHECK(geometrySpec(schema).kind == QStringLiteral("hole"));
     CHECK(geometrySpec(schema).needsOne());
     // A number with the document's expressions: a parameter, a unit, inches.
@@ -219,11 +220,13 @@ TEST_CASE("the form covers each construct of the subset and says what it cannot 
     for (const FormField& f : fields)
         keys << f.key;
     CHECK(keys.mid(0, 6) == QStringList({QStringLiteral("mode"), QStringLiteral("depth"), QStringLiteral("angle"),
-                                          QStringLiteral("dwell"), QStringLiteral("passes"), QStringLiteral("climb")}));
+                                         QStringLiteral("dwell"), QStringLiteral("passes"), QStringLiteral("climb")}));
     CHECK(keys.indexOf(QStringLiteral("label")) == 6);
     CHECK(keys.size() == 16); // every property has a row, editable or not
     // Kinds.
-    const auto kind = [&](const char* key) { return fieldOf(form, QLatin1String(key)).value(QStringLiteral("kind")).toString(); };
+    const auto kind = [&](const char* key) {
+        return fieldOf(form, QLatin1String(key)).value(QStringLiteral("kind")).toString();
+    };
     CHECK(kind("mode") == QStringLiteral("enum"));
     CHECK(kind("depth") == QStringLiteral("number"));
     CHECK(kind("passes") == QStringLiteral("integer"));
@@ -240,12 +243,17 @@ TEST_CASE("the form covers each construct of the subset and says what it cannot 
     const QVariantList choices = fieldOf(form, QStringLiteral("mode")).value(QStringLiteral("choices")).toList();
     REQUIRE(choices.size() == 3);
     CHECK(choices[1].toMap().value(QStringLiteral("text")).toString() == QStringLiteral("Beta"));
-    CHECK(fieldOf(form, QStringLiteral("odd")).value(QStringLiteral("choices")).toList()[0].toMap().value(
-              QStringLiteral("text")) == QStringLiteral("x"));
+    CHECK(fieldOf(form, QStringLiteral("odd"))
+              .value(QStringLiteral("choices"))
+              .toList()[0]
+              .toMap()
+              .value(QStringLiteral("text")) == QStringLiteral("x"));
     // Top-level constructs it cannot honour are rows too.
     const QStringList problems = form.problems();
-    CHECK(std::any_of(problems.begin(), problems.end(), [](const QString& p) { return p.contains(QLatin1String("allOf")); }));
-    CHECK(std::any_of(problems.begin(), problems.end(), [](const QString& p) { return p.contains(QLatin1String("'if'")); }));
+    CHECK(std::any_of(problems.begin(), problems.end(),
+                      [](const QString& p) { return p.contains(QLatin1String("allOf")); }));
+    CHECK(std::any_of(problems.begin(), problems.end(),
+                      [](const QString& p) { return p.contains(QLatin1String("'if'")); }));
     // Units: lengths in the display unit and the document's expressions, angles in degrees, times in seconds.
     CHECK(fieldOf(form, QStringLiteral("depth")).value(QStringLiteral("value")).toString() == QStringLiteral("10 mm"));
     CHECK(fieldOf(form, QStringLiteral("angle")).value(QStringLiteral("value")).toString() == QStringLiteral("90 deg"));
@@ -290,7 +298,8 @@ TEST_CASE("the form covers each construct of the subset and says what it cannot 
     CHECK_FALSE(fieldOf(form, QStringLiteral("climb")).value(QStringLiteral("isDefault")).toBool());
     form.resetField(QStringLiteral("climb"));
     CHECK(fieldOf(form, QStringLiteral("climb")).value(QStringLiteral("isDefault")).toBool());
-    CHECK(fieldOf(form, QStringLiteral("mode")).value(QStringLiteral("description")).toString() == QStringLiteral("How"));
+    CHECK(fieldOf(form, QStringLiteral("mode")).value(QStringLiteral("description")).toString() ==
+          QStringLiteral("How"));
     // What the form cannot edit is kept as loaded; the rest is stored with its value.
     QJsonObject stored = form.params();
     stored.insert(QStringLiteral("nested"), QJsonObject{{QStringLiteral("k"), 1}});
@@ -321,9 +330,8 @@ TEST_CASE("schemas the form cannot use do not break it", "[cam][t045][form]")
         (void)form.params();
         (void)form.valid();
         const bool problem = !form.problems().isEmpty() ||
-                             std::any_of(form.schema().fields.begin(), form.schema().fields.end(), [](const FormField& f) {
-                                 return f.kind == FormField::Kind::Unsupported;
-                             });
+                             std::any_of(form.schema().fields.begin(), form.schema().fields.end(),
+                                         [](const FormField& f) { return f.kind == FormField::Kind::Unsupported; });
         CHECK(problem);
     }
     // A field without a default: editable, nothing to reset to.
@@ -339,8 +347,8 @@ TEST_CASE("schemas the form cannot use do not break it", "[cam][t045][form]")
 TEST_CASE("the panel's logic: heights, feeds in display units, records, tools and arguments", "[cam][t045]")
 {
     // Unused heights take the nearest used one before them, else after (docs/operation_types.md).
-    const auto h = completeHeights({{QStringLiteral("clearance"), 15}, {QStringLiteral("retract"), 2},
-                                    {QStringLiteral("top"), 0}});
+    const auto h = completeHeights(
+        {{QStringLiteral("clearance"), 15}, {QStringLiteral("retract"), 2}, {QStringLiteral("top"), 0}});
     CHECK(h.at(QStringLiteral("feedPlane")) == 2);
     CHECK(h.at(QStringLiteral("bottom")) == 0);
     const auto only = completeHeights({{QStringLiteral("top"), 1}, {QStringLiteral("bottom"), -3}});
@@ -402,8 +410,8 @@ TEST_CASE("the panel's logic: heights, feeds in display units, records, tools an
     in.rpm = 1000;
     in.feedCut = 200;
     in.feedPlunge = 200;
-    in.heights = completeHeights({{QStringLiteral("clearance"), 15}, {QStringLiteral("retract"), 2},
-                                  {QStringLiteral("top"), 0}});
+    in.heights = completeHeights(
+        {{QStringLiteral("clearance"), 15}, {QStringLiteral("retract"), 2}, {QStringLiteral("top"), 0}});
     in.params = object(R"({"cycle":"peck"})");
     in.libraryTools.push_back(QJsonObject{{QStringLiteral("id"), in.tool}});
     in.calculated = calculatedJson(r);

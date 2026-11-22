@@ -6,8 +6,8 @@
 //              x-propertyOrder, then key order; descriptions as hints; a reset to the default per field. A property
 //              or top-level keyword the form cannot edit is a row saying so (FormField::Kind::Unsupported, or
 //              FormSchema::problems), never a crash or a missing field; such a property's stored value is kept.
-//   Relevance  x-relevantWhen, transitive: a field that is not relevant is hidden and not validated, and keeps its value.
-//   Numbers    text as the feature panels take it: a bare number in the display unit, a number with a unit, an
+//   Relevance  x-relevantWhen, transitive: a field that is not relevant is hidden and not validated, and keeps its
+//   value. Numbers    text as the feature panels take it: a bare number in the display unit, a number with a unit, an
 //              expression, parameter names, read through an ExprFn (the document's expressions; ray_api
 //              cam_operation::evaluate in the app). The value is in the schema's units (mm, degrees, seconds).
 //              Text left as loaded keeps the stored value exactly (no round trip through the display unit).
@@ -108,6 +108,8 @@ public:
     bool valid() const;
     int revision() const { return revision_; }
 
+    // A choice's [{value, text}] (stable while the schema stays, so a list bound to it is not made again on each edit).
+    Q_INVOKABLE QVariantList choicesOf(const QString& key) const;
     Q_INVOKABLE void setValue(const QString& key, const QVariant& value);
     Q_INVOKABLE void resetField(const QString& key);
     Q_INVOKABLE void resetAll();
@@ -138,7 +140,7 @@ signals:
 
 private:
     struct Entry {
-        QVariant text;                // what the field shows: QString, or bool for a boolean
+        QVariant text;                    // what the field shows: QString, or bool for a boolean
         std::optional<QJsonValue> loaded; // the stored value, while `text` is what it was loaded as
         QVariant loadedText;
     };
@@ -157,6 +159,8 @@ private:
     QJsonObject kept_; // loaded values of properties the form cannot edit
     std::map<QString, QString> external_;
     int revision_ = 0;
+    mutable QVariantList fieldsCache_; // fields() as of fieldsRevision_
+    mutable int fieldsRevision_ = -1;
 };
 
 } // namespace ray::ui

@@ -129,7 +129,8 @@ Column {
                     id: combo
                     objectName: "schemaCombo." + row.key
                     width: root.fieldWidth
-                    model: row.kind === "enum" ? row.modelData.choices : []
+                    // From choicesOf: the list is made once per schema, not again on every edit.
+                    model: row.kind === "enum" && root.form ? root.form.choicesOf(row.key) : []
                     textRole: "text"
                     valueRole: "value"
                     Accessible.name: row.modelData.title
@@ -143,6 +144,8 @@ Column {
                     onModelChanged: Qt.callLater(sync)
                     Component.onCompleted: Qt.callLater(sync)
                     onActivated: root.form.setValue(row.key, currentValue)
+                    // Esc closes the list when it is open (the popup takes it), else the panel, as from a field.
+                    Keys.onEscapePressed: root.cancelled()
                 }
                 ResetButton {
                     key: row.key

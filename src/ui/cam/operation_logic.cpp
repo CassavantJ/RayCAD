@@ -59,9 +59,9 @@ const QStringList& heightKeys()
 
 const QStringList& cuttingKeys()
 {
-    static const QStringList keys = {QStringLiteral("rpm"),        QStringLiteral("clockwise"),
-                                     QStringLiteral("feedCut"),    QStringLiteral("feedPlunge"),
-                                     QStringLiteral("feedRamp"),   QStringLiteral("feedLeadIn"),
+    static const QStringList keys = {QStringLiteral("rpm"),         QStringLiteral("clockwise"),
+                                     QStringLiteral("feedCut"),     QStringLiteral("feedPlunge"),
+                                     QStringLiteral("feedRamp"),    QStringLiteral("feedLeadIn"),
                                      QStringLiteral("feedLeadOut"), QStringLiteral("coolant")};
     return keys;
 }
@@ -129,8 +129,8 @@ QStringList toolTypesFor(const QJsonObject& schema, const QJsonObject& params)
                       .toObject()
                       .value(QStringLiteral("default"));
     }
-    const QString key = current.isBool() ? (current.toBool() ? QStringLiteral("true") : QStringLiteral("false"))
-                                         : current.toString();
+    const QString key =
+        current.isBool() ? (current.toBool() ? QStringLiteral("true") : QStringLiteral("false")) : current.toString();
     if (values.contains(key))
         return list(values.value(key));
     return list(o.value(QStringLiteral("default")));
@@ -263,7 +263,9 @@ QString limitStateText(cam::LimitState state)
 bool matchesRecord(const cam::CalculatedFeeds& r, double rpm, double feedCut, double feedPlunge, double feedRamp,
                    const QStringList& used)
 {
-    const auto same = [](double a, double b) { return std::abs(a - b) <= 1e-6 * std::max(1.0, std::abs(b)); };
+    const auto same = [](double a, double b) {
+        return std::abs(a - b) <= 1e-6 * std::max(1.0, std::abs(b));
+    };
     if (!same(rpm, r.spindleRpm) || !same(feedCut, r.feedCut))
         return false;
     if (used.contains(QLatin1String("feedPlunge")) && !same(feedPlunge, r.feedPlunge))
@@ -275,7 +277,9 @@ bool matchesRecord(const cam::CalculatedFeeds& r, double rpm, double feedCut, do
 
 QJsonObject calculatedJson(const cam::CalculatedFeeds& r)
 {
-    const auto id = [](const Uuid& u) { return u == Uuid{} ? QJsonValue() : QJsonValue(QString::fromStdString(u.toString())); };
+    const auto id = [](const Uuid& u) {
+        return u == Uuid{} ? QJsonValue() : QJsonValue(QString::fromStdString(u.toString()));
+    };
     QJsonObject o;
     o.insert(QStringLiteral("tool"), QString::fromStdString(r.tool.value.toString()));
     o.insert(QStringLiteral("material"), id(r.material.value));
@@ -308,7 +312,8 @@ void sortTools(std::vector<ToolRow>& rows)
 
 QString toolDetail(const ToolRow& row, bool inch)
 {
-    const QString d = inch ? trimmed(row.diameter / 25.4, 4) + QStringLiteral(" in") : trimmed(row.diameter, 3) + QStringLiteral(" mm");
+    const QString d = inch ? trimmed(row.diameter / 25.4, 4) + QStringLiteral(" in")
+                           : trimmed(row.diameter, 3) + QStringLiteral(" mm");
     const QString flutes = row.flutes == 1 ? tr("1 flute") : tr("%1 flutes").arg(row.flutes);
     return tr("⌀%1, %2, %3").arg(d, flutes, row.type);
 }

@@ -92,10 +92,7 @@ public:
     int currentIndex() const { return current_; }
     void setCurrentIndex(int index);
     QString message() const { return message_; }
-    bool busy() const
-    {
-        return (statusJob_.valid() && !statusJob_.done()) || (setupJob_.valid() && !setupJob_.done());
-    }
+    bool busy() const { return (statusJob_.valid() && !statusJob_.done()) || (setupJob_.valid() && !setupJob_.done()); }
 
     // ---- QML ----
     Q_INVOKABLE QVariantMap get(int row) const;
@@ -184,7 +181,7 @@ private:
     // Statuses.
     void subscribeEngine();
     Statuses statuses_;
-    JobHandle<std::map<OperationId, cam::OpState>> statusJob_;            // ICamEngine::statusAsync
+    JobHandle<std::map<OperationId, cam::OpState>> statusJob_;             // ICamEngine::statusAsync
     JobHandle<std::shared_ptr<const std::map<SetupId, Status>>> setupJob_; // api::cam_setup::setupStates
     std::uint64_t statusSerial_ = 0;
     int statusRuns_ = 0;

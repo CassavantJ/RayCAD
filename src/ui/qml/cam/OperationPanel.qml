@@ -119,6 +119,7 @@ Item {
             Accessible.name: choiceRow.label
             Component.onCompleted: choiceRow.sync()
             onActivated: choiceRow.chosen(currentValue)
+            Keys.onEscapePressed: CamOperation.cancel()
         }
     }
 
@@ -243,7 +244,7 @@ Item {
                     x: root.labelWidth + Theme.spacingS
                     width: root.fieldWidth
                     height: Math.min(toolList.contentHeight, Theme.rowHeight * 2 * 4.5) + 2
-                    radius: Theme.radiusControl
+                    radius: Theme.radiusSmall
                     color: "transparent"
                     border.width: Theme.borderWidth
                     border.color: Theme.controlBorder

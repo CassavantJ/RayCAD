@@ -89,7 +89,7 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(QVariantList tools READ tools NOTIFY toolsChanged)
     Q_PROPERTY(QString toolSearch READ toolSearch WRITE setToolSearch NOTIFY toolsChanged)
     Q_PROPERTY(bool showAllTools READ showAllTools WRITE setShowAllTools NOTIFY toolsChanged)
-    Q_PROPERTY(QVariantList holders READ holders NOTIFY toolsChanged) // [{id, name}], "" first (none)
+    Q_PROPERTY(QVariantList holders READ holders NOTIFY optionsChanged) // [{id, name}], "" first (none)
     Q_PROPERTY(QString holderId READ holderId NOTIFY toolChanged)
     // Geometry: x-geometry's kind ("hole", "face", "edge", "none") and prompt, the picks [{index, text}], picking.
     Q_PROPERTY(QString geometryKind READ geometryKind NOTIFY typeChanged)
@@ -97,7 +97,7 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(QVariantList picks READ picks NOTIFY picksChanged)
     Q_PROPERTY(bool picking READ picking NOTIFY picksChanged)
     // Feeds: the materials [{id, name}], the one used, where it comes from ("setup", "document", "chosen", "").
-    Q_PROPERTY(QVariantList materials READ materials NOTIFY toolsChanged)
+    Q_PROPERTY(QVariantList materials READ materials NOTIFY optionsChanged)
     Q_PROPERTY(QString materialId READ materialId NOTIFY feedsChanged)
     Q_PROPERTY(QString materialSource READ materialSource NOTIFY feedsChanged)
     // computeFeeds: {available, error, rpm, feed, chipLoad, surfaceSpeed, actualSurfaceSpeed, power, torque, opClass,
@@ -108,13 +108,14 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(QString feedsState READ feedsState NOTIFY feedsChanged)
     Q_PROPERTY(QString feedsNote READ feedsNote NOTIFY feedsChanged)
     // Status.
-    Q_PROPERTY(QString message READ message NOTIFY statusChanged)          // why the values cannot be used, or a pick
+    Q_PROPERTY(QString message READ message NOTIFY statusChanged) // why the values cannot be used, or a pick
     Q_PROPERTY(QString messageField READ messageField NOTIFY statusChanged)
-    Q_PROPERTY(QString previewStatus READ previewStatus NOTIFY statusChanged) // "", "incomplete", "building", "ok", "failed"
-    Q_PROPERTY(QStringList errors READ errors NOTIFY statusChanged)      // validation: block OK
-    Q_PROPERTY(QStringList warnings READ warnings NOTIFY statusChanged)  // validation: do not
-    Q_PROPERTY(double progress READ progress NOTIFY statusChanged)       // the preview generation, 0..1, or -1
-    Q_PROPERTY(QString statusLine READ statusLine NOTIFY statusChanged)  // the next step, or "Ready: ..."
+    Q_PROPERTY(
+        QString previewStatus READ previewStatus NOTIFY statusChanged)  // "", "incomplete", "building", "ok", "failed"
+    Q_PROPERTY(QStringList errors READ errors NOTIFY statusChanged)     // validation: block OK
+    Q_PROPERTY(QStringList warnings READ warnings NOTIFY statusChanged) // validation: do not
+    Q_PROPERTY(double progress READ progress NOTIFY statusChanged)      // the preview generation, 0..1, or -1
+    Q_PROPERTY(QString statusLine READ statusLine NOTIFY statusChanged) // the next step, or "Ready: ..."
     Q_PROPERTY(bool committing READ committing NOTIFY statusChanged)
     Q_PROPERTY(bool canCommit READ canCommit NOTIFY statusChanged)
 
@@ -211,6 +212,7 @@ signals:
     void valuesChanged();
     void toolChanged();
     void toolsChanged();
+    void optionsChanged(); // the holders and materials on offer
     void picksChanged();
     void feedsChanged();
     void statusChanged();
@@ -218,8 +220,8 @@ signals:
 
 private:
     struct Pick {
-        QJsonObject ref;  // TopoRef JSON
-        QString body;     // body id
+        QJsonObject ref; // TopoRef JSON
+        QString body;    // body id
         std::uint32_t element = 0;
         QString text;
     };

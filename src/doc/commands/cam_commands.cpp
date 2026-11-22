@@ -501,9 +501,8 @@ Result<DocStatePtr> setupEdit(const DocState& before, std::string_view argsJson)
     Edit e = edit(before);
     RAY_CAM_TRY(index, existingSetup(*args, *e.cam));
     if (!args->has("fixtureBodies") && !args->has("library") && !args->has("machine") && !args->has("material") &&
-        !args->has("name") &&
-        !args->has("partBodies") && !args->has("post") && !args->has("programComment") && !args->has("programNumber") &&
-        !args->has("stock") && !args->has("wcs")) {
+        !args->has("name") && !args->has("partBodies") && !args->has("post") && !args->has("programComment") &&
+        !args->has("programNumber") && !args->has("stock") && !args->has("wcs")) {
         return args->error("nothing to change: give at least one member of the setup");
     }
     RAY_CAM_CHECK(embedFromArgs(*args, *e.cam));
@@ -651,9 +650,8 @@ Result<DocStatePtr> operationEdit(const DocState& before, std::string_view argsJ
     Edit e = edit(before);
     RAY_CAM_TRY(id, existingOperation(*args, *e.cam));
     if (!args->has("calculatedFeeds") && !args->has("cutting") && !args->has("geometry") && !args->has("heights") &&
-        !args->has("library") &&
-        !args->has("name") && !args->has("params") && !args->has("template") && !args->has("tool") &&
-        !args->has("type")) {
+        !args->has("library") && !args->has("name") && !args->has("params") && !args->has("template") &&
+        !args->has("tool") && !args->has("type")) {
         return args->error("nothing to change: give at least one member of the operation");
     }
     RAY_CAM_CHECK(embedFromArgs(*args, *e.cam));
@@ -830,9 +828,9 @@ std::string calculatedFeedsSchema()
            R"(calculated' (computeFeeds) last wrote into the cutting data; a record for the panel, not in the input )"
            R"(hash","properties":{"tool":)" +
            uuid() + R"(,"material":)" + nullableUuid() + R"(,"machine":)" + nullableUuid() +
-           R"(,"opClass":{"type":"string"},"surfaceSpeed":)" + optional + R"(,"chipLoad":)" + optional +
-           R"(,"rpm":)" + nonNegative + R"(,"feedCut":)" + nonNegative + R"(,"feedPlunge":)" + nonNegative +
-           R"(,"feedRamp":)" + nonNegative + "}}";
+           R"(,"opClass":{"type":"string"},"surfaceSpeed":)" + optional + R"(,"chipLoad":)" + optional + R"(,"rpm":)" +
+           nonNegative + R"(,"feedCut":)" + nonNegative + R"(,"feedPlunge":)" + nonNegative + R"(,"feedRamp":)" +
+           nonNegative + "}}";
 }
 
 std::string setupProperties(bool withIndex)

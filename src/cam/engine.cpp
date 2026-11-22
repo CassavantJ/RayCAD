@@ -267,8 +267,9 @@ Result<Prepared> prepare(const CamSnapshot& snap, const naming::IResolver& resol
 }
 
 // The worker side of a generation: setup resolution, validation and the generator.
-Result<ToolpathPtr> runGenerator(const CamSnapshot& snap, const naming::IResolver& resolver, const OperationRegistry& types,
-                        const ResolveGeometryFn& resolve, const OperationId& id, const Hash256& hash, JobContext& ctx)
+Result<ToolpathPtr> runGenerator(const CamSnapshot& snap, const naming::IResolver& resolver,
+                                 const OperationRegistry& types, const ResolveGeometryFn& resolve,
+                                 const OperationId& id, const Hash256& hash, JobContext& ctx)
 {
     auto prepared = prepare(snap, resolver, types, resolve, id, ctx, 0.1);
     if (!prepared) {
@@ -374,9 +375,9 @@ public:
                 ToolpathPtr toolpath = cached->second.toolpath;
                 const bool changed = s_->latest[id] != toolpath;
                 s_->latest[id] = toolpath;
-                JobHandle<ToolpathPtr> done = jobs_.submit<ToolpathPtr>(
-                    JobInfo{"Toolpath", JobPriority::Interactive, false},
-                    [toolpath](JobContext&) -> Result<ToolpathPtr> { return toolpath; });
+                JobHandle<ToolpathPtr> done =
+                    jobs_.submit<ToolpathPtr>(JobInfo{"Toolpath", JobPriority::Interactive, false},
+                                              [toolpath](JobContext&) -> Result<ToolpathPtr> { return toolpath; });
                 if (changed && !s_->listeners.empty()) {
                     std::weak_ptr<Shared> weak = s_;
                     done.then([weak, id](Result<ToolpathPtr>) {

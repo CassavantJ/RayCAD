@@ -21,8 +21,8 @@ namespace ray::ui::camui {
 
 // ---------- Schema annotations ----------
 struct GeometrySpec {
-    QString kind = QStringLiteral("none");  // "hole", "face", "edge", "none"
-    QString count = QStringLiteral("any");  // "one", "oneOrMore", "any"
+    QString kind = QStringLiteral("none"); // "hole", "face", "edge", "none"
+    QString count = QStringLiteral("any"); // "one", "oneOrMore", "any"
     QString description;
     bool needsOne() const { return count == QLatin1String("one") || count == QLatin1String("oneOrMore"); }
     bool atMostOne() const { return count == QLatin1String("one"); }
@@ -48,11 +48,11 @@ std::optional<std::pair<QString, QString>> heightsOutOfOrder(const std::map<QStr
 // "Use calculated" has no rule for these (cam.h computeFeeds): fractions of the cut feed, offered as editable defaults.
 inline constexpr double kPlungeFraction = 0.5;
 inline constexpr double kRampFraction = 0.75;
-QString rpmText(double rpm);                          // "1200 rpm"
-QString feedText(double mmMin, bool inch);            // "320 mm/min", "12.6 in/min"
-QString surfaceSpeedText(double mMin, bool inch);     // "300 m/min", "984 sfm"
-QString chipLoadText(double mm, bool inch);           // "0.05 mm/tooth", "0.0020 in/tooth"
-QString powerText(double kw);                         // "1.2 kW"
+QString rpmText(double rpm);                      // "1200 rpm"
+QString feedText(double mmMin, bool inch);        // "320 mm/min", "12.6 in/min"
+QString surfaceSpeedText(double mMin, bool inch); // "300 m/min", "984 sfm"
+QString chipLoadText(double mm, bool inch);       // "0.05 mm/tooth", "0.0020 in/tooth"
+QString powerText(double kw);                     // "1.2 kW"
 // A feed field as mm/min: a bare number in the display unit, a trailing mm/min, in/min or ipm, an expression before
 // it. nullopt with the reason.
 std::optional<double> readFeed(const QString& text, bool inch, const ExprFn& expr, QString* error);
@@ -82,7 +82,7 @@ QString toolDetail(const ToolRow& row, bool inch); // "⌀6 mm, 2 flutes, drill"
 // ---------- Arguments ----------
 struct OperationInput {
     QString id, setup, type, name;
-    QString tool, holder;     // holder "" for none
+    QString tool, holder; // holder "" for none
     std::optional<int> toolNumber;
     std::optional<double> stickOut;
     double rpm = 0, feedCut = 0, feedPlunge = 0, feedRamp = 0, feedLeadIn = 0, feedLeadOut = 0;
@@ -92,7 +92,7 @@ struct OperationInput {
     QJsonArray geometry;               // TopoRef JSON
     QJsonObject params;
     QJsonValue calculated = QJsonValue(QJsonValue::Undefined); // an object, null (forget it) or undefined (as it is)
-    QJsonArray libraryTools, libraryHolders;                  // items to embed in the same step
+    QJsonArray libraryTools, libraryHolders;                   // items to embed in the same step
 };
 QJsonObject operationArgs(const OperationInput& input, bool adding);
 

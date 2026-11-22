@@ -729,10 +729,10 @@ Result<cam::CalculatedFeeds> readCalculatedFeeds(const Value& value, const Sourc
             *slot = *n;
         }
     }
-    for (const auto& [key, slot] : {std::pair<const char*, double*>{"rpm", &c.spindleRpm},
-                                    std::pair<const char*, double*>{"feedCut", &c.feedCut},
-                                    std::pair<const char*, double*>{"feedPlunge", &c.feedPlunge},
-                                    std::pair<const char*, double*>{"feedRamp", &c.feedRamp}}) {
+    for (const auto& [key, slot] :
+         {std::pair<const char*, double*>{"rpm", &c.spindleRpm}, std::pair<const char*, double*>{"feedCut", &c.feedCut},
+          std::pair<const char*, double*>{"feedPlunge", &c.feedPlunge},
+          std::pair<const char*, double*>{"feedRamp", &c.feedRamp}}) {
         RAY_CAMJSON_TRY(n, o->number(key, 0.0));
         RAY_CAMJSON_CHECK(nonNegative(*o, key, *n));
         *slot = *n;
@@ -742,7 +742,9 @@ Result<cam::CalculatedFeeds> readCalculatedFeeds(const Value& value, const Sourc
 
 Value toJson(const cam::CalculatedFeeds& c)
 {
-    const auto optional = [](const std::optional<double>& v) { return v ? Value::number(*v) : Value(); };
+    const auto optional = [](const std::optional<double>& v) {
+        return v ? Value::number(*v) : Value();
+    };
     return Value::object({{"chipLoad", optional(c.chipLoadMm)},
                           {"feedCut", Value::number(c.feedCut)},
                           {"feedPlunge", Value::number(c.feedPlunge)},

@@ -32,12 +32,18 @@ const cam::Setup* findSetup(const cam::CamState& cam, const SetupId& id)
 }
 
 constexpr std::pair<lib::ToolType, const char*> kToolTypes[] = {
-    {lib::ToolType::FlatEndMill, "flatEndMill"}, {lib::ToolType::BallEndMill, "ballEndMill"},
-    {lib::ToolType::BullEndMill, "bullEndMill"}, {lib::ToolType::ChamferMill, "chamferMill"},
-    {lib::ToolType::FaceMill, "faceMill"},       {lib::ToolType::SpotDrill, "spotDrill"},
-    {lib::ToolType::Drill, "drill"},             {lib::ToolType::Tap, "tap"},
-    {lib::ToolType::Reamer, "reamer"},           {lib::ToolType::BoringBar, "boringBar"},
-    {lib::ToolType::ThreadMill, "threadMill"},   {lib::ToolType::EngraveCutter, "engraveCutter"},
+    {lib::ToolType::FlatEndMill, "flatEndMill"},
+    {lib::ToolType::BallEndMill, "ballEndMill"},
+    {lib::ToolType::BullEndMill, "bullEndMill"},
+    {lib::ToolType::ChamferMill, "chamferMill"},
+    {lib::ToolType::FaceMill, "faceMill"},
+    {lib::ToolType::SpotDrill, "spotDrill"},
+    {lib::ToolType::Drill, "drill"},
+    {lib::ToolType::Tap, "tap"},
+    {lib::ToolType::Reamer, "reamer"},
+    {lib::ToolType::BoringBar, "boringBar"},
+    {lib::ToolType::ThreadMill, "threadMill"},
+    {lib::ToolType::EngraveCutter, "engraveCutter"},
 };
 
 // The setup's frame and its snapshot, for the hole and backplot helpers.
@@ -86,8 +92,8 @@ std::vector<TypeInfo> operationTypes(IApp& app)
         }
         TypeInfo info{std::string(name), std::string(name), std::string(type->paramsSchemaJson())};
         if (auto schema = json::parse(info.schemaJson); schema) {
-            if (const json::Value* title = schema->find("title"); title != nullptr && title->isString() &&
-                                                                  !title->asString().empty()) {
+            if (const json::Value* title = schema->find("title");
+                title != nullptr && title->isString() && !title->asString().empty()) {
                 info.title = title->asString();
             }
         }
@@ -163,15 +169,8 @@ std::optional<lib::ToolType> toolTypeFromName(std::string_view name)
 Result<cam::FeedsResult> computeFeeds(const FeedsRequest& r)
 {
     try {
-        const cam::FeedsInput in{r.tool,
-                                 r.material,
-                                 r.machine,
-                                 r.radialEngagementMm,
-                                 r.axialDepthMm,
-                                 r.opType,
-                                 r.opClass,
-                                 r.surfaceSpeedMMin,
-                                 r.chipLoadMm};
+        const cam::FeedsInput in{r.tool,   r.material, r.machine,          r.radialEngagementMm, r.axialDepthMm,
+                                 r.opType, r.opClass,  r.surfaceSpeedMMin, r.chipLoadMm};
         return cam::computeFeeds(in);
     } catch (const std::bad_alloc&) {
         return failWith(ErrorCode::Internal, "Out of memory");
@@ -242,7 +241,8 @@ Result<std::shared_ptr<const sim::Backplot>> backplot(const doc::DocStatePtr& st
             return tl::unexpected(frame.error());
         }
         const lib::MachineDef* machine = nullptr;
-        if (const auto m = frame->snap.cam->machines.find(frame->setup->machine); m != frame->snap.cam->machines.end()) {
+        if (const auto m = frame->snap.cam->machines.find(frame->setup->machine);
+            m != frame->snap.cam->machines.end()) {
             machine = &m->second.item;
         }
         if (auto st = ctx.cancel.check(); !st) {
