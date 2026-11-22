@@ -1028,9 +1028,13 @@ SketchJson meander(int periods, bool redundant)
             s.constraint(c++, "tangent", {prevCurve, lA, prevEnd});
             s.constraint(c++, "distance", {lA}, {}, L);
         }
-        s.constraint(c++, "tangent", {lA, aA, p1}).constraint(c++, "radius", {aA}, {}, R);
-        s.constraint(c++, "tangent", {aA, lB, p2}).constraint(c++, "distance", {lB}, {}, L);
-        s.constraint(c++, "tangent", {lB, aB, p3}).constraint(c++, "radius", {aB}, {}, R);
+        // One constraint per statement: two c++ in one chained call are unsequenced for GCC (-Wsequence-point).
+        s.constraint(c++, "tangent", {lA, aA, p1});
+        s.constraint(c++, "radius", {aA}, {}, R);
+        s.constraint(c++, "tangent", {aA, lB, p2});
+        s.constraint(c++, "distance", {lB}, {}, L);
+        s.constraint(c++, "tangent", {lB, aB, p3});
+        s.constraint(c++, "radius", {aB}, {}, R);
         if (redundant) {
             s.constraint(c++, "horizontal", {lB});
             if (k > 0) {
