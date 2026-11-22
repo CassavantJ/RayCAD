@@ -379,6 +379,24 @@ struct Window {
         view()->fitAll();
         grab();
     }
+    // A new document (inches, the default for new documents) with `path` imported into it: a STEP file opened on its
+    // own takes the unit it declares (the plate is metric), one imported keeps the document's.
+    void openInNewDocument(const QString& path) const
+    {
+        REQUIRE(QFileInfo::exists(path));
+        host->files()->newPart();
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                return host->session()->hasDocument() && host->app()->active() != nullptr && !host->files()->busy();
+            },
+            kTimeoutMs));
+        host->files()->importFile(path);
+        REQUIRE(QTest::qWaitFor([&] { return host->scene()->bodyCount() >= 1 && settled(); }, kTimeoutMs));
+        settle();
+        REQUIRE(host->app()->active()->document->state()->settings.units == UnitSystem::Inch);
+        view()->fitAll();
+        grab();
+    }
     void toWorkspace(int index) const
     {
         click(shown(QStringLiteral("workspaceTab.%1").arg(index)));
@@ -853,7 +871,7 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
 {
     RAY_REQUIRE_RHI();
     Window w;
-    w.open(kPlate);
+    w.openInNewDocument(kPlate); // in inches: a stored length then shows rounded (the exact value is checked)
     w.toWorkspace(ui::kCamWorkspace);
     addSetup(w);
     const std::string before = w.stateHash();

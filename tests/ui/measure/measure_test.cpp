@@ -25,6 +25,7 @@
 #include "selection_model.h"
 #include "session.h"
 #include "theme_object.h"
+#include "units.h"
 #include "viewport_item.h"
 #include "viewport_navigation.h"
 
@@ -169,6 +170,11 @@ struct Window {
         REQUIRE(host->files()->open(path));
         REQUIRE(QTest::qWaitFor([&] { return settled(); }, kOpenTimeoutMs));
         REQUIRE(scene()->bodyCount() >= 1);
+        // A STEP file opens in the unit it declares (these are metric); the cases read inches first, so the display
+        // is switched to inches as the status bar's toggle does (the document stays metric).
+        REQUIRE(host->session()->activeDocument() != nullptr);
+        CHECK(host->session()->activeDocument()->document->state()->settings.units == UnitSystem::Metric);
+        host->units()->setDisplaySystem(QStringLiteral("inch"));
         grab();
     }
     bool measured() const
@@ -255,7 +261,7 @@ TEST_CASE("two holes show their centre distance; inch and mm switch live; copy; 
     Window w("dark");
     w.open(kPlate);
     MeasureModel& m = *w.measure();
-    // A STEP file opens as a new document: inch, 4 decimals (PLAN.md: new documents default to inch).
+    // Shown in inches (Window::open), with the inch decimals.
     CHECK(m.unitSystem() == QStringLiteral("inch"));
     CHECK(m.decimals() == 4);
     REQUIRE(w.view()->setStandardView(QStringLiteral("iso")));

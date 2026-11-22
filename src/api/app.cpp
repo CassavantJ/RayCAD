@@ -741,8 +741,25 @@ Result<std::string> AppImpl::importWork(std::optional<std::string> documentId, c
             }
         }
     }
-    // A STEP/IGES file opened as a new document starts like file.new (the journal from the same state).
-    const doc::DocStatePtr initial = guard->get() == nullptr ? newDocumentState() : nullptr;
+    // A STEP/IGES file opened as a new document starts like file.new (the journal from the same state), in the length
+    // unit the file declares (the import's "sourceUnits"), so a metric part is not shown and posted in inches only
+    // because that is the default for new documents. The display decimals are the user's for that unit.
+    doc::DocStatePtr initial;
+    if (guard->get() == nullptr) {
+        initial = newDocumentState();
+        const auto args = json::parse(shared->command.argsJson);
+        const json::Value* props = args && args->isObject() ? args->find("props") : nullptr;
+        const json::Value* units = props != nullptr && props->isObject() ? props->find("sourceUnits") : nullptr;
+        if (units != nullptr && units->isString()) {
+            if (const auto declared = unitSystemFromName(units->asString());
+                declared && *declared != initial->settings.units) {
+                auto adopted = std::make_shared<doc::DocState>(*initial);
+                adopted->settings.units = *declared;
+                adopted->settings.decimals = settings_->get().decimalsFor(*declared);
+                initial = std::move(adopted);
+            }
+        }
+    }
     if (guard->get() == nullptr && journaling()) {
         *slot = startUnsavedJournal(initial);
         if (slot->journal) {
