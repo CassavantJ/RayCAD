@@ -76,9 +76,11 @@ struct LibraryStack::Impl {
     // weakly finds it gone.
     struct Roots {
         std::vector<std::string> dirs;
-        std::size_t readOnly = 0;                         // the first `readOnly` roots
-        std::vector<std::unique_ptr<ILibrary>> libraries; // parallel to dirs; null for a root that did not open
-        std::vector<LibraryIssue> rootIssues;             // parallel to dirs: why it did not open
+        std::size_t readOnly = 0; // the first `readOnly` roots
+        // Parallel to dirs; null for a root that did not open. Shared so that a worker can keep one past a setRoots
+        // (sharedLibrary, refreshInBackground); a slot is set at most once (null to a library) in a Roots' life.
+        std::vector<std::shared_ptr<ILibrary>> libraries;
+        std::vector<LibraryIssue> rootIssues; // parallel to dirs: why it did not open
         template <class Id, class T>
         using Merged = std::map<Id, std::pair<T, std::size_t>>; // the item and the root it comes from
         Merged<ToolId, Tool> tools;
@@ -87,7 +89,7 @@ struct LibraryStack::Impl {
         Merged<MachineId, MachineDef> machines;
         Merged<Uuid, OpTemplate> templates;
         std::vector<std::shared_ptr<Pending>> pending; // parallel to dirs: a background read not adopted yet, or null
-        std::vector<JobHandle<bool>> reads;            // the background read jobs, cancelled with the roots
+        std::vector<JobHandle<bool>> reads;            // the background read and refresh jobs, cancelled with the roots
         Roots() = default;
         Roots(const Roots&) = delete;
         Roots& operator=(const Roots&) = delete;
@@ -352,6 +354,78 @@ bool LibraryStack::refresh()
     return changed;
 }
 
+void LibraryStack::refreshInBackground(IJobSystem& jobs, std::function<void(bool changed)> done)
+{
+    // What the worker reads: the open roots' libraries (shared, so a setRoots meanwhile does not destroy them under
+    // it) and the folders of the roots that did not open. Taken here, on the UI thread, where the slots change.
+    struct Work {
+        std::vector<std::pair<std::string, std::shared_ptr<ILibrary>>> open;
+        std::vector<std::pair<std::size_t, std::string>> missing;
+        std::vector<std::pair<std::size_t, Result<std::unique_ptr<ILibrary>>>> opened; // written by the worker
+    };
+    auto work = std::make_shared<Work>();
+    const std::shared_ptr<Impl::Roots>& roots = impl_->roots;
+    for (std::size_t i = 0; i < roots->dirs.size(); ++i) {
+        if (roots->libraries[i]) {
+            work->open.emplace_back(roots->dirs[i], roots->libraries[i]);
+        } else if (!roots->loading(i)) {
+            work->missing.emplace_back(i, roots->dirs[i]);
+        }
+    }
+    JobHandle<bool> job = jobs.submit<bool>(JobInfo{"Rescanning the libraries", JobPriority::Background, false},
+                                            [work](JobContext& ctx) -> Result<bool> {
+                                                bool changed = false;
+                                                for (const auto& [dir, library] : work->open) {
+                                                    runReadHook(dir, ctx.cancel);
+                                                    if (auto st = ctx.cancel.check(); !st) {
+                                                        return tl::unexpected(st.error());
+                                                    }
+                                                    changed = library->refresh() || changed;
+                                                }
+                                                for (const auto& [i, dir] : work->missing) {
+                                                    runReadHook(dir, ctx.cancel);
+                                                    if (auto st = ctx.cancel.check(); !st) {
+                                                        return tl::unexpected(st.error());
+                                                    }
+                                                    work->opened.emplace_back(i, ILibrary::open(dir));
+                                                }
+                                                return changed;
+                                            });
+    std::erase_if(roots->reads, [](const JobHandle<bool>& j) { return j.done(); });
+    roots->reads.push_back(job);
+    std::weak_ptr<Impl::Roots> weak = roots;
+    Impl* impl = impl_.get();
+    job.then([impl, weak, work, done = std::move(done)](Result<bool> result) {
+        // On the UI thread; `impl` is alive whenever the roots are (they belong to it), as in watchOne.
+        auto alive = weak.lock();
+        if (!alive || !result) {
+            return; // new roots, the stack gone, or cancelled
+        }
+        bool changed = *result;
+        Impl::Roots& r = *alive;
+        for (auto& [i, opened] : work->opened) {
+            if (r.libraries[i] || r.loading(i)) {
+                continue; // opened meanwhile (a refresh() on this thread)
+            }
+            if (opened) {
+                r.libraries[i] = std::move(*opened);
+                r.rootIssues[i] = {};
+                impl->watchOne(i);
+                changed = true;
+            } else {
+                r.rootIssues[i] = {r.dirs[i], "The library cannot be opened: " + opened.error().message};
+            }
+        }
+        impl->merge();
+        if (changed) {
+            impl->notify();
+        }
+        if (done) {
+            done(changed);
+        }
+    });
+}
+
 std::vector<LibraryStack::RootInfo> LibraryStack::roots() const
 {
     const Impl::Roots& r = *impl_->roots;
@@ -378,6 +452,15 @@ ILibrary* LibraryStack::library(std::size_t root)
         return nullptr;
     }
     return r.libraries[root].get();
+}
+
+std::shared_ptr<ILibrary> LibraryStack::sharedLibrary(std::size_t root)
+{
+    Impl::Roots& r = *impl_->roots;
+    if (root >= r.libraries.size() || root < r.readOnly) {
+        return nullptr;
+    }
+    return r.libraries[root];
 }
 
 void LibraryStack::remerge()

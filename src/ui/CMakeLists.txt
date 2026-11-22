@@ -42,7 +42,9 @@ add_library(ray_ui STATIC
     cam/setup_logic.h # T-044
     cam/setup_logic.cpp
     cam/operation_logic.h # T-045
-    cam/operation_logic.cpp)
+    cam/operation_logic.cpp
+    cam/tools_logic.h # T-046
+    cam/tools_logic.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -120,7 +122,11 @@ set(RAY_UI_QML_FILES
     qml/cam/SetupPanel.qml
     qml/cam/CamTree.qml
     qml/cam/SchemaForm.qml
-    qml/cam/OperationPanel.qml)
+    qml/cam/OperationPanel.qml
+    qml/cam/ToolLibrary.qml # T-046
+    qml/cam/ToolProfile.qml
+    qml/cam/ToolFields.qml
+    qml/cam/ToolPicker.qml)
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -181,6 +187,8 @@ qt_add_qml_module(ray_ui
         cam/operation_tool.cpp
         cam/operation_view.h
         cam/operation_view.cpp
+        cam/tools_model.h # T-046
+        cam/tools_model.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick
