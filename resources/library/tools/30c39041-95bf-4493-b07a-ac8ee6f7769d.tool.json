@@ -1,0 +1,96 @@
+{
+  "bodyMaterial": "carbide",
+  "comment": "Generic carbide straight-flute machine reamer, 1/4 in nominal. Lengths: approximate catalogue proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 6.35,
+  "fluteLength": 25.4,
+  "flutes": 6,
+  "id": "30c39041-95bf-4493-b07a-ac8ee6f7769d",
+  "name": "1/4 in carbide reamer",
+  "overallLength": 76.2,
+  "presets": [
+    {
+      "chipLoad": 0.0317,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 60
+    },
+    {
+      "chipLoad": 0.0286,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 50
+    },
+    {
+      "chipLoad": 0.0238,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 25
+    },
+    {
+      "chipLoad": 0.0191,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 20
+    },
+    {
+      "chipLoad": 0.0159,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 15
+    },
+    {
+      "chipLoad": 0.0159,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 12
+    },
+    {
+      "chipLoad": 0.0127,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 8
+    },
+    {
+      "chipLoad": 0.0127,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "ream",
+      "rampAngle": 0,
+      "surfaceSpeed": 8
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 6.35,
+  "shoulderLength": 25.4,
+  "threadPitch": 0,
+  "threadSpec": "",
+  "tipAngle": 0,
+  "tipDiameter": 0,
+  "type": "reamer",
+  "vendor": ""
+}

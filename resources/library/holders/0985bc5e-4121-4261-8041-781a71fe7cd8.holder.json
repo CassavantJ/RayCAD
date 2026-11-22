@@ -1,0 +1,25 @@
+{
+  "comment": "Flange per the CAT40 (V-flange) standard (ASME B5.50, flange 2.50 in = 63.5 mm); the body and nose are a conservative generic envelope for collision checks; chuck body about 52 mm across, tapering to 40 mm at the jaws. Measure your own holders and correct the segments.",
+  "gaugeLength": 100,
+  "id": "0985bc5e-4121-4261-8041-781a71fe7cd8",
+  "name": "CAT40 keyless drill chuck 0-1/2 in, 100 mm gauge",
+  "schema": 1,
+  "segments": [
+    {
+      "height": 15.9,
+      "lowerDiameter": 63.5,
+      "upperDiameter": 63.5
+    },
+    {
+      "height": 34.1,
+      "lowerDiameter": 44.5,
+      "upperDiameter": 44.5
+    },
+    {
+      "height": 50,
+      "lowerDiameter": 40,
+      "upperDiameter": 52
+    }
+  ],
+  "vendor": ""
+}

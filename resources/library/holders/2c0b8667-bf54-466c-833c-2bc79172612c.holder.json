@@ -1,0 +1,25 @@
+{
+  "comment": "Flange per the BT40 standard (JIS B 6339 / ISO 7388-1, flange 63 mm); the body and nose are a conservative generic envelope for collision checks; nose: ER32 collet nut about 50 mm across (ISO 15488 ER32 collets). Measure your own holders and correct the segments.",
+  "gaugeLength": 70,
+  "id": "2c0b8667-bf54-466c-833c-2bc79172612c",
+  "name": "BT40 ER32 collet chuck, 70 mm gauge",
+  "schema": 1,
+  "segments": [
+    {
+      "height": 16,
+      "lowerDiameter": 63,
+      "upperDiameter": 63
+    },
+    {
+      "height": 20,
+      "lowerDiameter": 44.5,
+      "upperDiameter": 44.5
+    },
+    {
+      "height": 34,
+      "lowerDiameter": 50,
+      "upperDiameter": 50
+    }
+  ],
+  "vendor": ""
+}

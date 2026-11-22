@@ -1,0 +1,25 @@
+{
+  "comment": "Flange per the BT30 standard (JIS B 6339 / ISO 7388-1, flange 46 mm); the body and nose are a conservative generic envelope for collision checks; nose: ER20 collet nut about 34 mm across (ISO 15488 ER20 collets). Measure your own holders and correct the segments.",
+  "gaugeLength": 60,
+  "id": "5f1a0e5e-be76-4340-8c41-1401233eceeb",
+  "name": "BT30 ER20 collet chuck, 60 mm gauge",
+  "schema": 1,
+  "segments": [
+    {
+      "height": 12,
+      "lowerDiameter": 46,
+      "upperDiameter": 46
+    },
+    {
+      "height": 20,
+      "lowerDiameter": 31.75,
+      "upperDiameter": 31.75
+    },
+    {
+      "height": 28,
+      "lowerDiameter": 34,
+      "upperDiameter": 34
+    }
+  ],
+  "vendor": ""
+}

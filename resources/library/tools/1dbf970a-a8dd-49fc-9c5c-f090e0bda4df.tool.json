@@ -1,0 +1,96 @@
+{
+  "bodyMaterial": "HSS-Co",
+  "comment": "Generic HSS-Co jobber drill, 135 degree split point. Diameter: metric size 3.3 mm. Lengths: DIN 338 jobber length for that diameter range. Tap drill for M4x0.7 (resources/standards/threads.json). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 3.3,
+  "fluteLength": 36,
+  "flutes": 2,
+  "id": "1dbf970a-a8dd-49fc-9c5c-f090e0bda4df",
+  "name": "3.3 mm HSS-Co jobber drill",
+  "overallLength": 65,
+  "presets": [
+    {
+      "chipLoad": 0.033,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 60
+    },
+    {
+      "chipLoad": 0.0297,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 3,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 50
+    },
+    {
+      "chipLoad": 0.0247,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 24
+    },
+    {
+      "chipLoad": 0.0198,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 18
+    },
+    {
+      "chipLoad": 0.0165,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 12
+    },
+    {
+      "chipLoad": 0.0165,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 10
+    },
+    {
+      "chipLoad": 0.0132,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 7
+    },
+    {
+      "chipLoad": 0.0132,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 1,
+      "opClass": "drill",
+      "rampAngle": 0,
+      "surfaceSpeed": 8
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 3.3,
+  "shoulderLength": 36,
+  "threadPitch": 0,
+  "threadSpec": "",
+  "tipAngle": 135,
+  "tipDiameter": 0,
+  "type": "drill",
+  "vendor": ""
+}

@@ -1,0 +1,240 @@
+{
+  "bodyMaterial": "carbide",
+  "comment": "Generic square end mill, 1/2 in diameter. Lengths: approximate regular-length inch catalogue proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "cornerRadius": 0,
+  "defaultToolNumber": 0,
+  "diameter": 12.7,
+  "fluteLength": 25.4,
+  "flutes": 4,
+  "id": "1ba1e776-675a-43a1-8bd0-485e014c75ec",
+  "name": "1/2 in 4FL carbide flat end mill",
+  "overallLength": 76.2,
+  "presets": [
+    {
+      "chipLoad": 0.1016,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 0.15,
+      "opClass": "rough",
+      "rampAngle": 3,
+      "surfaceSpeed": 250
+    },
+    {
+      "chipLoad": 0.0813,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 3,
+      "surfaceSpeed": 300
+    },
+    {
+      "chipLoad": 0.0813,
+      "material": "b72c5171-c258-44d2-91ae-ee049b636621",
+      "maxAxialFraction": 0.5,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 3,
+      "surfaceSpeed": 200
+    },
+    {
+      "chipLoad": 0.0889,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 0.15,
+      "opClass": "rough",
+      "rampAngle": 3,
+      "surfaceSpeed": 220
+    },
+    {
+      "chipLoad": 0.0711,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 2,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 3,
+      "surfaceSpeed": 264
+    },
+    {
+      "chipLoad": 0.0711,
+      "material": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+      "maxAxialFraction": 0.5,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 3,
+      "surfaceSpeed": 176
+    },
+    {
+      "chipLoad": 0.0635,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 0.1,
+      "opClass": "rough",
+      "rampAngle": 2,
+      "surfaceSpeed": 110
+    },
+    {
+      "chipLoad": 0.0508,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 2,
+      "surfaceSpeed": 132
+    },
+    {
+      "chipLoad": 0.0508,
+      "material": "000dafba-65e0-4ceb-8fc2-284c79449e1a",
+      "maxAxialFraction": 0.35,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 2,
+      "surfaceSpeed": 88
+    },
+    {
+      "chipLoad": 0.0571,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 0.1,
+      "opClass": "rough",
+      "rampAngle": 2,
+      "surfaceSpeed": 90
+    },
+    {
+      "chipLoad": 0.0457,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 1.5,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 2,
+      "surfaceSpeed": 108
+    },
+    {
+      "chipLoad": 0.0457,
+      "material": "89571a2d-9732-405b-9534-7b44020c53d8",
+      "maxAxialFraction": 0.3,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 2,
+      "surfaceSpeed": 72
+    },
+    {
+      "chipLoad": 0.0508,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.08,
+      "opClass": "rough",
+      "rampAngle": 1.5,
+      "surfaceSpeed": 70
+    },
+    {
+      "chipLoad": 0.0406,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 1.5,
+      "surfaceSpeed": 84
+    },
+    {
+      "chipLoad": 0.0406,
+      "material": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 1.5,
+      "surfaceSpeed": 56
+    },
+    {
+      "chipLoad": 0.0508,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.08,
+      "opClass": "rough",
+      "rampAngle": 1.5,
+      "surfaceSpeed": 65
+    },
+    {
+      "chipLoad": 0.0406,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 1.5,
+      "surfaceSpeed": 78
+    },
+    {
+      "chipLoad": 0.0406,
+      "material": "84d2a88a-bf96-428c-958e-9d9ae6363ce2",
+      "maxAxialFraction": 0.25,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 1.5,
+      "surfaceSpeed": 52
+    },
+    {
+      "chipLoad": 0.0381,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.06,
+      "opClass": "rough",
+      "rampAngle": 1,
+      "surfaceSpeed": 45
+    },
+    {
+      "chipLoad": 0.0305,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 1,
+      "surfaceSpeed": 54
+    },
+    {
+      "chipLoad": 0.0305,
+      "material": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+      "maxAxialFraction": 0.2,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 1,
+      "surfaceSpeed": 36
+    },
+    {
+      "chipLoad": 0.0381,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.06,
+      "opClass": "rough",
+      "rampAngle": 1,
+      "surfaceSpeed": 40
+    },
+    {
+      "chipLoad": 0.0305,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 1,
+      "maxRadialFraction": 0.05,
+      "opClass": "finish",
+      "rampAngle": 1,
+      "surfaceSpeed": 48
+    },
+    {
+      "chipLoad": 0.0305,
+      "material": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+      "maxAxialFraction": 0.2,
+      "maxRadialFraction": 1,
+      "opClass": "slot",
+      "rampAngle": 1,
+      "surfaceSpeed": 32
+    }
+  ],
+  "productId": "",
+  "schema": 1,
+  "shankDiameter": 12.7,
+  "shoulderLength": 25.4,
+  "threadPitch": 0,
+  "threadSpec": "",
+  "tipAngle": 0,
+  "tipDiameter": 0,
+  "type": "flatEndMill",
+  "vendor": ""
+}

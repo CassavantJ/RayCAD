@@ -14,6 +14,7 @@ add_executable(ray_lib_tests
     kill_test.cpp
     lib_test_util.cpp
     library_test.cpp
+    shipped_test.cpp
     stack_test.cpp
 )
 target_link_libraries(ray_lib_tests PRIVATE ray_lib ray_core Catch2::Catch2WithMain)
@@ -31,3 +32,6 @@ foreach(_t ray_lib_tests ray_lib_kill)
     ray_test_runtime_path(${_t})
 endforeach()
 
+# The shipped library (resources/library) is exactly what tools/gen_library.py writes, ids included (task T-031).
+add_test(NAME lib_starter_library_generated
+    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/gen_library.py" --check)

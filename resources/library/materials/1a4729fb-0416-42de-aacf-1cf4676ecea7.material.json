@@ -1,0 +1,10 @@
+{
+  "comment": "17-4 PH precipitation-hardening stainless steel (SAE type 630), aged to about 44 HRC: Wikipedia '17-4 stainless steel' (density 7,800 to 7,900 kg/m3; 'approximately 44 Rc' after heat treatment). Hardness 409 HB: 44 HRC converted with the ASTM E140 tables. For condition A or H1150 stock the data here are on the safe side. kc1.1 2700 N/mm2: approximate, ISO 513 group M (precipitation hardened). Cutting data for this material are in the tools' presets.",
+  "density": 7.8,
+  "group": "Stainless steel",
+  "hardnessHb": 409,
+  "id": "1a4729fb-0416-42de-aacf-1cf4676ecea7",
+  "name": "17-4 PH (H900)",
+  "schema": 1,
+  "specificCuttingForce": 2700
+}

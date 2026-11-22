@@ -1,0 +1,10 @@
+{
+  "comment": "Ti-6Al-4V titanium alloy (grade 5). Density 4.43 g/cm3: Wikipedia 'Ti-6Al-4V' (4.429 to 4.512 g/cm3). Hardness 336 HB: the typical 36 HRC that page gives, converted with the ASTM E140 tables. kc1.1 1500 N/mm2: approximate, ISO 513 group S (titanium alloys). Cutting data for this material are in the tools' presets.",
+  "density": 4.43,
+  "group": "Titanium",
+  "hardnessHb": 336,
+  "id": "d2b446b3-7272-402f-8bb2-351fc38255bb",
+  "name": "Ti-6Al-4V (annealed)",
+  "schema": 1,
+  "specificCuttingForce": 1500
+}

@@ -1,0 +1,10 @@
+{
+  "comment": "7075 aluminium alloy, T6 temper. Density 2.81 g/cm3: Wikipedia '7075 aluminium alloy' (infobox). Hardness 150 HB: typical value of public 7075-T6 datasheets (ASM International / MatWeb; Wikipedia gives 87 HRB), not re-checked here. kc1.1 800 N/mm2: approximate, ISO 513 group N order of magnitude. Cutting data for this material are in the tools' presets.",
+  "density": 2.81,
+  "group": "Aluminium",
+  "hardnessHb": 150,
+  "id": "4dfd9a48-f386-449e-a847-47d763e5a0cf",
+  "name": "7075-T6",
+  "schema": 1,
+  "specificCuttingForce": 800
+}

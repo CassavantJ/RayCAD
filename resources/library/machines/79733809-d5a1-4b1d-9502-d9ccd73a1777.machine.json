@@ -1,0 +1,59 @@
+{
+  "axes": [
+    {
+      "accel": 0,
+      "letter": "X",
+      "max": 500,
+      "maxFeed": 30000,
+      "min": 0,
+      "rapid": 54000
+    },
+    {
+      "accel": 0,
+      "letter": "Y",
+      "max": 400,
+      "maxFeed": 30000,
+      "min": 0,
+      "rapid": 54000
+    },
+    {
+      "accel": 0,
+      "letter": "Z",
+      "max": 330,
+      "maxFeed": 30000,
+      "min": 0,
+      "rapid": 54000
+    }
+  ],
+  "comment": "Published catalogue values of the FANUC ROBODRILL alpha-D21MiB5 Plus (FANUC America product page 'α D21MiB5 Plus', fanucamerica.com/products/robodrill/a-d21mib5-plus): travels 500 x 400 x 330 mm, 24000 min-1 (listed as the high-speed spindle; check which one the machine has), rapids 54 m/min, programmable cutting feed 30000 mm/min, 21 tools, 0.9 s tool change, BBT30 holders, ROBODRILL 31i-MB5 Plus control. Spindle power and torque, acceleration and rigid tapping are not stated there: 0 / false = unknown. Axis directions are not stated; travels are given from 0. Not verified on a real machine.",
+  "control": {
+    "defaultPost": "fanuc",
+    "dialect": "fanuc",
+    "maxBlockNumber": 0,
+    "maxProgramNameLength": 0,
+    "rigidTapping": false
+  },
+  "id": "79733809-d5a1-4b1d-9502-d9ccd73a1777",
+  "kind": "mill3",
+  "model": "",
+  "name": "Generic Fanuc-controlled VMC (ROBODRILL class)",
+  "options": {
+    "probe": false,
+    "throughSpindleCoolant": false,
+    "toolSetter": false
+  },
+  "postProperties": {},
+  "schema": 1,
+  "spindle": {
+    "maxRpm": 24000,
+    "minRpm": 0,
+    "powerKw": 0,
+    "torqueNm": 0
+  },
+  "toolChanger": {
+    "capacity": 21,
+    "changeSeconds": 0.9
+  },
+  "vendor": "",
+  "verified": false
+}
