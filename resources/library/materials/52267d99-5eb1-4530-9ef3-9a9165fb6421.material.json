@@ -1,9 +1,10 @@
 {
-  "comment": "AISI 4140 bought quenched and tempered ('pre-hard'), commonly sold at 28-32 HRC. Hardness 286 HB: 30 HRC converted with the ASTM E140 hardness conversion tables. Density as 4140. kc1.1 2400 N/mm2: approximate, ISO 513 group P (hardened alloy steel). Cutting data for this material are in the tools' presets.",
+  "comment": "AISI 4140 bought quenched and tempered ('pre-hard'), commonly sold at 28-32 HRC. Hardness 286 HB: 30 HRC converted with the ASTM E140 hardness conversion tables. Density as 4140. kc1.1 2400 N/mm2: approximate, ISO 513 group P (hardened alloy steel). mc 0.24: approximate, the typical value of row 8, low alloy steel, quenched and tempered, in the material group table 'according to DIN / ISO 513 and VDI 3323' (ISCAR catalogue page 'Material Groups'). Cutting data for this material are in the tools' presets.",
   "density": 7.85,
   "group": "Steel",
   "hardnessHb": 286,
   "id": "52267d99-5eb1-4530-9ef3-9a9165fb6421",
+  "mc": 0.24,
   "name": "4140PH (pre-hardened, 28-32 HRC)",
   "schema": 1,
   "specificCuttingForce": 2400

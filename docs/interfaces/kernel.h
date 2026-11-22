@@ -145,7 +145,7 @@ Result<OpResult> fillet (const Shape&, std::span<const SubId> edges, double radi
 Result<OpResult> chamfer(const Shape&, std::span<const SubId> edges, double distance, JobContext&);
 Result<OpResult> shell  (const Shape&, std::span<const SubId> openFaces, double thickness, JobContext&);   // v1.x
 Result<OpResult> draft  (const Shape&, std::span<const SubId> faces, Plane neutral, double angle, JobContext&); // v1.x
-Result<OpResult> transformed(const Shape&, const Xform&);
+Result<OpResult> transformed(const Shape&, const Xform&);   // rigid moves only; the identity returns the input shape
 Result<OpResult> splitBody(const Shape&, Plane, JobContext&);                                              // v1.x
 
 // ---------- Direct editing (works on history-free imported solids) ----------

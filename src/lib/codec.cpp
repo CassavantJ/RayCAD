@@ -244,17 +244,19 @@ Value toValue(const Holder& h)
 
 Value toValue(const Material& m)
 {
-    return finish(
-        {
-            {"schema", num(kFormatVersion)},
-            {"id", uuid(m.id.value)},
-            {"name", str(m.name)},
-            {"group", str(m.group)},
-            {"hardnessHb", num(m.hardnessHb)},
-            {"specificCuttingForce", num(m.specificCuttingForceNmm2)},
-            {"density", num(m.densityGcm3)},
-        },
-        m.comment, m.extraJson);
+    Value::Object members{
+        {"schema", num(kFormatVersion)},
+        {"id", uuid(m.id.value)},
+        {"name", str(m.name)},
+        {"group", str(m.group)},
+        {"hardnessHb", num(m.hardnessHb)},
+        {"specificCuttingForce", num(m.specificCuttingForceNmm2)},
+        {"density", num(m.densityGcm3)},
+    };
+    if (m.mc != 0) { // optional: written only when known
+        members.push_back({"mc", num(m.mc)});
+    }
+    return finish(std::move(members), m.comment, m.extraJson);
 }
 
 Value toValue(const MachineDef& m)
@@ -477,6 +479,7 @@ Result<Material> decodeMaterial(const Value& v)
     m.hardnessHb = numberOr(v, "hardnessHb");
     m.specificCuttingForceNmm2 = numberOr(v, "specificCuttingForce");
     m.densityGcm3 = numberOr(v, "density");
+    m.mc = numberOr(v, "mc");
     m.comment = stringOr(v, "comment");
     m.extraJson = unknownKeysOf(v, toValue(m));
     return m;

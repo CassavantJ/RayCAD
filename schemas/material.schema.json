@@ -13,6 +13,7 @@
     "hardnessHb": { "type": "number", "minimum": 0, "maximum": 1000, "description": "Brinell hardness (0: not known)." },
     "specificCuttingForce": { "type": "number", "minimum": 0, "maximum": 10000, "description": "Specific cutting force kc1.1 in N/mm2, for power and torque estimates (0: not known)." },
     "density": { "type": "number", "minimum": 0, "maximum": 30, "description": "g/cm3 (0: not known)." },
+    "mc": { "type": "number", "minimum": 0, "exclusiveMaximum": 1, "description": "Optional. Chip thickness exponent of the specific cutting force, kc = kc1.1 h^-mc with h the mean chip thickness in mm (0 or absent: not known; kc1.1 is then used flat). Feeds use it rounded to a multiple of 1/256." },
     "comment": { "type": "string" }
   },
   "$defs": {

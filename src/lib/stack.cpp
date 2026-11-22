@@ -5,12 +5,20 @@
 // thread posts through the dispatcher after a rescan that changed something; on the UI thread it merges again and
 // calls the listeners. The callback holds the stack's state weakly: one posted before setRoots or the stack's
 // destruction does nothing when it runs.
+//
+// Background roots (setRootsInBackground): a job reads the folder (ILibrary::open) on a worker into a Pending slot the
+// stack does not look into until the read is done; the UI thread then moves the library into the root (adopt), either
+// in setRootsInBackground's bounded wait or in the job's continuation, which holds the roots weakly like the watch
+// callback. Replacing or destroying the roots cancels the jobs.
+#include "library_internal.h"
 #include "tool_query.h"
 
 #include <ray/libraries.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <map>
+#include <mutex>
 #include <tuple>
 #include <utility>
 
@@ -29,7 +37,39 @@ std::string folderName(const std::string& dir)
     return slash == std::string::npos ? trimmed : trimmed.substr(slash + 1);
 }
 
+// The test hook of background reads (library_internal.h).
+std::mutex gHookMutex;
+std::function<void(const std::string&, const CancelToken&)> gReadHook;
+
+void runReadHook(const std::string& dir, const CancelToken& cancel)
+{
+    std::function<void(const std::string&, const CancelToken&)> hook;
+    {
+        std::lock_guard<std::mutex> lock(gHookMutex);
+        hook = gReadHook;
+    }
+    if (hook) {
+        hook(dir, cancel);
+    }
+}
+
+// One root read on a worker: written there once, then read on the UI thread.
+struct Pending {
+    std::mutex mutex;
+    std::condition_variable done;
+    bool ready = false;
+    std::optional<Result<std::unique_ptr<ILibrary>>> result;
+};
+
 } // namespace
+
+namespace detail {
+void setBackgroundReadHook(std::function<void(const std::string& dir, const CancelToken& cancel)> hook)
+{
+    std::lock_guard<std::mutex> lock(gHookMutex);
+    gReadHook = std::move(hook);
+}
+} // namespace detail
 
 struct LibraryStack::Impl {
     // The roots and what was merged from them; replaced whole by setRoots, so a posted watch callback that holds it
@@ -46,6 +86,18 @@ struct LibraryStack::Impl {
         Merged<MaterialId, Material> materials;
         Merged<MachineId, MachineDef> machines;
         Merged<Uuid, OpTemplate> templates;
+        std::vector<std::shared_ptr<Pending>> pending; // parallel to dirs: a background read not adopted yet, or null
+        std::vector<JobHandle<bool>> reads;            // the background read jobs, cancelled with the roots
+        Roots() = default;
+        Roots(const Roots&) = delete;
+        Roots& operator=(const Roots&) = delete;
+        ~Roots()
+        {
+            for (auto& job : reads) {
+                (void)job.cancel();
+            }
+        }
+        bool loading(std::size_t i) const { return i < pending.size() && pending[i] != nullptr; }
     };
     std::shared_ptr<Roots> roots = std::make_shared<Roots>();
     IUiDispatcher* dispatcher = nullptr; // set by watch()
@@ -58,7 +110,7 @@ struct LibraryStack::Impl {
         r.libraries.resize(r.dirs.size());
         r.rootIssues.resize(r.dirs.size());
         for (std::size_t i = 0; i < r.dirs.size(); ++i) {
-            if (r.libraries[i]) {
+            if (r.libraries[i] || r.loading(i)) {
                 continue;
             }
             auto opened = ILibrary::open(r.dirs[i]);
@@ -142,6 +194,33 @@ struct LibraryStack::Impl {
         });
     }
 
+    // UI thread: takes root i's background read into the stack if it is done. True if it was.
+    bool adopt(std::size_t i)
+    {
+        Roots& r = *roots;
+        if (!r.loading(i)) {
+            return false;
+        }
+        std::optional<Result<std::unique_ptr<ILibrary>>> result;
+        {
+            std::lock_guard<std::mutex> lock(r.pending[i]->mutex);
+            if (!r.pending[i]->ready) {
+                return false;
+            }
+            result = std::move(r.pending[i]->result);
+        }
+        r.pending[i].reset();
+        if (result && *result) {
+            r.libraries[i] = std::move(**result);
+            r.rootIssues[i] = {};
+            watchOne(i);
+        } else {
+            const std::string why = result ? result->error().message : std::string("it was not read");
+            r.rootIssues[i] = {r.dirs[i], "The library cannot be opened: " + why};
+        }
+        return true;
+    }
+
     template <class Map>
     static auto listOf(const Map& map)
     {
@@ -177,6 +256,64 @@ void LibraryStack::setRoots(std::vector<std::string> dirsLowestFirst, std::size_
     impl_->notify();
 }
 
+void LibraryStack::setRootsInBackground(std::vector<std::string> dirsLowestFirst, std::size_t readOnlyRoots,
+                                        IJobSystem& jobs, std::size_t openNow, std::chrono::milliseconds waitAtMost)
+{
+    auto next = std::make_shared<Impl::Roots>();
+    next->dirs = std::move(dirsLowestFirst);
+    next->readOnly = std::min(readOnlyRoots, next->dirs.size());
+    next->libraries.resize(next->dirs.size());
+    next->rootIssues.resize(next->dirs.size());
+    next->pending.resize(next->dirs.size());
+    impl_->roots = next; // the old libraries, watch threads and reads go now
+    std::vector<std::shared_ptr<Pending>> started;
+    for (std::size_t i = std::min(openNow, next->dirs.size()); i < next->dirs.size(); ++i) {
+        auto pending = std::make_shared<Pending>();
+        const std::string dir = next->dirs[i];
+        JobHandle<bool> job = jobs.submit<bool>(JobInfo{"Reading the library " + dir, JobPriority::Background, false},
+                                                [pending, dir](JobContext& ctx) -> Result<bool> {
+                                                    runReadHook(dir, ctx.cancel);
+                                                    if (auto st = ctx.cancel.check(); !st) {
+                                                        return tl::unexpected(st.error());
+                                                    }
+                                                    auto opened = ILibrary::open(dir);
+                                                    {
+                                                        std::lock_guard<std::mutex> lock(pending->mutex);
+                                                        pending->result.emplace(std::move(opened));
+                                                        pending->ready = true;
+                                                    }
+                                                    pending->done.notify_all();
+                                                    return true;
+                                                });
+        next->pending[i] = pending;
+        next->reads.push_back(job);
+        started.push_back(pending);
+        std::weak_ptr<Impl::Roots> weak = next;
+        Impl* impl = impl_.get();
+        job.then([impl, weak, i](Result<bool>) {
+            // On the UI thread; `impl` is alive whenever the roots are (they belong to it), as in watchOne.
+            if (auto alive = weak.lock(); alive && impl->adopt(i)) {
+                impl->merge();
+                impl->notify();
+            }
+        });
+    }
+    impl_->openMissing(); // the first `openNow` roots, here
+    // A bounded wait for the background reads: those done by the deadline are in the stack when this returns.
+    const auto deadline = std::chrono::steady_clock::now() + waitAtMost;
+    for (const auto& pending : started) {
+        std::unique_lock<std::mutex> lock(pending->mutex);
+        if (!pending->done.wait_until(lock, deadline, [&pending] { return pending->ready; })) {
+            break;
+        }
+    }
+    for (std::size_t i = 0; i < next->dirs.size(); ++i) {
+        (void)impl_->adopt(i);
+    }
+    impl_->merge();
+    impl_->notify();
+}
+
 std::vector<LibraryIssue> LibraryStack::issues() const
 {
     const Impl::Roots& r = *impl_->roots;
@@ -186,7 +323,7 @@ std::vector<LibraryIssue> LibraryStack::issues() const
             for (LibraryIssue& issue : r.libraries[i]->issues()) {
                 out.push_back(std::move(issue));
             }
-        } else {
+        } else if (!r.loading(i)) {
             out.push_back(r.rootIssues[i]);
         }
     }
@@ -223,6 +360,7 @@ std::vector<LibraryStack::RootInfo> LibraryStack::roots() const
         RootInfo info;
         info.dir = r.dirs[i];
         info.open = r.libraries[i] != nullptr;
+        info.loading = r.loading(i);
         info.writable = info.open && i >= r.readOnly;
         info.name = info.open ? r.libraries[i]->name() : std::string();
         if (info.name.empty()) {
