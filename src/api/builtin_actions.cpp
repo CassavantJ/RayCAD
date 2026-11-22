@@ -252,7 +252,83 @@ std::string commandSchema(std::string_view commandSchemaJson)
 //      executed on the UI thread, so it always ends. The commit (or that execute) is the job's point of no return
 //      (AppImpl::pointOfNoReturn): a job that reports Cancelled changed nothing, and one that changed the document
 //      reports its result, whenever and from whichever thread it is cancelled.
-Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const doc::Command& command, JobContext& ctx)
+// The arguments of a command checked against the snapshot it is applied to, and possibly completed (empty: as given).
+using ArgsCheck = std::function<Result<doc::Command>(const doc::DocState&, const doc::Command&)>;
+
+// cam.operation.add and cam.operation.edit: "params" checked against the operation type's schema
+// (IOperationType::paramsSchemaJson; the document has no operation registry, so its commands cannot), with the
+// schema's top-level defaults filled in for params left out, so the document stores them. The type is "type", else (an
+// edit) the operation's type in `state`. An edit is checked when it gives params or changes the type (the operation's
+// params are then checked, and completed, for the new type). A type the app has not registered is not checked: the
+// engine reports such an operation Failed ("Unknown operation type"). Errors name the JSON Pointer of the bad value,
+// "/params/...".
+Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, const doc::DocState& state,
+                                          const doc::Command& command)
+{
+    auto args = json::parse(command.argsJson);
+    if (types == nullptr || !args || !args->isObject()) {
+        return command; // the command reports malformed arguments itself
+    }
+    const Value* typeArg = args->find("type");
+    const cam::Operation* current = nullptr;
+    if (command.name == "cam.operation.edit") {
+        const Value* id = args->find("id");
+        if (id != nullptr && id->isString() && state.cam) {
+            if (auto it = state.cam->operations.find(OperationId{Uuid::fromString(id->asString())});
+                it != state.cam->operations.end()) {
+                current = &it->second;
+            }
+        }
+        if (current == nullptr) {
+            return command; // the command reports the missing operation
+        }
+        const bool typeChanges = typeArg != nullptr && typeArg->isString() && typeArg->asString() != current->type;
+        if (args->find("params") == nullptr && !typeChanges) {
+            return command;
+        }
+    }
+    const std::string type = typeArg != nullptr && typeArg->isString() ? typeArg->asString()
+                             : current != nullptr                     ? current->type
+                                                                      : std::string();
+    const cam::IOperationType* opType = types->find(type);
+    if (opType == nullptr) {
+        return command;
+    }
+    auto schemaValue = json::parse(opType->paramsSchemaJson());
+    if (!schemaValue) {
+        return fail(ErrorCode::Internal, "The params schema of operation type '" + type +
+                                             "' is not valid JSON: " + schemaValue.error().message);
+    }
+    Value params = Value::object();
+    if (const Value* given = args->find("params")) {
+        params = *given;
+    } else if (current != nullptr && !current->paramsJson.empty()) {
+        auto stored = json::parse(current->paramsJson);
+        if (stored) {
+            params = std::move(*stored);
+        }
+    }
+    schema::fillDefaults(*schemaValue, params); // objects only
+    if (auto st = schema::validate(*schemaValue, params); !st) {
+        Error e = st.error();
+        if (e.code == ErrorCode::InvalidArgument) {
+            // validate() says "<pointer>: <what>" ("(the arguments)" for the whole value): the pointer from the
+            // command's arguments instead.
+            const std::string path = e.context.empty() ? std::string() : e.context.front();
+            const std::string prefix = (path.empty() ? std::string("(the arguments)") : path) + ": ";
+            const std::string what = e.message.rfind(prefix, 0) == 0 ? e.message.substr(prefix.size()) : e.message;
+            const std::string pointer = "/params" + path;
+            e.message = command.name + ": invalid params for operation type '" + type + "': " + pointer + ": " + what;
+            e.context = {pointer};
+        }
+        return tl::unexpected<Error>(std::move(e));
+    }
+    args->set("params", std::move(params));
+    return doc::Command{command.name, json::canonical(*args), command.label};
+}
+
+Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const doc::Command& given, JobContext& ctx,
+                                const ArgsCheck& check = {})
 {
     auto guard = claimOnUi(app, docId, ctx);
     if (!guard) {
@@ -262,16 +338,32 @@ Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const do
     constexpr int kPrepares = 3;
     for (int attempt = 1;; ++attempt) {
         // od.document is set when the entry is made and stays while it is claimed; prepare() may run on any thread.
-        auto prepared = entry.od.document->prepare(command, ctx);
+        // The check reads the snapshot the command is then prepared on (a change in between is a stale prepare: the
+        // loop checks again).
+        const doc::DocStatePtr now = entry.od.document->state();
+        auto checked = check ? check(*now, given) : Result<doc::Command>(given);
+        if (!checked) {
+            return tl::unexpected<Error>(checked.error());
+        }
+        auto prepared = entry.od.document->prepare(*checked, ctx);
         if (!prepared) {
             return tl::unexpected<Error>(prepared.error());
         }
         const bool last = attempt >= kPrepares;
+        if (check && prepared->before != now && !last) {
+            continue; // prepared on another snapshot than the one checked
+        }
         auto done = app.bridge().call<std::optional<Value>>(
-            [&app, &entry, &prepared, &command, &ctx, last]() -> Result<std::optional<Value>> {
-                const bool stale = entry.od.document->state() != prepared->before;
+            [&app, &entry, &prepared, &given, &check, &ctx, &now, last]() -> Result<std::optional<Value>> {
+                const bool stale =
+                    entry.od.document->state() != prepared->before || (check && prepared->before != now);
                 if (stale && !last) {
                     return std::optional<Value>(); // changed meanwhile: prepare again (still cancellable)
+                }
+                // Executed here on the state as it is now: checked against that state.
+                auto again = stale && check ? check(*entry.od.document->state(), given) : Result<doc::Command>(given);
+                if (!again) {
+                    return tl::unexpected<Error>(again.error());
                 }
                 // The point of no return: cancelled before it, nothing changes and the job reports Cancelled; after it
                 // a cancel is too late and the job reports the commit.
@@ -279,7 +371,7 @@ Result<ActionResult> runCommand(AppImpl& app, const std::string& docId, const do
                     return fail(ErrorCode::Cancelled, "Cancelled");
                 }
                 if (stale) {
-                    auto executed = app.execute(entry, command);
+                    auto executed = app.execute(entry, *again);
                     if (!executed) {
                         return tl::unexpected<Error>(executed.error());
                     }
@@ -336,7 +428,13 @@ Status addCommandActions(AppImpl& app)
             if (const Value* n = args->find("name"); n && n->isString()) {
                 label += " " + n->asString();
             }
-            return runCommand(app, docId, doc::Command{name, json::canonical(*args), label}, ctx);
+            ArgsCheck check;
+            if (name == "cam.operation.add" || name == "cam.operation.edit") {
+                check = [&app](const doc::DocState& state, const doc::Command& command) {
+                    return checkOperationParams(app.operationTypes(), state, command);
+                };
+            }
+            return runCommand(app, docId, doc::Command{name, json::canonical(*args), label}, ctx, check);
         };
         app.runOnWorker(info.id);
         app.setOrder(info.id, ActionOrder::Ordered);

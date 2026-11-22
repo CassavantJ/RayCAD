@@ -85,6 +85,24 @@ public:
     }
 };
 
+// "test.schema" (test only): params with a range, a choice and defaults, no other keys. Generates nothing.
+class TestSchemaType final : public cam::IOperationType {
+public:
+    std::string_view typeName() const override { return "test.schema"; }
+    std::string_view paramsSchemaJson() const override
+    {
+        return R"({"type":"object","additionalProperties":false,"properties":{)"
+               R"("stepover":{"type":"number","exclusiveMinimum":0,"maximum":1,"default":0.4},)"
+               R"("direction":{"enum":["climb","conventional"],"default":"climb"},)"
+               R"("passes":{"type":"integer","minimum":1}}})";
+    }
+    Status validate(const cam::GenerateInput&) const override { return {}; }
+    Result<cam::Toolpath> generate(const cam::GenerateInput&, JobContext&) const override
+    {
+        return tl::unexpected(Error{ErrorCode::Internal, "not used", {}});
+    }
+};
+
 std::string uuid(char kind, int n)
 {
     std::string tail = std::to_string(n);
@@ -142,7 +160,18 @@ std::unique_ptr<api::HeadlessApp> makeCamApp(const std::string& userDataDir, con
     REQUIRE(app != nullptr);
     REQUIRE(app->operationTypes() != nullptr);
     app->operationTypes()->add(std::make_unique<TestGenerator>());
+    app->operationTypes()->add(std::make_unique<TestSchemaType>());
     return app;
+}
+
+// The error of an action that must fail.
+Error invokeFails(api::HeadlessApp& app, const std::string& action, const std::string& args)
+{
+    auto done = app.wait(app.actions().invoke(action, args, Caller::User), kWait);
+    if (done) {
+        FAIL(action << " should have failed");
+    }
+    return done.error();
 }
 
 std::string invoke(api::HeadlessApp& app, const std::string& action, const std::string& args)
@@ -389,4 +418,65 @@ TEST_CASE("closing a document cancels its generations; the app's destructor canc
         REQUIRE(app->runUntil([] { return Seen::get().blocking.load(); }, kWait));
     } // the destructor cancels the generation and waits for it
     CHECK(Seen::get().cancelled.load() == 1);
+}
+
+TEST_CASE("operation params are checked against the type's schema, with its defaults filled in", "[api][cam][params]")
+{
+    TempDir dir;
+    const std::string builtin = dir.file("builtin");
+    writeLibrary(builtin, "Built-in");
+    auto app = makeCamApp("", builtin);
+    invoke(*app, "file.new", "{}");
+    makeBlock(*app);
+    addSetupAndOperation(*app, 1, R"({"mode":"plain"})"); // test.gen: any object
+    const auto opArgs = [](int op, const std::string& type, const std::string& paramsMember) {
+        return R"({"id":")" + uuid('c', op) + R"(","setup":")" + uuid('a', 1) + R"(","type":")" + type +
+               R"(","name":"Op )" + std::to_string(op) + R"(","tool":{"tool":")" + uuid('d', 1) + R"("},"cutting":)" +
+               kCutting + R"(,"heights":)" + kHeights + paramsMember + "}";
+    };
+    const auto paramsOf = [&](int op) {
+        return app->active()->document->state()->cam->operations.at(OperationId{Uuid::fromString(uuid('c', op))}).paramsJson;
+    };
+    const std::string before = app->active()->document->state()->stateHash().hex();
+
+    // Out of range, not one of the choices, the wrong type, an unknown key: refused, naming the value, and the
+    // document is unchanged.
+    Error e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"stepover":2})"));
+    CHECK(e.code == ErrorCode::InvalidArgument);
+    CHECK_THAT(e.message, ContainsSubstring("test.schema"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/stepover: must be at most 1"));
+    e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"direction":"sideways"})"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/direction: must be one of"));
+    e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"passes":1.5})"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/passes: must be an integer"));
+    e = invokeFails(*app, "cam.operation.add", opArgs(2, "test.schema", R"(,"params":{"mode":"plain"})"));
+    CHECK_THAT(e.message, ContainsSubstring("/params/mode: is not a known argument"));
+    CHECK(app->active()->document->state()->stateHash().hex() == before);
+
+    // Params left out (all of them, or some) take the schema's defaults, stored in the document.
+    invoke(*app, "cam.operation.add", opArgs(2, "test.schema", ""));
+    CHECK(paramsOf(2) == R"({"direction":"climb","stepover":0.4})");
+    invoke(*app, "cam.operation.add", opArgs(3, "test.schema", R"(,"params":{"passes":3,"stepover":0.25})"));
+    CHECK(paramsOf(3) == R"({"direction":"climb","passes":3,"stepover":0.25})");
+
+    // An edit with params is checked and completed the same way (params are replaced whole).
+    e = invokeFails(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 2) + R"(","params":{"stepover":0}})");
+    CHECK_THAT(e.message, ContainsSubstring("/params/stepover: must be greater than 0"));
+    invoke(*app, "cam.operation.edit",
+           R"({"id":")" + uuid('c', 2) + R"(","params":{"direction":"conventional"}})");
+    CHECK(paramsOf(2) == R"({"direction":"conventional","stepover":0.4})");
+    // An edit of something else is not a params check; a change of type checks the params it keeps.
+    invoke(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 2) + R"(","name":"Renamed"})");
+    e = invokeFails(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 1) + R"(","type":"test.schema"})");
+    CHECK_THAT(e.message, ContainsSubstring("/params/mode: is not a known argument"));
+    invoke(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 1) + R"(","type":"test.schema","params":{}})");
+    CHECK(paramsOf(1) == R"({"direction":"climb","stepover":0.4})");
+
+    // Not an object at all.
+    e = invokeFails(*app, "cam.operation.add", opArgs(4, "test.schema", R"(,"params":[1])"));
+    CHECK_THAT(e.message, ContainsSubstring("/params: must be an object"));
+    // A type the app does not have is not checked (the engine reports it Failed).
+    invoke(*app, "cam.operation.add", opArgs(4, "no.such.type", R"(,"params":{"anything":[1,2]})"));
+    CHECK(paramsOf(4) == R"({"anything":[1,2]})");
+    CHECK(statusOf(*app, 4).status == cam::OpStatus::Failed);
 }
