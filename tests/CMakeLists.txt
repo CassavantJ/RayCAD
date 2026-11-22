@@ -91,6 +91,14 @@ foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_star
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/real_pointer_listener.cpp")
 endforeach()
 
+# ---------- The UI-thread watchdog ----------
+# The stall tests ([wallclock]) judge the time the UI thread itself was busy or blocked in its worst gap, not the time
+# it was runnable and not run (ui/ui_watchdog.h).
+foreach(_target IN ITEMS ray_ui_viewport_tests ray_ui_start_tests ray_ui_measure_tests ray_ui_sketch_tests
+                         ray_ui_model_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/ui_watchdog.cpp")
+endforeach()
+
 # ---------- Sanitizer run options for every test ----------
 # Adds `options` to the environment variable `var` (ASAN_OPTIONS, ...) of every test under `dir`. A test that sets
 # the variable itself (a suppression file) keeps its options; these are added to them.

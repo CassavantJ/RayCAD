@@ -17,6 +17,7 @@
 // Screenshots: with RAY_T019_SHOTS set to a folder, some steps save the window there.
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -832,27 +833,16 @@ TEST_CASE("no UI-thread stall over 50 ms while a mid-size corpus file opens", "[
     Window w("dark");
     REQUIRE(QFileInfo::exists(kMidSize));
 
-    // Watchdog: a 2 ms timer on the UI thread; a gap between ticks is time the event loop was blocked.
-    QElapsedTimer clock;
-    qint64 last = 0;
-    qint64 worst = 0;
-    QTimer tick;
-    tick.setTimerType(Qt::PreciseTimer);
-    tick.setInterval(2);
-    QObject::connect(&tick, &QTimer::timeout, [&] {
-        const qint64 now = clock.elapsed();
-        worst = std::max(worst, now - last);
-        last = now;
-    });
-    clock.start();
-    tick.start();
+    // Watchdog (ui_watchdog.h): the worst time the UI thread was busy or blocked between two of its 2 ms ticks.
+    ray::test::UiWatchdog dog;
+    dog.start();
     REQUIRE(w.files()->open(kMidSize));
-    REQUIRE(QTest::qWaitFor([&] { return w.settled(); }, kOpenTimeoutMs));
-    QTest::qWait(300);
-    tick.stop();
-    INFO("worst UI-thread gap " << worst << " ms");
-    WARN("UI-thread watchdog during the open of a mid-size corpus file: worst gap " << worst << " ms");
-    CHECK(worst < ray::test::uiBudgetMs(50));
+    REQUIRE(ray::test::waitFor([&] { return w.settled(); }, kOpenTimeoutMs));
+    ray::test::waitMs(300);
+    dog.stop();
+    WARN("UI-thread watchdog during the open of a mid-size corpus file: worst "
+         << dog.worst().describe() << "; longest gap " << dog.worstWall().describe());
+    CHECK(dog.worstStallMs() < ray::test::uiBudgetMs(50));
     CHECK(w.scene()->bodyCount() >= 1);
 }
 

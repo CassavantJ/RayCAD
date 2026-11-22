@@ -17,6 +17,7 @@
 // Screenshots: with RAY_T098_SHOTS set to a folder, the window is saved there (every tool's panel, the finished part).
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -603,27 +604,20 @@ TEST_CASE("a part by hand: extrude, cut, hole, fillet; edit; undo and redo", "[m
     // The preview never commits, and never stalls the UI thread while the values change.
     {
         const std::size_t undoBefore = w.document()->undoCount();
-        QElapsedTimer clock;
-        qint64 last = 0, worst = 0;
-        QTimer tick;
-        tick.setTimerType(Qt::PreciseTimer);
-        tick.setInterval(2);
-        QObject::connect(&tick, &QTimer::timeout, [&] {
-            const qint64 now = clock.elapsed();
-            worst = std::max(worst, now - last);
-            last = now;
-        });
-        clock.start();
-        tick.start();
+        ray::test::UiWatchdog dog; // ui_watchdog.h
+        dog.start();
         for (const char* d : {"11 mm", "11.5 mm", "13 mm", "12 mm"}) {
             w.typeInto(QStringLiteral("distance"), QString::fromLatin1(d));
-            QTest::qWait(60);
+            ray::test::waitMs(60);
         }
+        // As w.previewed(), without sleeping the UI thread between passes of the event loop.
+        CHECK(ray::test::waitFor([&] { return !w.tool()->previewBusy(); }, kTimeoutMs));
+        dog.stop();
         w.previewed();
-        tick.stop();
-        WARN("UI-thread watchdog while the extrude preview rebuilt the part: worst gap "
-             << worst << " ms, " << w.tool()->previewBuilds() << " preview builds");
-        CHECK(worst < ray::test::uiBudgetMs(50));
+        WARN("UI-thread watchdog while the extrude preview rebuilt the part: worst "
+             << dog.worst().describe() << "; longest gap " << dog.worstWall().describe() << "; "
+             << w.tool()->previewBuilds() << " preview builds");
+        CHECK(dog.worstStallMs() < ray::test::uiBudgetMs(50));
         CHECK(w.document()->undoCount() == undoBefore);
         CHECK(w.stateHash() == finished);
     }

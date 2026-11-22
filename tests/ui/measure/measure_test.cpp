@@ -13,6 +13,7 @@
 // Screenshots: with RAY_T022_SHOTS set to a folder, the window is saved there (both themes).
 #include "../scene_graph_probe.h"
 #include "../ui_budget.h"
+#include "../ui_watchdog.h"
 #include "app_context.h"
 #include "app_host.h"
 #include "app_options.h"
@@ -171,7 +172,8 @@ struct Window {
     }
     bool measured() const
     {
-        return QTest::qWaitFor([&] { return !measure()->busy() && !selection()->pending(); }, 20000) &&
+        // Without sleeping between the passes of the event loop: the stall test waits with this (ui_watchdog.h).
+        return ray::test::waitFor([&] { return !measure()->busy() && !selection()->pending(); }, 20000) &&
                measure()->hasResult();
     }
     // The text the panel shows for a value of the current measurement.
@@ -574,26 +576,17 @@ TEST_CASE("no UI-thread stall over 50 ms while measuring a mid-size corpus part"
     const std::uint32_t faces = body->shape.count(kernel::SubKind::Face);
     REQUIRE(faces > 10);
 
-    QElapsedTimer clock;
-    qint64 last = 0;
-    qint64 worst = 0;
-    QTimer tick;
-    tick.setTimerType(Qt::PreciseTimer);
-    tick.setInterval(2);
-    QObject::connect(&tick, &QTimer::timeout, [&] {
-        const qint64 now = clock.elapsed();
-        worst = std::max(worst, now - last);
-        last = now;
-    });
-    clock.start();
-    tick.start();
-    // The worst gap of each step, for the report.
+    ray::test::UiWatchdog dog;
+    dog.start();
+    // The worst stall of each step, for the report.
     std::string steps;
-    qint64 overall = 0;
+    ray::test::UiWatchdog::Gap overall;
     const auto step = [&](const char* name) {
-        steps += std::string(name) + " " + std::to_string(worst) + " ms; ";
-        overall = std::max(overall, worst);
-        worst = 0;
+        const ray::test::UiWatchdog::Gap g = dog.worst();
+        steps += std::string(name) + ": " + g.describe() + "; ";
+        if (g.stallMs() > overall.stallMs())
+            overall = g;
+        dog.reset();
     };
     selectFaces(w, 0, faces - 1);
     REQUIRE(w.measured());
@@ -607,14 +600,12 @@ TEST_CASE("no UI-thread stall over 50 ms while measuring a mid-size corpus part"
     step("box");
     m.setUnits(QStringLiteral("mm"));
     m.setUnits(QStringLiteral("inch"));
-    QTest::qWait(200);
+    ray::test::waitMs(200);
     step("units");
-    tick.stop();
-    worst = overall;
+    dog.stop();
     UNSCOPED_INFO("per step: " << steps);
-    INFO("worst UI-thread gap " << worst << " ms");
-    WARN("UI-thread watchdog while measuring a mid-size corpus part: worst gap " << worst << " ms");
-    CHECK(worst < ray::test::uiBudgetMs(50));
+    WARN("UI-thread watchdog while measuring a mid-size corpus part: worst " << overall.describe());
+    CHECK(overall.stallMs() < ray::test::uiBudgetMs(50));
 }
 
 int main(int argc, char** argv)
