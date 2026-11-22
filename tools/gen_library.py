@@ -296,8 +296,11 @@ def base_tool(key, name, kind, flutes, d, shank, flute, overall, body, comment, 
         "overallLength": r(overall), "cornerRadius": 0, "tipAngle": 0, "tipDiameter": 0, "threadPitch": 0,
         "threadSpec": "", "bodyMaterial": body, "defaultToolNumber": 0, "comment": comment,
     }
+    # Lengths to 4 decimals (0.1 um; inch values such as number and letter drills are 25.4 x a 4-decimal inch size,
+    # at most 5 decimals in mm), but a thread pitch to 6 (1 nm, what the toolpath stores as threadPitchNm): 25.4 / TPI
+    # rounded to 4 decimals made #8-32 0.7937 instead of 0.79375 mm.
     for k, v in extra.items():
-        t[k] = r(v) if isinstance(v, float) else v
+        t[k] = r(v, 6 if k == "threadPitch" else 4) if isinstance(v, float) else v
     return t
 
 

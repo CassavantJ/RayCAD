@@ -778,6 +778,35 @@ TEST_CASE("feeds hand 37 (library): M6x1 tap in 304 on the Haas", "[cam][feeds][
     CHECK(r.limits.torque.state == LimitState::NotReached);
 }
 
+TEST_CASE("feeds hand 37b (library): shipped inch taps carry 25.4 / TPI to the nanometre", "[cam][feeds][hand][shipped]")
+{
+    // The starter library writes inch pitches with 6 decimals (tools/gen_library.py), so toNm gives 25.4 / TPI rounded
+    // to the nearest nm; 4 decimals made #8-32 0.7937 and 1/2-13 1.9538 mm.
+    // tool.tap.no8-32unc: D 4.1656, P = 25.4 / 32 = 0.79375 mm = 793750 nm; 1018 tap vc 9.
+    // n = 9000 / (pi 4.1656) = 687.73 -> 687; gcd(793750, 1000) = 250, step 4 -> 684. feed = 793750 x 684 / 1000 =
+    // 542925 um/min exactly.
+    const auto& s = shipped();
+    const lib::Tool& tap832 = s.tool("e0e813b4-7d3d-42a8-890f-a37e7efd2ce0");
+    CHECK(toNm(tap832.threadPitch) == 793750);
+    auto r = run(tap832, s.material(k1018), s.machine(kHaas), 0, 0, "drill");
+    CHECK(r.rpm == 684);
+    CHECK(r.feedMicronPerMin == 542925);
+    CHECK(r.tapFeedExact);
+    // tool.tap.1-2-13unc: D 12.7, P = 25.4 / 13 = 1.953846 mm = 1953846 nm; gcd(1953846, 1000) = 2, step 500 > 10: plain
+    // rpm. n = 9000 / (pi 12.7) = 225.57 -> 225. feed = 1953846 x 225 / 1000 = 439615.35 -> 439615 um/min (not exact).
+    const lib::Tool& tap1213 = s.tool("7ff37b22-17c4-4849-a50c-d66f0f571508");
+    CHECK(toNm(tap1213.threadPitch) == 1953846);
+    r = run(tap1213, s.material(k1018), s.machine(kHaas), 0, 0, "drill");
+    CHECK(r.rpm == 225);
+    CHECK(r.feedMicronPerMin == 439615);
+    CHECK_FALSE(r.tapFeedExact);
+    // The other inch pitches of the shipped taps, to the nanometre.
+    CHECK(toNm(s.tool("1d953741-d500-44a8-8d98-68857bc24ce6").threadPitch) == 1058333); // #10-24: 25.4 / 24
+    CHECK(toNm(s.tool("be514908-39fd-464a-ab26-f1fe6a11f8f0").threadPitch) == 907143);  // 1/4-28: 25.4 / 28
+    CHECK(toNm(s.tool("fcf692f4-d52e-4eb4-840c-9f0104a6682f").threadPitch) == 1411111); // 5/16-18: 25.4 / 18
+    CHECK(toNm(s.tool("a8490dc2-b551-43b1-9b11-cb08580cea2d").threadPitch) == 1270000); // 1/4-20: 25.4 / 20
+}
+
 TEST_CASE("feeds hand 38 (library): 2 in face mill in 1018 on the Haas", "[cam][feeds][hand][shipped]")
 {
     // tool.face.2in.45.4z: D 50.8, 4 inserts; 1018 face vc 180, fz 0.1, maxRadial 0.75, maxAxial 0.04.
@@ -1245,7 +1274,10 @@ TEST_CASE("feeds: every shipped preset on every shipped machine, pinned", "[cam]
     CHECK(count == 2088); // 696 presets x 3 machines
     // The rpm and feed of every combination, the values that reach toolpaths: identical on every platform. Changes
     // only when the library, the formulas or the constants of feeds.cpp change (then review and update this).
-    CHECK(h.finish().hex() == "99be74e907961782b72e9d9b7cf47a14d434554a7d7bf02b4d2044fc62edb42a");
+    // Re-pinned when the shipped inch tap pitches became exact (25.4 / TPI to 6 decimals instead of 4): the rounded
+    // pitches had happened to make every tap feed exact; with the true ones the 24, 28, 18 and 13 TPI taps round
+    // their feed (tapFeedExact false) and 32 TPI taps move to the rpm step of 4.
+    CHECK(h.finish().hex() == "dec74b088e27e3c895b9fcc5c4ee8a9121cf96fd78c279981489aef72080ab5a");
 }
 
 // Not a test: a table of the shipped presets that hit a limit on all three shipped machines (run by hand with
