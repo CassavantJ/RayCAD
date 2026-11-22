@@ -332,6 +332,7 @@ definePost({
       if (section.coolant !== this.coolant) this.coolantOn(section.coolant, out);
     }
     this.section = section;
+    this.clearanceZ = section.clearanceZ;
     this.sectionClockwise = section.clockwise;
     this.rpm = rpm;
     this.comp = 0;
@@ -370,6 +371,13 @@ definePost({
   },
 
   retract(method, out) {
+    // Z first: that G28 (or G53) with Z alone moves only Z is [F1, unverified] (RS274/NGC's G28 goes to a home
+    // position that may include X and Y [N 3.5.8]). So when the tool is below the operation's clearance height, it
+    // rapids straight up to that height before the reference or machine-zero return.
+    if (method !== "none" && this.pos.z !== null && this.clearanceZ !== undefined && this.pos.z < this.clearanceZ) {
+      out.block(out.modal("motion", "G0"), out.axis("Z", this.clearanceZ));
+      this.pos.z = this.clearanceZ;
+    }
     if (method === "G28") {
       // Reference position return in Z only, through the current position (incremental 0) [F1, unverified:
       // 'Reference position return G28'; N 3.5.8].

@@ -123,6 +123,10 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 11. toolChangeRetract = none is refused unless the property m6LeavesZRetracted states that the builder's M6 leaves Z at
     the tool-change height (T-043 finding F5): otherwise the first X/Y move after the tool change would run at an
     unknown height. With the assertion the round trip still reports that move (it cannot know what M6 does).
+12. Z first before a retract (T-043 finding M2, raised for the Mazak posts): that `G91 G28 Z0.` and `G0 G53 Z0.` move
+    only Z is FANUC practice but [F1, unverified], and RS274/NGC's G28 goes to a home position that may include X and Y
+    (N 3.5.8). So when the tool is below the operation's clearance height at a tool change or the end, it first rapids
+    straight up to that height (golden 06-coolant: `G0 Z25.` before `G91 G28 Z0.`).
 
 ## G and M words this post can write (for T-043)
 

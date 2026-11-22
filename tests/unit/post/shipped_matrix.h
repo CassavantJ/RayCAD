@@ -558,7 +558,6 @@ inline std::vector<Extra> extras()
         {"mazak-smooth", "30-tap-g84-2", [] { return tapping(true); }, {{"tapping", "G84.2"}}},
         {"mazak-smooth", "31-tap-plain-g84", [] { return tapping(true); }, {{"tapping", "plainG84"}}},
         {"mazak-smooth", "32-high-speed-g61-1", arcsXY, {{"highSpeedMode", "G61.1"}}},
-        {"mazak-smooth", "33-preselect-same-block", toolChange, {{"toolPreselect", "sameBlock"}}},
         {"mazak-smooth",
          "34-dwell-seconds",
          [] {

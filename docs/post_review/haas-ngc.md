@@ -104,6 +104,9 @@ Each file exists as `_mm.nc` and `_inch.nc`.
     finding F1): the workbook defines G98 as the return to "Z position it was at when the canned cycle was first
     defined" and shows exactly this case, G99 holes then `G98 X1.5 Y-2.5` "position to initial start point" (H1 p.74,
     program O10074), so the doubt RS274/NGC's wording leaves does not apply here.
+11. Retract (T-043 finding M2, raised for the Mazak posts): no Z-first move is added. The workbook settles it: with G28
+    "if an X, Y, Z, or A axis is on the same block ... only those axes will move" (H1 p.49), and G53 positions the axes
+    given from machine zero (H1 p.46-47); so `G28 G91 Z0.` and `G00 G53 G49 Z0.` move Z alone.
 
 ## G and M words this post can write (for T-043)
 

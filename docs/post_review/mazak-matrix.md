@@ -29,6 +29,9 @@ The same matrix as the Smooth post (`01`-`16`, `20`, `30`, `31`), plus:
 | 32-high-speed-g05-p2 | highSpeedMode = G05P2 | `G05 P2` after the safe start, `G05 P0` before M30; the warning |
 | 33-preselect-separate-t | toolPreselect = separateT | the next tool's `T` alone after `M6` |
 
+As for the Smooth post (T-043 findings M1 and M2): the one-block pre-select form `T<this> T<next> M6` is not offered, and
+before a G28 or G53 retract the tool rapids up to the operation's clearance height when it is below it (06-coolant).
+
 ## Starter machine
 
 `Generic Mazak VMC, MAZATROL Matrix, EIA/ISO programs (VCN-530C class)`: Mazak no longer lists Matrix-generation

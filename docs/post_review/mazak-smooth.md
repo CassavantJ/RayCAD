@@ -33,7 +33,7 @@ programming manual before it runs a program.
 | Safe start | `G17 G40 G49 G80 G90 G94` | N 3.5.6, 3.5.10, 3.5.11, 3.5.15, 3.5.17, 3.5.19 |
 | High-speed mode (property, off) | `G61.1` ... `G64`, or `G05 P2` ... `G05 P0`; a warning when used | [unverified], from general knowledge only |
 | First retract, tool-change and end retract | `G91 G28 Z0.` + `G90` (or `G0 G53 Z0.`; none only with m6LeavesZRetracted) | N 3.5.8, 3.5.12 |
-| Tool change | `T1 M6`; pre-select off (or `T2` alone after M6, or `T1 T2 M6`, by property) | N 3.6.3, 3.7.3 |
+| Tool change | `T1 M6`; pre-select off (or `T2` in a block of its own after the M6 block, by property). The one-block form `T1 T2 M6` is not offered (note 6) | N 3.6.3, 3.7.3 |
 | After a tool change | `G21`, `G0 G90 G54 G17 X Y`, `S M3`, `G43 Z H`, coolant | N 3.5.11 |
 | Coolant | `M8` / `M9`; mist, through, air: no default code | N 3.6.4 |
 | Arcs | IJK, at most 180 degrees per block (full circles as two halves); R by property (90 degrees) | N 3.5.3 |
@@ -57,7 +57,6 @@ Each file exists as `_mm.nc` and `_inch.nc`, the same matrix as the other posts 
 | 30-tap-g84-2 | tapping = G84.2 | `S500` without M3, `G84.2` / `G84.3`; is this the machine's synchronous tapping form? |
 | 31-tap-plain-g84 | tapping = plainG84 | `M3` / `M4` before `G84` / `G74`, no M29 |
 | 32-high-speed-g61-1 | highSpeedMode = G61.1 | `G61.1` after the safe start, `G64` before M30; the warning |
-| 33-preselect-same-block | toolPreselect = sameBlock | `T5 T3 M6`: is that how the control takes the next tool? |
 | 34-dwell-seconds | dwellUnits = seconds | `G82 ... P0.3` |
 
 Things to look at on every file: the full circles split in two (01, 05, 20), the G98 holes after G99 holes ended and
@@ -71,7 +70,7 @@ G99, G80 and `G0 Z<clearance>` instead of G98, the `.warnings.txt` (dwell unit, 
 | each cycle | 09 (G81), 10 (G82), 11 (G83), 12 (G73), 13 (G89), 14 (G85), 15 (G84 M29, G74), 30 (G84.2/G84.3), 31 (plain G84) |
 | arcs in four quadrants and full circles | 01 |
 | helical | 03 |
-| tool change with pre-select | 04 (off), 33 (same block) |
+| tool change with pre-select | 04 (off); the Matrix golden 33 shows separateT |
 | G43 | every file; 04 (H25) |
 | G41/G42 | 05 |
 | coolant modes | 06 (codes set by the golden: examples, not Mazak codes) |
@@ -93,10 +92,16 @@ G99, G80 and `G0 Z<clearance>` instead of G98, the `.warnings.txt` (dwell unit, 
 5. Tapping: M29, G84.2/G84.3, or synchronous G84 by parameter; whether the spindle must be stopped before the
    synchronous form (the post leaves it stopped).
 6. Tool change: `T.. M6`; whether M6 retracts Z itself (the post retracts with G28 first, and refuses none without
-   m6LeavesZRetracted); the next-tool forms; how T words are numbered (pocket or tool number).
+   m6LeavesZRetracted); the next-tool forms; how T words are numbered (pocket or tool number). The one-block form
+   `T<this> T<next> M6` is not offered (T-043 finding M1): if the control mounted the last T word of the block, every
+   operation would run with the wrong tool and length offset (RS274/NGC: the most recent T word takes effect, N 3.7.3).
+   It is not offered until the control's manual confirms how it reads two T words.
 7. Tool length: G43 H, or the length taken from the control's tool data (and the parameter that selects it). If the
    control applies the tool data length itself, G43 H must be checked so that the length is not applied twice.
-8. Work offsets G54.1 P (count), G28 / G53 behaviour, machine Z zero at the top of travel.
+8. Work offsets G54.1 P (count), G28 / G53 behaviour, machine Z zero at the top of travel. Whether G28 (or G53) with Z
+   alone moves only Z is unknown (RS274/NGC's G28 goes to a home position that may include X and Y, N 3.5.8), so
+   before the retract the tool first rapids straight up to the operation's clearance height when it is below it
+   (T-043 finding M2; golden 06-coolant shows `G0 Z25.` before `G91 G28 Z0.`).
 9. High-speed / smoothing codes (G61.1, G05 P2) and their cancels.
 10. Coolant: M8/M9 only; mist, through-spindle and air codes unknown.
 11. Full circles in one IJK block, helical interpolation in G18/G19, R arcs over 180 degrees: avoided.
@@ -112,7 +117,8 @@ G0 G1 G2 G3 G4 G17 G18 G19 G20 G21 G28 G40 G41 G42 G43 G49 G53 G54 G55 G56 G57 G
 G84 G84.2 G84.3 G85 G89 G90 G91 G94 G98 G99, and with highSpeedMode G61.1 G64 G05; M1 M3 M4 M5 M6 M29 M30 and the codes
 of coolantCodes (default M8 M9). Other words: N O T S F H D X Y Z I J K R Q P, comments in parentheses, `%` lines.
 Forms: `G91 G28 Z0.` / `Y0.` / `X0. Y0.` (home through the current point), `G0 G53 Z0.`, `G4 P<ms>` (or `P<s.sss>` by
-property), cycle P in the same unit, `M29 S<rpm>` alone before G84/G74, `T<n> T<m> M6` (property), `G05 P2` / `G05 P0`.
+property), cycle P in the same unit, `M29 S<rpm>` alone before G84/G74, the next tool's `T<m>` alone after `T<n> M6`
+(property), `G05 P2` / `G05 P0`.
 
 ## Questions for the owner (need the machine or its manuals)
 

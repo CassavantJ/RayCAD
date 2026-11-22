@@ -101,6 +101,11 @@ Each file exists as `_mm.nc` and `_inch.nc`.
    that the machine's M6 leaves Z at the tool-change height: RS274/NGC's M6 leaves the axes where they are (N 3.6.3), so
    the first X/Y move after it would otherwise run at an unknown height (T-043 finding F5). With the assertion the
    program is posted; the round trip still reports the X/Y move at an unknown Z, as it cannot know what M6 does.
+8. Z first before a G28 retract (T-043 finding M2, raised for the Mazak posts): RS274/NGC's G28 goes to the home
+   position by way of the programmed point (N 3.5.8), which may include X and Y, so with toolChangeRetract or
+   endRetract G28 the tool first rapids up to the operation's clearance height when it is below it. The default
+   `G0 G53 Z0.` needs no such move: G53 moves only the axes programmed (N 3.5.12). No golden changed (in the matrix
+   the G28 programs already end at their clearance).
 
 ## G and M words this post can write (for T-043)
 

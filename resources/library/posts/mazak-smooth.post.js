@@ -147,9 +147,11 @@ definePost({
     toolList: { type: "bool", title: "Tool list in header", default: true, group: "Program" },
     optionalStop: { type: "bool", title: "Optional stop before tool changes", default: false, group: "Program",
       description: "M1 before every tool change after the first [N 3.6.1]." },
-    toolPreselect: { type: "enum", title: "Next-tool pre-select", default: "off", values: ["off", "separateT", "sameBlock"],
-      group: "Tool change", description: "off; separateT: the next tool's T word on its own line after M6 [N 3.7.3]; " +
-        "sameBlock: T<this> T<next> M6 on one line. How the control reads either is [unverified]." },
+    // A one-block form (T<this> T<next> M6) is not offered: if the control mounted the last T word of the block, every
+    // operation would run with the wrong tool and length offset. Not until the control's manual confirms it.
+    toolPreselect: { type: "enum", title: "Next-tool pre-select", default: "off", values: ["off", "separateT"],
+      group: "Tool change", description: "off; separateT: the next tool's T word in a block of its own after the M6 " +
+        "block [N 3.7.3]. How the control reads it is [unverified]." },
     toolChangeRetract: { type: "enum", title: "Retract before tool change", default: "G28", values: ["G28", "G53", "none"],
       group: "Tool change", description: "G91 G28 Z0. then G90, G0 G53 Z0., or nothing (needs m6LeavesZRetracted) " +
         "[unverified]." },
@@ -278,7 +280,7 @@ definePost({
       out.comment("T" + t.number + " " + t.description + (t.holderDescription !== "" ? " in " + t.holderDescription : ""));
       const next = section.nextTool !== null ? "T" + section.nextTool.number : null;
       // T.. M6 [N 3.6.3, 3.7.3; unverified]; the pre-select forms by property.
-      out.block("T" + t.number, p.toolPreselect === "sameBlock" ? next : null, "M6");
+      out.block("T" + t.number, "M6");
       if (p.toolPreselect === "separateT" && next !== null) out.block(next);
       this.toolLoaded = true;
       this.spindle = null;
@@ -312,6 +314,7 @@ definePost({
     this.pos = { x: section.start.x, y: section.start.y, z: section.start.z };
     if (section.coolant !== this.coolant) this.coolantOn(section.coolant, out);
     this.section = section;
+    this.clearanceZ = section.clearanceZ;
     this.sectionClockwise = section.clockwise;
     this.rpm = rpm;
     this.comp = 0;
@@ -350,6 +353,13 @@ definePost({
   },
 
   retract(method, out) {
+    // Z first: whether G28 (or G53) with Z alone moves only Z is [unverified] (RS274/NGC's G28 goes to a home
+    // position that may include X and Y [N 3.5.8]). So when the tool is below the operation's clearance height, it
+    // rapids straight up to that height before the reference or machine-zero return.
+    if (method !== "none" && this.pos.z !== null && this.clearanceZ !== undefined && this.pos.z < this.clearanceZ) {
+      out.block(out.modal("motion", "G0"), out.axis("Z", this.clearanceZ));
+      this.pos.z = this.clearanceZ;
+    }
     if (method === "G28") {
       out.block("G91", "G28", out.word("Z", 0)); // Z home through the current point [N 3.5.8; unverified]
       out.block("G90");

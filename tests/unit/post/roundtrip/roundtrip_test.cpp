@@ -256,26 +256,7 @@ const std::vector<Known>& knownFindings()
         "M6 retracts is the builder's macro [F1, unverified; docs/post_review/fanuc.md question 2]; RS274/NGC's M6 "
         "leaves the axes where they are [N 3.6.3]. (Haas M06 retracts Z itself [H1 p.19], so the Haas posts are "
         "safe with none.)";
-    // M1: Mazak "T<n> T<m> M6" (toolPreselect = sameBlock).
-    static const char* const kTwoT =
-        "The Mazak post writes the tool change with the next tool in the same block, 'T5 T3 M6'. No Mazak manual "
-        "could be read (mazak-smooth.md item 6), so which T the M6 mounts is unknown: read as the post means it "
-        "(the first T mounted, the second pre-selected) the program is right; read as RS274/NGC reads T words (the "
-        "most recent T word takes effect [N 3.7.3]; two T words in a block are not allowed at all [N 3.3.5]) M6 "
-        "mounts the next operation's tool and every cut runs with the wrong tool and the wrong length offset.";
-    // M2: Mazak G28 retract from below the next operation's start height.
-    static const char* const kG28All =
-        "The Mazak post retracts for the tool change with 'G91 G28 Z0.' straight from the last move (here Z10, the "
-        "coolant program's last rapid). If the control's G28 sends every axis home, as RS274/NGC's does "
-        "[N 3.5.8: the home position is a whole point], X and Y move at the same time as Z rises from Z10, below "
-        "the Z25 the toolpath travels at. Read as FANUC's G28 (only the axes named) it is safe. No Mazak manual "
-        "decides (mazak-smooth.md item 8). Safe either way: a G0 Z up to the clearance before G28, or G53 Z0.";
     static const std::vector<Known> k = {
-        {"mazak-smooth", "33-preselect-same-block", "rt-tool", "reading 1, RS274/NGC-like] tool T", kTwoT},
-        {"mazak-smooth", "pairwise", "rt-tool", "reading 1, RS274/NGC-like] tool T", kTwoT},
-        {"mazak-matrix", "pairwise", "rt-tool", "reading 1, RS274/NGC-like] tool T", kTwoT},
-        {"mazak-smooth", "06-coolant", "rt-unsafe-rapid", "G91 G28 Z0.): [Mazak reading 1", kG28All},
-        {"mazak-matrix", "06-coolant", "rt-unsafe-rapid", "G91 G28 Z0.): [Mazak reading 1", kG28All},
         {"fanuc", "pairwise", "rt-unsafe-rapid", "at Z unknown", kNoRetract},
         {"fanuc", "pairwise", "safety-xy-rapid-z-unknown", "G17 X0", kNoRetract},
         {"generic-iso", "pairwise", "rt-unsafe-rapid", "at Z unknown", kNoRetract},

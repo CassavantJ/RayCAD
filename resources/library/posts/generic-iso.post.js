@@ -283,6 +283,7 @@ definePost({
     this.pos = { x: section.start.x, y: section.start.y, z: section.start.z };
     if (section.coolant !== this.coolant) this.coolantOn(section.coolant, out);
     this.section = section;
+    this.clearanceZ = section.clearanceZ;
     this.sectionClockwise = section.clockwise;
     this.rpm = rpm;
     this.comp = 0;
@@ -314,6 +315,13 @@ definePost({
   },
 
   retract(method, out) {
+    // Z first for G28: RS274/NGC's G28 goes to "the home position" by way of the programmed point [N 3.5.8], which
+    // may include X and Y; so when the tool is below the operation's clearance height it rapids straight up to that
+    // height first. G53 Z0. moves only Z [N 3.5.12: only the axes programmed], so it needs no such move.
+    if (method === "G28" && this.pos.z !== null && this.clearanceZ !== undefined && this.pos.z < this.clearanceZ) {
+      out.block(out.modal("motion", "G0"), out.axis("Z", this.clearanceZ));
+      this.pos.z = this.clearanceZ;
+    }
     if (method === "G53") {
       out.block("G0", "G53", out.word("Z", 0));
       out.modal("motion", "G0");
