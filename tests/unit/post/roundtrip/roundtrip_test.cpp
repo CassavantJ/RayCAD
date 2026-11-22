@@ -245,8 +245,8 @@ const std::vector<Known>& knownFindings()
         "The post copies the toolpath's rapid faithfully (tests/unit/post/shipped_matrix.h helical(): rapid(20, 25, "
         "5) right after the line to the centre); the hazard is in the hand-built toolpath, and on a FANUC with "
         "non-linear rapid positioning [F1, unverified] Y may arrive before Z has left the bore. No gouge in this "
-        "geometry (the 8 mm tool stays inside the 18 mm bore); a post or the host could split a rising diagonal "
-        "rapid into Z first.";
+        "geometry (the 8 mm tool's edge reaches the line of the 18 mm bore's wall only above the part); a post or "
+        "the host could split a rising diagonal rapid into Z first.";
     // F4: G187 P on the classic control.
     static const char* const kG187 =
         "The Haas classic post writes G187 P3; H1 p.17 lists G187 for the classic control with E only "
