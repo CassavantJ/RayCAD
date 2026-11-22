@@ -1,6 +1,8 @@
 // RayCAD interface contract: kernel
 // Module: src/kernel   Depends on: core, OCCT (the ONLY module that includes OCCT headers)
 // Status: PLAN DRAFT, revision 2 (after spikes S3, S4, S9).
+// Amended by T-044 (CAM workspace): boundsIn, the box of a shape in a rigid frame without moving a copy of it (the
+// setup preview measures the part in a tilted WCS on every change; transformed() copies and checks the whole body).
 //
 // Contract:
 //  - Shape is an immutable value handle. Every operation returns a new Shape plus a ShapeHistory.
@@ -82,6 +84,10 @@ Result<CurveInfo>   curveInfo(const Shape&, SubId edge);
 Result<Vec3>        vertexPoint(const Shape&, SubId vertex);
 std::vector<SubId>  adjacent(const Shape&, SubId of, SubKind wanted);   // sorted ascending
 Box3                bounds(const Shape&);
+// The box bounds(transformed(shape, frame).shape) would give, measured with the move applied as a location: nothing is
+// copied, checked or built, so it costs about what bounds() does. `frame` must be a rigid move (InvalidArgument
+// otherwise, as for transformed); the identity is allowed. T-044.
+Result<Box3>        boundsIn(const Shape&, const Xform& frame);
 struct MassProps { double volume, area; Vec3 centroid; };
 Result<MassProps>   massProps(const Shape&, double density = 1.0);
 struct Distance { double value; Vec3 p1, p2; };

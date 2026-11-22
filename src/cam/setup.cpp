@@ -6,12 +6,13 @@
 //      component, then IEEE arithmetic and dmath::sqrt only, so the same model gives the same bits everywhere; the
 //      flips (Wcs::flipZ before X is chosen, Wcs::flipX after) are exact negations;
 //   2. the part box in the WCS orientation ("O": p -> R p, no translation): taken from the model box exactly when R
-//      only permutes and negates axes (the usual case, and cheap), else measured on the body rotated into O;
+//      only permutes and negates axes (the usual case, and cheap), else measured on the body rotated into O
+//      (kernel::boundsIn: the rotation as a location, nothing copied);
 //   3. everything after that in integer nanometres in O: part box, stock box, origin; the WCS is O shifted by the
 //      origin, so stockBounds and partBounds are whole nanometres in the WCS.
 // What it reads is what operationInputHash covers (state.cpp putSetup): the part and stock bodies by content, the
-// stock definition, the origin mode and corner, the flips, and the WCS references through the geometry of what they resolve to
-// (surface normal and orientation, curve direction, vertex point). Nothing else of the setup is read.
+// stock definition, the origin mode and corner, the flips, and the WCS references through the geometry of what they
+// resolve to (surface normal and orientation, curve direction, vertex point). Nothing else of the setup is read.
 #include "state.h"
 
 #include <algorithm>
@@ -380,12 +381,14 @@ Result<Box3> boundsIn(const kernel::Shape& shape, const Axes& r, const std::stri
         }
         return out;
     }
-    auto moved = kernel::transformed(shape, rotationOf(r));
-    if (!moved) {
+    // Measured with the rotation as a location (T-044): no copy of the body is moved and checked, so a tilted frame
+    // costs about what an axis-aligned one does (the live setup preview resolves on every change).
+    auto box = kernel::boundsIn(shape, rotationOf(r));
+    if (!box) {
         return failure(ErrorCode::KernelFailure,
-                       what + " could not be measured in the WCS orientation: " + moved.error().message);
+                       what + " could not be measured in the WCS orientation: " + box.error().message);
     }
-    return measured(kernel::bounds(moved->shape));
+    return measured(*box);
 }
 
 Box3 unite(const Box3& a, const Box3& b)

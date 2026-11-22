@@ -418,8 +418,8 @@ struct ResolvedSetup {
     kernel::Shape stockSolid;    // the stock solid in the WCS; null unless SetupResolveOptions::stockSolid
 };
 struct SetupResolveOptions { bool stockSolid = false; };
-// Cheap enough for a live preview when the frame is axis-aligned (the bounds then come from the model boxes); a
-// tilted frame measures each body moved into it. Errors: ReferenceBroken for a part, fixture or stock body that is
+// Cheap enough for a live preview: an axis-aligned frame takes the bounds from the model boxes, a tilted one measures
+// each body in it with kernel::boundsIn (T-044: no copy of the body is made). Errors: ReferenceBroken for a part, fixture or stock body that is
 // not built or a reference that does not resolve usably; InvalidArgument for a WCS or stock the setup cannot have
 // (above; also box or cylinder stock without part bodies); KernelFailure when a body cannot be measured or the stock
 // solid made; Cancelled.

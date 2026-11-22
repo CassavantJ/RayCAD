@@ -4,9 +4,12 @@
 // they are registered (src/api), and work everywhere.
 //
 //   Contexts   Global: the key works everywhere. Model: while no sketch is being edited (the model tools).
-//              Sketch: while a sketch is being edited (drawing tools, constraints). Two commands may share a key
-//              only when their contexts never apply at the same time (Model and Sketch); the shortcut manager
-//              (shortcuts.h) reports any other pair as a conflict, and a test fails on one among the defaults.
+//              Sketch: while a sketch is being edited (drawing tools, constraints). Cam (T-044): while the CAM
+//              workspace is shown (setups, the CAM tree); Model and Sketch do not apply there. Two commands may share
+//              a key only when their contexts never apply at the same time (Model, Sketch and Cam); the shortcut
+//              manager (shortcuts.h) reports any other pair as a conflict, and a test fails on one among the defaults.
+//              The command palette lists a Cam command only in the CAM workspace, and Model and Sketch ones
+//              everywhere else (CommandCatalog::inPalette).
 //   Fronts     a UI command that is the user's way to a registry action (model.tool.extrude for
 //              feature.extrude.add, sketch.tool.trim for sketch.trim, ...) names it, and the palette and the
 //              shortcut list then show only the UI command (the action stays in the registry for scripts and agents,
@@ -20,7 +23,10 @@
 
 namespace ray::ui {
 
-enum class CommandContext : std::uint8_t { Global, Model, Sketch };
+enum class CommandContext : std::uint8_t { Global, Model, Sketch, Cam };
+
+// The CAM workspace's index in AppContext::workspaceNames ("Design", "CAM", "Simulate").
+inline constexpr int kCamWorkspace = 1;
 
 struct UiCommand {
     const char* id;
@@ -45,6 +51,8 @@ std::span<const UiCommand> sectionUiCommands();    // section_model.cpp: view.se
 std::span<const UiCommand> sketchUiCommands();     // sketch/sketch_mode.cpp: sketch.mode.*, sketch.tool.*
 std::span<const UiCommand> constraintUiCommands(); // sketch/constraints_model.cpp: sketch.constrain.*
 std::span<const UiCommand> modelUiCommands();      // model/feature_tools.cpp: model.*
+std::span<const UiCommand> camSetupUiCommands();   // cam/setup_tool.cpp: cam.tool.* (T-044)
+std::span<const UiCommand> camTreeUiCommands();    // cam/setup_tree.cpp: cam.tree.* (T-044)
 // All of the above, in that order.
 const std::vector<UiCommand>& allUiCommands();
 

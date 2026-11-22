@@ -427,9 +427,19 @@ TEST_CASE("every registered action appears in the palette; typing sav puts Save 
         if (const auto f = frontedBy.find(id); f != frontedBy.end()) {
             const auto c = w.commands()->find(f->second);
             REQUIRE(c.has_value());
+            // T-044: a CAM command is listed in the CAM workspace (CommandCatalog::inPalette).
+            const bool cam = c->context == ray::ui::CommandContext::Cam;
+            if (cam)
+                w.commands()->context()->setWorkspace(ray::ui::kCamWorkspace);
             w.search()->setProperty("text", c->title);
             CHECK(model.indexOf(id) < 0); // listed once, as the UI command
             CHECK(model.indexOf(f->second) >= 0);
+            if (cam) {
+                w.commands()->context()->setWorkspace(0);
+                w.search()->setProperty("text", QString());
+                w.search()->setProperty("text", c->title);
+                CHECK(model.indexOf(f->second) < 0); // and only there
+            }
             continue;
         }
         const QString title = QString::fromStdString(a.title);

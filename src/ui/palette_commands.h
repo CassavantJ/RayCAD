@@ -101,10 +101,14 @@ public:
     bool needsForm(const Command& command) const;
     // The user data folder of the session ("" without one: nothing is persisted).
     QString userDataDir() const;
-    // The context keyboard shortcuts work in now (ui_commands.h): what the probe says (the sketch mode installs one:
-    // Sketch while a sketch is being edited, else Model); Model without a probe.
-    CommandContext activeContext() const { return contextProbe_ ? contextProbe_() : CommandContext::Model; }
+    // The context keyboard shortcuts work in now (ui_commands.h): Cam while the CAM workspace is shown (T-044), else
+    // what the probe says (the sketch mode installs one: Sketch while a sketch is being edited, else Model); Model
+    // without a probe.
+    CommandContext activeContext() const;
     void setContextProbe(std::function<CommandContext()> probe) { contextProbe_ = std::move(probe); }
+    // Whether the command palette lists the command in the workspace shown (T-044): Cam commands only in the CAM
+    // workspace, Model and Sketch ones only outside it. find() and commands() list every command regardless.
+    bool inPalette(const Command& command) const;
 
     // ---- QML ----
     // { id, title, category, description, shortcut (native text), enabled, reason, needsForm }; empty if unknown.
