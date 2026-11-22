@@ -9,6 +9,7 @@
     "boost-graph",
     "boost-math",
     "catch2",
+    "clipper2",
     "eigen3",
     {
       "name": "opencascade",
@@ -27,6 +28,10 @@
     "zstd"
   ],
   "overrides": [
+    {
+      "name": "clipper2",
+      "version": "2.0.1"
+    },
     {
       "name": "opencascade",
       "version": "8.0.1",
