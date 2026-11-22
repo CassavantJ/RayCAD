@@ -426,10 +426,10 @@ TEST_CASE("output: names are made valid on Windows, Linux and macOS", "[post][ou
     };
     CHECK(named("a/b\\c:d*e?f\"g<h>i|j") == "a_b_c_d_e_f_g_h_i_j.nc");
     CHECK(named(std::string("tab\there\x01") + "\x7f") == "tab_here__.nc");
-    CHECK(named("Geh\xC3\xA4use") == "Geh_use.nc");              // one '_' per character, not per byte
-    CHECK(named("rocket \xF0\x9F\x9A\x80") == "rocket _.nc");     // a 4-byte character
-    CHECK(named("  ..hidden") == "hidden.nc");                    // no leading dots or spaces
-    CHECK(named("trailing. . ") == "trailing.nc");                // Windows drops trailing dots and spaces
+    CHECK(named("Geh\xC3\xA4use") == "Geh_use.nc");           // one '_' per character, not per byte
+    CHECK(named("rocket \xF0\x9F\x9A\x80") == "rocket _.nc"); // a 4-byte character
+    CHECK(named("  ..hidden") == "hidden.nc");                // no leading dots or spaces
+    CHECK(named("trailing. . ") == "trailing.nc");            // Windows drops trailing dots and spaces
     CHECK(named("") == "program.nc");
     CHECK(named("...") == "program.nc");
     for (const char* device : {"CON", "con", "Prn", "AUX", "NUL", "COM1", "com9", "LPT1", "LPT9", "COM0", "nul.txt"})
@@ -476,9 +476,8 @@ TEST_CASE("output: every name made from any text is valid everywhere (10,000 ran
         CHECK(s.back() != ' ');
         CHECK(s.back() != '.');
         std::string upper = s.substr(0, s.find('.'));
-        std::transform(upper.begin(), upper.end(), upper.begin(), [](char c) {
-            return c >= 'a' && c <= 'z' ? static_cast<char>(c - 32) : c;
-        });
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+                       [](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 32) : c; });
         for (const char* device : {"CON", "PRN", "AUX", "NUL", "COM1", "LPT1"})
             CHECK(upper != device);
         CHECK(sanitizeFileName(s) == s); // stable: a safe name stays as it is
@@ -626,7 +625,9 @@ TEST_CASE("output: cancel before the rename writes nothing; a cancel after the c
     f.files[std::string(kShare) + "\\O1001.nc"] = "old";
     CancelSource source;
     CancelToken token = source.token();
-    f.onWrite = [&] { source.cancel(); };
+    f.onWrite = [&] {
+        source.cancel();
+    };
     const std::string big(std::size_t(3) << 20, 'G'); // several chunks
     auto w = writeProgramFile(big, target(OverwriteMode::Replace), f, &token);
     REQUIRE_FALSE(w);
@@ -645,7 +646,8 @@ TEST_CASE("output: cancel before the rename writes nothing; a cancel after the c
     CHECK(g.files.at(std::string(kShare) + "\\O1001.nc") == "new");
 }
 
-// ======================================================================================================== faults (fake)
+// ======================================================================================================== faults
+// (fake)
 TEST_CASE("output: a full disk mid-write leaves no partial program and the old one intact", "[post][output][fake]")
 {
     FakeFs f;
@@ -779,8 +781,7 @@ TEST_CASE("output: writeProgram writes every golden program byte for byte (Outpu
         CHECK_FALSE(isTemporaryOutputName(name));
 }
 
-TEST_CASE("output: a posted program's file equals PostOutput::text with either line ending property",
-          "[post][output]")
+TEST_CASE("output: a posted program's file equals PostOutput::text with either line ending property", "[post][output]")
 {
     TempDir dir;
     for (const char* ending : {"crlf", "lf"}) {

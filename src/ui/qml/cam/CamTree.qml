@@ -269,6 +269,16 @@ Item {
                                         toolTipText: qsTr("New operation in this setup")
                                         onClicked: CamOperation.startFor(row.rowId)
                                     }
+                                    // T-047: post the setup.
+                                    ToolButton {
+                                        objectName: "camRowPost." + row.index
+                                        visible: row.isSetup && (row.hovered || row.current)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        compact: true
+                                        iconName: "post"
+                                        toolTipText: qsTr("Post this setup (Ctrl+P)")
+                                        onClicked: CamPost.open(row.rowId)
+                                    }
                                     ToolButton {
                                         objectName: "camRowUp." + row.index
                                         visible: row.hovered && row.canMoveUp

@@ -192,6 +192,11 @@ FocusScope {
                     }
                     // T-045: the selected operation's toolpath in the view (CamToolpaths draws into the viewport).
                     readonly property int toolpathsShown: CamToolpaths.shownCount
+                    // T-047: the G-code viewer on the right, and the post dialog over everything.
+                    GcodeView {
+                        anchors.fill: parent
+                    }
+                    PostDialog {}
                 }
             }
         }

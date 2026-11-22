@@ -64,7 +64,10 @@ public:
     void setVertices(bool on) { setMaskBit(kVertices, on); }
     void setBodies(bool on) { setMaskBit(kBodies, on); }
     // render::PickFilter bits of the enabled kinds.
-    std::uint8_t filterMask() const { return mask_; }
+    std::uint8_t filterMask() const
+    {
+        return pathPicking_ ? std::uint8_t(mask_ | std::uint8_t(render::PickFilter::Toolpath)) : mask_;
+    }
     void setFilterMask(std::uint8_t mask);
 
     int count() const { return static_cast<int>(entries_.size()); }
@@ -87,13 +90,24 @@ public:
     Q_INVOKABLE bool isBodySelected(int bodyIndex) const;
 
     const std::vector<SelectionEntry>& entries() const { return entries_; }
+    // What the viewport highlights: the entries' hits, then the path highlight (below).
     std::vector<render::PickHit> hits() const;
+
+    // T-047, toolpath moves (the G-code viewer, cam/post_view.h). While path picking is on, clicks and the hover pick
+    // toolpaths too (render::PickFilter::Toolpath in filterMask()); a click on a toolpath move does not change the
+    // selection: it becomes the path highlight and is announced (pathPicked). The path highlight is drawn with the
+    // selection (render.h setHighlight: a hit on a backplot item highlights its move).
+    void setPathPicking(bool on);
+    bool pathPicking() const { return pathPicking_; }
+    void setPathHighlight(std::optional<render::PickHit> hit);
+    std::optional<render::PickHit> pathHighlight() const { return pathHighlight_; }
 
 signals:
     void changed();
     void highlightChanged(); // selection or hover: the viewport updates its highlight
     void filterChanged();
     void infoChanged();
+    void pathPicked(const ray::render::PickHit& hit); // T-047
 
 private:
     static constexpr std::uint8_t kFaces = static_cast<std::uint8_t>(render::PickFilter::Faces);
@@ -120,6 +134,8 @@ private:
     std::uint64_t infoFor_ = 0; // entry serial the read-out shows
     QString infoTitle_;
     QVariantList info_;
+    bool pathPicking_ = false;                     // T-047
+    std::optional<render::PickHit> pathHighlight_; // T-047
 };
 
 } // namespace ray::ui

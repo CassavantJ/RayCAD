@@ -101,7 +101,10 @@ var paths = {
                             + "M 5.5 5 L 2 8 L 5.5 11 M 10.5 5 L 14 8 L 10.5 11" },
     "glyph-fix": { d: "M 4.5 7.5 H 11.5 V 13.5 H 4.5 Z M 6 7.5 V 5.5 A 2 2 0 0 1 10 5.5 V 7.5" },
     "driven": { d: "M 5 3 Q 2.5 8 5 13 M 11 3 Q 13.5 8 11 13 M 6.5 8 H 9.5" },
-    "delete": { d: "M 3 4.5 H 13 M 6.5 4.5 V 3 H 9.5 V 4.5 M 4.5 4.5 L 5.25 13.5 H 10.75 L 11.5 4.5" }
+    "delete": { d: "M 3 4.5 H 13 M 6.5 4.5 V 3 H 9.5 V 4.5 M 4.5 4.5 L 5.25 13.5 H 10.75 L 11.5 4.5" },
+    // T-047: post a setup (a program page with lines of code and an arrow leaving it).
+    "post": { d: "M 10.5 6 V 2.25 H 2.75 V 13.75 H 10.5 V 11.5 M 4.75 5 H 8.25 M 4.75 7.5 H 7 M 4.75 10 H 7.75 "
+                 + "M 8.75 8.75 H 14.25 M 12.25 6.75 L 14.25 8.75 L 12.25 10.75" }
 };
 
 function path(name) {

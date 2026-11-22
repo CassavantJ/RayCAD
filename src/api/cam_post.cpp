@@ -49,6 +49,20 @@ const lib::Holder* holderOf(const cam::CamState& cam, const cam::Operation& op)
     return it == cam.holders.end() ? nullptr : &it->second.item;
 }
 
+// "<what>: <why>. <fix>", without doubled punctuation when <why> ends a sentence itself.
+std::string sentences(const std::string& what, const std::string& why, const std::string& fix)
+{
+    std::string out = what;
+    if (!why.empty()) {
+        out += ": " + why;
+        const char last = why.back();
+        out += last == '.' || last == ')' || last == '!' || last == '?' ? " " : ". ";
+    } else {
+        out += ". ";
+    }
+    return out + fix;
+}
+
 std::string percent(double fraction)
 {
     if (!(fraction >= 0))
@@ -258,8 +272,8 @@ std::vector<Blocker> blockers(const doc::DocState& state, bool built, const Setu
     std::vector<Blocker> out;
     const cam::Setup* setup = findSetup(state, setupId);
     if (setup == nullptr) {
-        out.push_back(Blocker{OperationId{}, std::string(), BlockReason::NoSetup,
-                              "The document has no such setup", false});
+        out.push_back(
+            Blocker{OperationId{}, std::string(), BlockReason::NoSetup, "The document has no such setup", false});
         return out;
     }
     if (!built) {
@@ -302,8 +316,7 @@ std::vector<Blocker> blockers(const doc::DocState& state, bool built, const Setu
                                       "since it was generated",
                                       true});
             else
-                out.push_back(
-                    Blocker{id, name, BlockReason::NoToolpath, "Its toolpath has not been generated", true});
+                out.push_back(Blocker{id, name, BlockReason::NoToolpath, "Its toolpath has not been generated", true});
             break;
         case cam::OpStatus::Generating:
             out.push_back(Blocker{id, name, BlockReason::Generating,
@@ -313,24 +326,21 @@ std::vector<Blocker> blockers(const doc::DocState& state, bool built, const Setu
             break;
         case cam::OpStatus::Failed:
             out.push_back(Blocker{id, name, BlockReason::Failed,
-                                  "Generating its toolpath failed" +
-                                      (engineMessage.empty() ? std::string() : ": " + engineMessage) +
-                                      ". Edit the operation",
+                                  sentences("Generating its toolpath failed", engineMessage, "Edit the operation"),
                                   false});
             break;
         case cam::OpStatus::ReferenceBroken:
             out.push_back(Blocker{id, name, BlockReason::ReferenceBroken,
-                                  "A geometry reference does not resolve" +
-                                      (engineMessage.empty() ? std::string() : ": " + engineMessage) +
-                                      ". Edit the operation and pick its geometry again",
+                                  sentences("A geometry reference does not resolve", engineMessage,
+                                            "Edit the operation and pick its geometry again"),
                                   false});
             break;
         case cam::OpStatus::Suppressed:
             break;
         }
         if (toolOf(cam, op->second) == nullptr)
-            out.push_back(Blocker{id, name, BlockReason::NoTool, "Its tool is not in the document; choose a tool",
-                                  false});
+            out.push_back(
+                Blocker{id, name, BlockReason::NoTool, "Its tool is not in the document; choose a tool", false});
     }
     if (posted == 0)
         out.push_back(Blocker{OperationId{}, setup->name, BlockReason::NoOperations,
@@ -362,7 +372,8 @@ std::string findPost(const std::vector<std::string>& roots, std::string_view id)
         return {};
     for (auto it = roots.rbegin(); it != roots.rend(); ++it) {
         std::error_code ec;
-        const std::filesystem::path p = detail::toFsPath(*it) / "posts" / detail::toFsPath(std::string(id) + ".post.js");
+        const std::filesystem::path p =
+            detail::toFsPath(*it) / "posts" / detail::toFsPath(std::string(id) + ".post.js");
         if (std::filesystem::is_regular_file(p, ec))
             return detail::fromFsPath(p);
     }
@@ -537,8 +548,8 @@ Result<Posted> run(const Inputs& in, const Settings& settings, JobContext& ctx)
                                                                   "names one"));
     const std::string script = findPost(in.libraryRoots, postId);
     if (script.empty())
-        return tl::unexpected(failure(ErrorCode::NotFound, "The post '" + postId +
-                                                               "' is not in the library (posts/" + postId +
+        return tl::unexpected(failure(ErrorCode::NotFound, "The post '" + postId + "' is not in the library (posts/" +
+                                                               postId +
                                                                ".post.js in the built-in, shared or user library)"));
     auto engine = post::makeQuickJsPostEngine();
     if (!engine)
@@ -613,9 +624,9 @@ Status stillCurrent(const Posted& posted, const doc::DocState& now, bool built,
 {
     const std::vector<Blocker> blocked = blockers(now, built, posted.setup, nowStatuses, setupState);
     if (!blocked.empty())
-        return tl::unexpected(failure(ErrorCode::PostFailed,
-                                      "The setup changed while it was posted; nothing was written. " +
-                                          blockersText(blocked)));
+        return tl::unexpected(
+            failure(ErrorCode::PostFailed,
+                    "The setup changed while it was posted; nothing was written. " + blockersText(blocked)));
     const auto changed = [](const std::string& what) -> Status {
         return tl::unexpected(failure(ErrorCode::PostFailed, "The setup changed while it was posted (" + what +
                                                                  "); nothing was written. Post it again"));

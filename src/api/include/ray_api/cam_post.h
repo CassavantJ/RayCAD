@@ -63,10 +63,10 @@ enum class BlockReason {
 };
 std::string_view reasonKey(BlockReason reason); // "stale", "referenceBroken", ...
 struct Blocker {
-    OperationId op;         // nil when it is about the setup
-    std::string name;       // the operation's name (the setup's for a setup reason)
+    OperationId op;   // nil when it is about the setup
+    std::string name; // the operation's name (the setup's for a setup reason)
     BlockReason reason;
-    std::string message;    // what is wrong, in words (with the engine's message where it has one)
+    std::string message;        // what is wrong, in words (with the engine's message where it has one)
     bool generateFixes = false; // generating the operation is the fix (Stale, NoToolpath)
 };
 // Why setup `setup` of `state` cannot be posted now; empty when it can. `statuses`: ICamEngine::status of `state`
@@ -108,14 +108,14 @@ struct Settings {
     std::optional<UnitSystem> units;               // the document's when unset
     std::string directory;                         // the output folder
     std::string fileNamePattern = std::string(kDefaultFileNamePattern);
-    Overwrite overwrite = Overwrite::Ask;          // Ask behaves as Refuse in write(): the caller asks first
-    bool limitNameLength = true;                   // cut the stem to the machine's maxProgramNameLength
-    std::optional<std::string> date;               // ISO date for the includeDate property (else no date)
+    Overwrite overwrite = Overwrite::Ask; // Ask behaves as Refuse in write(): the caller asks first
+    bool limitNameLength = true;          // cut the stem to the machine's maxProgramNameLength
+    std::optional<std::string> date;      // ISO date for the includeDate property (else no date)
 };
 
 // ---------- Posting ----------
 struct Inputs {
-    SetupId setup;                                // the setup to post
+    SetupId setup; // the setup to post
     doc::DocStatePtr state;
     doc::BuildResultPtr build;
     std::map<OperationId, cam::OpState> statuses; // ICamEngine::status(Async) of state and build
@@ -130,12 +130,12 @@ struct Posted {
     SetupId setup;
     std::string setupName, machineName;
     bool machineVerified = false;
-    std::vector<OperationId> sectionOps;      // PostOutput::lineMap's sectionIndex -> operation
+    std::vector<OperationId> sectionOps; // PostOutput::lineMap's sectionIndex -> operation
     std::vector<std::string> sectionNames;
-    std::vector<Hash256> sectionInputs;       // each posted toolpath's input hash (stillCurrent compares them)
-    std::vector<std::string> notes;           // operations left out (suppressed), name changes
-    FileName fileName;                        // the pattern applied
-    int maxStemLength = 0;                    // the stem limit applied (0: none)
+    std::vector<Hash256> sectionInputs; // each posted toolpath's input hash (stillCurrent compares them)
+    std::vector<std::string> notes;     // operations left out (suppressed), name changes
+    FileName fileName;                  // the pattern applied
+    int maxStemLength = 0;              // the stem limit applied (0: none)
 };
 // The file name `settings` give for setup `setup` of `state` with post `info` (for the dialog's preview).
 Result<FileName> fileNameFor(const doc::DocState& state, const SetupId& setup, const post::PostInfo& info,

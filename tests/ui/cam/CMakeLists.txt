@@ -61,10 +61,32 @@ foreach(_scale 1 1.5 2)
     set_tests_properties(ray_ui_cam_operation_scale_${_name} PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
 endforeach()
 
+# Posting, the G-code viewer and file output (task T-047): Catch2 driving the real window as above. The [wallclock] case
+# (a 200,000-line program) is split out by tests/tiers.cmake.
+add_executable(ray_ui_cam_post_tests post_test.cpp)
+target_link_libraries(ray_ui_cam_post_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
+                                                    Qt6::Test Catch2::Catch2)
+target_include_directories(ray_ui_cam_post_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui" "${CMAKE_SOURCE_DIR}/tests/unit/cam")
+target_compile_definitions(ray_ui_cam_post_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
+set_property(TARGET ray_ui_cam_post_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_ui_cam_post_tests COMMAND ray_ui_cam_post_tests "~[wallclock]")
+set_tests_properties(ray_ui_cam_post_tests PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
+ray_test_runtime_path(ray_ui_cam_post_tests QT)
+get_test_property(ray_ui_cam_post_tests ENVIRONMENT_MODIFICATION _mods)
+if(NOT _mods)
+    set(_mods)
+endif()
+list(APPEND _mods "QSG_NO_VSYNC=set:1")
+set_tests_properties(ray_ui_cam_post_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+
 add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp
-    operation_unit_test.cpp) # T-045: the schema form over every registered type and synthetic schemas, the panel logic
+    operation_unit_test.cpp # T-045: the schema form over every registered type and synthetic schemas, the panel logic
+    post_unit_test.cpp) # T-047: the viewer's tokens and index, post properties as a form, the gate through cam.post
 target_link_libraries(ray_ui_cam_unit_tests PRIVATE ray_ui ray_api Qt6::Core Catch2::Catch2WithMain)
 target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
+target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/tests/unit/cam") # T-047: test.op
+target_compile_definitions(ray_ui_cam_unit_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+                                                         RAY_SHIPPED_POSTS_DIR="${CMAKE_SOURCE_DIR}/resources/library/posts")
 set_property(TARGET ray_ui_cam_unit_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_ui_cam_unit_tests COMMAND ray_ui_cam_unit_tests)
 ray_test_runtime_path(ray_ui_cam_unit_tests QT)

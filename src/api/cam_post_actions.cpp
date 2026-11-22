@@ -147,8 +147,8 @@ Result<ActionResult> postAction(AppImpl& app, std::string_view argsJson, JobCont
     settings.postId = args->stringOr("post", "");
     settings.directory = args->stringOr("directory", "");
     settings.fileNamePattern = args->stringOr("fileNamePattern", std::string(cam_post::kDefaultFileNamePattern));
-    settings.overwrite = cam_post::overwriteFromKey(args->stringOr("overwrite", "refuse"))
-                             .value_or(cam_post::Overwrite::Refuse);
+    settings.overwrite =
+        cam_post::overwriteFromKey(args->stringOr("overwrite", "refuse")).value_or(cam_post::Overwrite::Refuse);
     settings.limitNameLength = args->boolOr("limitNameLength", true);
     if (const Value* n = args->find("programNumber"); n != nullptr && n->isNumber())
         settings.programNumber = static_cast<int>(n->asNumber());
@@ -195,13 +195,13 @@ Result<ActionResult> postAction(AppImpl& app, std::string_view argsJson, JobCont
     for (const char c : posted->output.text)
         lines += c == '\n' ? 1 : 0;
     ActionResult result;
-    result.resultJson = json::canonical(Value::object(
-        {{"path", Value::string(written->path)},
-         {"fileName", Value::string(written->fileName)},
-         {"replaced", Value::boolean(written->replaced)},
-         {"lines", Value::integer(static_cast<std::int64_t>(lines))},
-         {"bytes", Value::integer(static_cast<std::int64_t>(posted->output.text.size()))},
-         {"hash", Value::string(posted->output.hash().hex())}}));
+    result.resultJson =
+        json::canonical(Value::object({{"path", Value::string(written->path)},
+                                       {"fileName", Value::string(written->fileName)},
+                                       {"replaced", Value::boolean(written->replaced)},
+                                       {"lines", Value::integer(static_cast<std::int64_t>(lines))},
+                                       {"bytes", Value::integer(static_cast<std::int64_t>(posted->output.text.size()))},
+                                       {"hash", Value::string(posted->output.hash().hex())}}));
     result.warnings = posted->output.warnings;
     for (const std::string& note : posted->notes)
         result.warnings.push_back(note);

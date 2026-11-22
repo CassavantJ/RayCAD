@@ -117,8 +117,8 @@ std::pair<std::string, std::string> splitName(const std::string& name)
 
 Status cancelledStatus()
 {
-    return tl::unexpected(outputError(ErrorCode::Cancelled, OutputProblem::Cancelled,
-                                      "Posting was cancelled; no file was written"));
+    return tl::unexpected(
+        outputError(ErrorCode::Cancelled, OutputProblem::Cancelled, "Posting was cancelled; no file was written"));
 }
 
 } // namespace
@@ -320,9 +320,8 @@ Result<FileName> fileNameFor(std::string_view pattern, const NameFields& fields,
     std::string ext;
     if (!wroteExt && !fields.extension.empty()) {
         bool extChanged = false;
-        const std::string body =
-            sanitizeFileName(fields.extension.front() == '.' ? fields.extension.substr(1) : fields.extension,
-                             &extChanged);
+        const std::string body = sanitizeFileName(
+            fields.extension.front() == '.' ? fields.extension.substr(1) : fields.extension, &extChanged);
         ext = "." + body;
     }
     std::string stem = raw;
@@ -387,10 +386,11 @@ Result<bool> targetExists(const OutputTarget& target, IOutputFs& fs)
     return fs.exists(joinPath(target.directory, target.fileName));
 }
 
-Result<Written> writeProgramFile(std::string_view bytes, const OutputTarget& target, IOutputFs& fs,
-                                 CancelToken* cancel)
+Result<Written> writeProgramFile(std::string_view bytes, const OutputTarget& target, IOutputFs& fs, CancelToken* cancel)
 {
-    const auto isCancelled = [&] { return cancel != nullptr && cancel->cancelled(); };
+    const auto isCancelled = [&] {
+        return cancel != nullptr && cancel->cancelled();
+    };
     if (target.fileName.empty() || target.fileName.find_first_of("/\\") != std::string::npos) {
         return tl::unexpected(invalid("The file name '" + target.fileName + "' is not a plain file name"));
     }
@@ -406,7 +406,9 @@ Result<Written> writeProgramFile(std::string_view bytes, const OutputTarget& tar
     std::string name = target.fileName;
     auto [stem, ext] = splitName(name);
     bool replaced = false;
-    const auto taken = [&](const std::string& n) { return fs.exists(joinPath(target.directory, n)); };
+    const auto taken = [&](const std::string& n) {
+        return fs.exists(joinPath(target.directory, n));
+    };
     if (target.mode != OverwriteMode::Replace) {
         auto there = taken(name);
         if (!there) {
@@ -431,9 +433,9 @@ Result<Written> writeProgramFile(std::string_view bytes, const OutputTarget& tar
                 }
             }
             if (!found) {
-                return tl::unexpected(outputError(ErrorCode::Locked, OutputProblem::Exists,
-                                                  "No free numbered name for " + target.fileName + " in " +
-                                                      target.directory));
+                return tl::unexpected(
+                    outputError(ErrorCode::Locked, OutputProblem::Exists,
+                                "No free numbered name for " + target.fileName + " in " + target.directory));
             }
         }
     }
@@ -494,8 +496,8 @@ Result<Written> writeProgramFile(std::string_view bytes, const OutputTarget& tar
     } else {
         Status moved = fs.moveNoReplace(temp, finalPath);
         // NewName: someone took the name since it was chosen; the next free one.
-        for (int n = 2; !moved && target.mode == OverwriteMode::NewName && problemOf(moved.error()) == OutputProblem::Exists &&
-                        n <= kMaxNewNameNumber;
+        for (int n = 2; !moved && target.mode == OverwriteMode::NewName &&
+                        problemOf(moved.error()) == OutputProblem::Exists && n <= kMaxNewNameNumber;
              ++n) {
             name = numbered(stem, n, target.maxStemLength) + ext;
             moved = fs.moveNoReplace(temp, joinPath(target.directory, name));

@@ -240,8 +240,32 @@ void SelectionModel::resolveLater(SelectionEntry& entry)
     });
 }
 
+void SelectionModel::setPathPicking(bool on)
+{
+    if (on == pathPicking_)
+        return;
+    pathPicking_ = on;
+    setHover(std::nullopt); // a hover of a kind no longer picked goes
+    emit filterChanged();
+}
+
+void SelectionModel::setPathHighlight(std::optional<render::PickHit> hit)
+{
+    if (hit.has_value() == pathHighlight_.has_value() &&
+        (!hit || (hit->item == pathHighlight_->item && hit->moveIndex == pathHighlight_->moveIndex)))
+        return;
+    pathHighlight_ = hit;
+    emit highlightChanged();
+}
+
 void SelectionModel::applyClick(std::optional<render::PickHit> hit, Qt::KeyboardModifiers modifiers)
 {
+    // T-047: a toolpath move under the click while the G-code viewer picks them.
+    if (hit && pathPicking_ && scene_ && scene_->bodyIndexForItem(hit->item) < 0) {
+        setPathHighlight(*hit);
+        emit pathPicked(*hit);
+        return;
+    }
     const bool ctrl = modifiers.testFlag(Qt::ControlModifier);
     const bool shift = modifiers.testFlag(Qt::ShiftModifier);
     if (!hit) {
@@ -315,9 +339,11 @@ bool SelectionModel::isBodySelected(int bodyIndex) const
 std::vector<render::PickHit> SelectionModel::hits() const
 {
     std::vector<render::PickHit> out;
-    out.reserve(entries_.size());
+    out.reserve(entries_.size() + 1);
     for (const SelectionEntry& e : entries_)
         out.push_back(e.hit);
+    if (pathHighlight_)
+        out.push_back(*pathHighlight_);
     return out;
 }
 

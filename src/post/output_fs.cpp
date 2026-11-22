@@ -63,23 +63,23 @@ std::string winDetail(const char* what, DWORD code, const std::string& path)
 bool networkError(DWORD e)
 {
     switch (e) {
-    case ERROR_BAD_NETPATH:          // 53
-    case ERROR_NETWORK_BUSY:         // 54
-    case ERROR_DEV_NOT_EXIST:        // 55
-    case ERROR_UNEXP_NET_ERR:        // 59
-    case ERROR_BAD_NET_RESP:         // 58
-    case ERROR_NETNAME_DELETED:      // 64
+    case ERROR_BAD_NETPATH:           // 53
+    case ERROR_NETWORK_BUSY:          // 54
+    case ERROR_DEV_NOT_EXIST:         // 55
+    case ERROR_UNEXP_NET_ERR:         // 59
+    case ERROR_BAD_NET_RESP:          // 58
+    case ERROR_NETNAME_DELETED:       // 64
     case ERROR_NETWORK_ACCESS_DENIED: // 65
-    case ERROR_BAD_NET_NAME:         // 67
-    case ERROR_SEM_TIMEOUT:          // 121
-    case ERROR_NO_NET_OR_BAD_PATH:   // 1203
-    case ERROR_NOT_CONNECTED:        // 2250
-    case ERROR_CONNECTION_ABORTED:   // 1236
-    case ERROR_NETWORK_UNREACHABLE:  // 1231
-    case ERROR_HOST_UNREACHABLE:     // 1232
-    case ERROR_CONNECTION_REFUSED:   // 1225
-    case ERROR_NOT_READY:            // 21: a removable drive or a disconnected mapped drive
-    case ERROR_DEVICE_NOT_CONNECTED: // 1167
+    case ERROR_BAD_NET_NAME:          // 67
+    case ERROR_SEM_TIMEOUT:           // 121
+    case ERROR_NO_NET_OR_BAD_PATH:    // 1203
+    case ERROR_NOT_CONNECTED:         // 2250
+    case ERROR_CONNECTION_ABORTED:    // 1236
+    case ERROR_NETWORK_UNREACHABLE:   // 1231
+    case ERROR_HOST_UNREACHABLE:      // 1232
+    case ERROR_CONNECTION_REFUSED:    // 1225
+    case ERROR_NOT_READY:             // 21: a removable drive or a disconnected mapped drive
+    case ERROR_DEVICE_NOT_CONNECTED:  // 1167
         return true;
     default:
         return false;
@@ -111,8 +111,7 @@ Error mapped(DWORD e, const char* what, const std::string& path, const std::stri
         return outputError(ErrorCode::IoError, OutputProblem::DiskFull,
                            "The disk of " + folderOf(path) + " is full (" + doing + ")", detail);
     }
-    if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND || e == ERROR_INVALID_NAME ||
-        e == ERROR_DIRECTORY) {
+    if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND || e == ERROR_INVALID_NAME || e == ERROR_DIRECTORY) {
         return outputError(ErrorCode::NotFound, OutputProblem::FolderMissing,
                            "The folder " + folderOf(path) + " does not exist (" + doing + ")", detail);
     }
@@ -176,17 +175,17 @@ public:
     Status checkFolder(const std::string& dir) override
     {
         if (dir.empty()) {
-            return tl::unexpected(outputError(ErrorCode::InvalidArgument, OutputProblem::FolderMissing,
-                                              "No output folder is set"));
+            return tl::unexpected(
+                outputError(ErrorCode::InvalidArgument, OutputProblem::FolderMissing, "No output folder is set"));
         }
         const DWORD a = GetFileAttributesW(widen(dir).c_str());
         if (a == INVALID_FILE_ATTRIBUTES) {
             const DWORD e = GetLastError();
             if (networkError(e)) {
-                return tl::unexpected(outputError(ErrorCode::IoError, OutputProblem::Unreachable,
-                                                  "The folder " + dir +
-                                                      " cannot be reached: the network share is not available",
-                                                  winDetail("GetFileAttributesW", e, dir)));
+                return tl::unexpected(
+                    outputError(ErrorCode::IoError, OutputProblem::Unreachable,
+                                "The folder " + dir + " cannot be reached: the network share is not available",
+                                winDetail("GetFileAttributesW", e, dir)));
             }
             if (e == ERROR_ACCESS_DENIED) {
                 return tl::unexpected(outputError(ErrorCode::IoError, OutputProblem::Denied,
@@ -217,8 +216,8 @@ public:
     }
     Result<std::unique_ptr<IOutputFile>> createNew(const std::string& path) override
     {
-        HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL,
-                               nullptr);
+        HANDLE h =
+            CreateFileW(widen(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h == INVALID_HANDLE_VALUE) {
             return tl::unexpected(mapped(GetLastError(), "CreateFileW", path, "making the temporary file"));
         }
@@ -371,17 +370,17 @@ public:
     Status checkFolder(const std::string& dir) override
     {
         if (dir.empty()) {
-            return tl::unexpected(outputError(ErrorCode::InvalidArgument, OutputProblem::FolderMissing,
-                                              "No output folder is set"));
+            return tl::unexpected(
+                outputError(ErrorCode::InvalidArgument, OutputProblem::FolderMissing, "No output folder is set"));
         }
         struct stat st{};
         if (::stat(dir.c_str(), &st) != 0) {
             const int e = errno;
             if (networkErrno(e)) {
-                return tl::unexpected(outputError(ErrorCode::IoError, OutputProblem::Unreachable,
-                                                  "The folder " + dir +
-                                                      " cannot be reached: the network share is not available",
-                                                  posixDetail("stat", e, dir)));
+                return tl::unexpected(
+                    outputError(ErrorCode::IoError, OutputProblem::Unreachable,
+                                "The folder " + dir + " cannot be reached: the network share is not available",
+                                posixDetail("stat", e, dir)));
             }
             if (e == EACCES) {
                 return tl::unexpected(outputError(ErrorCode::IoError, OutputProblem::Denied,
@@ -445,8 +444,7 @@ public:
         }
         // File systems without hard links (SMB without Unix extensions, FAT, some NAS mounts): check, then rename.
         // The name could be taken between the two; nothing better exists there.
-        if (e == EPERM || e == ENOTSUP || e == EOPNOTSUPP || e == EMLINK || e == ENOSYS || e == EXDEV ||
-            e == EACCES) {
+        if (e == EPERM || e == ENOTSUP || e == EOPNOTSUPP || e == EMLINK || e == ENOSYS || e == EXDEV || e == EACCES) {
             auto there = exists(to);
             if (!there) {
                 return tl::unexpected(there.error());

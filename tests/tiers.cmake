@@ -100,7 +100,8 @@ set(RAY_WALLCLOCK_SPLITS
     ray_ui_settings_tests=ray_ui_settings_tests
     ray_ui_model_tests=ray_ui_model_tests
     ray_ui_cam_tests=ray_ui_cam_tests
-    ray_ui_cam_operation_tests=ray_ui_cam_operation_tests)
+    ray_ui_cam_operation_tests=ray_ui_cam_operation_tests
+    ray_ui_cam_post_tests=ray_ui_cam_post_tests)
 
 # Whole tests timed against the wall clock, besides the <test>_wallclock splits: they run alone.
 set(RAY_SERIAL_TESTS
@@ -138,7 +139,9 @@ set(RAY_TEST_LOCKS
     desktop=ray_ui_cam_operation_scale_1
     desktop=ray_ui_cam_operation_scale_1_5
     desktop=ray_ui_cam_operation_scale_2
-    clipboard=ray_ui_measure_tests) # copies a value and the whole result, then reads the clipboard back
+    desktop=ray_ui_cam_post_tests
+    clipboard=ray_ui_measure_tests  # copies a value and the whole result, then reads the clipboard back
+    clipboard=ray_ui_cam_post_tests) # copies G-code lines and the whole program, then reads the clipboard back
 
 # ---------- implementation ----------
 # Remembers the directory of every test (set_property(TEST ... DIRECTORY ...) needs it).
