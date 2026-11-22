@@ -37,7 +37,8 @@ set(RAY_SLOW_TESTS
     ray_naming_random_holdout4
     ray_naming_random_holdout5
     ray_naming_random_holdout6
-    ray_sketch_drag_agreement)
+    ray_sketch_drag_agreement
+    ray_render_backplot_cost) # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
