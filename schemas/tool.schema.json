@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/tool.schema.json",
+  "title": "RayCAD cutting tool",
+  "description": "One cutting tool of a library, the file tools/<uuid>.tool.json (PLAN.md 3.6, libraries.h Tool). Lengths are millimetres, angles degrees, surface speed metres per minute, chip load millimetres per flute. Unknown keys are allowed and are kept when RayCAD saves the tool again. src/lib checks every file against this schema when it reads it.",
+  "type": "object",
+  "required": ["schema", "id", "name", "type", "flutes", "diameter", "shankDiameter", "fluteLength", "overallLength"],
+  "properties": {
+    "schema": { "const": 1, "description": "Version of this file's format. A larger value means a newer RayCAD wrote it." },
+    "id": { "$ref": "#/$defs/uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "vendor": { "type": "string", "description": "Maker, or empty for a generic tool." },
+    "productId": { "type": "string", "description": "The maker's order number, or empty." },
+    "type": {
+      "enum": ["flatEndMill", "ballEndMill", "bullEndMill", "chamferMill", "faceMill", "spotDrill", "drill", "tap",
+               "reamer", "boringBar", "threadMill", "engraveCutter"]
+    },
+    "flutes": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Cutting edges (inserts for a face mill)." },
+    "diameter": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000, "description": "Cutting diameter; for a chamfer mill or spot drill the largest one." },
+    "shankDiameter": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+    "fluteLength": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000, "description": "Length of cut, from the tip." },
+    "shoulderLength": { "type": "number", "minimum": 0, "maximum": 2000, "description": "From the tip to where the body widens to the shank (0: same as the flute length)." },
+    "overallLength": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+    "cornerRadius": { "type": "number", "minimum": 0, "maximum": 1000, "description": "Bull nose radius; half the diameter for a ball end mill." },
+    "tipAngle": { "type": "number", "minimum": 0, "maximum": 180, "description": "Included point angle of a drill or spot drill, included angle of a chamfer mill (degrees; 0 = none)." },
+    "tipDiameter": { "type": "number", "minimum": 0, "maximum": 2000, "description": "Flat at the tip of a chamfer mill or spot drill." },
+    "threadPitch": { "type": "number", "minimum": 0, "maximum": 100, "description": "Taps and thread mills: thread pitch (0 = a single-profile thread mill that cuts any pitch)." },
+    "threadSpec": { "type": "string", "description": "Taps: the thread designation of resources/standards/threads.json, e.g. '1/4-20 UNC' or 'M6x1'." },
+    "bodyMaterial": { "type": "string", "description": "e.g. 'carbide', 'HSS', 'HSS-Co'." },
+    "defaultToolNumber": { "type": "integer", "minimum": 0, "maximum": 99999, "description": "Pocket number to suggest (0: none)." },
+    "presets": { "type": "array", "items": { "$ref": "#/$defs/preset" } },
+    "comment": { "type": "string", "description": "Free text; the shipped library names the public source of every value here." }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "preset": {
+      "type": "object",
+      "description": "Starting cutting data for one material and one kind of cut.",
+      "required": ["material", "opClass", "surfaceSpeed", "chipLoad", "maxRadialFraction", "maxAxialFraction", "rampAngle"],
+      "properties": {
+        "material": { "$ref": "#/$defs/uuid" },
+        "opClass": {
+          "enum": ["rough", "finish", "slot", "drill", "spot", "tap", "ream", "chamfer", "face", "thread", "bore", "engrave"]
+        },
+        "surfaceSpeed": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000, "description": "Metres per minute." },
+        "chipLoad": { "type": "number", "minimum": 0, "maximum": 10, "description": "Millimetres per flute per revolution (a tap's feed is its pitch, so 0 there)." },
+        "maxRadialFraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "Largest radial engagement, as a fraction of the diameter." },
+        "maxAxialFraction": { "type": "number", "minimum": 0, "maximum": 100, "description": "Largest depth of cut, as a fraction of the diameter." },
+        "rampAngle": { "type": "number", "minimum": 0, "maximum": 90, "description": "Largest ramp angle, degrees (0: no ramping, plunge or pre-drill)." },
+        "comment": { "type": "string" }
+      }
+    }
+  }
+}

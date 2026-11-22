@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/optemplate.schema.json",
+  "title": "RayCAD operation template",
+  "description": "One operation template of a library, the file templates/<uuid>.optemplate.json (PLAN.md 3.6, libraries.h OpTemplate): a saved operation with its tool query and parameters, keyed by the feature it is for. Values in toolQuery and params may be expressions over feature.* and tool.* (with or without a leading '$'). Unknown keys are allowed and are kept when RayCAD saves the template again.",
+  "type": "object",
+  "required": ["schema", "id", "name", "opType", "toolQuery", "params"],
+  "properties": {
+    "schema": { "const": 1, "description": "Version of this file's format. A larger value means a newer RayCAD wrote it." },
+    "id": { "$ref": "#/$defs/uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "opType": { "type": "string", "minLength": 1, "description": "cam::Operation::type, e.g. 'drill', 'adaptive2d'." },
+    "featureKind": { "type": "string", "description": "'hole.tapped', 'hole.plain', 'pocket.closed', 'face', ... or empty for any." },
+    "material": { "anyOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }], "description": "Material id, or null for any." },
+    "machine": { "anyOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }], "description": "Machine id, or null for any." },
+    "toolQuery": { "type": "object", "description": "A LibraryStack::queryTools query." },
+    "params": { "type": "object", "description": "Operation parameters as the operation type's schema defines them." },
+    "comment": { "type": "string" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}
