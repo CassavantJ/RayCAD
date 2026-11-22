@@ -102,7 +102,8 @@ set(RAY_WALLCLOCK_SPLITS
 set(RAY_SERIAL_TESTS
     ray_core_jobs_tests     # a cancelled job returns within 100 ms
     ray_sketch_drag_bench   # the median drag step under 16 ms
-    ray_store_bench)        # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
+    ray_store_bench         # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
+    ray_render_backplot_cost) # 2 M backplot segments under the 500k-triangle baseline frame time on WARP
 
 # "<lock>=<test>", one list entry per test and lock.
 #   desktop    every test that shows a window. The windows of one desktop share the active window (only it gets keys

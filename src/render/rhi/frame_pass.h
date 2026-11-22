@@ -14,6 +14,8 @@
 //          with the rest. A section change marks the picture changed (colourRedrawn) and bumps sceneGeneration, so
 //          glass and the ID buffer follow. The pick pass draws the caps into the ID buffer from `capQuad` and
 //          `capped` (IdKind::Cap) with the same stencil technique.
+//   T-038 backplots: drawn in the main pass with the lines (path_lines.h); the pick pass draws the same instance
+//          ranges into its ID buffer (IdKind::Path) from `pathCorners` and the items' GpuItem::pathChunks.
 #pragma once
 
 #include "../viewport_frontend.h"
@@ -62,6 +64,8 @@ struct FrameContext {
     // of the bodies capped this frame; empty when nothing is capped.
     QRhiBuffer* capQuad = nullptr;
     std::span<const std::size_t> capped;
+    // Added by T-038: the backplot strip template (path_lines.h); null when it could not be created.
+    QRhiBuffer* pathCorners = nullptr;
 };
 
 // Vertex layouts of the scene's buffers (GpuItem), for passes that draw them with their own shaders.

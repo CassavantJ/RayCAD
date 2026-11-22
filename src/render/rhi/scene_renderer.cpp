@@ -43,6 +43,8 @@ struct FrameBlock {
     float draftPositive[4];
     float draftNegative[4];
     float draftVertical[4];
+    // T-038: the toolpath tokens by detail::PathSlot
+    float pathColor[8][4];
 };
 struct ItemBlock {
     float model[16];
@@ -52,7 +54,8 @@ struct ItemBlock {
     float line[4];
     float ids[4];
 };
-static_assert(sizeof(FrameBlock) == 304);
+static_assert(sizeof(FrameBlock) == 432);
+static_assert(int(detail::PathSlot::Count) <= 8);
 static_assert(sizeof(ItemBlock) == 192);
 
 constexpr quint32 kMeshStride = 28; // position, normal, face id
@@ -75,6 +78,10 @@ constexpr const char* kMetricHighlightLine = "line.highlight.px";
 constexpr double kHighlightLineScale = 2.0;
 constexpr const char* kMetricVertexMarker = "point.highlight.px";
 constexpr double kVertexMarkerScale = 2.5;
+// Backplots (T-038): line width (default: the thin line width); in the picking ID buffer at least this many logical
+// pixels, so a 1 px path still leaves an unbroken trail there (resolvePick then reaches it from kPickTolerancePx).
+constexpr const char* kMetricPathLine = "line.path.px";
+constexpr double kPathPickMinWidthPx = 2.0;
 
 QRhiGraphicsPipeline::TargetBlend alphaBlend()
 {
@@ -111,8 +118,9 @@ void copyMatrix(float dst[16], const QMatrix4x4& m)
 // Loaded once per process; a QShader holds no GPU resource.
 struct Shaders {
     QShader backgroundVs, backgroundFs, meshVs, meshFs, lineVs, lineFs, wideVs, wideFs;
-    QShader capVs, capFs; // T-023: section caps (optional: without them nothing is capped)
-    bool ok = false, capOk = false;
+    QShader capVs, capFs;   // T-023: section caps (optional: without them nothing is capped)
+    QShader pathVs, pathFs; // T-038: backplots (optional: without them no backplot is drawn)
+    bool ok = false, capOk = false, pathOk = false;
 };
 
 const Shaders& shaders()
@@ -133,6 +141,9 @@ const Shaders& shaders()
                  out.meshFs.isValid() && out.lineVs.isValid() && out.lineFs.isValid() && out.wideVs.isValid() &&
                  out.wideFs.isValid();
         out.capOk = out.capVs.isValid() && out.capFs.isValid();
+        out.pathVs = loadShader("path.vert");
+        out.pathFs = loadShader("path.frag");
+        out.pathOk = out.pathVs.isValid() && out.pathFs.isValid();
         return out;
     }();
     return s;
@@ -230,6 +241,7 @@ struct SceneRenderer::PipelineSet {
     Owned<QRhiGraphicsPipeline> background, meshOpaque, meshBlend, lineThin, lineWide;
     Owned<QRhiGraphicsPipeline> highlightFaces;      // T-015: mesh shaders, blended, on the faces' own depth
     Owned<QRhiGraphicsPipeline> capStencil, capFill; // T-023: section caps (section.h); null: no caps
+    Owned<QRhiGraphicsPipeline> path;                // T-038: backplots (path_lines.h); null: none drawn
     bool ok = false;
 };
 
@@ -386,6 +398,7 @@ void SceneRenderer::releaseResources()
     uniformCapacity_ = 0;
     quad_.reset();
     corners_.reset();
+    pathCorners_.reset();
     targetDirty_ = true;
 }
 
@@ -466,6 +479,10 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
         set->lineWide = make(sh.wideVs, sh.wideFs, wide, P::Triangles, true, false, P::LessOrEqual, true, false);
     // Same shaders and depth bias as the faces, so a highlight lands on exactly their depth and passes LessOrEqual.
     set->highlightFaces = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, false, P::LessOrEqual, true, true);
+    // T-038: backplots, blended (anti-aliased) and without depth writes, like the wide lines.
+    if (sh.pathOk && rhi_->isFeatureSupported(QRhi::Instancing))
+        set->path =
+            make(sh.pathVs, sh.pathFs, pathVertexLayout(), P::TriangleStrip, true, false, P::LessOrEqual, true, false);
     if (sh.capOk) {
         const auto finish = [&](Owned<QRhiGraphicsPipeline>& p) {
             p->setSampleCount(set->samples);
@@ -560,6 +577,11 @@ void SceneRenderer::uploadItem(const detail::SceneItem& item, GpuItem& gpu, bool
 {
     gpu.generation = item.geometryGeneration;
     ++uploads_;
+    if (item.kind == detail::ItemKind::Backplot) {
+        if (item.backplot && !uploadBackplot(rhi_, counter_, *item.backplot, snap_.preset.maxBackplotSegments, gpu, u))
+            ray::log(LogLevel::Error, "render", "a backplot could not be uploaded; it is not drawn");
+        return;
+    }
     if (item.kind == detail::ItemKind::Lines) {
         ensureWide(item, gpu, u);
         if (!rhi_->isFeatureSupported(QRhi::Instancing)) {
@@ -645,7 +667,7 @@ void SceneRenderer::uploadItem(const detail::SceneItem& item, GpuItem& gpu, bool
 
 void SceneRenderer::ensureWide(const detail::SceneItem& item, GpuItem& gpu, QRhiResourceUpdateBatch* u)
 {
-    if (gpu.wideEdges)
+    if (gpu.wideEdges || item.kind == detail::ItemKind::Backplot)
         return;
     QByteArray data;
     std::uint32_t segments = 0;
@@ -696,14 +718,21 @@ void SceneRenderer::syncItems(QRhiResourceUpdateBatch* u)
         if (!detail::itemNeeded(item))
             continue; // uploaded when it becomes visible (or pickable while hidden)
         GpuItem& gpu = gpu_[item.id];
-        const bool wantWide = item.kind == detail::ItemKind::Lines || (smoothEdges_ && item.style.showEdges) ||
-                              std::binary_search(highlightWide_.begin(), highlightWide_.end(), item.id);
-        if (gpu.generation != item.geometryGeneration) {
+        const bool wantWide = item.kind != detail::ItemKind::Backplot &&
+                              (item.kind == detail::ItemKind::Lines || (smoothEdges_ && item.style.showEdges) ||
+                               std::binary_search(highlightWide_.begin(), highlightWide_.end(), item.id));
+        // A backplot is uploaded again only for new geometry or a new display limit (preset), never for a range.
+        const bool restride = item.kind == detail::ItemKind::Backplot && item.backplot &&
+                              gpu.pathStride != detail::backplotStride(detail::backplotSegmentCount(*item.backplot),
+                                                                       snap_.preset.maxBackplotSegments);
+        if (gpu.generation != item.geometryGeneration || restride) {
             gpu = GpuItem{};
             uploadItem(item, gpu, wantWide, u);
         } else if (wantWide) {
             ensureWide(item, gpu, u);
         }
+        if (item.kind == detail::ItemKind::Backplot && uploadPathLods(rhi_, counter_, item, gpu, u))
+            ++uploads_; // its levels of detail, once the worker has made them (lines.h)
     }
 }
 
@@ -768,6 +797,8 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
         toFloat4(theme->colors[static_cast<std::size_t>(Token::ViewportBgTop)], block.bgTop);
         toFloat4(theme->colors[static_cast<std::size_t>(Token::ViewportBgBottom)], block.bgBottom);
         block.misc[3] = float(metric(*theme, kMetricDash, kDefaultDashPx) * snap_.devicePixelRatio);
+        for (int slot = 0; slot < int(detail::PathSlot::Count); ++slot)
+            toFloat4(theme->colors[std::size_t(detail::pathToken(detail::PathSlot(slot)))], block.pathColor[slot]);
     } else {
         block.misc[3] = float(kDefaultDashPx);
     }
@@ -952,10 +983,19 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
             drawCalls += 2;
         }
     }
-    // 2. edges and lines
+    // 2. edges, lines and backplots (T-038: the range of each, path_lines.h)
+    pathSegmentsDrawn_ = 0;
     for (const DrawItem& d : draws_) {
         if (!d.drawn)
             continue;
+        if (d.item->kind == detail::ItemKind::Backplot) {
+            if (set.path && pathCorners_) {
+                use(set.path.get(), d.itemUniformOffset);
+                const int level = pathLevelFor(*d.item, *d.gpu, snap_.camera, size.height());
+                pathSegmentsDrawn_ += drawBackplot(cb, pathCorners_.get(), *d.item, *d.gpu, level, drawCalls);
+            }
+            continue;
+        }
         if (d.item->kind == detail::ItemKind::Lines && set.lineWide) {
             drawWide(d);
         } else if (d.item->kind == detail::ItemKind::Lines || d.item->style.showEdges) {
@@ -1074,6 +1114,16 @@ void SceneRenderer::prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& t
         const QMatrix4x4 model = toMatrix(item.xform);
         copyMatrix(block.model, model);
         copyMatrix(block.normalMatrix, model.inverted().transposed());
+        if (item.kind == detail::ItemKind::Backplot) {
+            // T-038: the picked or named moves in one colour (PathSelected, or Hover), at the highlight width.
+            toFloat4(theme.colors[std::size_t(g.hover ? Token::Hover : Token::PathSelected)], block.edgeColor);
+            block.faceColor[3] = 1.0f;
+            block.line[0] = float(line * dpr);
+            block.line[1] = 1.0f;
+            block.ids[0] = float(item.id);
+            u->updateDynamicBuffer(uniforms_.get(), g.blockOffset, sizeof(block), &block);
+            continue;
+        }
         const Color themeBody = theme.colors[std::size_t(item.style.face)];
         const Color lineColour = theme.colors[std::size_t(g.hover ? Token::Hover : Token::Selection)];
         const Color fillColour = g.hover ? theme.colors[std::size_t(Token::Hover)] : fill;
@@ -1105,6 +1155,16 @@ void SceneRenderer::drawHighlights(QRhiCommandBuffer* cb, PipelineSet& set, cons
     for (const HighlightGroup& g : highlights_) {
         const DrawItem& d = draws_[g.draw];
         const GpuItem& gpu = *d.gpu;
+        if (d.item->kind == detail::ItemKind::Backplot) {
+            // T-038: each hit names a move by its moveIndex (kind and subIndex do not matter), drawn whether or not
+            // it is inside the range that setBackplotRange shows.
+            if (!set.path || !pathCorners_)
+                continue;
+            use(set.path.get(), g.blockOffset);
+            for (const PickHit& h : g.hits)
+                drawBackplotMove(cb, pathCorners_.get(), *d.item, gpu, h.moveIndex, drawCalls);
+            continue;
+        }
         const detail::MeshIndex* index = gpu.index.get();
         const kernel::Mesh* mesh = d.item->kind == detail::ItemKind::Mesh ? d.item->mesh.get() : nullptr;
 
@@ -1193,6 +1253,12 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         corners_->create();
         u->uploadStaticBuffer(quad_.get(), quad);
         u->uploadStaticBuffer(corners_.get(), corners);
+        pathCorners_ =
+            own(counter_, rhi_->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, kPathCornerBytes));
+        if (pathCorners_->create())
+            u->uploadStaticBuffer(pathCorners_.get(), kPathCorners);
+        else
+            pathCorners_.reset();
     }
 
     // Draw list: visible items with geometry. Slots in the uniform buffer: FrameBlocks first (main pass, then one
@@ -1284,7 +1350,15 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
             toFloat4(theme->colors[static_cast<std::size_t>(d.item->style.edge)], block.edgeColor);
             block.faceColor[3] = snap_.preset.transparency ? std::clamp(d.item->style.opacity, 0.0f, 1.0f) : 1.0f;
             block.edgeColor[3] = 1.0f;
-            if (d.item->kind == detail::ItemKind::Lines) {
+            if (d.item->kind == detail::ItemKind::Backplot) {
+                // T-038 (frame.glsl): width, one colour unless the style keeps PathCut, ID-buffer width, opacity.
+                const double width =
+                    metric(*theme, kMetricPathLine, metric(*theme, kMetricThinLine, kDefaultThinLinePx));
+                block.line[0] = float(width * dpr);
+                block.line[1] = style.edge != Token::PathCut ? 1.0f : 0.0f;
+                block.line[3] = float(std::max(width, kPathPickMinWidthPx) * dpr);
+                block.faceColor[3] = std::clamp(style.opacity, 0.0f, 1.0f);
+            } else if (d.item->kind == detail::ItemKind::Lines) {
                 block.line[0] = float(d.item->lines->widthPx * dpr);
                 block.line[1] = d.item->lines->dashed ? 1.0f : 0.0f;
             } else {
@@ -1417,6 +1491,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         ctx.lineCorners = corners_.get();
         ctx.capQuad = capQuad_.get();
         ctx.capped = capped_;
+        ctx.pathCorners = pathCorners_.get();
         for (auto& pass : passes_)
             pass->record(ctx);
     }
@@ -1467,6 +1542,17 @@ void SceneRenderer::publishStats(double cpuMs)
     info.backdropBlurs = backdropBlurs();
     info.meshUploads = uploads_;
     info.sectionCaps = capsDrawn_;
+    info.pathSegments = pathSegmentsDrawn_;
+    info.pathGpuBytes = 0;
+    const auto addBytes = [&info](const std::vector<PathChunk>& chunks) {
+        for (const PathChunk& chunk : chunks)
+            info.pathGpuBytes += chunk.buffer ? chunk.buffer->size() : 0;
+    };
+    for (const auto& entry : gpu_) {
+        addBytes(entry.second.pathChunks);
+        for (const std::vector<PathChunk>& level : entry.second.lodChunks)
+            addBytes(level);
+    }
     info.liveRhiResources = counter_.live.load();
     // The UI thread learns size, orientation and generation; the handle itself stays on this thread (render.h).
     status_->backdrop = backdrop();
