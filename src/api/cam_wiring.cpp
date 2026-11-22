@@ -4,9 +4,12 @@
 // cam::makeCamEngine over doc::camSnapshot and the app's job system, wrapped so every generation is an app job: the
 // destructor cancels and waits for it like any other, and closing a document cancels the generations of its
 // operations and makes the engine forget them (unless another open document has the same operation ids: a second copy
-// of the same file). The library stack is made from AppOptions::libraryRoots, or (when they are empty) from the built-in
-// library, the shared folders and the user library of the settings, made again on the UI thread when those settings
-// change, and watched (LibraryStack::watch) through the app's dispatcher.
+// of the same file). The library stack is made from AppOptions::libraryRoots, or (when they are empty) from the
+// built-in library, the shared folders and the user library of the settings, made again on the UI thread when those
+// settings change, and watched (LibraryStack::watch) through the app's dispatcher. Only the built-in library (local,
+// read-only) is read on the UI thread; the shared folders and the user library are read on the app's workers
+// (LibraryStack::setRootsInBackground) and join the stack when read, so a slow or unreachable network share neither
+// delays start-up by more than kLibraryWait nor hangs it: it becomes an issue when its read fails.
 #include "app_impl.h"
 
 #include <algorithm>
@@ -18,6 +21,10 @@ namespace ray::api::detail {
 namespace {
 
 using ToolpathPtr = std::shared_ptr<const cam::Toolpath>;
+
+// How long making the default library stack waits for the roots read in the background: local folders are read by
+// then (the stack is complete when the app starts); a slow network share arrives later, through the listeners.
+constexpr std::chrono::milliseconds kLibraryWait{500};
 
 // The engine as the app hands it out: the real one, with each generation adopted as an app job and remembered per
 // operation until it ends, so a closing document can cancel its own.
@@ -51,10 +58,7 @@ public:
         }
     }
 
-    void forget(std::span<const OperationId> ops) override
-    {
-        inner_->forget(ops);
-    }
+    void forget(std::span<const OperationId> ops) override { inner_->forget(ops); }
 
     void cancel(const std::set<OperationId>& ops)
     {
@@ -188,7 +192,7 @@ void AppImpl::configureLibraries()
             log(LogLevel::Warn, "api", "The user library folder could not be made: " + ec.message());
         }
     }
-    libraries_->setRoots(std::move(roots), readOnly);
+    libraries_->setRootsInBackground(std::move(roots), readOnly, *jobs_, readOnly, kLibraryWait);
 }
 
 void AppImpl::cancelGenerations(const doc::DocStatePtr& state)

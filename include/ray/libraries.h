@@ -37,10 +37,12 @@
 //    comes from), merged lists of every kind, remerge, and one watch over every root with listeners (the tool
 //    library UI, T-046).
 // Changed by the canned-cycle settlement (cam.h): MachineDef::peckClearance, optional, the expansion fallback.
+// Changed so start-up does not wait for network folders: LibraryStack::setRootsInBackground, RootInfo::loading.
 // Changed for the feeds power model: Material::mc, optional, the chip thickness exponent of kc (kc1.1 alone reads about
 // half the power at typical chip thicknesses).
 #pragma once
 #include "core.h"
+#include <chrono>
 #include <map>
 #include <optional>
 #include <variant>
@@ -196,7 +198,9 @@ using QueryVars = std::map<std::string, QueryValue, std::less<>>;
 
 // Several roots are layered: built-in (read-only, shipped) < shop (network) < user (local). Later wins by id.
 // Not thread-safe (UI thread). Item pointers returned stay valid until the next setRoots, refresh or remerge (or a
-// change the watch merges); ILibrary pointers until the next setRoots. A worker needs copies.
+// change the watch merges, or a root read in the background arriving); ILibrary pointers until the next setRoots. A
+// worker needs copies. setRootsInBackground keeps this: a worker reads a folder into a library nothing else sees, and
+// only the UI thread puts it into the stack.
 class LibraryStack {
 public:
     LibraryStack();
@@ -206,6 +210,18 @@ public:
     // A root that cannot be opened becomes an issue. The first `readOnlyRoots` roots (the built-in library) are
     // read-only: roots() reports them not writable and library() does not hand them out. A watch carries over.
     void setRoots(std::vector<std::string> dirsLowestFirst, std::size_t readOnlyRoots = 0);
+    // As setRoots, but only the first `openNow` roots are read here. The others are read on workers of `jobs`
+    // (ILibrary::open, into a library no one else sees yet) and handed to the stack on the UI thread by the job's
+    // continuation (posted through the job system's dispatcher), where each is merged in, watched when the stack is,
+    // and the listeners are called. This call first waits up to `waitAtMost` for them (a local folder is read by then,
+    // so the stack is usually complete when it returns; a slow or unreachable network folder does not hold it up
+    // longer). Until a root arrives, roots() reports it `loading` and not open, and it adds no items; one that cannot
+    // be opened becomes an issue, as with setRoots. A later setRoots or setRootsInBackground, or the stack's
+    // destruction, cancels the reads still running (a read blocked inside the file system ends when that call
+    // returns) and drops their results. `jobs` and its dispatcher must outlive the stack. Added so that start-up does
+    // not wait for library.sharedFolders.
+    void setRootsInBackground(std::vector<std::string> dirsLowestFirst, std::size_t readOnlyRoots, IJobSystem& jobs,
+                              std::size_t openNow, std::chrono::milliseconds waitAtMost);
     std::vector<LibraryIssue> issues() const;                  // of every root, lowest root first
     bool refresh();                                            // rescans every root (and retries failed ones)
 
@@ -214,6 +230,7 @@ public:
         std::string name;           // library.json "name", else the folder's own name
         bool open = false;          // false: it could not be opened (issues() says why; refresh() retries)
         bool writable = false;      // open and not read-only
+        bool loading = false;       // being read in the background (setRootsInBackground); not open yet
     };
     std::vector<RootInfo> roots() const;                       // lowest first
     // The library of a writable root, to save into or remove from; null for a read-only root, one that is not open
