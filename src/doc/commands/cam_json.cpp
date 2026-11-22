@@ -706,6 +706,55 @@ Value toJson(const cam::Heights& z)
                           {"top", Value::number(z.top)}});
 }
 
+// T-045: what "Use calculated" wrote (cam.h CalculatedFeeds). Ids: tool required, material and machine nullable;
+// opClass "" by default; surfaceSpeed and chipLoad absent or null when not given; the values written non-negative.
+Result<cam::CalculatedFeeds> readCalculatedFeeds(const Value& value, const Source& source, std::string_view field)
+{
+    RAY_CAMJSON_TRY(o, Obj::of(value, source, std::string(field)));
+    RAY_CAMJSON_CHECK(o->only({"chipLoad", "feedCut", "feedPlunge", "feedRamp", "machine", "material", "opClass", "rpm",
+                               "surfaceSpeed", "tool"}));
+    cam::CalculatedFeeds c;
+    RAY_CAMJSON_TRY(tool, o->uuid("tool"));
+    RAY_CAMJSON_TRY(material, o->uuid("material", true));
+    RAY_CAMJSON_TRY(machine, o->uuid("machine", true));
+    RAY_CAMJSON_TRY(opClass, o->string("opClass", std::string()));
+    c.tool = ToolId{*tool};
+    c.material = MaterialId{*material};
+    c.machine = MachineId{*machine};
+    c.opClass = std::move(*opClass);
+    for (const auto& [key, slot] : {std::pair<const char*, std::optional<double>*>{"surfaceSpeed", &c.surfaceSpeedMMin},
+                                    std::pair<const char*, std::optional<double>*>{"chipLoad", &c.chipLoadMm}}) {
+        if (const Value* v = o->get(key); v != nullptr && !v->isNull()) {
+            RAY_CAMJSON_TRY(n, o->number(key, std::nullopt));
+            *slot = *n;
+        }
+    }
+    for (const auto& [key, slot] : {std::pair<const char*, double*>{"rpm", &c.spindleRpm},
+                                    std::pair<const char*, double*>{"feedCut", &c.feedCut},
+                                    std::pair<const char*, double*>{"feedPlunge", &c.feedPlunge},
+                                    std::pair<const char*, double*>{"feedRamp", &c.feedRamp}}) {
+        RAY_CAMJSON_TRY(n, o->number(key, 0.0));
+        RAY_CAMJSON_CHECK(nonNegative(*o, key, *n));
+        *slot = *n;
+    }
+    return c;
+}
+
+Value toJson(const cam::CalculatedFeeds& c)
+{
+    const auto optional = [](const std::optional<double>& v) { return v ? Value::number(*v) : Value(); };
+    return Value::object({{"chipLoad", optional(c.chipLoadMm)},
+                          {"feedCut", Value::number(c.feedCut)},
+                          {"feedPlunge", Value::number(c.feedPlunge)},
+                          {"feedRamp", Value::number(c.feedRamp)},
+                          {"machine", nullableId(c.machine.value)},
+                          {"material", nullableId(c.material.value)},
+                          {"opClass", text(c.opClass)},
+                          {"rpm", Value::number(c.spindleRpm)},
+                          {"surfaceSpeed", optional(c.surfaceSpeedMMin)},
+                          {"tool", idValue(c.tool.value)}});
+}
+
 Result<std::vector<naming::TopoRef>> readGeometry(const Value& value, const Source& source, std::string_view field)
 {
     if (!value.isArray()) {
@@ -807,17 +856,22 @@ Value toJson(const cam::Setup& s)
     for (const OperationId& id : s.operations) {
         ops.push_back(idValue(id.value));
     }
-    Value known = Value::object({{"fixtureBodies", idArray(s.fixtureBodies)},
-                                 {"id", idValue(s.id.value)},
-                                 {"machine", nullableId(s.machine.value)},
-                                 {"name", text(s.name)},
-                                 {"operations", Value::array(std::move(ops))},
-                                 {"partBodies", idArray(s.partBodies)},
-                                 {"post", text(s.postId)},
-                                 {"programComment", text(s.programComment)},
-                                 {"programNumber", Value::number(s.programNumber)},
-                                 {"stock", toJson(s.stock)},
-                                 {"wcs", toJson(s.wcs)}});
+    Value::Object members{{"fixtureBodies", idArray(s.fixtureBodies)},
+                          {"id", idValue(s.id.value)},
+                          {"machine", nullableId(s.machine.value)},
+                          {"name", text(s.name)},
+                          {"operations", Value::array(std::move(ops))},
+                          {"partBodies", idArray(s.partBodies)},
+                          {"post", text(s.postId)},
+                          {"programComment", text(s.programComment)},
+                          {"programNumber", Value::number(s.programNumber)},
+                          {"stock", toJson(s.stock)},
+                          {"wcs", toJson(s.wcs)}};
+    // T-045: written only when set, so a setup without one keeps the bytes (and hash) it had before the member.
+    if (s.material.value != Uuid{}) {
+        members.push_back({"material", idValue(s.material.value)});
+    }
+    Value known = Value::object(std::move(members));
     return withExtras(std::move(known), s.extraJson);
 }
 
@@ -828,12 +882,14 @@ Result<cam::Setup> readSetup(const Value& value, const Source& source)
     RAY_CAMJSON_TRY(id, o->uuid("id"));
     RAY_CAMJSON_TRY(name, o->string("name", std::nullopt));
     RAY_CAMJSON_TRY(machine, o->uuid("machine", true));
+    RAY_CAMJSON_TRY(material, o->uuid("material", true)); // T-045; absent in older documents
     RAY_CAMJSON_TRY(post, o->string("post", std::string()));
     RAY_CAMJSON_TRY(comment, o->string("programComment", std::string()));
     RAY_CAMJSON_TRY(number, o->integer("programNumber", 1001, 0, 99999999));
     s.id = SetupId{*id};
     s.name = std::move(*name);
     s.machine = MachineId{*machine};
+    s.material = MaterialId{*material};
     s.postId = std::move(*post);
     s.programComment = std::move(*comment);
     s.programNumber = *number;
@@ -876,16 +932,21 @@ Value toJson(const cam::Operation& op)
             params = std::move(*parsed);
         }
     }
-    Value known = Value::object({{"cutting", toJson(op.cutting)},
-                                 {"geometry", toJson(op.geometry)},
-                                 {"heights", toJson(op.heights)},
-                                 {"id", idValue(op.id.value)},
-                                 {"name", text(op.name)},
-                                 {"params", std::move(params)},
-                                 {"suppressed", Value::boolean(op.suppressed)},
-                                 {"template", text(op.templateId)},
-                                 {"tool", toJson(op.tool)},
-                                 {"type", text(op.type)}});
+    Value::Object members{{"cutting", toJson(op.cutting)},
+                          {"geometry", toJson(op.geometry)},
+                          {"heights", toJson(op.heights)},
+                          {"id", idValue(op.id.value)},
+                          {"name", text(op.name)},
+                          {"params", std::move(params)},
+                          {"suppressed", Value::boolean(op.suppressed)},
+                          {"template", text(op.templateId)},
+                          {"tool", toJson(op.tool)},
+                          {"type", text(op.type)}};
+    // T-045: written only when set, so an operation without one keeps its bytes (and hash).
+    if (op.calculated) {
+        members.push_back({"calculatedFeeds", toJson(*op.calculated)});
+    }
+    Value known = Value::object(std::move(members));
     return withExtras(std::move(known), op.extraJson);
 }
 
@@ -923,6 +984,10 @@ Result<cam::Operation> readOperation(const Value& value, const Source& source)
         op.paramsJson = json::write(*params);
     } else {
         op.paramsJson = "{}";
+    }
+    if (const Value* calculated = o->get("calculatedFeeds"); calculated != nullptr && !calculated->isNull()) {
+        RAY_CAMJSON_TRY(read, readCalculatedFeeds(*calculated, source, "calculatedFeeds"));
+        op.calculated = std::move(*read);
     }
     op.extraJson = extrasOf(value, toJson(op));
     return op;

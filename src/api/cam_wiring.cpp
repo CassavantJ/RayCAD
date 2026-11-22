@@ -60,6 +60,30 @@ public:
 
     void forget(std::span<const OperationId> ops) override { inner_->forget(ops); }
 
+    // T-045: the listeners are the inner engine's; its worker jobs are adopted as app jobs, so the app's destructor
+    // cancels and waits for them like any other.
+    int subscribe(Listener listener) override { return inner_->subscribe(std::move(listener)); }
+    void unsubscribe(int id) override { inner_->unsubscribe(id); }
+    JobHandle<std::map<OperationId, cam::OpState>> statusAsync(doc::DocStatePtr state,
+                                                               doc::BuildResultPtr build) override
+    {
+        auto job = inner_->statusAsync(std::move(state), std::move(build));
+        app_.adoptJob(job, "CAM status");
+        return job;
+    }
+    JobHandle<cam::OpValidation> validate(doc::DocStatePtr state, doc::BuildResultPtr build, OperationId id) override
+    {
+        auto job = inner_->validate(std::move(state), std::move(build), id);
+        app_.adoptJob(job, "Check operation");
+        return job;
+    }
+    JobHandle<ToolpathPtr> preview(doc::DocStatePtr state, doc::BuildResultPtr build, OperationId id) override
+    {
+        auto job = inner_->preview(std::move(state), std::move(build), id);
+        app_.adoptJob(job, "Toolpath preview");
+        return job;
+    }
+
     void cancel(const std::set<OperationId>& ops)
     {
         std::vector<JobHandle<ToolpathPtr>> jobs;

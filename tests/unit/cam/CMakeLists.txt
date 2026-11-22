@@ -2,6 +2,7 @@
 add_executable(ray_cam_engine_tests
     engine_api_test.cpp
     engine_document_test.cpp
+    engine_notify_test.cpp # notifications, status on a worker, validate, previews, material and feeds record (T-045)
     engine_test.cpp
 )
 # The engine reads document snapshots (doc::camSnapshot), the document tests rebuild parts with the doc tests' builders

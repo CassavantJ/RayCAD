@@ -113,6 +113,10 @@ std::unique_ptr<IActionRegistry> makeActionRegistry(AppImpl& app);
 Status registerBuiltinActions(AppImpl& app);
 // settings.get, settings.set and settings.reset over `store` (settings.cpp, T-024).
 Status registerSettingsActions(IActionRegistry& actions, std::shared_ptr<SettingsStore> store);
+// cam.operation.add / edit: "params" checked against the operation type's schema and completed with its defaults, as
+// the actions run them (builtin_actions.cpp; also ray_api/cam_operation.h completeCommand, T-045).
+Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, const doc::DocState& state,
+                                          const doc::Command& command);
 
 class AppImpl final : public HeadlessApp {
 public:

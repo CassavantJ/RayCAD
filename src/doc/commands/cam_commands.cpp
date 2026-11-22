@@ -27,6 +27,9 @@
 //   cam.operation.suppress {"id", "suppressed"}
 //   cam.library.embed    {"tools"?, "holders"?, "machines"?, "materials"?}: embeds the items, or replaces the embedded
 //                        copy of the same id (an updated library item: the operations using it go stale)
+// T-045: cam.setup.add / edit take "material"?: uuid | null (the stock material, embedded or in "library"), and
+// cam.operation.add / edit "calculatedFeeds"?: CalculatedFeeds | null (what "Use calculated" wrote; null forgets it).
+// Neither is in an input hash: changing them makes nothing stale.
 // Library = {"tools"?: [Tool], "holders"?: [Holder], "machines"?: [Machine], "materials"?: [Material]}: library items
 // embedded in the same step (PLAN.md 3.1: a document carries a copy of every library item it uses, taken on first use).
 // Checks: bodies are bodies of the document (part and fixture bodies distinct, at least one part); a "fromSetup" stock
@@ -342,6 +345,10 @@ Status checkSetup(const Args& args, const DocState& doc, const cam::CamState& ca
         return args.error("machine", "names machine " + s.machine.value.toString() +
                                          ", which is not embedded: give it in 'library'");
     }
+    if (s.material.value != Uuid{} && cam.materials.count(s.material) == 0) {
+        return args.error("material", "names material " + s.material.value.toString() +
+                                          ", which is not embedded: give it in 'library'");
+    }
     for (const OperationId& opId : s.operations) {
         const cam::Operation& op = cam.operations.at(opId);
         for (std::size_t i = 0; i < op.geometry.size(); ++i) {
@@ -428,6 +435,15 @@ Status readSetupMembers(const Args& args, cam::Setup& s, bool adding, const cam:
             s.machine = MachineId{*id};
         }
     }
+    RAY_CAM_TRY(material, args.optValue("material")); // T-045
+    if (*material != nullptr) {
+        if ((*material)->isNull()) {
+            s.material = MaterialId{};
+        } else {
+            RAY_CAM_TRY(id, args.id("material"));
+            s.material = MaterialId{*id};
+        }
+    }
     RAY_CAM_TRY(post, args.optString("post"));
     if (*post) {
         s.postId = std::move(**post);
@@ -456,8 +472,8 @@ Status readSetupMembers(const Args& args, cam::Setup& s, bool adding, const cam:
 Result<DocStatePtr> setupAdd(const DocState& before, std::string_view argsJson)
 {
     RAY_CAM_TRY(args, Args::parse(kSetupAdd, argsJson,
-                                  {"fixtureBodies", "id", "index", "library", "machine", "name", "partBodies", "post",
-                                   "programComment", "programNumber", "stock", "wcs"}));
+                                  {"fixtureBodies", "id", "index", "library", "machine", "material", "name",
+                                   "partBodies", "post", "programComment", "programNumber", "stock", "wcs"}));
     RAY_CAM_TRY(id, args->id("id"));
     Edit e = edit(before);
     if (setupIndex(*e.cam, SetupId{*id}) >= 0) {
@@ -480,11 +496,12 @@ Result<DocStatePtr> setupAdd(const DocState& before, std::string_view argsJson)
 Result<DocStatePtr> setupEdit(const DocState& before, std::string_view argsJson)
 {
     RAY_CAM_TRY(args, Args::parse(kSetupEdit, argsJson,
-                                  {"fixtureBodies", "id", "library", "machine", "name", "partBodies", "post",
-                                   "programComment", "programNumber", "stock", "wcs"}));
+                                  {"fixtureBodies", "id", "library", "machine", "material", "name", "partBodies",
+                                   "post", "programComment", "programNumber", "stock", "wcs"}));
     Edit e = edit(before);
     RAY_CAM_TRY(index, existingSetup(*args, *e.cam));
-    if (!args->has("fixtureBodies") && !args->has("library") && !args->has("machine") && !args->has("name") &&
+    if (!args->has("fixtureBodies") && !args->has("library") && !args->has("machine") && !args->has("material") &&
+        !args->has("name") &&
         !args->has("partBodies") && !args->has("post") && !args->has("programComment") && !args->has("programNumber") &&
         !args->has("stock") && !args->has("wcs")) {
         return args->error("nothing to change: give at least one member of the setup");
@@ -587,14 +604,24 @@ Status readOperationMembers(const Args& args, cam::Operation& op, bool adding, c
     if (*templ) {
         op.templateId = std::move(**templ);
     }
+    // T-045: what "Use calculated" wrote; null forgets it (the values are the user's own then).
+    RAY_CAM_TRY(calculated, args.optValue("calculatedFeeds"));
+    if (*calculated != nullptr) {
+        if ((*calculated)->isNull()) {
+            op.calculated.reset();
+        } else {
+            RAY_CAM_TRY(read, camjson::readCalculatedFeeds(**calculated, source, "calculatedFeeds"));
+            op.calculated = std::move(*read);
+        }
+    }
     return {};
 }
 
 Result<DocStatePtr> operationAdd(const DocState& before, std::string_view argsJson)
 {
     RAY_CAM_TRY(args, Args::parse(kOpAdd, argsJson,
-                                  {"cutting", "geometry", "heights", "id", "index", "library", "name", "params",
-                                   "setup", "suppressed", "template", "tool", "type"}));
+                                  {"calculatedFeeds", "cutting", "geometry", "heights", "id", "index", "library",
+                                   "name", "params", "setup", "suppressed", "template", "tool", "type"}));
     RAY_CAM_TRY(id, args->id("id"));
     Edit e = edit(before);
     if (e.cam->operations.count(OperationId{*id}) != 0) {
@@ -619,11 +646,12 @@ Result<DocStatePtr> operationAdd(const DocState& before, std::string_view argsJs
 Result<DocStatePtr> operationEdit(const DocState& before, std::string_view argsJson)
 {
     RAY_CAM_TRY(args, Args::parse(kOpEdit, argsJson,
-                                  {"cutting", "geometry", "heights", "id", "library", "name", "params", "template",
-                                   "tool", "type"}));
+                                  {"calculatedFeeds", "cutting", "geometry", "heights", "id", "library", "name",
+                                   "params", "template", "tool", "type"}));
     Edit e = edit(before);
     RAY_CAM_TRY(id, existingOperation(*args, *e.cam));
-    if (!args->has("cutting") && !args->has("geometry") && !args->has("heights") && !args->has("library") &&
+    if (!args->has("calculatedFeeds") && !args->has("cutting") && !args->has("geometry") && !args->has("heights") &&
+        !args->has("library") &&
         !args->has("name") && !args->has("params") && !args->has("template") && !args->has("tool") &&
         !args->has("type")) {
         return args->error("nothing to change: give at least one member of the operation");
@@ -793,12 +821,27 @@ std::string librarySchema()
            item + R"(,"holders":)" + item + R"(,"machines":)" + item + R"(,"materials":)" + item + "}}";
 }
 
+// T-045: Operation::calculated (cam_json.h readCalculatedFeeds); null forgets it.
+std::string calculatedFeedsSchema()
+{
+    const std::string nonNegative = R"({"type":"number","minimum":0})";
+    const std::string optional = R"({"type":["number","null"],"exclusiveMinimum":0})";
+    return R"({"type":["object","null"],"additionalProperties":false,"required":["tool"],"description":"What 'Use )"
+           R"(calculated' (computeFeeds) last wrote into the cutting data; a record for the panel, not in the input )"
+           R"(hash","properties":{"tool":)" +
+           uuid() + R"(,"material":)" + nullableUuid() + R"(,"machine":)" + nullableUuid() +
+           R"(,"opClass":{"type":"string"},"surfaceSpeed":)" + optional + R"(,"chipLoad":)" + optional +
+           R"(,"rpm":)" + nonNegative + R"(,"feedCut":)" + nonNegative + R"(,"feedPlunge":)" + nonNegative +
+           R"(,"feedRamp":)" + nonNegative + "}}";
+}
+
 std::string setupProperties(bool withIndex)
 {
     return R"("id":)" + uuid() + R"(,"name":{"type":"string","minLength":1},"partBodies":)" +
            bodies("The bodies this setup machines") + R"(,"fixtureBodies":)" +
            bodies("Vises, clamps and plates: collision bodies, never cut") + R"(,"stock":)" + stockSchema() +
-           R"(,"wcs":)" + wcsSchema() + R"(,"machine":)" + nullableUuid() + R"(,"post":{"type":"string"},)" +
+           R"(,"wcs":)" + wcsSchema() + R"(,"machine":)" + nullableUuid() + R"(,"material":)" + nullableUuid() +
+           R"(,"post":{"type":"string"},)" +
            R"("programNumber":{"type":"integer","minimum":0,"maximum":99999999},"programComment":{"type":"string"},)" +
            R"("library":)" + librarySchema() + (withIndex ? R"(,"index":{"type":"integer","minimum":0})" : "");
 }
@@ -809,7 +852,8 @@ std::string operationProperties()
            R"("name":{"type":"string","minLength":1},"tool":)" + toolRefSchema() + R"(,"cutting":)" + cuttingSchema() +
            R"(,"heights":)" + heightsSchema() + R"(,"geometry":)" + refs() +
            R"(,"params":{"type":"object","description":"Type-specific; the operation type's schema"},)" +
-           R"("template":{"type":"string"},"library":)" + librarySchema();
+           R"("template":{"type":"string"},"library":)" + librarySchema() + R"(,"calculatedFeeds":)" +
+           calculatedFeedsSchema();
 }
 
 std::string head(std::string_view required, std::string_view properties, bool minTwo = false)

@@ -67,6 +67,11 @@ Result<cam::CuttingData> readCutting(const json::Value&, const Source&, std::str
 Result<cam::Heights> readHeights(const json::Value&, const Source&, std::string_view field, const cam::Heights* base);
 Result<std::vector<naming::TopoRef>> readGeometry(const json::Value&, const Source&, std::string_view field);
 Result<std::vector<BodyId>> readBodies(const json::Value&, const Source&, std::string_view field);
+// T-045: Operation::calculated, {"chipLoad"?,"feedCut","feedPlunge","feedRamp","machine","material","opClass","rpm",
+// "surfaceSpeed"?,"tool"}; an operation writes it only when set (as a setup writes "material"), so documents without
+// either keep their bytes.
+Result<cam::CalculatedFeeds> readCalculatedFeeds(const json::Value&, const Source&, std::string_view field);
+json::Value toJson(const cam::CalculatedFeeds&);
 
 json::Value toJson(const cam::StockDef&);
 json::Value toJson(const cam::Wcs&);
