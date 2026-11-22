@@ -199,6 +199,23 @@ Item {
                 font: Theme.smallFont
                 text: (root.values["name"] !== undefined ? root.values["name"] : "") + " · " + CamOperation.typeTitle
             }
+            // How many are picked, whatever the scroll (the list itself is under Geometry and can scroll away).
+            Row {
+                visible: CamOperation.pickCountText !== ""
+                spacing: Theme.spacingXs
+                Icon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "select"
+                    color: CamOperation.picks.length > 0 ? Theme.accentText : Theme.textSecondary
+                }
+                Label {
+                    objectName: "operationPickCount"
+                    anchors.verticalCenter: parent.verticalCenter
+                    font: Theme.smallFont
+                    secondary: CamOperation.picks.length === 0
+                    text: CamOperation.pickCountText
+                }
+            }
         }
 
         Flickable {
@@ -346,28 +363,50 @@ Item {
                     font: Theme.smallFont
                     text: qsTr("Nothing picked yet")
                 }
+                // Each pick, marked in the view as well; the row under the pointer marks its own more strongly.
                 Repeater {
                     model: CamOperation.active ? CamOperation.picks : []
-                    delegate: Row {
+                    delegate: Item {
+                        id: pickRow
                         required property var modelData
                         required property int index
+                        readonly property bool emphasised: CamOperation.hoveredPick === index
                         objectName: "operationPick." + index
-                        spacing: Theme.spacingS
-                        leftPadding: Theme.spacingM
-                        Label {
-                            width: root.labelWidth + root.fieldWidth - Theme.spacingM
-                            anchors.verticalCenter: parent.verticalCenter
-                            wrapMode: Text.Wrap
-                            elide: Text.ElideNone
-                            text: modelData.text
+                        width: pickLine.implicitWidth
+                        height: pickLine.implicitHeight
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: Theme.radiusSmall
+                            color: pickRow.emphasised ? Theme.controlBgHover : "transparent"
                         }
-                        ToolButton {
-                            objectName: "operationPickRemove." + index
-                            anchors.verticalCenter: parent.verticalCenter
-                            compact: true
-                            iconName: "close"
-                            toolTipText: qsTr("Remove")
-                            onClicked: CamOperation.removePick(index)
+                        HoverHandler {
+                            id: pickHover
+                            onHoveredChanged: {
+                                if (hovered)
+                                    CamOperation.hoveredPick = pickRow.index
+                                else if (CamOperation.hoveredPick === pickRow.index)
+                                    CamOperation.hoveredPick = -1
+                            }
+                        }
+                        Row {
+                            id: pickLine
+                            spacing: Theme.spacingS
+                            leftPadding: Theme.spacingM
+                            Label {
+                                width: root.labelWidth + root.fieldWidth - Theme.spacingM
+                                anchors.verticalCenter: parent.verticalCenter
+                                wrapMode: Text.Wrap
+                                elide: Text.ElideNone
+                                text: pickRow.modelData.text
+                            }
+                            ToolButton {
+                                objectName: "operationPickRemove." + pickRow.index
+                                anchors.verticalCenter: parent.verticalCenter
+                                compact: true
+                                iconName: "close"
+                                toolTipText: qsTr("Remove %1").arg(pickRow.modelData.text)
+                                onClicked: CamOperation.removePick(pickRow.index)
+                            }
                         }
                     }
                 }

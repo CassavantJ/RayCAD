@@ -344,7 +344,22 @@ std::vector<render::PickHit> SelectionModel::hits() const
         out.push_back(e.hit);
     if (pathHighlight_)
         out.push_back(*pathHighlight_);
+    out.insert(out.end(), toolHighlight_.begin(), toolHighlight_.end());
     return out;
+}
+
+void SelectionModel::setToolHighlight(std::vector<render::PickHit> hits, std::optional<render::PickHit> emphasis)
+{
+    const auto same = [](const std::vector<render::PickHit>& a, const std::vector<render::PickHit>& b) {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), sameHit);
+    };
+    const bool sameEmphasis = emphasis.has_value() == toolEmphasis_.has_value() &&
+                              (!emphasis || sameHit(*emphasis, *toolEmphasis_));
+    if (same(hits, toolHighlight_) && sameEmphasis)
+        return;
+    toolHighlight_ = std::move(hits);
+    toolEmphasis_ = emphasis;
+    emit highlightChanged();
 }
 
 void SelectionModel::selectionChanged()

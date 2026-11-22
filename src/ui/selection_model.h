@@ -90,7 +90,7 @@ public:
     Q_INVOKABLE bool isBodySelected(int bodyIndex) const;
 
     const std::vector<SelectionEntry>& entries() const { return entries_; }
-    // What the viewport highlights: the entries' hits, then the path highlight (below).
+    // What the viewport highlights: the entries' hits, then the path highlight and the tool highlight (below).
     std::vector<render::PickHit> hits() const;
 
     // T-047, toolpath moves (the G-code viewer, cam/post_view.h). While path picking is on, clicks and the hover pick
@@ -101,6 +101,15 @@ public:
     bool pathPicking() const { return pathPicking_; }
     void setPathHighlight(std::optional<render::PickHit> hit);
     std::optional<render::PickHit> pathHighlight() const { return pathHighlight_; }
+
+    // What a tool panel shows as picked (the operation panel's holes, faces or edges): drawn with the selection's
+    // highlight but not part of the selection (a click, Esc or clear() leave it). `emphasis` (the pick a list row under
+    // the pointer names) is drawn with the hover highlight while the view has no hover of its own. Empty: none.
+    void setToolHighlight(std::vector<render::PickHit> hits, std::optional<render::PickHit> emphasis = std::nullopt);
+    const std::vector<render::PickHit>& toolHighlight() const { return toolHighlight_; }
+    std::optional<render::PickHit> toolEmphasis() const { return toolEmphasis_; }
+    // What the viewport draws with the hover highlight: the element under the pointer, else the tool's emphasis.
+    std::optional<render::PickHit> hoverHighlight() const { return hover_ ? hover_ : toolEmphasis_; }
 
 signals:
     void changed();
@@ -136,6 +145,8 @@ private:
     QVariantList info_;
     bool pathPicking_ = false;                     // T-047
     std::optional<render::PickHit> pathHighlight_; // T-047
+    std::vector<render::PickHit> toolHighlight_;
+    std::optional<render::PickHit> toolEmphasis_;
 };
 
 } // namespace ray::ui

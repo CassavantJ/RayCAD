@@ -656,7 +656,7 @@ void ViewportItem::updateHighlight()
     const std::vector<render::PickHit> hits = selection_->hits();
     // A highlight changes no pick answer (the picking ID buffer has none).
     ownRequest_ = true;
-    front_->setHighlight(hits, selection_->hover());
+    front_->setHighlight(hits, selection_->hoverHighlight());
     ownRequest_ = false;
 }
 
