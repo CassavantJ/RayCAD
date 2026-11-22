@@ -92,3 +92,16 @@ target_compile_definitions(ray_cam_drill_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_S
     RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_drill_tests)
+# Operation templates (task T-057): the core (src/cam/templates.h) against hand-made holes and the shipped library, the
+# shipped starter templates, and the cam.template.* actions on a part built like benchmark part 1 in a headless app.
+add_executable(ray_cam_templates_tests
+    templates_api_test.cpp
+    templates_test.cpp
+)
+target_link_libraries(ray_cam_templates_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_sim ray_post ray_naming
+    ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_templates_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_templates_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_templates_tests)

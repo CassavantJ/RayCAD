@@ -303,20 +303,19 @@ Result<EvaluatedQuery> evaluateQuery(const lib::OpTemplate& t, const TemplateRul
     }
     Value::Object out;
     std::vector<std::string> words;
+    std::string typeWords; // first in the description, whatever the key order
     for (const Member& m : parsed->asObject()) {
         const std::string field = "toolQuery." + m.key;
         if (m.key == "type") {
             out.push_back(m);
             if (m.value.isString()) {
-                words.push_back(m.value.asString());
+                typeWords = m.value.asString();
             } else if (m.value.isArray()) {
-                std::string list;
                 for (const Value& x : m.value.asArray()) {
                     if (x.isString()) {
-                        list += (list.empty() ? "" : " or ") + x.asString();
+                        typeWords += (typeWords.empty() ? "" : " or ") + x.asString();
                     }
                 }
-                words.push_back(list);
             }
             continue;
         }
@@ -377,6 +376,9 @@ Result<EvaluatedQuery> evaluateQuery(const lib::OpTemplate& t, const TemplateRul
     }
     EvaluatedQuery q;
     q.json = json::write(Value::object(std::move(out)));
+    if (!typeWords.empty()) {
+        words.insert(words.begin(), typeWords);
+    }
     for (const std::string& w : words) {
         q.description += (q.description.empty() ? "" : ", ") + w;
     }
