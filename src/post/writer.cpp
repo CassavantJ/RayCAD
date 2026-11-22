@@ -83,6 +83,7 @@ Writer::Writer(WriterOptions options) : options_(std::move(options))
 {
     coordinate_ = NumberFormat{options_.inch ? 4 : 3, true, true, true, 1.0};
     feed_ = NumberFormat{options_.inch ? 2 : 1, true, true, true, 1.0};
+    grid_ = options_.inch ? fmt::kInchGrid : fmt::kMicroGrid;
 }
 
 bool Writer::emit(std::string_view line)
@@ -178,14 +179,14 @@ bool Writer::modal(std::string_view group, std::string_view word)
     return true;
 }
 
-bool Writer::axis(char letter, std::int64_t micro, std::string& word)
+bool Writer::axis(char letter, std::int64_t n, std::string& word)
 {
     const int index = axisIndex(letter);
     if (index < 0) {
         return false;
     }
     const auto slot = static_cast<std::size_t>(index);
-    const std::int64_t q = fmt::roundMicro(micro, coordinate_.decimals);
+    const std::int64_t q = fmt::roundGrid(n, coordinate_.decimals, grid_);
     if (axisSet_[slot] && axisLast_[slot] == q) {
         return false;
     }
@@ -198,9 +199,9 @@ bool Writer::axis(char letter, std::int64_t micro, std::string& word)
     return true;
 }
 
-bool Writer::feed(std::int64_t micro, std::string& word)
+bool Writer::feed(std::int64_t n, std::string& word)
 {
-    const std::int64_t q = fmt::roundMicro(micro, feed_.decimals);
+    const std::int64_t q = fmt::roundGrid(n, feed_.decimals, grid_);
     if (feedSet_ && feedLast_ == q) {
         return false;
     }
@@ -212,10 +213,10 @@ bool Writer::feed(std::int64_t micro, std::string& word)
     return true;
 }
 
-void Writer::word(std::string_view prefix, std::int64_t micro, const NumberFormat& format, std::string& word)
+void Writer::word(std::string_view prefix, std::int64_t n, const NumberFormat& format, std::string& word) const
 {
     word.assign(prefix);
-    fmt::appendMicro(word, micro, format);
+    fmt::appendGrid(word, n, format, grid_);
 }
 
 void Writer::resetAll()

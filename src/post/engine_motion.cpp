@@ -402,7 +402,7 @@ private:
         e.dwellMs = m.cycleDwellMs;
         e.pitchNm = m.threadPitchNm;
         e.first = first;
-        pos_ = Point{{m.x, m.y, runClearance_}};
+        pos_ = Point{{m.x, m.y, cycle_conventions::kReturnToRetractPlane ? m.cycleRetract : runClearance_}};
         return send(e);
     }
 
@@ -488,10 +488,12 @@ private:
             }
         }
         if (kind == CycleKind::Bore || kind == CycleKind::Ream) {
-            r = emitLinear(at(retract), feed, MoveRole::Retract, 0, index);
-            if (!r || !*r) {
-                return r;
-            }
+            r = emitLinear(at(retract), feed, MoveRole::Retract, 0, index); // G85 / G89: feed out
+        } else {
+            r = emitRapid(at(retract), index, false);
+        }
+        if (!r || !*r || cycle_conventions::kReturnToRetractPlane) {
+            return r; // G99: the tool stays at (x, y, R)
         }
         return emitRapid(at(clearance), index, false);
     }

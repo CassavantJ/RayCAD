@@ -10,7 +10,7 @@
 namespace ray::post::detail {
 
 // Output units: what the script sees. Lengths arrive as integer nanometres and leave as one division, so the host
-// can snap the script's numbers back to the same integers (fmt::snapMicro).
+// can snap the script's numbers back to the same integers (fmt::snapToGrid).
 struct Units {
     bool inch = false;
     double len(Nm nm) const { return static_cast<double>(nm) / (inch ? 25.4e6 : 1.0e6); }

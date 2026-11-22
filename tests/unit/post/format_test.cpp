@@ -89,8 +89,8 @@ TEST_CASE("formatNumber gives no text for values it cannot format", "[post][form
     CHECK(formatNumber(std::numeric_limits<double>::quiet_NaN(), kMm).empty());
     CHECK(formatNumber(std::numeric_limits<double>::infinity(), kMm).empty());
     CHECK(formatNumber(-std::numeric_limits<double>::infinity(), kMm).empty());
-    CHECK(formatNumber(2e12, kMm).empty());
-    CHECK(formatNumber(1e12, NumberFormat{0, true, false, true, 1.0}) == "1000000000000");
+    CHECK(formatNumber(2e10, kMm).empty());
+    CHECK(formatNumber(1e10, NumberFormat{0, true, false, true, 1.0}) == "10000000000");
 }
 
 TEST_CASE("formatNumber equals an integer-only reference for every nanometre value it is given", "[post][format]")

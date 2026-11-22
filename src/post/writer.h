@@ -46,14 +46,17 @@ public:
     // ---------- Modal state ----------
     // True (write the word) when `word` differs from the last word of `group`, or the group was reset.
     bool modal(std::string_view group, std::string_view word);
+    // Every number below is a value on grid() (fmt::snapToGrid): the script's double snapped back to integers, one
+    // nanometre per step in mm and in inch output.
+    std::int64_t grid() const { return grid_; }
     // Axis words with the coordinate format of the output units: mm "X12.5" (3 decimals), inch "X0.4921" (4).
-    // `micro` is the value in micro-units of the output unit (fmt::snapMicro). True, with `word` set, when the value
-    // rounded to the format differs from the last one written for that letter (A to Z, upper case).
-    bool axis(char letter, std::int64_t micro, std::string& word);
+    // True, with `word` set, when the value rounded to the format differs from the last one written for that letter
+    // (A to Z, upper case).
+    bool axis(char letter, std::int64_t n, std::string& word);
     // Feed word, mm/min with 1 decimal or inch/min with 2; true with `word` set when it changed.
-    bool feed(std::int64_t micro, std::string& word);
+    bool feed(std::int64_t n, std::string& word);
     // prefix + the number, always.
-    static void word(std::string_view prefix, std::int64_t micro, const NumberFormat& format, std::string& word);
+    void word(std::string_view prefix, std::int64_t n, const NumberFormat& format, std::string& word) const;
     // Forgets every modal group, every axis and the feed, so that the next word of each is written.
     void resetAll();
     // Forgets one thing: "feed", "axes" (every axis), a single upper-case letter A to Z (that axis), or a modal
@@ -102,6 +105,7 @@ private:
     WriterOptions options_;
     NumberFormat coordinate_{};
     NumberFormat feed_{};
+    std::int64_t grid_ = 0;
     PostOutput out_;
     std::uint32_t lines_ = 0;
     bool outputLimitHit_ = false;

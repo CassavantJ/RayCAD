@@ -7,6 +7,8 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 
 using namespace ray;
 using namespace ray::post;
@@ -95,11 +97,14 @@ TEST_CASE("post 1,000,000 moves", "[post][bench][wallclock]")
     const PostJob job = program.job();
     QuickJsPostEngine engine;
     JobContext ctx;
+    // RAYCAD_POST_BENCH_SCRIPT=<file> times another post (spike S8's toy post, say) on the same toolpath.
+    const char* other = std::getenv("RAYCAD_POST_BENCH_SCRIPT");
+    const std::string script = other ? std::string(other) : postPath("iso-test.post.js");
     double best = 1e9;
     Hash256 hash{};
     for (int run = 0; run < 3; ++run) {
         const auto t0 = std::chrono::steady_clock::now();
-        const auto out = engine.run(postPath("iso-test.post.js"), job, ctx);
+        const auto out = engine.run(script, job, ctx);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         REQUIRE(out.has_value());
         if (run == 0) {

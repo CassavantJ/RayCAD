@@ -30,11 +30,28 @@ struct MotionCaps {
     bool cutterComp = false;
 };
 
-// Constants of the host's own motion, in nanometres. Documented in post_api.d.ts terms in the engine header.
+// Constants of the host's own arc linearisation, in nanometres.
 constexpr Nm kLinearizeToleranceNm = 1'000;      // chord error when an arc is replaced by lines
 constexpr std::int64_t kMaxSegmentsPerArc = 65'536;
-constexpr Nm kPeckReentryNm = 500'000;           // expanded peck: rapid back down to 0.5 mm above the last depth
-constexpr Nm kChipBreakBackoffNm = 200'000;      // expanded chip break: back off 0.2 mm between pecks
+
+// ---------- Canned-cycle conventions: ONE place, shared with the backplot (T-037) ----------
+// cam.h does not yet say how a cycle Move is to be read. Until it does, the post host and the backplot assume the
+// same, and every one of these assumptions lives here so that it changes in one edit:
+//  - Move::cycleRetract is the absolute Z of the R plane; Move::z is the hole bottom; Move::(x, y) the hole.
+//  - Peck depth (Move::cyclePeck, Q) is measured down from the R plane.
+//  - After each hole the tool is back at the R plane (G99): it ends the cycle at (x, y, R), not at the bottom
+//    the move's z names, and moves to the next hole at R.
+//  - Expanded peck (G83): after each peck, rapid out to R and back down to kPeckReentryNm above the last depth.
+//  - Expanded chip break (G73): after each peck, back off kChipBreakBackoffNm by rapid, then feed on.
+//  - Bore and ream are G85 (feed in, feed out to R), or G89 (with a dwell at the bottom) when Move::cycleDwellMs > 0.
+// Neither clearance distance is in the IR.
+namespace cycle_conventions {
+constexpr bool kReturnToRetractPlane = true;     // G99; false would return to the level before the run (G98)
+constexpr Nm kPeckReentryNm = 500'000;           // 0.5 mm
+constexpr Nm kChipBreakBackoffNm = 500'000;      // 0.5 mm
+} // namespace cycle_conventions
+using cycle_conventions::kChipBreakBackoffNm;
+using cycle_conventions::kPeckReentryNm;
 
 enum class EventKind : std::uint8_t { Rapid, Linear, Arc, Cycle, CycleEnd, Dwell };
 
@@ -75,16 +92,18 @@ public:
 // is not below its retract plane.
 //
 // Cycles the post declares: one Cycle event per hole, a CycleEnd event when the run ends (a CycleCancel move, any
-// other move, or the end of the section; mapped to the cancel move or the run's last hole). The run's clearance is
-// the tool's Z before its first hole (at least the retract plane); after each hole the host assumes the tool is back
-// at that level at the hole, as with G98.
-// Cycles it does not declare: rapid to the hole at the clearance level, rapid to the retract plane, then
-//   drill      feed to the bottom, dwell, rapid out to the clearance level
-//   peck       feed in steps of `peck`, rapid to the retract plane after each step and back down to
-//              kPeckReentryNm above the last depth; at the bottom dwell, rapid out
-//   chipBreak  feed in steps of `peck`, backing off kChipBreakBackoffNm by rapid between steps; dwell, rapid out
-//   bore, ream feed to the bottom, dwell, feed back to the retract plane, rapid out
-// A peck or chip break with peck 0 is drilled in one feed.
+// other move, or the end of the section; mapped to the cancel move or the run's last hole). The run's clearance
+// (CycleMove.clearance) is the tool's Z before its first hole, at least the retract plane. After each hole the host
+// takes the tool to be where cycle_conventions says (the R plane with G99).
+// Cycles it does not declare (cycle_conventions above): from the tool's Z (raised to R if below it) rapid to the
+// hole, rapid down to R, then
+//   drill      feed to the bottom, dwell, rapid out to R                            (G81, G82)
+//   peck       feed in steps of `peck`, rapid to R after each step and back down to kPeckReentryNm above the last
+//              depth; at the bottom dwell, rapid out to R                         (G83)
+//   chipBreak  feed in steps of `peck`, backing off kChipBreakBackoffNm by rapid between steps; dwell, rapid out (G73)
+//   bore, ream feed to the bottom, dwell, feed back out to R                        (G85, G89)
+// and with kReturnToRetractPlane false, a final rapid up to the clearance. A peck or chip break with peck 0 is
+// drilled in one feed.
 // Arcs: split into equal pieces of at most maxArcDegrees (with arcs "R", every piece under 180 degrees); with arcs
 // "none", or a helical arc and helical off, replaced by lines within kLinearizeToleranceNm.
 Result<bool> expandSection(const cam::Toolpath& path, Nm topZ, const MotionCaps& caps, MotionSink& sink);

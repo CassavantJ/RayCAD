@@ -100,15 +100,15 @@ definePost({
 
   onCycle(c, out) {
     const codes = { drill: c.dwellSeconds > 0 ? "G82" : "G81", peck: "G83", chipBreak: "G73", tap: "G84" };
+    if (c.first) out.resetModal("cycle", "X", "Y", "Z", "feed");
     const hole = [out.axis("X", c.x), out.axis("Y", c.y)];
     if (c.first) {
-      out.resetModal("cycle", "Z", "feed");
       const extra = [];
       if (c.kind === "peck" || c.kind === "chipBreak") extra.push(out.word("Q", c.peck));
       if (c.dwellSeconds > 0) extra.push(out.word("P", c.dwellSeconds, { decimals: 3, trimZeros: true, forceDecimalPoint: false }));
-      if (c.kind === "tap") extra.push(out.word("F", c.pitch, { decimals: 4, forceDecimalPoint: false }));
-      out.block(out.modal("return", "G98"), out.modal("cycle", codes[c.kind]), ...hole, out.axis("Z", c.bottom),
-        out.word("R", c.retract), ...extra, c.kind === "tap" ? null : out.feed(c.feed));
+      if (c.kind === "tap") out.comment("tap pitch " + out.word("", c.pitch, { decimals: 4 }) + " top " + out.word("", c.top));
+      out.block(out.modal("return", "G99"), out.modal("cycle", codes[c.kind]), ...hole, out.axis("Z", c.bottom),
+        out.word("R", c.retract), ...extra, out.feed(c.feed));
     } else {
       out.block(...hole);
     }

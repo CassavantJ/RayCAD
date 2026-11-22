@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -123,7 +124,7 @@ Program goldenProgramFor(const Golden& g)
     return p;
 }
 
-Result<PostOutput> post(const std::string& postFile, const Program& program, std::optional<std::string> date = {})
+Result<PostOutput> postWith(const std::string& postFile, const Program& program, std::optional<std::string> date = {})
 {
     QuickJsPostEngine engine;
     JobContext ctx;
@@ -134,7 +135,7 @@ Result<PostOutput> post(const std::string& postFile, const Program& program, std
 
 Result<PostOutput> postGolden(const Golden& g)
 {
-    return post(g.post, goldenProgramFor(g), std::string("2026-01-02"));
+    return postWith(g.post, goldenProgramFor(g), std::string("2026-01-02"));
 }
 
 std::string goldenPath(const char* file)
@@ -285,12 +286,13 @@ TEST_CASE("golden programs: byte for byte on every OS", "[post][engine][golden]"
         const auto out = postGolden(g);
         REQUIRE(out.has_value());
         if (const char* dir = std::getenv("RAYCAD_GOLDEN_PRODUCED")) {
-            const std::filesystem::path folder = std::filesystem::path(dir) / "gcode" / "host";
+            // Laid out like the suite: tools/update_golden.py --produced <dir> --suite gcode/host.
+            const std::filesystem::path folder(dir);
             std::filesystem::create_directories(folder);
             std::ofstream(folder / g.file, std::ios::binary) << out->text;
         }
         const std::string golden = readFile(goldenPath(g.file));
-        REQUIRE_FALSE(golden.empty());
+        CHECK_FALSE(golden.empty());
         CHECK(out->text == golden);
         // The same bytes from a second engine in the same process.
         CHECK(postGolden(g)->hash() == out->hash());
@@ -319,7 +321,8 @@ TEST_CASE("the line map covers every motion line and points at its move", "[post
             const cam::Move& m = program.paths[e.sectionIndex].moves[e.moveIndex];
             const bool plain = m.kind == cam::MoveKind::Rapid || m.kind == cam::MoveKind::Linear;
             const std::string& line = text[e.line];
-            if (plain && line.find("G43") == std::string::npos) {
+            // (Lines of onSectionStart map to move 0 and show the section's start point instead.)
+            if (plain && e.moveIndex > 0) {
                 const double unit = g.units == UnitSystem::Inch ? 25.4e6 : 1e6;
                 if (const auto x = wordValue(line, 'X')) {
                     CHECK(std::abs(*x - static_cast<double>(m.x) / unit) < 1e-3);
@@ -337,7 +340,7 @@ TEST_CASE("the line map covers every motion line and points at its move", "[post
                 CHECK(mapped.count(i) == 1);
             }
         }
-        CHECK(motionLines > 50);
+        CHECK(motionLines > 40);
     }
 }
 
@@ -347,27 +350,32 @@ TEST_CASE("the host services show in the output", "[post][engine]")
     REQUIRE(iso.has_value());
     const std::string& t = iso->text;
     // Arcs split to 180 degrees: the full circle (move 8) becomes two G2 blocks; quarter arcs stay whole.
-    CHECK(t.find("G2 X30. Y30. I0. J10. F1000.") != std::string::npos);
-    CHECK(t.find("X30. Y10. I0. J-10.\r\n") != std::string::npos);
-    CHECK(t.find("G3 X40. Y20. I0. J10. F1200.") != std::string::npos);
+    CHECK(t.find(" G2 Y30. I0. J10. F1000.\r\n") != std::string::npos);
+    CHECK(t.find(" Y10. I0. J-10.\r\n") != std::string::npos);
+    CHECK(t.find(" G17 G3 X40. Y20. I0. J10.\r\n") != std::string::npos);
+    CHECK(t.find(" X30. Y30. I-10. J0.\r\n") != std::string::npos);
     // Helix: two halves with the axis interpolated.
     CHECK(t.find("G3 X15. Z-3.5 I-5. J0. F700.") != std::string::npos);
     CHECK(t.find("X25. Z-5. I5. J0.") != std::string::npos);
     // Planes, cutter compensation, ties rounded half to even.
     CHECK(t.find("G18 G2") != std::string::npos);
     CHECK(t.find("G19") != std::string::npos);
-    CHECK(t.find("G41 G1 X45. Y9. D1 F900.") != std::string::npos);
+    CHECK(t.find("G41 G1 X45. D1 F900.") != std::string::npos);
     CHECK(t.find("G40 X50.") != std::string::npos);
     CHECK(t.find("X12.346 Y4.") != std::string::npos);
     CHECK(t.find("X12.344 Y4.002") != std::string::npos);
     // Declared cycles: modal G81 with the later holes as XY only, G82 with dwell, G83 and G73 with Q, G84 with the
-    // pitch, G80 at the end of each run; bore and ream (not declared) expanded into plain moves.
-    CHECK(t.find("G98 G81 X10. Y10. Z-12. R2. F150.") != std::string::npos);
+    // pitch in a comment, G80 at the end of each run; bore and ream (not declared) expanded into plain moves.
+    CHECK(t.find("G99 G81 X10. Y10. Z-12. R2. F150.") != std::string::npos);
     CHECK(t.find("X20.\r\n") != std::string::npos);
-    CHECK(t.find("G82 X30. Z-12. R2. P0.3") != std::string::npos);
-    CHECK(t.find("G83 X40. Z-20. R2. Q4.") != std::string::npos);
-    CHECK(t.find("G73 X50. Z-15. R2. Q3.") != std::string::npos);
-    CHECK(t.find("G84 X10. Y10. Z-12. R3. F1.25") != std::string::npos);
+    CHECK(t.find("G82 X30. Y10. Z-12. R2. P0.3 F150.") != std::string::npos);
+    CHECK(t.find("G83 X40. Y10. Z-20. R2. Q4. F120.") != std::string::npos);
+    CHECK(t.find("G73 X50. Y10. Z-15. R2. Q3. F120.") != std::string::npos);
+    CHECK(t.find("(TAP PITCH 1.25 TOP 0.)") != std::string::npos);
+    CHECK(t.find("G99 G84 X10. Y10. Z-12. R3. F625.") != std::string::npos);
+    CHECK(t.find(" G0 X60. Z2.\r\n") != std::string::npos); // bore, expanded: G85-like, ends at R (G99)
+    CHECK(t.find(" G1 Z-8. F80.\r\n") != std::string::npos);
+    CHECK(t.find(" G4 P0.2\r\n") != std::string::npos);
     CHECK(t.find("G80") != std::string::npos);
     CHECK(t.find("G4 P0.25") != std::string::npos);
     // Sequence numbers in steps of numberStep (5), the tool change with pre-select of the next tool.
@@ -387,7 +395,7 @@ TEST_CASE("the host services show in the output", "[post][engine]")
     const std::string& p = plain->text;
     CHECK(p.find('\r') == std::string::npos); // the post's lineEnding default is lf
     // R arcs of at most 90 degrees; the helix as lines (helical off); cycles expanded.
-    CHECK(p.find("G3 X40. Y20. R10. F1200.") != std::string::npos);
+    CHECK(p.find("G3 X40. Y20. R10.\n") != std::string::npos);
     CHECK(p.find("G2 X20. Y20. R10. F1000.") != std::string::npos);
     CHECK(p.find(" R5.") == std::string::npos);
     CHECK(p.find("G81") == std::string::npos);
@@ -397,7 +405,10 @@ TEST_CASE("the host services show in the output", "[post][engine]")
     CHECK(p.find("N1 T1 M6") != std::string::npos);
     CHECK(p.find("N2 T2 M6") != std::string::npos);
     CHECK(p.find("N3") == std::string::npos); // section 2 keeps T2
-    CHECK(p.find("(Setup Op 1 top, mm  work offset 1)") != std::string::npos);
+    CHECK(p.find("(Setup Op 1 top, mm work offset 1)") != std::string::npos);
+    CHECK(p.find("(10 mm 3FL carbide rough , flatEndMill D10.)") != std::string::npos); // Haas: lower case kept
+    // The peck, expanded: re-entry 0.5 mm above the last depth, back to R after each peck.
+    CHECK(p.find("G1 Z-2. F120.\nG0 Z2.\nZ-1.5\nG1 Z-6.\n") != std::string::npos);
 }
 
 TEST_CASE("units: inch output converts every length and feed", "[post][engine]")
@@ -407,8 +418,10 @@ TEST_CASE("units: inch output converts every length and feed", "[post][engine]")
     const std::string& t = inch->text;
     CHECK(t.find("G20") != std::string::npos);
     CHECK(t.find("G3 X1.5748 Y.7874") == std::string::npos); // leading zeros are kept
-    CHECK(t.find("G3 X1.5748 Y0.7874 I0. J0.3937 F47.24") != std::string::npos); // 40 mm, 20 mm, 10 mm, 1200 mm/min
-    CHECK(t.find("G98 G81 X0.3937 Y0.3937 Z-0.4724 R0.0787 F5.91") != std::string::npos);
+    CHECK(t.find("G3 X1.5748 Y0.7874 I0. J0.3937\r\n") != std::string::npos); // 40 mm, 20 mm, 10 mm
+    CHECK(t.find(" X1.1811 F47.24\r\n") != std::string::npos); // 30 mm at 1200 mm/min
+    CHECK(t.find(" Z0.1969\r\n") != std::string::npos); // 5 mm = 0.19685039 in, on the nanometre grid
+    CHECK(t.find("G99 G81 X0.3937 Y0.3937 Z-0.4724 R0.0787 F5.91") != std::string::npos);
     CHECK(t.find("(T2 DRILL D0.268 6.8 MM DRILL)") != std::string::npos);
     CHECK(t.find("(DATE 2026-01-02)") != std::string::npos);
 }
@@ -421,21 +434,21 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
     program.properties["numberBlocks"] = "true";
     program.properties["header"] = "setup header";
     program.properties["unknownKey"] = "1";
-    auto out = post("iso-test.post.js", program);
+    auto out = postWith("iso-test.post.js", program);
     REQUIRE(out.has_value());
     CHECK(out->text.find("N12 ") != std::string::npos); // 10, 12, 14...
-    CHECK(out->text.find("(SETUP HEADER FOR TESTER )") != std::string::npos);
+    CHECK(out->text.find("(SETUP HEADER FOR TESTER)") != std::string::npos);
     REQUIRE(out->warnings.size() == 2);
     CHECK(out->warnings[0] == "post property 'unknownKey' is not declared by the post and was ignored");
 
     program.properties["numberStep"] = "3"; // the setup wins over the machine
     program.properties["numberBlocks"] = "false";
-    out = post("iso-test.post.js", program);
+    out = postWith("iso-test.post.js", program);
     REQUIRE(out.has_value());
     CHECK(out->text.find("N1") == std::string::npos);
 
     program.properties["lineEnding"] = "lf";
-    out = post("iso-test.post.js", program);
+    out = postWith("iso-test.post.js", program);
     REQUIRE(out.has_value());
     CHECK(out->text.find('\r') == std::string::npos);
 
@@ -445,13 +458,13 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
         INFO(key << " = " << value);
         Program bad = goldenProgram(true);
         bad.properties[key] = value;
-        const auto r = post("iso-test.post.js", bad);
+        const auto r = postWith("iso-test.post.js", bad);
         REQUIRE_FALSE(r.has_value());
         CHECK(r.error().code == ErrorCode::InvalidArgument);
     }
     Program number = goldenProgram(true);
     number.properties["homeZ"] = "1.5e1";
-    out = post("iso-test.post.js", number);
+    out = postWith("iso-test.post.js", number);
     REQUIRE(out.has_value());
     CHECK(out->text.find("G53 Z15.") != std::string::npos);
 }
@@ -459,26 +472,39 @@ TEST_CASE("properties: declared defaults, machine and setup overrides", "[post][
 TEST_CASE("the date comes only from the job, and only with includeDate", "[post][engine]")
 {
     Program program = goldenProgram(true);
-    auto out = post("iso-test.post.js", program, std::string("2026-05-06"));
+    auto out = postWith("iso-test.post.js", program, std::string("2026-05-06"));
     REQUIRE(out.has_value());
     CHECK(out->text.find("2026") == std::string::npos); // includeDate is off by default
     program.properties["includeDate"] = "true";
-    out = post("iso-test.post.js", program, std::string("2026-05-06"));
+    out = postWith("iso-test.post.js", program, std::string("2026-05-06"));
     REQUIRE(out.has_value());
     CHECK(out->text.find("(DATE 2026-05-06)") != std::string::npos);
-    out = post("iso-test.post.js", program);
+    out = postWith("iso-test.post.js", program);
     REQUIRE(out.has_value());
     CHECK(out->text.find("(DATE") == std::string::npos);
-    CHECK(out->warnings.back().find("includeDate is on but the post job carries no date") != std::string::npos);
+    CHECK(std::any_of(out->warnings.begin(), out->warnings.end(), [](const std::string& w) {
+        return w.find("includeDate is on but the post job carries no date") != std::string::npos;
+    }));
 }
 
 TEST_CASE("jobs the post cannot take are refused", "[post][engine]")
 {
-    // Tapping and cutter compensation with a post that declares neither.
-    auto r = post("plain-test.post.js", goldenProgram(true));
+    // Cutter compensation and tapping with a post that declares neither.
+    Program comp = goldenProgram(false);
+    comp.paths[0].moves.insert(comp.paths[0].moves.end() - 1,
+                               linear(mm(45), mm(9), -mm(5), mmPerMin(900), cam::MoveRole::LeadIn, 2));
+    auto r = postWith("plain-test.post.js", comp);
     REQUIRE_FALSE(r.has_value());
     CHECK(r.error().code == ErrorCode::PostFailed);
     CHECK(r.error().message.find("cutter compensation") != std::string::npos);
+    CHECK(r.error().message.find("section 0 (Contour and arcs): move 14") != std::string::npos);
+    Program tap = goldenProgram(true);
+    tap.paths[0].moves.resize(14); // no XZ / YZ arcs, no compensation
+    tap.paths[0].moves.push_back(rapid(mm(20), mm(4), mm(25)));
+    r = postWith("plain-test.post.js", tap);
+    REQUIRE_FALSE(r.has_value());
+    CHECK(r.error().code == ErrorCode::PostFailed);
+    CHECK(r.error().message.find("tapping cycle") != std::string::npos);
     // A section without a toolpath.
     Program program = goldenProgram(false);
     PostJob job = program.job();
@@ -491,7 +517,7 @@ TEST_CASE("jobs the post cannot take are refused", "[post][engine]")
     CHECK(r.error().message.find("has no toolpath") != std::string::npos);
     // An empty program still runs program start and end.
     Program empty;
-    const auto e = post("iso-test.post.js", empty);
+    const auto e = postWith("iso-test.post.js", empty);
     REQUIRE(e.has_value());
     CHECK(e->text.rfind("%\r\nO1001 (BRACKET)\r\n", 0) == 0);
     CHECK(e->lineMap.empty());

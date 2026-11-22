@@ -33,7 +33,8 @@ definePost({
 
   onSectionStart(section, ctx, out) {
     if (section.toolChanged) {
-      out.block("T" + section.tool.number, "M6", "(" + section.tool.description.toUpperCase() + ")");
+      out.block("T" + section.tool.number, "M6");
+      out.comment(section.tool.description + ", " + section.tool.type + " " + out.word("D", section.tool.diameter));
     }
     out.resetModal();
     out.block(out.modal("motion", "G0"), out.axis("X", section.start.x), out.axis("Y", section.start.y),

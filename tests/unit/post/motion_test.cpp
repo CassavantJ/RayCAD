@@ -217,6 +217,7 @@ TEST_CASE("declared cycles run modally and end with CycleEnd", "[post][motion]")
     CHECK(ev[5].first);
     CHECK(ev[5].cycle == CycleKind::Peck);
     CHECK(ev[5].peck == mm(2));
+    CHECK(ev[5].clearance == mm(2)); // G99: the drill run left the tool at its R plane
     CHECK(ev[1].clearance == mm(10)); // the Z before the run
     CHECK(ev[1].retract == mm(2));
     CHECK(ev[1].z == -mm(3));
@@ -234,13 +235,14 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         return out;
     };
     using K = EventKind;
+    // cycle_conventions: G99, the tool ends each hole at the R plane.
     SECTION("drill with dwell")
     {
         const auto ev = expand(pathFrom(0, 0, mm(10), {cycle(cam::MoveKind::CycleDrill, mm(5), 0, -mm(3), mm(2),
                                                              100000, 0, 500)}),
                                caps);
         const std::vector<std::pair<K, Nm>> want = {
-            {K::Rapid, mm(10)}, {K::Rapid, mm(2)}, {K::Linear, -mm(3)}, {K::Dwell, -mm(3)}, {K::Rapid, mm(10)}};
+            {K::Rapid, mm(10)}, {K::Rapid, mm(2)}, {K::Linear, -mm(3)}, {K::Dwell, -mm(3)}, {K::Rapid, mm(2)}};
         CHECK(kinds(ev) == want);
         CHECK(ev[0].x == mm(5));
         CHECK(ev[2].feed == 100000);
@@ -256,7 +258,7 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         const std::vector<std::pair<K, Nm>> want = {
             {K::Rapid, mm(1)},       {K::Linear, -mm(1)}, {K::Rapid, mm(1)},  {K::Rapid, -mm(1) + re},
             {K::Linear, -mm(3)},     {K::Rapid, mm(1)},   {K::Rapid, -mm(3) + re}, {K::Linear, -mm(5)},
-            {K::Rapid, mm(10)}};
+            {K::Rapid, mm(1)}};
         CHECK(kinds(ev) == want);
     }
     SECTION("chip break: back off between pecks")
@@ -267,7 +269,7 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         const Nm back = kChipBreakBackoffNm;
         const std::vector<std::pair<K, Nm>> want = {{K::Rapid, mm(1)},         {K::Linear, -mm(1)},
                                                     {K::Rapid, -mm(1) + back}, {K::Linear, -mm(3)},
-                                                    {K::Rapid, mm(10)}};
+                                                    {K::Rapid, mm(1)}};
         CHECK(kinds(ev) == want);
     }
     SECTION("bore and ream feed out")
@@ -275,7 +277,7 @@ TEST_CASE("undeclared cycles are expanded into plain moves", "[post][motion]")
         for (const auto kind : {cam::MoveKind::CycleBore, cam::MoveKind::CycleReam}) {
             const auto ev = expand(pathFrom(mm(5), 0, mm(10), {cycle(kind, mm(5), 0, -mm(3), mm(1), 100000)}), caps);
             const std::vector<std::pair<K, Nm>> want = {
-                {K::Rapid, mm(1)}, {K::Linear, -mm(3)}, {K::Linear, mm(1)}, {K::Rapid, mm(10)}};
+                {K::Rapid, mm(1)}, {K::Linear, -mm(3)}, {K::Linear, mm(1)}};
             CHECK(kinds(ev) == want);
             CHECK(ev[2].role == cam::MoveRole::Retract);
         }

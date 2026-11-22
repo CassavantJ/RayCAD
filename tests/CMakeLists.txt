@@ -38,6 +38,7 @@ add_subdirectory(unit/store)
 add_subdirectory(unit/api)
 add_subdirectory(unit/render)
 add_subdirectory(unit/core_jobs)
+add_subdirectory(unit/post) # T-039
 add_subdirectory(lint)
 add_subdirectory(apps)
 add_subdirectory(ui/controls)

@@ -29,11 +29,16 @@ bool block(Writer& w, std::initializer_list<std::string_view> words)
     return w.block(v);
 }
 
-std::int64_t micro(double v)
+// A script's number on the writer's grid (mm output: 1e6 per mm; inch output: 25.4e6 per inch).
+std::int64_t micro(double v, std::int64_t grid = ray::post::fmt::kMicroGrid)
 {
     std::int64_t m = 0;
-    ray::post::fmt::snapMicro(v, m);
+    ray::post::fmt::snapToGrid(v, m, grid);
     return m;
+}
+std::int64_t inch(double v)
+{
+    return micro(v, ray::post::fmt::kInchGrid);
 }
 
 } // namespace
@@ -122,10 +127,23 @@ TEST_CASE("inch output uses 4 coordinate decimals and 2 feed decimals", "[post][
     o.inch = true;
     Writer w(o);
     std::string word;
-    CHECK(w.axis('Y', micro(0.49215), word));
+    CHECK(w.axis('Y', inch(0.49215), word));
     CHECK(word == "Y0.4922"); // tie: 4921 odd, up
-    CHECK(w.feed(micro(47.244), word));
+    CHECK(w.feed(inch(47.244), word));
     CHECK(word == "F47.24");
+    // 5 mm is 0.19685039 in: 0.1969. Snapping to micro-inch first (196850) would round the tie down to 0.1968.
+    CHECK(w.axis('Z', inch(5.0 / 25.4), word));
+    CHECK(word == "Z0.1969");
+    // Every whole nanometre from -2 mm to 2 mm in steps of 3 nm: the word equals integer rounding of nm / 2540.
+    for (std::int64_t nm = -2'000'000; nm <= 2'000'000; nm += 3) {
+        w.reset("X");
+        REQUIRE(w.axis('X', inch(static_cast<double>(nm) / 25.4e6), word));
+        std::string want = "X";
+        ray::post::fmt::appendFixed(want, ray::post::fmt::divRoundHalfEven(nm, 2540), 4, true, true, true);
+        if (word != want) {
+            FAIL("nm " << nm << ": " << word << " != " << want);
+        }
+    }
 }
 
 TEST_CASE("comments are sanitised per dialect", "[post][writer]")
@@ -133,7 +151,7 @@ TEST_CASE("comments are sanitised per dialect", "[post][writer]")
     CHECK(sanitizeComment("Rough pocket (2 mm stock); 50% feed", "fanuc") == "ROUGH POCKET 2 MM STOCK 50 FEED");
     CHECK(sanitizeComment("Rough pocket (2 mm stock)", "haas-ngc") == "Rough pocket 2 mm stock");
     CHECK(sanitizeComment("  tab\there  ", "generic-iso") == "TAB HERE");
-    CHECK(sanitizeComment("Ø12 Fräser \xE2\x80\x94 dia", "generic-iso") == "12 FR SER DIA");
+    CHECK(sanitizeComment("ÃƒËœ12 FrÃƒÂ¤ser \xE2\x80\x94 dia", "generic-iso") == "12 FR SER DIA");
     CHECK(sanitizeComment("a.b,c-d+e/f*g=h:i#j_k", "mazak-eia") == "A.B,C-D+E/F*G=H:I#J_K");
     CHECK(sanitizeComment("((()))", "fanuc").empty());
 
@@ -154,21 +172,29 @@ TEST_CASE("raw writes one line per newline", "[post][writer]")
 TEST_CASE("words with a format", "[post][writer]")
 {
     std::string word;
-    Writer::word("Q", micro(0.5), ray::post::NumberFormat{3, true, true, true, 1}, word);
+    const Writer w(lf());
+    w.word("Q", micro(0.5), ray::post::NumberFormat{3, true, true, true, 1}, word);
     CHECK(word == "Q0.5");
-    Writer::word("P", micro(1.25), ray::post::NumberFormat{3, false, false, true, 1}, word);
+    w.word("P", micro(1.25), ray::post::NumberFormat{3, false, false, true, 1}, word);
     CHECK(word == "P1.250");
-    Writer::word("", micro(-3), ray::post::NumberFormat{0, true, false, true, 1}, word);
+    w.word("", micro(-3), ray::post::NumberFormat{0, true, false, true, 1}, word);
     CHECK(word == "-3");
+    WriterOptions o = lf();
+    o.inch = true;
+    const Writer wi(o);
+    wi.word("P", inch(0.25), ray::post::NumberFormat{6, true, false, true, 1}, word); // unitless numbers too
+    CHECK(word == "P0.25");
+    wi.word("Q", inch(0.1234565), ray::post::NumberFormat{6, true, false, true, 1}, word);
+    CHECK(word == "Q0.123456"); // 6 decimals on the inch grid: n * 5 / 127, half to even
 }
 
 TEST_CASE("the output limit stops writing at the limit", "[post][writer]")
 {
     WriterOptions o = lf();
-    o.maxOutputBytes = 10;
+    o.maxOutputBytes = 9;
     Writer w(o);
     CHECK(block(w, {"G0", "X1."})); // 7 bytes
-    CHECK_FALSE(block(w, {"G1"}));  // 7 + 3 > 10
+    CHECK_FALSE(block(w, {"G1"}));  // 7 + 3 > 9
     CHECK(w.outputLimitHit());
     CHECK_FALSE(w.raw("x")); // once hit, always refused
     CHECK(w.take().text == "G0 X1.\n");

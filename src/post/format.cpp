@@ -5,6 +5,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <numeric>
 
 namespace ray::post {
 namespace fmt {
@@ -25,21 +26,25 @@ std::int64_t divRoundHalfEven(std::int64_t value, std::int64_t divisor) noexcept
     return q;
 }
 
-bool snapMicro(double value, std::int64_t& micro) noexcept
+bool snapToGrid(double value, std::int64_t& n, std::int64_t grid) noexcept
 {
     if (!std::isfinite(value) || std::fabs(value) > kMaxAbsValue) {
         return false;
     }
     // One multiplication and one round to nearest: llround is exact and the same on every platform. For a double
-    // made by the host as nm / 1e6 this recovers nm exactly (|nm| < 2^53).
-    micro = static_cast<std::int64_t>(std::llround(value * 1.0e6));
+    // made by the host as nm / 1e6 (or nm / 25.4e6 for inch, on the inch grid) this recovers nm exactly.
+    n = static_cast<std::int64_t>(std::llround(value * static_cast<double>(grid)));
     return true;
 }
 
-std::int64_t roundMicro(std::int64_t micro, int decimals) noexcept
+std::int64_t roundGrid(std::int64_t n, int decimals, std::int64_t grid) noexcept
 {
+    // n * 10^d / grid, rounded half to even, with the fraction reduced so that nothing overflows: on the micro grid
+    // that is n / 10^(6 - d); on the inch grid n / (254e5 / 10^d) up to 5 decimals and n * 5 / 127 for 6.
     const int d = std::clamp(decimals, 0, kMaxDecimals);
-    return divRoundHalfEven(micro, kPow10[static_cast<std::size_t>(kMaxDecimals - d)]);
+    const std::int64_t scale = kPow10[static_cast<std::size_t>(d)];
+    const std::int64_t g = std::gcd(scale, grid);
+    return divRoundHalfEven(n * (scale / g), grid / g);
 }
 
 void appendFixed(std::string& out, std::int64_t q, int decimals, bool trimZeros, bool forcePoint, bool leadingZero)
@@ -77,10 +82,10 @@ void appendFixed(std::string& out, std::int64_t q, int decimals, bool trimZeros,
     }
 }
 
-void appendMicro(std::string& out, std::int64_t micro, const NumberFormat& format)
+void appendGrid(std::string& out, std::int64_t n, const NumberFormat& format, std::int64_t grid)
 {
     const int d = std::clamp(format.decimals, 0, kMaxDecimals);
-    appendFixed(out, roundMicro(micro, d), d, format.trimTrailingZeros, format.forceDecimalPoint, format.leadingZero);
+    appendFixed(out, roundGrid(n, d, grid), d, format.trimTrailingZeros, format.forceDecimalPoint, format.leadingZero);
 }
 
 } // namespace fmt
@@ -91,11 +96,11 @@ std::string formatNumber(double value, const NumberFormat& format)
     // on every platform (src/post is compiled without contraction or fast math).
     const double scaled = format.scale == 0.0 || format.scale == 1.0 ? value : value * format.scale;
     std::int64_t micro = 0;
-    if (!fmt::snapMicro(scaled, micro)) {
+    if (!fmt::snapToGrid(scaled, micro, fmt::kMicroGrid)) {
         return {}; // not finite, or beyond fmt::kMaxAbsValue: no text rather than a wrong number
     }
     std::string text;
-    fmt::appendMicro(text, micro, format);
+    fmt::appendGrid(text, micro, format, fmt::kMicroGrid);
     return text;
 }
 

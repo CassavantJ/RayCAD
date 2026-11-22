@@ -175,7 +175,7 @@ TEST_CASE("the heap limit stops a runaway script with a line", "[post][sandbox][
 {
     check({"heap_runaway.js", Want::Heap, nullptr, -2, 32, 20});
     check({"heap_string.js", Want::Heap, nullptr, -2, 32, 20});
-    check({"heap_in_callback.js", Want::Heap, nullptr, 4, 32, 20, 16, 1000});
+    check({"heap_in_callback.js", Want::Heap, nullptr, -2, 32, 20, 16, 1000});
     check({"heap_catch.js", Want::Heap, nullptr, -2, 32, 20});
     // One allocation far beyond the limit, between two polls: only the hard limit can stop it.
     check({"heap_big_single.js", Want::Heap, nullptr, -2, 32, 20});

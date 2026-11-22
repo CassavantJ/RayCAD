@@ -12,13 +12,17 @@
 namespace ray::post::detail {
 namespace {
 
-// The C strings of a call's arguments, freed on scope exit.
+// The C strings of a call's arguments, freed on scope exit. The first 24 need no allocation (this runs several
+// times per move).
 class CStrings {
 public:
     explicit CStrings(JSContext* ctx) : ctx_(ctx) {}
     ~CStrings()
     {
-        for (const char* p : owned_) {
+        for (std::size_t i = 0; i < count_ && i < small_.size(); ++i) {
+            JS_FreeCString(ctx_, small_[i]);
+        }
+        for (const char* p : more_) {
             JS_FreeCString(ctx_, p);
         }
     }
@@ -32,14 +36,21 @@ public:
         if (!p) {
             return false;
         }
-        owned_.push_back(p);
+        if (count_ < small_.size()) {
+            small_[count_] = p;
+        } else {
+            more_.push_back(p);
+        }
+        ++count_;
         out = std::string_view(p, n);
         return true;
     }
 
 private:
     JSContext* ctx_;
-    std::vector<const char*> owned_;
+    std::array<const char*, 24> small_{};
+    std::size_t count_ = 0;
+    std::vector<const char*> more_;
 };
 
 std::string outputLimitMessage(Session& s)
@@ -53,8 +64,8 @@ JSValue outputLimit(JSContext* ctx)
     return s.throwStop(Stop::Output, outputLimitMessage(s));
 }
 
-// A number argument as micro-units; throws (and returns false) for anything else.
-bool microArg(JSContext* ctx, JSValueConst v, const char* fn, double scale, std::int64_t& micro)
+// A number argument snapped to the writer's grid (format.h); throws (and returns false) for anything else.
+bool numberArg(JSContext* ctx, JSValueConst v, const char* fn, double scale, std::int64_t& n)
 {
     double d = 0;
     if (!JS_IsNumber(v)) {
@@ -65,8 +76,8 @@ bool microArg(JSContext* ctx, JSValueConst v, const char* fn, double scale, std:
     if (scale != 1.0) {
         d *= scale;
     }
-    if (!fmt::snapMicro(d, micro)) {
-        JS_ThrowRangeError(ctx, "out.%s: %s is not a finite number within 1e12", fn, std::isnan(d) ? "NaN" : "the value");
+    if (!fmt::snapToGrid(d, n, sessionOf(ctx).writer().grid())) {
+        JS_ThrowRangeError(ctx, "out.%s: %s is not a finite number within 1e10", fn, std::isnan(d) ? "NaN" : "the value");
         return false;
     }
     return true;
@@ -173,7 +184,7 @@ JSValue jsAxis(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     }
     char letter = 0;
     std::int64_t micro = 0;
-    if (!letterArg(ctx, argv[0], "axis", letter) || !microArg(ctx, argv[1], "axis", 1.0, micro)) {
+    if (!letterArg(ctx, argv[0], "axis", letter) || !numberArg(ctx, argv[1], "axis", 1.0, micro)) {
         return JS_EXCEPTION;
     }
     std::string word;
@@ -189,7 +200,7 @@ JSValue jsFeed(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
     if (argc < 1) {
         return JS_ThrowTypeError(ctx, "out.feed(value): a feed is needed");
     }
-    if (!microArg(ctx, argv[0], "feed", 1.0, micro)) {
+    if (!numberArg(ctx, argv[0], "feed", 1.0, micro)) {
         return JS_EXCEPTION;
     }
     std::string word;
@@ -276,11 +287,11 @@ JSValue jsWord(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv)
         return JS_EXCEPTION;
     }
     std::int64_t micro = 0;
-    if (!microArg(ctx, argv[1], "word", format.scale, micro)) {
+    if (!numberArg(ctx, argv[1], "word", format.scale, micro)) {
         return JS_EXCEPTION;
     }
     std::string word;
-    Writer::word(prefix, micro, format, word);
+    s.writer().word(prefix, micro, format, word);
     return newString(ctx, word);
 }
 
