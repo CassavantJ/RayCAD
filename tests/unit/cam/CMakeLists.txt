@@ -114,3 +114,5 @@ target_compile_definitions(ray_cam_cycletime_tests PRIVATE
 set_property(TARGET ray_cam_cycletime_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_cycletime_tests COMMAND ray_cam_cycletime_tests "~[wallclock]")
 ray_test_runtime_path(ray_cam_cycletime_tests)
+# The toolpath invariant checker and the property tests of the operation types (task T-058).
+add_subdirectory(invariants)
