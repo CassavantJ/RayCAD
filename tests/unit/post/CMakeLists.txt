@@ -28,3 +28,4 @@ set_property(TARGET ray_post_tests PROPERTY FOLDER "tests")
 # The bench ([bench][wallclock]) runs alone as ray_post_tests_wallclock (tests/tiers.cmake).
 add_test(NAME ray_post_tests COMMAND ray_post_tests "~[wallclock]")
 ray_test_runtime_path(ray_post_tests)
+add_subdirectory(roundtrip) # T-043: the independent G-code interpreter and the round trip of the goldens
