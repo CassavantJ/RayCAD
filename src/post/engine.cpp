@@ -346,6 +346,8 @@ Result<PostOutput> QuickJsPostEngine::runSource(std::string_view source, std::st
                 options.maxOutputBytes = outputLimit;
                 options.maxWarnings = limits_.maxWarnings;
                 options.maxBlockNumber = job.machine->maxBlockNumber;
+                options.reserveBytes = 4096 + 32 * moves; // about 24 bytes a move in the S8 and T-039 benches
+                options.reserveLines = moves;
                 s.startOutput(std::move(options));
                 return detail::runProgram(s, *d, job, ctx, plan);
             }();

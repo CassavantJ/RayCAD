@@ -3,6 +3,7 @@
 
 #include "format.h"
 
+#include <algorithm>
 #include <charconv>
 
 namespace ray::post {
@@ -84,6 +85,8 @@ Writer::Writer(WriterOptions options) : options_(std::move(options))
     coordinate_ = NumberFormat{options_.inch ? 4 : 3, true, true, true, 1.0};
     feed_ = NumberFormat{options_.inch ? 2 : 1, true, true, true, 1.0};
     grid_ = options_.inch ? fmt::kInchGrid : fmt::kMicroGrid;
+    out_.text.reserve(std::min(options_.reserveBytes, options_.maxOutputBytes));
+    out_.lineMap.reserve(options_.reserveLines);
 }
 
 bool Writer::emit(std::string_view line)

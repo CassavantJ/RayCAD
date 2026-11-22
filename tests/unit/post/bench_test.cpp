@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -56,8 +57,11 @@ Program benchProgram(std::size_t count)
         for (int i = 0; i < 96 && moves.size() < count; ++i) {
             const std::int32_t feed = next() % 10 == 0 ? mmPerMin(800) : mmPerMin(1200);
             if (i % 8 == 7) {
-                const Nm rx = snap(range(mm(1) / 2, mm(5))) * ((next() & 1) ? 1 : -1);
-                const Nm ry = snap(range(mm(1) / 2, mm(5))) * ((next() & 1) ? 1 : -1);
+                // One call per statement: the order of operands is unspecified in C++, and MSVC and GCC differ.
+                const Nm rxMagnitude = snap(range(mm(1) / 2, mm(5)));
+                const Nm rx = rxMagnitude * ((next() & 1) ? 1 : -1);
+                const Nm ryMagnitude = snap(range(mm(1) / 2, mm(5)));
+                const Nm ry = ryMagnitude * ((next() & 1) ? 1 : -1);
                 const Nm cx = x + rx, cy = y + ry;
                 const bool cw = (next() & 1) != 0;
                 if (i % 32 != 31) { // a quarter turn, exact in integers; else a full circle
@@ -105,18 +109,25 @@ TEST_CASE("post 1,000,000 moves", "[post][bench][wallclock]")
     const std::string script = other ? std::string(other) : postPath("iso-test.post.js");
     double best = 1e9;
     Hash256 hash{};
-    for (int run = 0; run < 3; ++run) {
+    const char* runsText = std::getenv("RAYCAD_POST_BENCH_RUNS"); // more runs, to look at run-to-run drift
+    const int runs = runsText ? std::max(1, std::atoi(runsText)) : 3;
+    for (int run = 0; run < runs; ++run) {
         const auto t0 = std::chrono::steady_clock::now();
         const auto out = engine.run(script, job, ctx);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         REQUIRE(out.has_value());
         if (run == 0) {
             hash = out->hash();
-            std::fprintf(stderr, "post bench: %zu moves -> %zu bytes, %zu lines mapped, JS heap peak %.2f MB\n", kMoves,
-                         out->text.size(), out->lineMap.size(),
-                         static_cast<double>(engine.lastRun().heapPeakBytes) / (1024.0 * 1024.0));
+            std::fprintf(
+                stderr, "post bench: %zu moves -> %zu bytes, %zu lines mapped, JS heap peak %.2f MB, hash %s\n", kMoves,
+                out->text.size(), out->lineMap.size(),
+                static_cast<double>(engine.lastRun().heapPeakBytes) / (1024.0 * 1024.0), out->hash().hex().c_str());
         }
         CHECK(out->hash() == hash);
+        if (!other) {
+            // The same bytes on every OS: this hash was produced by MSVC on Windows and GCC on Linux alike.
+            CHECK(out->hash().hex() == "25553abe844f6ba51b8542db1b450b0b55d6ff9c5b41bbcf2b96032646aa09dc");
+        }
         CHECK(engine.lastRun().heapAfterFreeBytes == 0);
         std::fprintf(stderr, "post bench run %d: %.3f s wall, %.3f s CPU, %llu interrupt polls\n", run + 1, seconds,
                      engine.lastRun().cpuSeconds, static_cast<unsigned long long>(engine.lastRun().interruptPolls));
@@ -126,5 +137,5 @@ TEST_CASE("post 1,000,000 moves", "[post][bench][wallclock]")
     // The Low-tier budget; the High-tier one (2 s) is checked on the reference machine.
     CHECK(best < 5.0);
 #endif
-    std::fprintf(stderr, "post bench: best of 3: %.3f s for %zu moves\n", best, kMoves);
+    std::fprintf(stderr, "post bench: best of %d: %.3f s for %zu moves\n", runs, best, kMoves);
 }

@@ -21,6 +21,8 @@ struct WriterOptions {
     std::size_t maxOutputBytes = std::size_t(1) << 20;
     std::size_t maxWarnings = 1000;
     std::size_t maxWarningBytes = 1000; // a longer warning is cut (UTF-8 safe) and marked with "..."
+    std::size_t reserveBytes = 0;       // text capacity to reserve up front (an estimate; growth copies are slow)
+    std::size_t reserveLines = 0;       // line map entries to reserve up front
     std::int64_t maxBlockNumber = 0;    // MachineDef::maxBlockNumber; 0 = no limit. Past it, N numbers wrap to start.
 };
 
@@ -87,7 +89,8 @@ public:
 
     // ---------- Line map ----------
     // While a move handler runs, every line written is mapped to (section, move): 0-based line index into text,
-    // section index into PostJob::sections, move index into that section's Toolpath::moves.
+    // section index into PostJob::sections, move index into that section's Toolpath::moves. The engine also enters
+    // (section, first move) around onSectionStart and (section, last move) around onSectionEnd.
     void enterMove(std::uint32_t section, std::uint32_t move);
     void leaveMove() { inMove_ = false; }
 

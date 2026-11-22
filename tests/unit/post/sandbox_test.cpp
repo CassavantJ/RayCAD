@@ -283,3 +283,16 @@ TEST_CASE("after every failure, a normal post run gives the same bytes", "[post]
     CHECK(after->hash() == before->hash());
     CHECK(engine.lastRun().heapAfterFreeBytes == 0);
 }
+
+TEST_CASE("the default limits are those of post.h and PLAN.md section 7", "[post][sandbox][limits]")
+{
+    const EngineLimits l;
+    CHECK(l.heapBytes == std::size_t(64) << 20);
+    CHECK(l.cpuSecondsBase == 10.0);
+    CHECK(l.cpuSecondsPerMove == 20.0e-6);
+    CHECK(l.outputBytesBase == std::size_t(1) << 20);
+    CHECK(l.outputBytesPerMove == 256);
+    CHECK(l.maxWarnings == 1000);
+    CHECK(l.jsStackBytes == 256 * 1024);
+    CHECK(l.threadStackBytes >= std::size_t(1) << 20);
+}
