@@ -197,6 +197,13 @@ QString chipLoadText(double mm, bool inch)
     return trimmed(mm, 4) + QStringLiteral(" mm/tooth");
 }
 
+QString feedPerRevText(double mm, bool inch)
+{
+    if (inch)
+        return cText(mm / 25.4, 'f', 4) + QStringLiteral(" in/rev");
+    return trimmed(mm, 4) + QStringLiteral(" mm/rev");
+}
+
 QString powerText(double kw)
 {
     return trimmed(kw, 2) + QStringLiteral(" kW");

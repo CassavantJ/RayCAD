@@ -19,6 +19,7 @@ Item {
     readonly property real fieldWidth: Theme.controlHeight * 5.5
     readonly property real contentWidth: labelWidth + fieldWidth + Theme.controlHeightSmall + 2 * Theme.spacingS
     readonly property var values: CamOperation.values
+    readonly property var fullValues: CamOperation.fullValues
     readonly property var messages: CamOperation.fieldMessages
     readonly property var calc: CamOperation.calculated
 
@@ -61,7 +62,9 @@ Item {
             TextField {
                 objectName: "operationInput." + fieldRow.key
                 width: root.fieldWidth
-                text: root.values[fieldRow.key] !== undefined ? String(root.values[fieldRow.key]) : ""
+                // At rest a stored length shows in the app's display format; being edited, in full.
+                text: activeFocus && root.fullValues[fieldRow.key] !== undefined ? String(root.fullValues[fieldRow.key])
+                      : root.values[fieldRow.key] !== undefined ? String(root.values[fieldRow.key]) : ""
                 placeholderText: fieldRow.placeholder
                 invalid: fieldRow.error !== ""
                 Accessible.name: fieldRow.label
@@ -159,37 +162,67 @@ Item {
         x: 0
         y: root.topInset
         width: column.implicitWidth + 2 * Theme.spacingM
-        height: Math.min(root.height - root.topInset - root.triadSpace, column.implicitHeight + 2 * Theme.spacingM)
+        // The header and the footer stay; the sections between them scroll when the window is too short for all.
+        height: Math.min(root.height - root.topInset - root.triadSpace,
+                         header.implicitHeight + column.implicitHeight + footer.implicitHeight
+                         + 2 * Theme.spacingM + 2 * Theme.spacingS)
         clip: true
+
+        // ---- header: what is being edited, whatever the scroll ----
+        Column {
+            id: header
+            objectName: "operationHeader"
+            x: Theme.spacingM
+            y: Theme.spacingM
+            width: root.contentWidth
+            spacing: Theme.spacingXs / 2
+            Row {
+                spacing: Theme.spacingS
+                Icon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "sliders"
+                    color: Theme.accentText
+                }
+                Label {
+                    objectName: "operationPanelTitle"
+                    anchors.verticalCenter: parent.verticalCenter
+                    font: Theme.strongFont
+                    text: CamOperation.title
+                }
+            }
+            Label {
+                objectName: "operationPanelSubject"
+                width: parent.width
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                secondary: true
+                font: Theme.smallFont
+                text: (root.values["name"] !== undefined ? root.values["name"] : "") + " · " + CamOperation.typeTitle
+            }
+        }
 
         Flickable {
             id: flick
             objectName: "operationScroll"
-            anchors.fill: parent
-            anchors.margins: Theme.spacingM
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: header.bottom
+            anchors.bottom: footer.top
+            anchors.leftMargin: Theme.spacingM
+            anchors.rightMargin: Theme.spacingM
+            anchors.topMargin: Theme.spacingS
+            anchors.bottomMargin: Theme.spacingS
             contentHeight: column.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
             interactive: contentHeight > height
+            clip: true
+            // Scrolled by whole device pixels, so text stays on the pixel grid.
+            pixelAligned: true
             ScrollBar.vertical: ScrollBar {}
 
             Column {
                 id: column
                 spacing: Theme.spacingS
-
-                Row {
-                    spacing: Theme.spacingS
-                    Icon {
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: "sliders"
-                        color: Theme.accentText
-                    }
-                    Label {
-                        objectName: "operationPanelTitle"
-                        anchors.verticalCenter: parent.verticalCenter
-                        font: Theme.strongFont
-                        text: CamOperation.title
-                    }
-                }
 
                 ChoiceRow {
                     visible: !CamOperation.editing
@@ -494,7 +527,8 @@ Item {
                     }
                     ReadOut {
                         visible: root.calc.available === true
-                        label: qsTr("Chip load")
+                        objectName: "operationCalculatedChipLoad"
+                        label: root.calc.chipLoadLabel !== undefined ? root.calc.chipLoadLabel : qsTr("Chip load")
                         value: root.calc.chipLoad !== undefined ? root.calc.chipLoad : ""
                     }
                     ReadOut {
@@ -620,20 +654,7 @@ Item {
                     onToggled: CamOperation.setValue("clockwise", checked)
                 }
 
-                // ---- what the check found ----
-                Repeater {
-                    model: CamOperation.errors
-                    delegate: Label {
-                        required property string modelData
-                        required property int index
-                        objectName: "operationError." + index
-                        width: root.contentWidth
-                        wrapMode: Text.Wrap
-                        elide: Text.ElideNone
-                        color: Theme.error
-                        text: modelData
-                    }
-                }
+                // ---- what the check found that does not block OK (what does is in the footer) ----
                 Repeater {
                     model: CamOperation.warnings
                     delegate: Label {
@@ -648,55 +669,80 @@ Item {
                         text: modelData
                     }
                 }
-                Label {
-                    objectName: "operationMessage"
-                    visible: CamOperation.message !== "" && CamOperation.previewStatus === "failed"
-                             && CamOperation.messageField !== "pick"
+            }
+        }
+
+        // ---- footer: what blocks OK, the progress, OK and Cancel and the status line, always in view ----
+        Column {
+            id: footer
+            objectName: "operationFooter"
+            x: Theme.spacingM
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Theme.spacingM
+            width: root.contentWidth
+            spacing: Theme.spacingS
+            Repeater {
+                model: CamOperation.errors
+                delegate: Label {
+                    required property string modelData
+                    required property int index
+                    objectName: "operationError." + index
                     width: root.contentWidth
                     wrapMode: Text.Wrap
                     elide: Text.ElideNone
+                    maximumLineCount: 4
                     color: Theme.error
-                    text: CamOperation.message
+                    text: modelData
                 }
-                ProgressBar {
-                    objectName: "operationProgress"
-                    width: root.contentWidth
-                    visible: CamOperation.progress >= 0
-                    from: 0
-                    to: 1
-                    value: Math.max(0, CamOperation.progress)
+            }
+            Label {
+                objectName: "operationMessage"
+                visible: CamOperation.message !== "" && CamOperation.previewStatus === "failed"
+                         && CamOperation.messageField !== "pick"
+                width: root.contentWidth
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                color: Theme.error
+                text: CamOperation.message
+            }
+            ProgressBar {
+                objectName: "operationProgress"
+                width: root.contentWidth
+                visible: CamOperation.progress >= 0
+                from: 0
+                to: 1
+                value: Math.max(0, CamOperation.progress)
+            }
+            Row {
+                spacing: Theme.spacingS
+                layoutDirection: Qt.RightToLeft
+                width: root.contentWidth
+                Button {
+                    objectName: "operationOk"
+                    primary: true
+                    text: CamOperation.editing ? qsTr("Apply") : qsTr("OK")
+                    enabled: CamOperation.canCommit
+                    toolTipText: CamOperation.editing ? qsTr("Change the operation (Enter)") : qsTr("Add the operation (Enter)")
+                    onClicked: CamOperation.commit()
                 }
-                Row {
-                    spacing: Theme.spacingS
-                    layoutDirection: Qt.RightToLeft
-                    width: root.contentWidth
-                    Button {
-                        objectName: "operationOk"
-                        primary: true
-                        text: CamOperation.editing ? qsTr("Apply") : qsTr("OK")
-                        enabled: CamOperation.canCommit
-                        toolTipText: CamOperation.editing ? qsTr("Change the operation (Enter)") : qsTr("Add the operation (Enter)")
-                        onClicked: CamOperation.commit()
-                    }
-                    Button {
-                        objectName: "operationCancel"
-                        text: qsTr("Cancel")
-                        toolTipText: qsTr("Close without changing the document (Esc)")
-                        onClicked: CamOperation.cancel()
-                    }
+                Button {
+                    objectName: "operationCancel"
+                    text: qsTr("Cancel")
+                    toolTipText: qsTr("Close without changing the document (Esc)")
+                    onClicked: CamOperation.cancel()
                 }
-                // Below the buttons, so that OK and Cancel never move while a preview builds.
-                Label {
-                    objectName: "operationPreviewState"
-                    width: root.contentWidth
-                    wrapMode: Text.Wrap
-                    elide: Text.ElideNone
-                    secondary: CamOperation.messageField !== "pick"
-                    color: CamOperation.messageField === "pick" ? Theme.warning : Theme.textSecondary
-                    font: Theme.smallFont
-                    text: CamOperation.statusLine
-                    visible: text !== ""
-                }
+            }
+            // Below the buttons, so that OK and Cancel never move while a preview builds.
+            Label {
+                objectName: "operationPreviewState"
+                width: root.contentWidth
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                secondary: CamOperation.messageField !== "pick"
+                color: CamOperation.messageField === "pick" ? Theme.warning : Theme.textSecondary
+                font: Theme.smallFont
+                text: CamOperation.statusLine
+                visible: text !== ""
             }
         }
     }

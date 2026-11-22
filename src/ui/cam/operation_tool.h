@@ -78,6 +78,9 @@ class OperationToolModel : public QObject {
     // Field text by key: name, clearance, retract, feedPlane, top, bottom, rpm, feedCut, feedPlunge, feedRamp,
     // feedLeadIn, feedLeadOut (text), coolant (string), clockwise (bool), stickOut, toolNumber (text).
     Q_PROPERTY(QVariantMap values READ values NOTIFY valuesChanged)
+    // The text to edit, by key, of a length field that shows a stored value: the value in full (at rest it shows in the
+    // app's display format, UnitsObject::formatLength).
+    Q_PROPERTY(QVariantMap fullValues READ fullValues NOTIFY valuesChanged)
     // Messages beside those fields, by key.
     Q_PROPERTY(QVariantMap fieldMessages READ fieldMessages NOTIFY statusChanged)
     // The heights the type uses [{key, label, hint}] and the cutting members it uses.
@@ -139,6 +142,7 @@ public:
     QString typeTitle() const;
     SchemaFormModel* form() const { return form_; }
     QVariantMap values() const { return values_; }
+    QVariantMap fullValues() const;
     QVariantMap fieldMessages() const;
     QVariantList heights() const;
     QStringList cutting() const { return cutting_; }
@@ -257,6 +261,8 @@ private:
     camui::ExprFn exprFn() const;
     bool inch() const;
     QString lengthText(double mm) const;
+    void setStoredLength(const QString& key, double mm);
+    bool isExactText(const QString& key, const QString& text) const;
     std::optional<double> length(const QString& key, QString* error) const;
     const ToolItem* chosenTool() const;
     const cam::Setup* setupOf(const doc::DocState& state) const;
@@ -295,6 +301,7 @@ private:
     // A field's text as it was written from a stored or calculated value, and that value: while the text is unchanged
     // it reads as exactly that value (no round trip through the display unit's rounding).
     std::map<QString, std::pair<QString, double>> exact_;
+    std::map<QString, QString> fullText_;       // a stored length's text in full precision, which reads exactly too
     std::map<QString, std::string> holderJson_; // library holders by id
     QVariantList holderList_;
     QString toolSearch_;

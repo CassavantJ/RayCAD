@@ -86,7 +86,8 @@ class SchemaFormModel : public QObject {
     // "mm" or "in": the display unit of lengths.
     Q_PROPERTY(QString lengthUnit READ lengthUnit WRITE setLengthUnit NOTIFY changed)
     // [{key, title, description, kind ("number", "integer", "boolean", "enum", "string", "unsupported"), unit (label),
-    //   value (text, or bool), choices [{value, text}], relevant, message, isDefault, defaultText, reason}]
+    //   value (text, or bool), fullValue (the text to edit while it shows a stored value, else ""), choices [{value,
+    //   text}], relevant, message, isDefault, defaultText, reason}]
     Q_PROPERTY(QVariantList fields READ fields NOTIFY changed)
     Q_PROPERTY(int fieldCount READ fieldCount NOTIFY schemaChanged)
     Q_PROPERTY(QStringList problems READ problems NOTIFY schemaChanged)
@@ -116,6 +117,9 @@ public:
 
     // ---- C++ ----
     void setExprFn(camui::ExprFn fn);
+    // How a length shows at rest (the app's display format, UnitsObject::formatLength); unset: numberText in full.
+    // A field being edited shows the value in full (fields(): fullValue). The stored value stays exact either way.
+    void setLengthFormat(std::function<QString(double mm)> format);
     const camui::FormSchema& schema() const { return schema_; }
     // Shows stored params (as the document holds them; members left out show their default).
     void load(const QJsonObject& params);
@@ -143,9 +147,11 @@ private:
         QVariant text;                    // what the field shows: QString, or bool for a boolean
         std::optional<QJsonValue> loaded; // the stored value, while `text` is what it was loaded as
         QVariant loadedText;
+        QVariant fullText; // the stored value's text in full precision (it reads as the stored value too)
     };
     const camui::FormField* field(const QString& key) const;
     QVariant textOf(const camui::FormField& f, const QJsonValue& v) const;
+    QVariant fullTextOf(const camui::FormField& f, const QJsonValue& v) const;
     // The value of the field's text, or nullopt with the reason.
     std::optional<QJsonValue> read(const camui::FormField& f, QString* error) const;
     bool relevant(const camui::FormField& f, int depth = 0) const;
@@ -155,6 +161,7 @@ private:
     camui::FormSchema schema_;
     QString lengthUnit_ = QStringLiteral("mm");
     camui::ExprFn expr_;
+    std::function<QString(double mm)> lengthFormat_;
     std::map<QString, Entry> entries_;
     QJsonObject kept_; // loaded values of properties the form cannot edit
     std::map<QString, QString> external_;

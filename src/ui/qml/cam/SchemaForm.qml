@@ -101,7 +101,10 @@ Column {
                 TextField {
                     objectName: "schemaInput." + row.key
                     width: root.fieldWidth
-                    text: row.visible && row.modelData.value !== undefined ? String(row.modelData.value) : ""
+                    // At rest a stored length shows in the app's display format; being edited, in full.
+                    text: !row.visible || row.modelData.value === undefined ? ""
+                          : activeFocus && row.modelData.fullValue ? row.modelData.fullValue
+                          : String(row.modelData.value)
                     placeholderText: row.modelData.defaultText
                     invalid: row.erroneous
                     Accessible.name: row.modelData.title
