@@ -572,6 +572,41 @@ TEST_CASE("link: step in to the next pocket ring with the tool centre in cut are
     CHECK(run({inner, outer}, o, stock).entered[1] == Entered::Helix);
 }
 
+TEST_CASE("link: step in as a slot to a ring beyond the cut area, with stepInSlot (T-054)", "[link][staydown]")
+{
+    // Rings 4 mm apart with a 3 mm tool radius: the step's centre line leaves the cut area for its last millimetre,
+    // which lies in what the outer ring cuts. Without stepInSlot the tool retracts and enters again; with it, it
+    // steps sideways at depth.
+    const Stock stock = boxStock(0, 0, 50 * kMm, 30 * kMm, 0);
+    const Pt c{25 * kMm, 15 * kMm};
+    Pass inner = passFromPath(geom2d::Path::circle(c, 3 * kMm, true), -2 * kMm, kCutFeed);
+    Pass far = passFromPath(geom2d::Path::circle(c, 7 * kMm, true), -2 * kMm, kCutFeed);
+    inner.room = far.room = unbounded();
+    inner.cluster = far.cluster = 0;
+    Options o = baseOptions();
+    o.keepOrder = true;
+    o.helixDiameter = 4 * kMm;
+    o.rampAngleDeg = 3;
+    o.maxStayDown = 6 * kMm;
+    o.stepIn = true;
+    CHECK(run({inner, far}, o, stock).entered[1] == Entered::Helix);
+    o.stepInSlot = true;
+    const Linked l = run({inner, far}, o, stock);
+    REQUIRE(l.entered[1] == Entered::Step);
+    const Move& step = l.moves[l.passMove[1] - 1];
+    CHECK(step.role == MoveRole::Cut);
+    CHECK(step.x == 32 * kMm);
+    CHECK(step.y == 15 * kMm);
+    CHECK(step.z == -2 * kMm);
+    // Still no farther than maxStayDown, and never into material the next pass does not cut: a ring 9 mm out is
+    // beyond what one step may reach (its cut does not reach back to the inner ring's cut area).
+    Pass beyond = passFromPath(geom2d::Path::circle(c, 10 * kMm, true), -2 * kMm, kCutFeed);
+    beyond.room = unbounded();
+    beyond.cluster = 0;
+    o.maxStayDown = 20 * kMm;
+    CHECK(run({inner, beyond}, o, stock).entered[1] == Entered::Helix);
+}
+
 TEST_CASE("link: the order respects sequences and cluster levels; keepOrder keeps it", "[link][order]")
 {
     std::vector<Pass> passes;

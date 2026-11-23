@@ -14,7 +14,8 @@
 //                   with cluster/level so depths stay in order; tabs are z moves inside the pass (non-planar passes
 //                   are fine, they enter by Free, PreDrill or Plunge).
 //   T-054 pocket    rings as rotatable closed passes, cluster = pocket, level = depth index, maxStayDown with stepIn
-//                   for the step from one ring to the next (Entered::Step: the tool centre stays in cut area), plain
+//                   for the step from one ring to the next (Entered::Step: the tool centre stays in cut area, or with
+//                   stepInSlot, added by T-054 for stepovers above the tool radius, in what the next ring cuts), plain
 //                   stay-down links where the whole link lies in cut area, entryOrder {Helix, Ramp, PreDrill}, room =
 //                   the pocket shrunk by the tool radius plus stock to leave; Options::preDrills for pre-drilled
 //                   points.
@@ -185,6 +186,11 @@ struct Options {
     // lies in what the pass (with its leads) cuts anyway. So the tool centre never enters material, only its flank
     // does (a radial depth under the tool radius), and nothing outside the pass's own swept area is cut. Entered::Step.
     bool stepIn = false;
+    // Added by T-054: with stepIn, the step's centre line may also lie in what the pass itself cuts (with its leads),
+    // not only in area already cut: the tool moves sideways into material the pass removes anyway, a cut at most as
+    // wide as the tool (a slot, as the first ring of a pocket is). For offset pocketing with a stepover above the tool
+    // radius, where the next ring lies farther out than the cut area reaches. The removed-material rule is unchanged.
+    bool stepInSlot = false;
     bool rapidRetract = false; // retract from the cut by a rapid straight up; false: feed up to the feed plane first
     // Entry, in this order, the first that fits (a pass's own entryOrder replaces it).
     std::vector<EntryKind> entryOrder{EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill};
