@@ -10,9 +10,9 @@ namespace ray::cam {
 void registerBuiltinOperationTypes(OperationRegistry& registry)
 {
     registry.add(ops::makeDrillOperationType());
-    registry.add(ops::makeFaceOperationType()); // T-052
+    registry.add(ops::makeFaceOperationType());      // T-052
     registry.add(ops::makeContour2dOperationType()); // "contour2d" (T-053)
-    registry.add(ops::makePocket2dOperationType()); // T-054
+    registry.add(ops::makePocket2dOperationType());  // T-054
 }
 
 } // namespace ray::cam
