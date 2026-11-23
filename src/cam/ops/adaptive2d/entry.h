@@ -10,8 +10,8 @@
 //                       along the region's first path, Role::Ramp, from `centre` to `start`: link.h's Ramp entry on
 //                       that path as a pass), PreDrill (plunge into the hole of `radius` at `centre`: link.h PreDrill;
 //                       the first path is then a LinkClear from the centre to the hole's side, where the first pass
-//                       starts), FromCleared (from cleared area: an open pocket or rest machining; a feed descent through
-//                       cut area). None only with Input::allowUnentered.
+//                       starts), FromCleared (from cleared area: an open pocket or rest machining; a feed descent
+//                       through cut area). None only with Input::allowUnentered.
 //   Region::paths       in cutting order, each starting where the previous one ended: Path::points (nm) to
 //                       geom2d::fitArcs then link::passFromPath; Path::motion: Cut (feed), LinkClear (a tool-down
 //                       link through cleared area: link.h maxStayDown with stayDownLift), LinkRetract (retract and

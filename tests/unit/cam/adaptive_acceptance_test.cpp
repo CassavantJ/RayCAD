@@ -46,8 +46,16 @@ void accept(const std::string& id, double stepover)
         // the 6 of the acceptance. The passes themselves run high (checked by role with the probe's "roles" mode;
         // leads, links and finishing are below target), as upstream's do (S5 measured 44.5). Held at what is
         // measured, so a regression still fails.
-        WARN("p3 at 10% load: p99 " << r.p99 << " deg, acceptance " << target + 6.0 << ": not met");
+        // T-063 (item A of T-060's report): the top 1% of the readings (44 degrees and up) all lie on passes turning
+        // away from the material with a radius under 5 mm (under 2 mm for two thirds of them), where the checker's
+        // removal lagging kLag behind on the curve leaves the outer side of the tool uncovered; read on the tool's
+        // forward half only (sweepcheck.h, Report::Forward) the p99 is 39.0. Lowering the step search's target in
+        // tight turns (four variants) only tightened the loops: median down to 26.8-35.8, p99 43.5-46.0, run time
+        // +24-66%. The regulator is upstream's.
+        WARN("p3 at 10% load: p99 " << r.p99 << " deg (forward half " << r.forward.p99 << "), acceptance "
+                                    << target + 6.0 << ": not met");
         CHECK(r.p99 <= target + 7.5);
+        CHECK(r.forward.p99 <= target + 6.0);
     } else {
         CHECK(r.p99 <= target + 6.0);
     }
