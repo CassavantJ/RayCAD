@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/pocket2d.schema.json",
+  "title": "2D pocket",
+  "description": "Parameters of a 'pocket2d' operation (cam.h Operation::paramsJson, task T-054): offset pocketing of the empty area above each picked floor face, islands left standing, open edges run out past, entered by a helix, a ramp or a pre-drilled hole, with optional floor and wall finishing passes and stock to leave. The operation's geometry is the floor face of each pocket. Its heights are measured from the top of the stock: 'clearance', 'retract' and 'feedPlane' as for every milling operation, 'top' where the material starts; 'bottom' is not used (each pocket goes down to its floor, plus the stock to leave on the floor). Feeds: the cutting feed for the rings, the ramp feed for helices and ramps, the plunge feed for descents and pre-drilled entries, the lead-in and lead-out feeds for the wall finishing leads. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here faces) and 'x-toolTypes' (the tools the picker offers); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane", "top"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "feedRamp", "feedLeadIn", "feedLeadOut", "coolant"],
+  "x-geometry": { "kind": "face", "count": "oneOrMore", "description": "Click the floor of each pocket." },
+  "x-toolTypes": ["flatEndMill", "bullEndMill"],
+  "x-propertyOrder": ["cutMode", "stepover", "stepdown", "stockToLeaveWall", "stockToLeaveFloor", "finishWalls",
+                      "wallAllowance", "finishFloor", "floorAllowance", "entry", "helixDiameter", "rampAngle",
+                      "preDrillPoints", "preDrillDiameter"],
+  "properties": {
+    "cutMode": {
+      "title": "Direction",
+      "description": "Climb: the cutter's teeth enter the material at its thickest (the usual choice on a rigid machine). Conventional: the reverse.",
+      "enum": ["climb", "conventional"],
+      "x-enumTitles": ["Climb", "Conventional"],
+      "default": "climb"
+    },
+    "stepover": {
+      "title": "Stepover",
+      "description": "Distance between neighbouring rings, in percent of the tool diameter. Above 50 % rings are added where the pocket's middle would keep material.",
+      "type": "number",
+      "minimum": 5,
+      "maximum": 95,
+      "default": 45,
+      "x-unit": "count"
+    },
+    "stepdown": {
+      "title": "Stepdown",
+      "description": "Largest depth of cut: the pocket is cut in equal steps no deeper than this.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100,
+      "default": 2,
+      "x-unit": "length"
+    },
+    "stockToLeaveWall": {
+      "title": "Stock to leave on walls",
+      "description": "Material left on the walls and islands for a later operation.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "stockToLeaveFloor": {
+      "title": "Stock to leave on the floor",
+      "description": "Material left on the floor for a later operation.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "finishWalls": {
+      "title": "Finish the walls",
+      "description": "Rough the walls leaving the wall allowance, then take one finishing pass round every wall and island at each depth, with tangent arc leads.",
+      "type": "boolean",
+      "default": false
+    },
+    "wallAllowance": {
+      "title": "Wall finishing allowance",
+      "description": "What the roughing leaves on the walls for the finishing pass to take.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 5,
+      "default": 0.2,
+      "x-unit": "length",
+      "x-relevantWhen": { "finishWalls": [true] }
+    },
+    "finishFloor": {
+      "title": "Finish the floor",
+      "description": "Rough down to the floor allowance, then cut the floor in one last depth.",
+      "type": "boolean",
+      "default": false
+    },
+    "floorAllowance": {
+      "title": "Floor finishing allowance",
+      "description": "What the roughing leaves on the floor for the finishing depth to take.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 5,
+      "default": 0.2,
+      "x-unit": "length",
+      "x-relevantWhen": { "finishFloor": [true] }
+    },
+    "entry": {
+      "title": "Entry",
+      "description": "How the tool gets down into the material. End mills do not cut at their centre, so there is never a straight plunge.",
+      "enum": ["helix", "ramp", "preDrill"],
+      "x-enumTitles": ["Helix", "Ramp", "Pre-drilled holes"],
+      "x-enumDescriptions": ["A helix first, a ramp along the ring where it does not fit, then a pre-drilled hole",
+                             "A ramp along the ring first, then a helix, then a pre-drilled hole",
+                             "Only at the pre-drilled holes given below"],
+      "default": "helix"
+    },
+    "helixDiameter": {
+      "title": "Helix diameter",
+      "description": "Diameter of the helix the tool centre follows, in percent of the tool diameter; made smaller (down to 30 %) where it does not fit.",
+      "type": "number",
+      "minimum": 30,
+      "maximum": 400,
+      "default": 90,
+      "x-unit": "count",
+      "x-relevantWhen": { "entry": ["helix", "ramp"] }
+    },
+    "rampAngle": {
+      "title": "Ramp angle",
+      "description": "How steeply helices and ramps go down.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 30,
+      "default": 2,
+      "x-unit": "angle",
+      "x-relevantWhen": { "entry": ["helix", "ramp"] }
+    },
+    "preDrillPoints": {
+      "title": "Pre-drilled holes",
+      "description": "Centres of holes drilled before this operation, in millimetres in the setup's coordinates whatever the display unit: 'x y' pairs separated by ';' (for example '20 15; 60 15'). Each must be drilled at least to the floor of its pocket. Empty: none.",
+      "type": "string",
+      "maxLength": 2000,
+      "default": ""
+    },
+    "preDrillDiameter": {
+      "title": "Pre-drilled hole diameter",
+      "description": "Diameter of the pre-drilled holes; at least the tool's.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 200,
+      "default": 0,
+      "x-unit": "length"
+    }
+  }
+}
