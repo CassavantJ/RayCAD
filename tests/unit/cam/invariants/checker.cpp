@@ -455,7 +455,8 @@ struct PartCheck {
         if (n.d - hd - p.inflate > rz) {
             return;
         }
-        pm.zset(i, j, qx, qy, s, allowed, zs);
+        double wholeBelow = std::numeric_limits<double>::infinity(); // T-055: see PartModel::zset
+        pm.zset(i, j, qx, qy, s, allowed, zs, &wholeBelow);
         if (zs.empty()) {
             return;
         }
@@ -470,7 +471,14 @@ struct PartCheck {
                 best.up = b.up;
                 best.zUp = b.zUp;
             }
-            best.lo = std::max(best.lo, b.lo);
+            if (iv.hi <= wholeBelow) {
+                best.lo = std::max(best.lo, b.lo);
+            } else if (iv.lo < wholeBelow) {
+                // Only the part of the interval no allowed cut reaches is known to be protected material.
+                const PenBounds below =
+                    penetration(prof, zone, iv.lo - f, wholeBelow + f, zr.first, zr.second, n.z + p.inflate, dUp, dLo);
+                best.lo = std::max(best.lo, below.lo);
+            }
         }
         if (best.up <= limit) {
             return; // no contact beyond the limit anywhere over this square
@@ -597,6 +605,11 @@ public:
                              ? *c_.centreCutting
                              : centreCuttingByDefault(in.tool.type) &&
                                    !(in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0);
+        // T-055: a chamfer mill with a flat at its tip cuts everywhere on its cone beyond that flat, so only the flat
+        // is its dead zone; other tools that do not cut at their centre have the fraction of the radius.
+        deadRadius_ = in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0 && !c_.centreCutting
+                          ? std::min(in.tool.tipDiameter / 2, c_.deadZoneFraction * rCut_)
+                          : c_.deadZoneFraction * rCut_;
         lf_ = prof_.zoneBottom(Zone::Body);
         if (std::isinf(lf_)) {
             lf_ = prof_.zoneBottom(Zone::Holder);
@@ -734,7 +747,7 @@ private:
             if (centreCutting_) {
                 return;
             }
-            const double rDead = c_.deadZoneFraction * rCut_;
+            const double rDead = deadRadius_;
             double depth = 0;
             Vec3 at{};
             samples(p, rDead, p.zmin(), [&](int idx, double x, double y, const Piece::Near&) {
@@ -1097,6 +1110,7 @@ private:
     PartCheck partCheck_;
     StockGrid stock_;
     double rCut_ = 0, lf_ = 0;
+    double deadRadius_ = 0; // T-055: see the constructor
     bool centreCutting_ = false;
     std::vector<std::pair<double, double>> runs_;
 };

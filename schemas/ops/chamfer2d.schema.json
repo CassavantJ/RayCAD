@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/chamfer2d.schema.json",
+  "title": "Chamfer",
+  "description": "Parameters of a 'chamfer2d' operation (cam.h Operation::paramsJson, task T-055): chamfering or deburring level edges with the flank of a chamfer mill or a spot drill. The operation's geometry is the edges to chamfer, each the top edge of a wall; picked edges that meet are cut as one chain. The chamfer's angle is the tool's (a 90 degree tool makes a 45 degree chamfer); 'width' is its width across the top face, and the tool tip goes 'tipOffset' below the chamfer's lower edge so the flank cuts it, not the tip. The operation is refused when the tool's tip or body would touch a wall or floor below or beside the edge. Its heights are measured from the top of the stock: 'clearance', 'retract' and 'feedPlane' as their names say; 'top' and 'bottom' are not used (the depth is the chamfer's own). The cut feed is the cutting feed (Operation cutting feedCut); the descent beside the edge uses feedPlunge (0: the cutting feed). Lengths are millimetres. Annotations for editors: 'x-unit' (length), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here edges) and 'x-toolTypes' (the tools the picker offers); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "coolant"],
+  "x-geometry": { "kind": "edge", "count": "oneOrMore", "description": "Click the edges to chamfer: the top edge of each wall." },
+  "x-toolTypes": ["chamferMill", "spotDrill"],
+  "x-propertyOrder": ["width", "tipOffset", "direction", "tangentEdges", "extension"],
+  "properties": {
+    "width": {
+      "title": "Chamfer width",
+      "description": "The chamfer's width across the top face; its depth follows from the tool's angle.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 50,
+      "default": 0.5,
+      "x-unit": "length"
+    },
+    "tipOffset": {
+      "title": "Tip offset",
+      "description": "How far the tool tip goes below the chamfer's lower edge, so the flank makes the chamfer and the tip stays clear of the wall.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "default": 0.3,
+      "x-unit": "length"
+    },
+    "direction": {
+      "title": "Direction",
+      "description": "Which way the tool goes round the edge.",
+      "enum": ["climb", "conventional"],
+      "x-enumTitles": ["Climb", "Conventional"],
+      "x-enumDescriptions": ["The tool keeps the wall on its right (spindle clockwise)", "The tool keeps the wall on its left (spindle clockwise)"],
+      "default": "climb"
+    },
+    "tangentEdges": {
+      "title": "Follow tangent edges",
+      "description": "Also chamfer the edges that carry on tangentially from the picked ones (round a filleted corner, all the way round a rounded outline).",
+      "type": "boolean",
+      "default": true
+    },
+    "extension": {
+      "title": "Extend open ends",
+      "description": "An edge chain that does not close is cut on this far past each of its ends, straight on, so the chamfer runs out cleanly.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "x-unit": "length"
+    }
+  }
+}

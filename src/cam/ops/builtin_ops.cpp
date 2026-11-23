@@ -5,6 +5,9 @@
 #include "engrave.h" // T-056
 #include "face.h"
 #include "threadmill.h" // T-056
+// T-055: slot and chamfer2d
+#include "chamfer2d.h"
+#include "slot.h"
 
 namespace ray::cam {
 
@@ -15,6 +18,9 @@ void registerBuiltinOperationTypes(OperationRegistry& registry)
     registry.add(ops::makeThreadmillOperationType()); // T-056
     registry.add(ops::makeFaceOperationType());       // T-052
     registry.add(ops::makeContour2dOperationType());  // "contour2d" (T-053)
+    // T-055: slot and chamfer2d
+    registry.add(ops::makeSlotOperationType());
+    registry.add(ops::makeChamfer2dOperationType());
 }
 
 } // namespace ray::cam

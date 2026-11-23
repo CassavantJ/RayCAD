@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <sstream>
 
 namespace ray::cam::invariants {
@@ -648,6 +649,65 @@ std::vector<kernel::SubId> outerWalls(PropertyCase& c)
 }
 
 } // namespace pick
+
+std::optional<AllowedCut> chamferCut(const kernel::Shape& shape, kernel::SubId edge, double depth, double slope,
+                                     double grow)
+{
+    // The edge in the XY plane by the kernel's curve rules (lines, arcs with their direction, whole circles).
+    const auto curves = kernel::edgeCurves(shape, edge, Xform::identity());
+    if (!curves || curves->curves.empty() || curves->zMax - curves->zMin > 1e-6) {
+        return std::nullopt;
+    }
+    AllowedCut a;
+    a.radius = grow + 0.001; // arcs are chorded within 1 um, inside the arc
+    a.slope = slope;
+    a.zBottom = curves->zMax - depth;
+    a.zTop = curves->zMax + 1;
+    for (const kernel::ProfileCurve& c : curves->curves) {
+        using K = kernel::ProfileCurve::Kind;
+        if (c.kind == K::Line) {
+            if (a.path.empty()) {
+                a.path.push_back(c.pts[0]);
+            }
+            a.path.push_back(c.pts[1]);
+            continue;
+        }
+        if (c.kind != K::Arc && c.kind != K::Circle) {
+            return std::nullopt;
+        }
+        const Vec2 centre = c.kind == K::Arc ? c.pts[2] : c.pts[0];
+        const Vec2 start = c.kind == K::Arc ? c.pts[0] : Vec2{centre.x + c.radius, centre.y};
+        const double r = std::hypot(start.x - centre.x, start.y - centre.y);
+        const double a0 = std::atan2(start.y - centre.y, start.x - centre.x);
+        const double dir = c.kind == K::Circle || c.ccw ? 1.0 : -1.0;
+        double sweep = 2 * kPi;
+        if (c.kind == K::Arc) {
+            sweep = dir * (std::atan2(c.pts[1].y - centre.y, c.pts[1].x - centre.x) - a0);
+            while (sweep <= 1e-12) {
+                sweep += 2 * kPi;
+            }
+            while (sweep > 2 * kPi) {
+                sweep -= 2 * kPi;
+            }
+        } else {
+            a.closed = true;
+        }
+        // Chords within 1 um of the arc (sag r (1 - cos(step / 2))), at least 8 per turn.
+        const double step = std::min(kPi / 4, 2 * std::acos(std::max(-1.0, 1 - 0.001 / std::max(r, 1e-9))));
+        const int n = std::max(1, static_cast<int>(std::ceil(sweep / step)));
+        for (int k = a.path.empty() ? 0 : 1; k <= n; ++k) {
+            const double t = a0 + dir * sweep * k / n;
+            a.path.push_back(Vec2{centre.x + r * std::cos(t), centre.y + r * std::sin(t)});
+        }
+    }
+    a.pathLo = Vec2{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+    a.pathHi = Vec2{-a.pathLo.x, -a.pathLo.y};
+    for (const Vec2& p : a.path) {
+        a.pathLo = Vec2{std::min(a.pathLo.x, p.x), std::min(a.pathLo.y, p.y)};
+        a.pathHi = Vec2{std::max(a.pathHi.x, p.x), std::max(a.pathHi.y, p.y)};
+    }
+    return a;
+}
 
 std::vector<ClearClaim> coverFeatures(const PropertyCase& c, std::vector<Feature::Kind> kinds, double scallop,
                                       std::string id)

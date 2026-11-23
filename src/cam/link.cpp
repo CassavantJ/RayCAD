@@ -1248,31 +1248,65 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
                     return tl::unexpected(p.error());
                 plan = std::move(*p);
             }
-            // Out of the last cut, across at the retract plane, down to the feed plane (or the free column's floor).
+            // T-055 (Options::stayDownEntry): stay in the cut and enter from there.
             const Pt s = plan.start;
-            if (k == 0) {
-                result.start = Pt3{s.x, s.y, opts.clearance};
-                em.rapid(result.start, MoveRole::Approach);
-            } else {
-                if (em.cur.z < opts.retract) {
-                    if (!opts.rapidRetract && em.cur.z < opts.feedPlane) {
-                        em.feed(Pt3{em.cur.x, em.cur.y, opts.feedPlane}, MoveRole::Retract, linkF);
+            bool kept = false;
+            if (k > 0 && opts.stayDownEntry && opts.maxStayDown > 0 && plan.kind != Entered::Free &&
+                distXY(xyOf(em.cur), s) <= static_cast<double>(opts.maxStayDown)) {
+                const Nm zt = std::max(em.cur.z, plan.top);
+                if (zt <= opts.feedPlane) {
+                    Path link;
+                    link.start = xyOf(em.cur);
+                    if (s != link.start)
+                        link.spans.push_back(lineTo(s));
+                    auto probe = material.sweep(link, ctx);
+                    if (!probe)
+                        return tl::unexpected(probe.error());
+                    auto across = material.freeAt(*probe, zt, ctx);
+                    if (!across)
+                        return tl::unexpected(across.error());
+                    if (*across) {
+                        if (zt > em.cur.z)
+                            em.feed(Pt3{em.cur.x, em.cur.y, zt}, MoveRole::Link, linkF);
+                        if (s != xyOf(em.cur))
+                            em.feed(Pt3{s.x, s.y, zt}, MoveRole::Link, linkF);
+                        if (zt > plan.top)
+                            em.feed(Pt3{s.x, s.y, plan.top}, MoveRole::Link, linkF);
+                        em.append(plan.moves);
+                        if (plan.flat) {
+                            if (auto st = material.addCut({*plan.flat}, opts.toolRadius, a.z, ctx); !st)
+                                return tl::unexpected(st.error());
+                        }
+                        kept = true;
                     }
-                    em.rapid(Pt3{em.cur.x, em.cur.y, opts.retract}, MoveRole::Retract);
                 }
-                em.rapid(Pt3{s.x, s.y, std::max(em.cur.z, opts.retract)}, MoveRole::Link);
             }
-            const Nm zRapid = std::max(opts.feedPlane, plan.level);
-            em.rapid(Pt3{s.x, s.y, std::min(em.cur.z, zRapid)}, MoveRole::Approach);
-            const std::int32_t plungeF = feedOr(opts.feeds.plunge);
-            if (plan.kind == Entered::Free) {
-                em.feed(a, MoveRole::Approach, plungeF);
-            } else {
-                em.feed(Pt3{s.x, s.y, plan.top}, MoveRole::Approach, plungeF);
-                em.append(plan.moves);
-                if (plan.flat) {
-                    if (auto st = material.addCut({*plan.flat}, opts.toolRadius, a.z, ctx); !st)
-                        return tl::unexpected(st.error());
+            // Out of the last cut, across at the retract plane, down to the feed plane (or the free column's floor).
+            if (!kept) {
+                if (k == 0) {
+                    result.start = Pt3{s.x, s.y, opts.clearance};
+                    em.rapid(result.start, MoveRole::Approach);
+                } else {
+                    if (em.cur.z < opts.retract) {
+                        if (!opts.rapidRetract && em.cur.z < opts.feedPlane) {
+                            em.feed(Pt3{em.cur.x, em.cur.y, opts.feedPlane}, MoveRole::Retract, linkF);
+                        }
+                        em.rapid(Pt3{em.cur.x, em.cur.y, opts.retract}, MoveRole::Retract);
+                    }
+                    em.rapid(Pt3{s.x, s.y, std::max(em.cur.z, opts.retract)}, MoveRole::Link);
+                }
+                const Nm zRapid = std::max(opts.feedPlane, plan.level);
+                em.rapid(Pt3{s.x, s.y, std::min(em.cur.z, zRapid)}, MoveRole::Approach);
+                const std::int32_t plungeF = feedOr(opts.feeds.plunge);
+                if (plan.kind == Entered::Free) {
+                    em.feed(a, MoveRole::Approach, plungeF);
+                } else {
+                    em.feed(Pt3{s.x, s.y, plan.top}, MoveRole::Approach, plungeF);
+                    em.append(plan.moves);
+                    if (plan.flat) {
+                        if (auto st = material.addCut({*plan.flat}, opts.toolRadius, a.z, ctx); !st)
+                            return tl::unexpected(st.error());
+                    }
                 }
             }
             entered = plan.kind;
