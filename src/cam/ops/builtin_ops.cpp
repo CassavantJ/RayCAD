@@ -7,6 +7,7 @@
 #include "threadmill.h" // T-056
 // T-055: slot and chamfer2d
 #include "chamfer2d.h"
+#include "pocket2d.h"
 #include "slot.h"
 
 namespace ray::cam {
@@ -21,6 +22,7 @@ void registerBuiltinOperationTypes(OperationRegistry& registry)
     // T-055: slot and chamfer2d
     registry.add(ops::makeSlotOperationType());
     registry.add(ops::makeChamfer2dOperationType());
+    registry.add(ops::makePocket2dOperationType()); // T-054
 }
 
 } // namespace ray::cam

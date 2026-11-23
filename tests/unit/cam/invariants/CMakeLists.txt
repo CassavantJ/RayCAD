@@ -40,6 +40,7 @@ add_executable(ray_cam_invariants_tests
     # T-055: slot and chamfer2d
     property_chamfer2d_test.cpp
     property_slot_test.cpp
+    property_pocket2d_test.cpp # T-054
 )
 target_link_libraries(ray_cam_invariants_tests PRIVATE ray_cam_invariants Catch2::Catch2WithMain)
 set_property(TARGET ray_cam_invariants_tests PROPERTY FOLDER "tests")

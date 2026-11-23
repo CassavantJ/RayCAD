@@ -1178,7 +1178,15 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
                 auto centre = geom2d::sweptArea(std::span<const Path>(&line, 1), kRoomProbe, ctx);
                 if (!centre)
                     return tl::unexpected(centre.error());
-                auto centreFree = material.freeAt(*centre, a.z, ctx);
+                // stepInSlot (T-054): or in what the pass itself cuts.
+                const Regions* besides = nullptr;
+                if (opts.stepInSlot) {
+                    auto own = passArea();
+                    if (!own)
+                        return tl::unexpected(own.error());
+                    besides = *own;
+                }
+                auto centreFree = material.freeAt(*centre, a.z, ctx, besides);
                 if (!centreFree)
                     return tl::unexpected(centreFree.error());
                 if (*centreFree) {

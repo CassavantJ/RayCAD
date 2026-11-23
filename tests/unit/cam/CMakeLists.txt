@@ -240,3 +240,25 @@ target_compile_definitions(ray_cam_slot_chamfer_tests PRIVATE RAY_CORPUS_DIR="${
     RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_slot_chamfer_tests)
+# The 2D pocket operation (task T-054): depths, rings, offsets, finishing and entries against hand-computed values on
+# kernel-built parts, each refusal, the coverage check, the goldens (tests/golden/toolpaths/pocket2d_*, with a corpus
+# part), the chain through the backplot and the post host, and end to end through the document and the engine. Every
+# toolpath goes through the independent invariant checker (invariants/) with coverage claims on the floors.
+add_executable(ray_cam_pocket2d_tests
+    pocket2d_document_test.cpp
+    pocket2d_golden_test.cpp
+    pocket2d_test.cpp
+    pocket2d_test_util.h
+    toolpath_dump.h
+)
+target_link_libraries(ray_cam_pocket2d_tests PRIVATE ray_cam_invariants ray_api ray_store ray_doc ray_cam ray_sim ray_post
+    ray_naming ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_pocket2d_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_pocket2d_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths"
+    RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+set_property(TARGET ray_cam_pocket2d_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_cam_pocket2d_tests COMMAND ray_cam_pocket2d_tests "~[wallclock]")
+ray_test_runtime_path(ray_cam_pocket2d_tests)
