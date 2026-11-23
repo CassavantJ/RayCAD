@@ -161,6 +161,7 @@ add_subdirectory(invariants)
 # src/ for the private header (cam/geom2d.h), tests/unit/kernel for the profile builders.
 add_executable(ray_cam_geom2d_tests
     geom2d_basic_test.cpp
+    geom2d_degenerate_test.cpp # degenerate and near-degenerate sweeps, fitted arc ends (shared-code fixes after T-056)
     geom2d_fit_test.cpp
     geom2d_golden_test.cpp
     geom2d_model_test.cpp
@@ -182,6 +183,7 @@ ray_test_runtime_path(ray_cam_geom2d_tests)
 # and the cancel latency. src/ for the private headers (cam/link.h, cam/geom2d.h).
 add_executable(ray_cam_link_tests
     link_golden_test.cpp
+    link_limits_test.cpp # start snapping, short link moves, pointed tools (shared-code fixes after T-056)
     link_order_test.cpp
     link_parts.h
     link_perf_test.cpp

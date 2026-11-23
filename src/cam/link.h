@@ -20,7 +20,8 @@
 //                   points.
 //   T-055 slot      the centre line as an open pass per depth, Ramp (zigzag along it; the run must be at least
 //                   minRampRun), helixDiameter 0 so no helix is tried; appendSloped for a ramp the op makes itself.
-//   T-056 engrave   entryOrder {Plunge} with a centre-cutting engraver; threadmill: the helical pass as moves, a
+//   T-056 engrave   entryOrder {Plunge} with a centre-cutting engraver, tipHeight its point length; threadmill: the
+//                   helical pass as moves, a
 //                   Lead::Arc of radius (thread radius / 2) and sweep 180 from the hole centre (a radial lead-in), the
 //                   drilled hole given as Stock::cleared (the linker does not know an earlier drilling operation).
 //   T-061 adaptive  passes from the engine as moves (fitArcs, then passFromPath), maxStayDown with stayDownLift (lifted
@@ -43,10 +44,28 @@
 // THE MATERIAL MODEL. Material is the stock region (XY) up to Stock::top. "Free at z" (the tool may be anywhere at
 // height z and above over that area without touching material) holds outside the stock region, above the stock top,
 // inside Stock::cleared areas at or above their z, and inside the area swept by the tool radius along every cut this
-// call made before, at or above that cut's highest Z. Cut area is the sweep of a pass with its leads (planar passes: at
-// their Z; others: at their highest Z) and the flat circle at the bottom of a helix; sloped entry moves are not counted
-// (conservative). A free test of a move grows nothing: the tool's disc shrunk by kFreeTolerance must lie in free area,
-// so a link may graze uncut material by at most kFreeTolerance (1 um) where its path runs along the edge of a cut.
+// call made before, at or above that cut's highest Z plus Options::tipHeight. Cut area is the sweep of a pass with its
+// leads (planar passes: at their Z; others: at their highest Z) and the flat circle at the bottom of a helix; sloped
+// entry moves are not counted (conservative). A free test of a move grows nothing: the tool's disc shrunk by
+// kFreeTolerance must lie in free area, so a link may graze uncut material by at most kFreeTolerance (1 um) where its
+// path runs along the edge of a cut.
+// THE TOOL'S END. The tool is a cylinder of toolRadius above the height tipHeight over its tip, and inside that
+// cylinder below it (a flat end mill: tipHeight 0; a ball end mill: its radius; a bull nose: its corner radius; a
+// pointed tool (engraver, spot drill, chamfer mill): the height of its point, where it reaches its diameter). A cut
+// clears the full tool radius along its path only from tipHeight above the cut up; below that it leaves a groove
+// narrower than the tool (a V or a round bottom). So a cut counts as free area from its highest Z plus tipHeight up,
+// and the rule above is the whole rule: every free test (stay-down links, the descent of an approach, the rapid down to
+// the feed plane, the floor of a feed descent before an entry) uses the full tool radius at the tested height, which is
+// conservative for the narrower tip below it. Stock::cleared areas are empty space and need no such margin. Moving
+// straight up out of a cut is always free (the tool only leaves its own volume), so retracts are not tested. With
+// tipHeight 0 (the default) every tool is taken as a cylinder, as before.
+//
+// SHORT MOVES. No link, retract or approach move linking makes is shorter than kMinLinkMove (a control writes such a
+// move as nothing, or as a zero move): a shorter one is dropped when the move after it is a straight move, or a rapid
+// after a short rapid (that move then starts where the short one started), or else merged into the link move before it
+// (which then ends where the short one ended); a feed is never taken over by a rapid, so a short feed between rapids,
+// or one before an arc of a pass with no link feed before it, stays. Rounded lead ends a nanometre or two apart (a
+// radial lead-out and the next radial lead-in at a hole's centre) are the case it is for.
 //
 // REFUSALS (Error ToolpathFailed, or InvalidArgument for options the user must change), each naming the cause: heights
 // out of order; the retract plane under the stock top; a pass above the feed plane, without moves, with a rapid or a
@@ -85,6 +104,8 @@ inline constexpr Coord kRoomProbe = 500;       // 0.5 um: the probe radius of a 
 inline constexpr Coord kRoomGrow = 1'000;      // 1 um: the room is grown by this for its test (so 1.5 um tolerance)
 inline constexpr double kRampSlack = 1e-4;     // ramps and helices are this much (relative) longer than the angle needs
 inline constexpr int kMaxLeadTries = 8;        // lead radii tried: radius, halved each time, down to minRadius
+inline constexpr Coord kMinLinkMove = 1'000;   // 1 um: shorter link moves are merged (SHORT MOVES above); a rotatable
+                                               // pass's start is never closer than this to a vertex on a line span
 
 struct Pt3 {
     Nm x = 0, y = 0, z = 0;
@@ -128,7 +149,12 @@ struct Pass {
     int cluster = -1;
     int level = 0;
     bool reversible = false; // planar, every move the same role, feed and no compensation: may be cut end to start
-    bool rotatable = false;  // planar and closed (ends at start), uniform as above: may start anywhere on it
+    // Planar and closed (ends at start), uniform as above: may start anywhere on it, except that a start that is not a
+    // vertex keeps at least geom2d::kMinArcChord (on an arc; kMinLinkMove on a line) from both ends of the span it
+    // splits; a nearer one is moved onto that vertex (the nearer, when the span is too short for both). So a rotated
+    // pass never has an arc shorter than an arc fitted or offset by geom2d (a control reads a shorter one as a whole
+    // circle or as nothing).
+    bool rotatable = false;
     Lead leadIn, leadOut;
     // Where the tool centre may go at this pass's depth without gouging: leads and helices must lie inside it. nullopt:
     // nowhere off the pass itself (leads and helices are refused). unbounded() for a pass with no walls within reach.
@@ -200,6 +226,9 @@ struct Options {
     // Order.
     bool keepOrder = false; // cut the passes as given (reversible and rotatable are then ignored)
     std::optional<Pt> from; // where the tool comes from (XY), for the first link of the order; nullopt: anywhere
+    // The tool's end (added after T-056): how far above its tip the tool reaches toolRadius (THE TOOL'S END above): 0
+    // for a flat end, a ball's radius, a bull nose's corner radius, a pointed tool's point length. >= 0.
+    Nm tipHeight = 0;
 };
 
 // ---------- Result ----------
@@ -207,7 +236,7 @@ enum class Entered : std::uint8_t { Free, StayDown, Step, Helix, Ramp, PreDrill,
 struct Placement {
     std::size_t pass = 0;
     bool reversed = false;
-    double startS = 0; // rotatable: the arc length along the pass's path where it starts (0: as given)
+    double startS = 0; // rotatable: the arc length along the pass's path where it starts (0: as given; Pass::rotatable)
 };
 struct Linked {
     Pt3 start;               // (the first approach point, clearance): Toolpath::startX/Y/Z

@@ -24,9 +24,22 @@
 //      primitive when the second follows it on its raw curve (the junction written down when the raw curve was made),
 //      otherwise the intersection of the two exact curves nearest Clipper2's vertex (for curves that miss each other
 //      by at most the sag near a tangency, their point of closest approach);
-//   4. an arc span's direction is the direction the polygon runs round the arc's centre.
+//   4. an arc span's direction is the direction the polygon runs round the arc's centre; its corners must leave it
+//      about the turn the polygon makes round that centre (DEGENERATE CORNERS below).
 // So every line and arc of the result is an exact piece of the right curve, and only which pieces exist and how they
 // connect is decided on the flattened polygons. Points are rounded once, at the end (roundNm).
+//
+// DEGENERATE CORNERS. Where three or more exact curves touch tangentially at one point (a tool path whose radius equals
+// the disc's: its inner offset is its centre, and a lead ending at that centre makes caps and offsets that all touch
+// the outer circle where the lead leaves it), a short piece of one curve lies between two corners that are
+// intersections of nearly tangent circles. Those are ill-conditioned: two circles that miss tangency by a nanometre of
+// rounding cross up to sqrt(2 r nm) apart (micrometres), so the two corners can come out in the opposite order along
+// the piece, and the arc between them would sweep almost a whole turn where the polygon turned almost nothing (a
+// 6 mm disc came back as 6 mm plus a whole 4.5 mm circle). So an arc span whose rebuilt sweep exceeds the polygon's
+// turn round its centre by more than half a turn is collapsed: its end corner moves onto its start and the next span
+// starts there (the piece was a few micrometres long at most, on a boundary all the curves share). The converse, a
+// group the polygon turned through more than half a turn whose corners leave almost nothing or meet, is split at the
+// middle of the polygon's turn into two arcs. Neither changes a result whose corners are in order.
 #include "geom2d_internal.h"
 
 #include <clipper2/clipper.h>
@@ -395,22 +408,65 @@ public:
             const auto& x = poly[cur.from];
             corner[g] = junction(prev.prim, cur.prim, D2{static_cast<double>(x.x), static_cast<double>(x.y)});
         }
+        // 4. Arcs whose corners came out in the wrong order (see "DEGENERATE CORNERS" at the top): collapsed onto their
+        // start, or split where the polygon turned more than half a turn but the corners leave almost nothing.
+        std::vector<double> turn(m, 0.0); // the polygon's turn about each arc group's centre, radians, >= 0
+        std::vector<bool> ccw(m, false);
+        const auto arcOf = [&](std::size_t g) -> const Prim* {
+            const int prim = groups[g].prim;
+            return prim >= 0 && raw_.prims[static_cast<std::size_t>(prim)].arc
+                       ? &raw_.prims[static_cast<std::size_t>(prim)]
+                       : nullptr;
+        };
+        for (std::size_t g = 0; g < m; ++g)
+            if (const Prim* p = arcOf(g)) {
+                ccw[g] = turnsCcw(p->c, poly, groups[g].from, groups[g].count);
+                turn[g] = std::abs(turnAngle(p->c, poly, groups[g].from, groups[g].count));
+            }
+        // The sweep of group g's arc between its rounded corners, in its direction (0 when they are equal).
+        const auto rebuiltSweep = [&](std::size_t g) {
+            const Prim& p = *arcOf(g);
+            const Pt a = roundPt(corner[g]), b = roundPt(corner[(g + 1) % m]);
+            if (a == b)
+                return 0.0;
+            return sweepBetween(angleOf(d2(a), d2(p.c)), angleOf(d2(b), d2(p.c)), ccw[g]);
+        };
+        for (std::size_t round = 0; round <= m; ++round) {
+            bool changed = false;
+            for (std::size_t g = 0; g < m; ++g)
+                if (arcOf(g) != nullptr && turn[g] < kPi && rebuiltSweep(g) > turn[g] + kPi) {
+                    corner[(g + 1) % m] = corner[g];
+                    changed = true;
+                }
+            if (!changed)
+                break;
+        }
         out.path.closed = true;
         out.path.start = roundPt(corner[0]);
         Pt at = out.path.start;
         for (std::size_t g = 0; g < m; ++g) {
             const Group& cur = groups[g];
             const Pt end = roundPt(corner[(g + 1) % m]);
-            if (end == at)
-                continue;
+            const Prim* p = arcOf(g);
             Span s;
             s.end = end;
-            if (cur.prim >= 0 && raw_.prims[static_cast<std::size_t>(cur.prim)].arc) {
-                const Prim& p = raw_.prims[static_cast<std::size_t>(cur.prim)];
-                s.kind = turnsCcw(p.c, poly, cur.from, cur.count) ? SpanKind::ArcCCW : SpanKind::ArcCW;
-                s.centre = p.c;
-                s.radius = p.r;
+            if (p != nullptr) {
+                s.kind = ccw[g] ? SpanKind::ArcCCW : SpanKind::ArcCW;
+                s.centre = p->c;
+                s.radius = p->r;
+                if (turn[g] >= kPi && rebuiltSweep(g) + kPi < turn[g] && at == roundPt(corner[g])) {
+                    // Most of a turn whose corners left almost nothing (or met): two halves through its middle.
+                    const double a0 = angleOf(d2(at), d2(p->c));
+                    Span half = s;
+                    half.end =
+                        roundPt(onCircle(d2(p->c), static_cast<double>(p->r), a0 + (ccw[g] ? 0.5 : -0.5) * turn[g]));
+                    out.path.spans.push_back(half);
+                    out.prims.push_back(cur.prim);
+                    at = half.end;
+                }
             }
+            if (end == at)
+                continue;
             out.path.spans.push_back(s);
             out.prims.push_back(cur.prim);
             at = end;
@@ -502,6 +558,20 @@ private:
                           D2{static_cast<double>(w.x - c.x), static_cast<double>(w.y - c.y)});
         }
         return turn > 0.0;
+    }
+    // The angle the polygon edges from..from+count-1 turn through about c (radians, counter-clockwise positive).
+    static double turnAngle(Pt c, const Clipper2Lib::Path64& poly, std::size_t from, std::size_t count)
+    {
+        const std::size_t n = poly.size();
+        double angle = 0.0;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto& u = poly[(from + i) % n];
+            const auto& w = poly[(from + i + 1) % n];
+            const D2 du{static_cast<double>(u.x - c.x), static_cast<double>(u.y - c.y)};
+            const D2 dw{static_cast<double>(w.x - c.x), static_cast<double>(w.y - c.y)};
+            angle += dmath::atan2(cross(du, dw), dot(du, dw));
+        }
+        return angle;
     }
 
     D2 junction(int p1, int p2, D2 x) const

@@ -17,6 +17,10 @@
 //                         at most 1 nm in about 0.1 mm of descent per move, 1e-5).
 //   kAreaEps 1 um^2       a boolean remainder smaller than this is a rounding sliver, not material or a way out of a
 //                         room: a real overlap of 1 um over 1 mm is 1000 um^2.
+//   kMinLinkMove 1 um     a post writes metric coordinates to 1 um, so a shorter link move comes out as no move or as a
+//                         zero move; merged into its neighbour it bends that move by under 1 um, within kFreeTolerance.
+//                         The same bound keeps a rotatable pass from starting on a line under 1 um from its vertex; on
+//                         an arc the bound is geom2d::kMinArcChord (a shorter arc reads as a whole circle).
 #include "link_internal.h"
 
 #include <algorithm>
@@ -150,8 +154,9 @@ std::string at2(Pt p)
 // ---------- The material ----------
 class Material {
 public:
-    Material(const Stock& stock, Coord toolRadius)
-        : stock_(stock), probe_(toolRadius > 2 * kFreeTolerance ? toolRadius - kFreeTolerance : toolRadius / 2)
+    Material(const Stock& stock, Coord toolRadius, Nm tipHeight)
+        : stock_(stock), probe_(toolRadius > 2 * kFreeTolerance ? toolRadius - kFreeTolerance : toolRadius / 2),
+          tip_(tipHeight)
     {
         for (const geom2d::Region& r : stock_.region) {
             const geom2d::Bounds b = geom2d::bounds(r);
@@ -230,10 +235,11 @@ public:
         return std::max(from, stock_.top);
     }
 
-    // The area swept by the tool radius along `paths` is cut at zMax and above.
+    // The area swept by the tool radius along `paths`, cut at zMax: free from zMax plus the tool's tip height up
+    // (link.h THE TOOL'S END).
     Status addCut(const std::vector<Path>& paths, Coord toolRadius, Nm zMax, JobContext& ctx)
     {
-        if (sb_.empty || zMax >= stock_.top)
+        if (sb_.empty || zMax + tip_ >= stock_.top)
             return {};
         auto area = swept(paths, toolRadius, ctx);
         if (!area)
@@ -243,10 +249,11 @@ public:
     }
     void addArea(Regions area, Nm zMax)
     {
-        if (sb_.empty || zMax >= stock_.top)
+        const Nm z = zMax + tip_;
+        if (sb_.empty || z >= stock_.top)
             return;
-        cuts_.push_back(Cut{std::move(area), zMax});
-        addLevel(zMax);
+        cuts_.push_back(Cut{std::move(area), z});
+        addLevel(z);
     }
     // The area a disc of radius r covers along `paths` (a path without spans: a disc at its start).
     static Result<Regions> swept(const std::vector<Path>& paths, Coord toolRadius, JobContext& ctx)
@@ -324,6 +331,7 @@ private:
 
     const Stock& stock_;
     Coord probe_;
+    Nm tip_ = 0;
     geom2d::Bounds sb_;
     std::vector<Cut> cuts_;
     std::map<Nm, Level> cache_;
@@ -344,11 +352,13 @@ Result<bool> insideRoom(const Path& path, const Regions& grownRoom, JobContext& 
 // ---------- Emitting ----------
 struct Emitter {
     std::vector<Move> out;
+    std::vector<bool> linking; // per move: made here (a link, retract or approach), not a pass's, lead's or entry's
     Pt3 cur;
 
-    void put(const Move& m)
+    void put(const Move& m, bool link = true)
     {
         out.push_back(m);
+        linking.push_back(link);
         cur = Pt3{m.x, m.y, m.z};
     }
     void rapid(Pt3 p, MoveRole role)
@@ -380,7 +390,64 @@ struct Emitter {
     void append(const std::vector<Move>& ms)
     {
         for (const Move& m : ms)
-            put(m);
+            put(m, false);
+    }
+
+    // link.h SHORT MOVES: every link, retract or approach move (straight or rapid) shorter than kMinLinkMove dropped
+    // before a straight move (a short rapid: or a rapid), which then starts where it started, or else merged into the
+    // link move before it. A feed is never taken over by a rapid. moves[0] (the approach to Linked::start) stays.
+    // `passMove` indices follow (they point at moves that are never merged).
+    void mergeShortMoves(std::vector<std::size_t>& passMove)
+    {
+        const auto mergeable = [](const Move& m) {
+            return (m.kind == MoveKind::Linear || m.kind == MoveKind::Rapid) &&
+                   (m.role == MoveRole::Link || m.role == MoveRole::Retract || m.role == MoveRole::Approach);
+        };
+        const auto at = [](const Move& m) {
+            return Pt3{m.x, m.y, m.z};
+        };
+        const auto length = [](Pt3 a, Pt3 b) {
+            return dmath::hypot(dmath::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y)),
+                                static_cast<double>(b.z - a.z));
+        };
+        std::vector<Move> kept;
+        std::vector<bool> keptLinking;
+        std::vector<Pt3> from; // where each kept move starts (kept[0]: its own end)
+        std::vector<std::size_t> index(out.size(), 0);
+        for (std::size_t i = 0; i < out.size(); ++i) {
+            const Move& m = out[i];
+            index[i] = kept.size();
+            if (i > 0 && linking[i] && mergeable(m) &&
+                length(at(kept.back()), at(m)) < static_cast<double>(kMinLinkMove)) {
+                // A feed is never taken over by a rapid (a rapid then could end, or start, lower than planned).
+                const bool rapid = m.kind == MoveKind::Rapid;
+                const MoveKind next = i + 1 < out.size() ? out[i + 1].kind : MoveKind::Dwell;
+                if (next == MoveKind::Linear || (rapid && next == MoveKind::Rapid))
+                    continue; // dropped: the next move starts where this one started
+                if (kept.size() >= 2 && keptLinking.back() && mergeable(kept.back()) &&
+                    (rapid || kept.back().kind == MoveKind::Linear)) {
+                    // Into the link move before: it ends where this one ended (or vanishes if that is its start).
+                    kept.back().x = m.x;
+                    kept.back().y = m.y;
+                    kept.back().z = m.z;
+                    if (at(kept.back()) == from.back()) {
+                        kept.pop_back();
+                        keptLinking.pop_back();
+                        from.pop_back();
+                    }
+                    continue;
+                }
+            }
+            from.push_back(kept.empty() ? at(m) : at(kept.back()));
+            kept.push_back(m);
+            keptLinking.push_back(linking[i]);
+        }
+        for (std::size_t& k : passMove)
+            k = index[k];
+        out = std::move(kept);
+        linking = std::move(keptLinking);
+        if (!out.empty())
+            cur = at(out.back());
     }
 };
 
@@ -739,6 +806,8 @@ Status checkOptions(const Options& o, const Stock& stock)
                                       " mm) must be at least its minimum (" + mm(o.helixMinDiameter) + " mm)."));
     if (o.stayDownLift < 0 || o.entryClearance < 0 || o.maxStayDown < 0 || o.minRampRun < 0)
         return tl::unexpected(invalid("Linking distances must not be negative."));
+    if (o.tipHeight < 0 || o.tipHeight > geom2d::kMaxCoord)
+        return tl::unexpected(invalid("The tool's tip height must be at least 0 (and below 1 km)."));
     return {};
 }
 
@@ -1059,7 +1128,7 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
         order = std::move(*o);
     }
 
-    Material material(stock, opts.toolRadius);
+    Material material(stock, opts.toolRadius, opts.tipHeight);
     std::map<std::size_t, Regions> grownRooms;
     Emitter em;
     double linkFeed = 0;
@@ -1302,6 +1371,7 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
             em.feed(Pt3{em.cur.x, em.cur.y, opts.feedPlane}, MoveRole::Retract, lastLinkFeed);
         em.rapid(Pt3{em.cur.x, em.cur.y, opts.clearance}, MoveRole::Retract);
     }
+    em.mergeShortMoves(result.passMove);
     // Stats: rapids, and the feed of links and retracts.
     Pt3 cur = result.start;
     for (const Move& m : em.out) {

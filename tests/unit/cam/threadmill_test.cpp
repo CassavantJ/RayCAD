@@ -376,15 +376,14 @@ TEST_CASE("thread milling warns about a bore smaller than the minor diameter", "
     CHECK_THAT(w->front(), ContainsSubstring("is smaller than the thread's minor diameter (6.917 mm)"));
 }
 
-// A problem of geom2d::sweptArea (T-050) found by T-056 and NOT fixed here: the area a disc of radius 3 mm sweeps along
-// a whole circle of radius 3 mm (its inner offset is the centre) together with a lead-out arc ending 1 nm from the
-// centre comes out as a disc of radius 7.5 mm (176.7 mm2) instead of 6 mm (113.1 mm2); either path alone is right.
-// Linking's cut-area model (link.cpp Material) is built from such sweeps, so a thread-milling pass whose radius equals
-// the tool's (an M12 thread with a 6 mm thread mill) with its lead-out gets a wrong cut area. The thread milling
-// operation does not rely on it (threadmill.h LINKING). [!shouldfail]: this case starts failing, i.e. reports, when
-// geom2d is fixed.
-TEST_CASE("known problem: geom2d::sweptArea of a circle of the disc's radius with another path",
-          "[cam][threadmill][!shouldfail]")
+// A problem of geom2d::sweptArea (T-050) found by T-056: the area a disc of radius 3 mm sweeps along a whole circle of
+// radius 3 mm (its inner offset is the centre) together with a lead-out arc ending 1 nm from the centre came out as
+// 176.7 mm2 (a whole 4.5 mm circle too many) instead of the 6 mm disc's 113.1 mm2. Linking's cut-area model (link.cpp
+// Material) is built from such sweeps: a thread-milling pass whose radius equals the tool's (an M12 thread with a 6 mm
+// thread mill) with its lead-out. Fixed in geom2d (geom2d_clip.cpp "DEGENERATE CORNERS"; seeded cases around it in
+// geom2d_degenerate_test.cpp).
+TEST_CASE("geom2d::sweptArea of a circle of the disc's radius with a lead-out ending near its centre",
+          "[cam][threadmill]")
 {
     JobContext ctx;
     const geom2d::Pt c{40'000'000, 20'000'000};
@@ -400,5 +399,5 @@ TEST_CASE("known problem: geom2d::sweptArea of a circle of the disc's radius wit
     CHECK(std::abs(geom2d::area(*alone) / 1e12 - 36 * 3.14159265358979323846) < 1e-3);
     auto both = geom2d::sweptArea(std::vector<geom2d::Path>{full, out}, 3'000'000, ctx);
     REQUIRE(both);
-    CHECK(std::abs(geom2d::area(*both) / 1e12 - 36 * 3.14159265358979323846) < 1e-3); // fails: 176.7 mm2
+    CHECK(std::abs(geom2d::area(*both) / 1e12 - 36 * 3.14159265358979323846) < 1e-3); // was 176.7 mm2
 }

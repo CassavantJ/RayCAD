@@ -123,6 +123,38 @@ double nearestS(const Path& p, Pt q)
     return bestS >= at ? 0.0 : bestS; // a closed path's end is its start
 }
 
+// link.h Pass::rotatable: a start at arc length s of the closed path p moved onto a vertex when it would split a span
+// leaving a piece shorter than geom2d::kMinArcChord (arcs) or kMinLinkMove (lines) at either end; the nearer vertex
+// when both pieces would be. The vertex's arc length is summed as geom2d::pointAt sums it, so the path started there
+// starts exactly at the vertex.
+double snapStart(const Path& p, double s)
+{
+    if (s <= 0)
+        return 0.0;
+    Pt cur = p.start;
+    double at = 0;
+    for (std::size_t k = 0; k < p.spans.size(); ++k) {
+        const geom2d::Span& span = p.spans[k];
+        const double len = span.kind == geom2d::SpanKind::Line
+                               ? distXY(cur, span.end)
+                               : static_cast<double>(span.radius) * geom2d::sweepOf(cur, span);
+        if (s <= at + len || k + 1 == p.spans.size()) {
+            const Pt q = geom2d::pointAt(p, s);
+            const double least =
+                static_cast<double>(span.kind == geom2d::SpanKind::Line ? kMinLinkMove : geom2d::kMinArcChord);
+            const double d0 = distXY(q, cur), d1 = distXY(q, span.end);
+            if (d0 >= least && d1 >= least)
+                return s;
+            const double end = at + len;
+            const double snapped = d0 <= d1 ? at : end;
+            return k + 1 == p.spans.size() && snapped == end ? 0.0 : snapped; // the last vertex is the start
+        }
+        at += len;
+        cur = span.end;
+    }
+    return 0.0;
+}
+
 class Orderer {
 public:
     Orderer(std::span<const Pass> passes, const Options& opts) : passes_(passes), opts_(opts)
@@ -167,7 +199,7 @@ public:
             return p.ends[n.o];
         }
         const Path& ring = *p.ring[n.o];
-        const double at = nearestS(ring, xyOf(w.e));
+        const double at = snapStart(ring, nearestS(ring, xyOf(w.e)));
         if (s != nullptr)
             *s = at;
         const Pt q = geom2d::pointAt(ring, at);

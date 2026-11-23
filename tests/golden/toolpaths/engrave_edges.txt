@@ -1,38 +1,40 @@
 RCTP 2
 operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
-start X10 Y30 Z15
-moves 34
-0 Rapid Approach X10 Y30 Z15
-1 Rapid Approach X10 Y30 Z2
-2 Linear Approach X10 Y30 Z0 F100
-3 Linear Plunge X10 Y30 Z-0.2 F100
-4 Linear Cut X30 Y30 Z-0.2 F300
-5 Linear Cut X30 Y42 Z-0.2 F300
-6 Linear Cut X10 Y42 Z-0.2 F300
-7 Linear Cut X10 Y30 Z-0.2 F300
-8 Linear Retract X10 Y30 Z2 F300
-9 Rapid Retract X10 Y30 Z5
-10 Rapid Approach X10 Y30 Z2
-11 Linear Approach X10 Y30 Z-0.2 F100
-12 Linear Plunge X10 Y30 Z-0.4 F100
-13 Linear Cut X30 Y30 Z-0.4 F300
-14 Linear Cut X30 Y42 Z-0.4 F300
-15 Linear Cut X10 Y42 Z-0.4 F300
-16 Linear Cut X10 Y30 Z-0.4 F300
-17 Linear Retract X10 Y30 Z2 F300
-18 Rapid Retract X10 Y30 Z5
-19 Rapid Link X64 Y36 Z5
-20 Rapid Approach X64 Y36 Z2
-21 Linear Approach X64 Y36 Z0 F100
-22 Linear Plunge X64 Y36 Z-0.2 F100
-23 ArcCCW Cut X56 Y36 Z-0.2 F300 I60 J36 K-0.2 plane XY
-24 ArcCCW Cut X64 Y36 Z-0.2 F300 I60 J36 K-0.2 plane XY
-25 Linear Retract X64 Y36 Z2 F300
-26 Rapid Retract X64 Y36 Z5
-27 Rapid Approach X64 Y36 Z2
-28 Linear Approach X64 Y36 Z-0.2 F100
-29 Linear Plunge X64 Y36 Z-0.4 F100
-30 ArcCCW Cut X56 Y36 Z-0.4 F300 I60 J36 K-0.4 plane XY
-31 ArcCCW Cut X64 Y36 Z-0.4 F300 I60 J36 K-0.4 plane XY
-32 Linear Retract X64 Y36 Z2 F300
-33 Rapid Retract X64 Y36 Z15
+start X64 Y36 Z15
+moves 36
+0 Rapid Approach X64 Y36 Z15
+1 Rapid Approach X64 Y36 Z2
+2 Linear Approach X64 Y36 Z0 F100
+3 Linear Plunge X64 Y36 Z-0.2 F100
+4 ArcCCW Cut X56 Y36 Z-0.2 F300 I60 J36 K-0.2 plane XY
+5 ArcCCW Cut X64 Y36 Z-0.2 F300 I60 J36 K-0.2 plane XY
+6 Linear Retract X64 Y36 Z2 F300
+7 Rapid Retract X64 Y36 Z5
+8 Rapid Approach X64 Y36 Z2
+9 Linear Approach X64 Y36 Z0 F100
+10 Linear Plunge X64 Y36 Z-0.4 F100
+11 ArcCCW Cut X56 Y36 Z-0.4 F300 I60 J36 K-0.4 plane XY
+12 ArcCCW Cut X64 Y36 Z-0.4 F300 I60 J36 K-0.4 plane XY
+13 Linear Retract X64 Y36 Z2 F300
+14 Rapid Retract X64 Y36 Z5
+15 Rapid Link X30 Y36 Z5
+16 Rapid Approach X30 Y36 Z2
+17 Linear Approach X30 Y36 Z0 F100
+18 Linear Plunge X30 Y36 Z-0.2 F100
+19 Linear Cut X30 Y42 Z-0.2 F300
+20 Linear Cut X10 Y42 Z-0.2 F300
+21 Linear Cut X10 Y30 Z-0.2 F300
+22 Linear Cut X30 Y30 Z-0.2 F300
+23 Linear Cut X30 Y36 Z-0.2 F300
+24 Linear Retract X30 Y36 Z2 F300
+25 Rapid Retract X30 Y36 Z5
+26 Rapid Approach X30 Y36 Z2
+27 Linear Approach X30 Y36 Z0 F100
+28 Linear Plunge X30 Y36 Z-0.4 F100
+29 Linear Cut X30 Y42 Z-0.4 F300
+30 Linear Cut X10 Y42 Z-0.4 F300
+31 Linear Cut X10 Y30 Z-0.4 F300
+32 Linear Cut X30 Y30 Z-0.4 F300
+33 Linear Cut X30 Y36 Z-0.4 F300
+34 Linear Retract X30 Y36 Z2 F300
+35 Rapid Retract X30 Y36 Z15

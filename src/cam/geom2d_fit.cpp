@@ -8,16 +8,22 @@
 // circle starts from the least-squares (Kasa) circle of the run's points; its centre is the integer point with the
 // smallest largest deviation found among the nine round it (ties: smaller x, then smaller y) and then by descent over
 // the eight neighbours at steps of 8, 4, 2 and 1 nm; its radius is the rounded middle of the smallest and largest
-// distance. On short, flat arcs many integer centres fit equally well (the samples' rounding allows it), so the centre
-// of a sampled known arc is found exactly in about 85% of cases and otherwise within the rounding's reach (the
-// property test measures it: at most 131 nm on a 10 degree arc of 100 mm radius), always within the tolerance. Every
-// test is integer-exact where it decides a direction (crossSign) and plain IEEE double otherwise; nothing depends on
-// the platform.
+// distance. When that circle leaves either end of the run more than 1.25 nm off it (or the two ends' distances more
+// than 1.5 nm apart), the centre is moved to the integer point nearest its projection onto the perpendicular bisector
+// of the ends and the radius becomes the rounded mean of the ends' distances (ends within 1.21 nm, 1.42 nm apart at
+// most); if that circle misses a point by more than the tolerance, a descent along the bisector (steps from a quarter
+// of the chord down to 1 nm) looks for one that does not. The run must still pass every test below with that circle;
+// so a fitted arc is a valid toolpath arc as it stands. On short, flat arcs many integer centres fit equally well (the
+// samples' rounding allows it), so the centre of a sampled known arc is found exactly in about 85% of cases and
+// otherwise within the rounding's reach (the property test measures it: at most 131 nm on a 10 degree arc of 100 mm
+// radius), always within the tolerance. Every test is integer-exact where it decides a direction (crossSign) and plain
+// IEEE double otherwise; nothing depends on the platform.
 #include "geom2d_internal.h"
 
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <utility>
 
 namespace ray::cam::geom2d {
 
@@ -26,6 +32,10 @@ using namespace detail;
 namespace {
 
 constexpr std::size_t kMaxRun = 4096;
+// A fitted arc's ends (geom2d.h fitArcs): each within kEndOnCircle of its circle, their distances from the centre
+// within kEndsApart of each other (the toolpath IR and its invariant checker allow 2 nm between them).
+constexpr double kEndOnCircle = 1.25;
+constexpr double kEndsApart = 1.5;
 
 struct Circle {
     Pt c;
@@ -117,6 +127,39 @@ public:
                     break;
             }
         }
+        // Both ends on the circle as the toolpath IR wants them (geom2d.h fitArcs): when the best centre leaves them
+        // farther, the centre moves onto the perpendicular bisector of the ends and the radius is their mean distance
+        // (first the projection of the best centre; if that misses a point by more than the tolerance, a descent along
+        // the bisector on the largest deviation, steps from a quarter of the chord down to 1 nm); the arc must then
+        // still be within the tolerance of every point.
+        if (!endsOnCircle(i, j, best)) {
+            if (p_[i] == p_[j])
+                return std::nullopt;
+            const Bisector b = bisectorOf(i, j);
+            double t = b.param(best.c);
+            best = circleOn(i, j, b, t);
+            bestDev = deviationOf(i, j, best);
+            if (bestDev > tol_) {
+                for (double step = std::max(1.0, std::floor(b.chord / 4)); step >= 1.0; step = std::floor(step / 2)) {
+                    for (int moves = 0; moves < 64; ++moves) {
+                        bool moved = false;
+                        for (const double dt : {step, -step}) {
+                            const Circle c = circleOn(i, j, b, t + dt);
+                            const double dev = deviationOf(i, j, c);
+                            if (dev < bestDev) {
+                                t += dt;
+                                best = c;
+                                bestDev = dev;
+                                moved = true;
+                                break;
+                            }
+                        }
+                        if (!moved)
+                            break;
+                    }
+                }
+            }
+        }
         if (best.r <= 0 || best.r > opt_.maxArcRadius || bestDev > tol_)
             return std::nullopt;
         // Monotone turning about the centre, each step below 90 degrees, all one way.
@@ -162,6 +205,57 @@ public:
     }
 
 private:
+    // The distances of the run's end points from c (dmath::hypot, as onBisector measures them).
+    std::pair<double, double> endDistances(std::size_t i, std::size_t j, Pt c) const
+    {
+        const double cx = static_cast<double>(c.x), cy = static_cast<double>(c.y);
+        return {dmath::hypot(static_cast<double>(p_[i].x) - cx, static_cast<double>(p_[i].y) - cy),
+                dmath::hypot(static_cast<double>(p_[j].x) - cx, static_cast<double>(p_[j].y) - cy)};
+    }
+    bool endsOnCircle(std::size_t i, std::size_t j, const Circle& c) const
+    {
+        const auto [di, dj] = endDistances(i, j, c.c);
+        const double r = static_cast<double>(c.r);
+        return std::abs(di - r) <= kEndOnCircle && std::abs(dj - r) <= kEndOnCircle && std::abs(di - dj) <= kEndsApart;
+    }
+    // The perpendicular bisector of the run's ends (distinct): their middle m and the unit normal n of the chord.
+    struct Bisector {
+        double mx = 0, my = 0, nx = 0, ny = 0, chord = 0;
+        double param(Pt c) const { return (static_cast<double>(c.x) - mx) * nx + (static_cast<double>(c.y) - my) * ny; }
+    };
+    Bisector bisectorOf(std::size_t i, std::size_t j) const
+    {
+        const double ax = static_cast<double>(p_[i].x), ay = static_cast<double>(p_[i].y);
+        const double bx = static_cast<double>(p_[j].x), by = static_cast<double>(p_[j].y);
+        Bisector b;
+        b.mx = (ax + bx) / 2;
+        b.my = (ay + by) / 2;
+        b.nx = -(by - ay);
+        b.ny = bx - ax;
+        b.chord = dmath::hypot(b.nx, b.ny);
+        b.nx /= b.chord;
+        b.ny /= b.chord;
+        return b;
+    }
+    // The integer point nearest m + t n, with the rounded mean of the two end distances as radius. Rounding moves the
+    // centre by at most 0.71 nm, so the two distances differ by at most 1.42 nm and each lies within 1.21 nm of the
+    // radius.
+    Circle circleOn(std::size_t i, std::size_t j, const Bisector& b, double t) const
+    {
+        Circle c;
+        c.c = Pt{roundNm(b.mx + t * b.nx), roundNm(b.my + t * b.ny)};
+        const auto [di, dj] = endDistances(i, j, c.c);
+        c.r = roundNm((di + dj) / 2);
+        return c;
+    }
+    double deviationOf(std::size_t i, std::size_t j, const Circle& c) const
+    {
+        double dev = 0.0;
+        for (std::size_t k = i; k <= j; ++k)
+            dev = std::max(dev, std::abs(distance(d2(p_[k]), d2(c.c)) - static_cast<double>(c.r)));
+        return dev;
+    }
+
     std::optional<D2> leastSquaresCentre(std::size_t i, std::size_t j) const
     {
         const D2 o = d2(p_[i]);

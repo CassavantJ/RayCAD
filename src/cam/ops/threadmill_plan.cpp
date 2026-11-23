@@ -760,43 +760,19 @@ private:
                 }
             }
         }
-        // Inside a hole, consecutive passes stay down: the link is a straight move in Z at the hole's centre (the
-        // lead-out ends and the next lead-in starts there, 1 nm apart at most), inside the drilled hole. Every other
-        // link retracts.
-        o.maxStayDown = p_.internal ? 1000 : 0;
+        // Inside holes linking decides: consecutive passes in a hole stay down (the link is a move in Z at the hole's
+        // centre, where the lead-out ends and the next lead-in starts, inside the drilled hole); a link from hole to
+        // hole crosses material and retracts. Outside, every link retracts.
+        o.maxStayDown = p_.internal ? geom2d::kMaxCoord : 0;
         auto linked = link::linkPasses(passes, o, stock, ctx_);
         if (!linked) {
             return tl::unexpected(linked.error());
         }
         plan_.linked = std::move(*linked);
-        dropMicroLinks(plan_.linked);
         for (const std::string& w : plan_.linked.warnings) {
             plan_.warnings.push_back(w);
         }
         return {};
-    }
-
-    // Linking joins a lead-out's end and the next lead-in's start, both rounded points on their arcs, which can be a
-    // nanometre or two apart: such a link (under 1 um) followed by a straight move is merged into that move, so the
-    // toolpath has no move a control could not write.
-    static void dropMicroLinks(link::Linked& l)
-    {
-        std::vector<Move> kept;
-        kept.reserve(l.moves.size());
-        link::Pt3 at = l.start;
-        for (std::size_t i = 0; i < l.moves.size(); ++i) {
-            const Move& m = l.moves[i];
-            const double d =
-                dmath::hypot(dmath::hypot(static_cast<double>(m.x - at.x), static_cast<double>(m.y - at.y)),
-                             static_cast<double>(m.z - at.z));
-            const bool next = i + 1 < l.moves.size() && l.moves[i + 1].kind == MoveKind::Linear;
-            if (m.kind == MoveKind::Linear && m.role == MoveRole::Link && next && d < 1000) {
-                continue;
-            }
-            kept.push_back(m);
-            at = link::Pt3{m.x, m.y, m.z};
-        }
-        l.moves = std::move(kept);
     }
 
     // The stock region less the part's material just above z: free around a boss (the part taken as machined).

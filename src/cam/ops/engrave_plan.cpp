@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <optional>
 #include <utility>
 
 // Returns the error of a Status or Result expression.
@@ -102,6 +103,19 @@ bool pointed(const lib::Tool& t)
     return t.tipAngleDeg > 0 && t.tipAngleDeg < 180 &&
            (t.type == lib::ToolType::EngraveCutter || t.type == lib::ToolType::SpotDrill ||
             t.type == lib::ToolType::ChamferMill);
+}
+
+// How far above its tip the tool reaches its diameter (link.h Options::tipHeight): a pointed tool's point length, a
+// ball end mill's radius, else 0.
+Nm tipHeightNm(const lib::Tool& t)
+{
+    if (pointed(t)) {
+        return pointLengthNm(t.diameter, t.tipAngleDeg, t.tipDiameter);
+    }
+    if (t.type == lib::ToolType::BallEndMill) {
+        return toNm(t.diameter) / 2;
+    }
+    return 0;
 }
 
 // Round half to even to an integer, for feeds (the default rounding mode of IEEE arithmetic).
@@ -389,10 +403,11 @@ private:
                 link::Pass pass = link::passFromPath(path, plan_.levels[k], feed_);
                 pass.cluster = static_cast<int>(i);
                 pass.level = static_cast<int>(k);
-                // Closed paths are not rotatable: linking may start one within 1 um of a vertex, which leaves an arc
-                // shorter than 1 um there (a full turn or nothing to a control; reported with T-056).
                 pass.reversible = true;
-                pass.rotatable = false;
+                // A closed path starts where linking finds best (it keeps a start that is not a vertex at least
+                // geom2d::kMinArcChord from the vertices of an arc it splits).
+                const std::optional<geom2d::Path> flat = link::planarPath(pass);
+                pass.rotatable = path.closed && flat && flat->closed;
                 pass.entryOrder = {EntryKind::Plunge};
                 passes.push_back(std::move(pass));
             }
@@ -401,9 +416,10 @@ private:
         o.clearance = toNm(h.clearance);
         o.retract = toNm(h.retract);
         o.feedPlane = toNm(h.feedPlane);
-        // Linking takes the tool as a cylinder of its radius and the area a cut swept as free above the cut, which a
-        // pointed tool does not clear (its cone is narrower than its diameter above the tip). So rapids stay at or
-        // above the stock's top: below it the tool always feeds.
+        // Rapids over the stock stay at or above its top (the toolpath invariant checker's rapid floor, which no
+        // engraving claims lower): a feed plane below the stock's top is raised to it for linking, and the tool feeds
+        // from there. Linking itself would be safe lower (the tool's end below), but only over what an earlier pass
+        // cut, which the checker does not credit.
         const Nm stockTop = toNm(in_.geom.stockBounds.max.z);
         if (o.feedPlane < stockTop && stockTop <= o.retract) {
             plan_.warnings.push_back("The feed plane (Z" + mmText(o.feedPlane) + ") is below the top of the stock (Z" +
@@ -411,6 +427,9 @@ private:
             o.feedPlane = stockTop;
         }
         o.toolRadius = std::max<Nm>(1, toNm(in_.tool.diameter) / 2);
+        // The tool's end (link.h THE TOOL'S END): a cut leaves the full tool width free only this far above it, so no
+        // feed descent before a plunge goes into an earlier groove below that height.
+        o.tipHeight = tipHeightNm(in_.tool);
         o.centreCutting = true;
         o.feeds.plunge = plungeFeed_;
         o.entryOrder = {EntryKind::Plunge};
@@ -453,36 +472,6 @@ double engraveWidthMm(const lib::Tool& t, double depth)
     return t.diameter;
 }
 
-namespace {
-
-// geom2d::fitArcs leaves an arc's ends within its tolerance (1 um) of the circle; the toolpath IR wants them within
-// 1 nm (the invariant checker allows 2 nm between the start and end radius, as a control's arc check would). Each arc
-// keeps its ends; its centre moves onto the perpendicular bisector of the ends (the nearest point to the fitted centre)
-// and is rounded, and its radius is the rounded mean of the two distances: both ends within 1.2 nm of the circle.
-geom2d::Path recentreArcs(geom2d::Path p)
-{
-    geom2d::Pt at = p.start;
-    for (geom2d::Span& s : p.spans) {
-        if (s.kind != geom2d::SpanKind::Line && s.end != at) {
-            const double ax = static_cast<double>(at.x), ay = static_cast<double>(at.y);
-            const double bx = static_cast<double>(s.end.x), by = static_cast<double>(s.end.y);
-            const double mx = (ax + bx) / 2, my = (ay + by) / 2;
-            double nx = -(by - ay), ny = bx - ax;
-            const double nl = dmath::hypot(nx, ny);
-            nx /= nl;
-            ny /= nl;
-            const double t = (static_cast<double>(s.centre.x) - mx) * nx + (static_cast<double>(s.centre.y) - my) * ny;
-            s.centre = geom2d::Pt{geom2d::roundNm(mx + t * nx), geom2d::roundNm(my + t * ny)};
-            const double cx = static_cast<double>(s.centre.x), cy = static_cast<double>(s.centre.y);
-            s.radius = geom2d::roundNm((dmath::hypot(ax - cx, ay - cy) + dmath::hypot(bx - cx, by - cy)) / 2);
-        }
-        at = s.end;
-    }
-    return p;
-}
-
-} // namespace
-
 geom2d::Path fitLineRuns(const geom2d::Path& path)
 {
     using geom2d::SpanKind;
@@ -497,7 +486,7 @@ geom2d::Path fitLineRuns(const geom2d::Path& path)
         for (std::size_t k = 0; k + 1 < path.spans.size(); ++k) {
             pts.push_back(path.spans[k].end);
         }
-        return recentreArcs(geom2d::fitArcs(pts, true));
+        return geom2d::fitArcs(pts, true);
     }
     geom2d::Path out;
     out.start = path.start;
@@ -514,7 +503,7 @@ geom2d::Path fitLineRuns(const geom2d::Path& path)
             for (std::size_t j = k; j < e; ++j) {
                 pts.push_back(path.spans[j].end);
             }
-            const geom2d::Path fitted = recentreArcs(geom2d::fitArcs(pts, false));
+            const geom2d::Path fitted = geom2d::fitArcs(pts, false);
             out.spans.insert(out.spans.end(), fitted.spans.begin(), fitted.spans.end());
             at = path.spans[e - 1].end;
             k = e;

@@ -61,13 +61,12 @@
 // LINKING (link::linkPasses, the given order): the drilled hole is Stock::cleared (its bore's disc, free from its
 //   bottom up: the linker does not know the drilling operation); around a boss, the stock box less the part's slice
 //   at the boss's bottom (geom2d::sliceRegions; the part is taken as already machined there). The tool goes down to
-//   the lead-in's start through that free area. Inside a hole consecutive passes stay down (maxStayDown 1 um: the link
-//   is a move along Z at the hole's centre, where the lead-out ends and the next lead-in starts); every other link
-//   retracts (outside, and from hole to hole). A feature that cannot be entered that way is refused by linking. A link
-//   under 1 um (a lead-out's end and the next lead-in's start are rounded points) followed by a straight move is merged
-//   into that move.
-//   (Links between holes are not left to linking's cut-area model on purpose: geom2d::sweptArea is wrong for a pass
-//   whose radius equals the tool's radius together with another path, a known problem reported with T-056.)
+//   the lead-in's start through that free area. Internal threads: linking decides where to stay down (maxStayDown
+//   unlimited): consecutive passes inside a hole stay down (the link is a move along Z at the hole's centre, where the
+//   lead-out ends and the next lead-in starts), a link from hole to hole crosses material and retracts. External
+//   threads: every link retracts. A feature that cannot be entered that way is refused by linking. Linking merges the
+//   nanometre moves between a lead-out's end and the next lead-in's start (rounded points) into the move beside them
+//   (link.h SHORT MOVES).
 // REFUSED, each naming its cause: a tool that is not a thread mill; a tool pitch that does not match the thread's;
 //   multi-form with a tool without a pitch or shorter than one pitch; no thread data; a thread mill that does not fit
 //   the hole (not smaller than the bore) or whose path radius would be under 0.01 mm; a bore not smaller than the

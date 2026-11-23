@@ -65,7 +65,7 @@ struct Pt {
 enum class SpanKind : std::uint8_t { Line, ArcCCW, ArcCW };
 // One piece of a path. It starts where the previous span ended (or at Path::start) and ends at `end`.
 // Arcs: `centre` and `radius` are exact (an offset arc's radius is the source radius plus the offset, exactly); the
-// endpoints are rounded points and lie within 1 nm of the circle (fitArcs: within its tolerance). An arc whose end
+// endpoints are rounded points and lie within 1 nm of the circle (fitArcs: within 1.25 nm, see there). An arc whose end
 // equals its start is a whole circle (sweep 360 degrees); every other arc sweeps less than 360 degrees in its
 // direction.
 struct Span {
@@ -241,7 +241,11 @@ std::size_t literalEdgeCount();
 //     or I/J-form arc is never ambiguous and never a whole circle by accident),
 //   - turn the same way at every point (its direction is never ambiguous).
 // The centre is an integer point near the least-squares centre that minimises the largest deviation (geom2d_fit.cpp);
-// the radius is then rounded. Arcs sampled from a known integer arc come back as one arc with the same endpoints and
+// the radius is then rounded. Both ends of every fitted arc lie on its circle as the toolpath IR wants: each within
+// 1.25 nm of the radius, their two distances from the centre within 1.5 nm of each other (the IR and its invariant
+// checker allow 2 nm); where the best centre leaves them farther, it is moved onto the perpendicular bisector of the
+// ends (and the arc must still be within `tolerance`), so a caller writes fitted arcs as moves with no fix-up. Arcs
+// sampled from a known integer arc come back as one arc with the same endpoints and
 // direction, the same centre and radius in about 85% of cases and otherwise as close as the samples' rounding allows
 // (measured: at most 131 nm off on a 10 degree arc of 100 mm radius; always within the tolerance). Exact reproduction
 // of known arcs is what offset and the booleans do, through their tags, not this function.
