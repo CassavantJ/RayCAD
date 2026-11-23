@@ -60,6 +60,12 @@ add_library(ray_cam STATIC
     ops/pocket2d.cpp    # "pocket2d" (task T-054)
     ops/pocket2d.h
     ops/pocket2d_plan.cpp
+    # T-060: the constant-engagement engine of adaptive clearing; engine_adaptive* is a modified fork of FreeCAD's
+    # Adaptive.cpp (LGPL-2.1-or-later, THIRD_PARTY.md)
+    ops/adaptive2d/engine.cpp
+    ops/adaptive2d/engine.h
+    ops/adaptive2d/engine_adaptive.cpp
+    ops/adaptive2d/engine_adaptive.h
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)

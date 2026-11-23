@@ -22,26 +22,98 @@
  *                                                                         *
  ***************************************************************************/
 
-#include "Adaptive.hpp"
+// MODIFIED FILE. This is FreeCAD's src/Mod/CAM/libarea/Adaptive.cpp from FreeCAD main at commit
+// 56062b61c7085af5af12ead4c02ce5765d0107c4, changed for RayCAD by the RayCAD contributors in November 2026 (task
+// T-060, PLAN.md section 13 "M4"). The unmodified upstream text is this file's first version in the repository's
+// history, so `git diff <that commit> -- src/cam/ops/adaptive2d/engine_adaptive.cpp` shows every change. Changes:
+//  1. Determinism. Every decision that read the clock (clock()) is gone: ResolveLinkPath gave up after 0.5 s of wall
+//     time and now after Limits::linkSearchSteps segments (and Limits::linkSideSteps sideways probes); progress was
+//     reported every 0.1 s and is now reported once per pass. Trigonometry goes through ray::dmath (identical on every
+//     platform) and std::pow through a cube root made of IEEE operations. Sorts whose keys can tie break the tie by a
+//     second key or are stable (std::sort may order equal keys differently on another standard library).
+//  2. Integers. `long` (32 bits on Windows, 64 elsewhere) is std::int64_t everywhere; every conversion of a double
+//     to a grid coordinate rounds (Rnd: half away from zero, as Clipper2 does) instead of truncating, and saturates a
+//     value that is not finite or beyond +-2^52 instead of being undefined; engine.cpp checks the range of every
+//     input and output coordinate. Output paths stay in grid units (upstream converted them to millimetre doubles
+//     and back to integers by truncation to grow the cleared area).
+//  3. Re-entrancy. The nine file-scope PerfCounter objects (and the class) are gone; no state is shared between
+//     instances. The SVG debug writer, which wrote a file into the current folder, and the DEV_MODE code are gone.
+//  4. Defined results. Every output field is initialised; the uninitialised locals of upstream (closest-path indices,
+//     the helix radius, pointNotInterp) are initialised; directions that could become NaN (a zero-length average
+//     direction, the arcsine of a zero-length step, the direction of a zero-length segment) are guarded.
+//  5. Reporting. Console output (std::cout, std::cerr) is gone; what it said is in the output flags (engine.cpp turns
+//     them into warnings or errors). New output: path roles, the engine's estimate of the radial depth of cut per
+//     segment, the helix radius, the tool-bound area and the cleared area of each region, counters (Stats).
+//  6. Cancel and limits. The cancel token is polled at every step of every loop (the step search, the passes, the
+//     engagement search, link and lead search, the entry search, finishing); hard limits on passes, points, steps
+//     and leads end a region with LimitReached instead of running on (upstream: LONG_MAX).
+//  7. Interface. Inputs arrive in grid units (engine.cpp converts from nanometres); the progress callback that
+//     received copies of the paths is replaced by the cancel token and a progress fraction.
+// The algorithm itself (the step search, the cut-area computation, engagement, linking, leads, finishing) is
+// upstream's, statement for statement, apart from these changes.
+// clang-format off
+
+#include "engine_adaptive.h"
 #include <cstddef>
-#include <iostream>
-#include <fstream>
 #include <cmath>
 #include <cstring>
-#include <ctime>
 #include <climits>
 #include <algorithm>
 #include <map>
 #include <numbers>
 #include <set>
 #include <string>
+#include <tuple>
 
-namespace AdaptivePath
+// RayCAD: upstream's code converts between int64_t and double and reuses names in inner scopes on purpose; those
+// warnings are silenced for this file only, rather than rewriting upstream's lines.
+#ifdef _MSC_VER
+# pragma warning(disable : 4244 4456 4457)
+#endif
+
+namespace ray::cam::adaptive2d::fork
 {
 using namespace std;
 using namespace Clipper2Lib;
 #define SAME_POINT_TOL_SQRD_SCALED 4.0
 #define UNUSED(expr) (void)(expr)
+
+// RayCAD: a double to a grid coordinate. Rounds half away from zero (as Clipper2's Point64(double, double) does);
+// a value that is not finite or beyond +-2^52 saturates (engine.cpp rejects any output outside the input's bounds).
+inline int64_t Rnd(double v)
+{
+    constexpr double kMax = 4503599627370496.0;  // 2^52
+    if (!(v == v)) {
+        return 0;
+    }
+    if (v >= kMax) {
+        return int64_t(kMax);
+    }
+    if (v <= -kMax) {
+        return -int64_t(kMax);
+    }
+    return int64_t(std::round(v));
+}
+
+// RayCAD: the cube root of x >= 0 from IEEE operations only (upstream: std::pow(x, 1 / 3.)), so it is the same on
+// every platform. Newton's iteration from a power-of-two estimate; converges to within an ulp or two.
+inline double CubeRoot(double x)
+{
+    if (!(x > 0)) {
+        return 0;
+    }
+    int e = 0;
+    (void)std::frexp(x, &e);  // x = m 2^e, m in [0.5, 1)
+    double y = std::ldexp(1.0, e / 3);
+    for (int i = 0; i < 100; i++) {
+        double next = y - (y * y * y - x) / (3 * y * y);
+        if (next == y) {
+            break;
+        }
+        y = next;
+    }
+    return y;
+}
 
 // Matches CleanPolygons default distance in Clipper1 (sqrt(2))
 const double CLEAN_POLYGONS_TOLERANCE = 1.415;
@@ -101,8 +173,8 @@ inline double averageDV(const vector<double>& vec)
 
 inline PointD rotate(const PointD& in, double rad)
 {
-    double c = cos(rad);
-    double s = sin(rad);
+    double c = dmath::cos(rad);
+    double s = dmath::sin(rad);
     return PointD(c * in.x - s * in.y, s * in.x + c * in.y);
 }
 
@@ -237,7 +309,7 @@ public:
     }
 
     // for circle: center and radius
-    BoundBox(const Point64& center, long radius)
+    BoundBox(const Point64& center, int64_t radius)
     {
         minX = center.x - radius;
         maxX = center.x + radius;
@@ -262,12 +334,6 @@ public:
     int64_t minY;
     int64_t maxY;
 };
-
-std::ostream& operator<<(std::ostream& s, const BoundBox& p)
-{
-    s << "(" << p.minX << "," << p.minY << ") - (" << p.maxX << "," << p.maxY << ")";
-    return s;
-}
 
 int getPathNestingLevel(const Path64& path, const Paths64& paths)
 {
@@ -306,6 +372,11 @@ void AverageDirection(const vector<PointD>& unityVectors, PointD& output)
     }
     // normalize
     double magnitude = sqrt(output.x * output.x + output.y * output.y);
+    if (magnitude < NTOL) {
+        // RayCAD: the directions cancel out (upstream divided by zero): keep the most recent one
+        output = size > 0 ? unityVectors[size - 1] : PointD(0, 0);
+        return;
+    }
     output.x /= magnitude;
     output.y /= magnitude;
 }
@@ -341,15 +412,15 @@ double DistancePointToLineSegSquared(
     }
     // point on line at parameter
     ptParameter = parameter / lsegLenSqr;
-    closestPoint.x = long(p1.x + ptParameter * D21X);
-    closestPoint.y = long(p1.y + ptParameter * D21Y);
+    closestPoint.x = Rnd(p1.x + ptParameter * D21X);
+    closestPoint.y = Rnd(p1.y + ptParameter * D21Y);
     // calculate distance from point on line to pt
     double DX = double(pt.x - closestPoint.x);
     double DY = double(pt.y - closestPoint.y);
     return DX * DX + DY * DY;  // return distance squared
 }
 
-void ScaleUpPaths(Paths64& paths, long scaleFactor)
+void ScaleUpPaths(Paths64& paths, int64_t scaleFactor)
 {
     for (auto& pth : paths) {
         for (auto& pt : pth) {
@@ -359,12 +430,12 @@ void ScaleUpPaths(Paths64& paths, long scaleFactor)
     }
 }
 
-void ScaleDownPaths(Paths64& paths, long scaleFactor)
+void ScaleDownPaths(Paths64& paths, int64_t scaleFactor)
 {
     for (auto& pth : paths) {
         for (auto& pt : pth) {
-            pt.x /= scaleFactor;
-            pt.y /= scaleFactor;
+            pt.x = Rnd(double(pt.x) / double(scaleFactor));  // RayCAD: rounds (upstream truncated)
+            pt.y = Rnd(double(pt.y) / double(scaleFactor));
         }
     }
 }
@@ -380,6 +451,11 @@ double DistancePointToPathsSqrd(
 )
 {
     double minDistSq = __DBL_MAX__;
+    // RayCAD: defined outputs when there is no segment at all
+    clpPathIndex = 0;
+    clpSegmentIndex = 0;
+    clpParameter = 0;
+    closestPointOnPath = pt;
     // iterate though paths
     for (size_t i = 0; i < paths.size(); i++) {
         const Path64& path = paths[i];
@@ -486,9 +562,15 @@ Point64 Compute2DPolygonCentroid(const Path64& vertices)
     }
 
     signedArea *= 0.5;
+    if (size == 0) {
+        return Point64(0, 0);  // RayCAD: defined for an empty path
+    }
+    if (signedArea == 0) {
+        return vertices[0];  // RayCAD: a polygon without area has no centroid (upstream divided by zero)
+    }
     centroid.x /= (6.0 * signedArea);
     centroid.y /= (6.0 * signedArea);
-    return Point64(long(centroid.x), long(centroid.y));
+    return Point64(Rnd(centroid.x), Rnd(centroid.y));
 }
 
 // point must be within first path (boundary) and must not be within all other paths (holes)
@@ -532,7 +614,7 @@ bool IntersectionPoint(
         return false;  // intersection not within segment2
     }
     double t = p1d / d;
-    intersection = Point64(long(s1p1.x + S1DX * t), long(s1p1.y + S1DY * t));
+    intersection = Point64(Rnd(s1p1.x + S1DX * t), Rnd(s1p1.y + S1DY * t));
     return true;
 }
 
@@ -578,17 +660,17 @@ bool IntersectionPoint(const Paths64& paths, const Point64& p1, const Point64& p
                 continue;  // intersection not within segment
             }
             double t = p1d / d;
-            intersection = Point64(long(p1.x + LDX * t), long(p1.y + LDY * t));
+            intersection = Point64(Rnd(p1.x + LDX * t), Rnd(p1.y + LDY * t));
             return true;
         }
     }
     return false;
 }
 
-void SmoothPaths(Paths64& paths, double stepSize, long pointCount, long iterations)
+void SmoothPaths(Paths64& paths, double stepSize, int64_t pointCount, int64_t iterations)
 {
     Paths64 output(paths.size());
-    const long scale = 1000;
+    const int64_t scale = 1000;
     const double stepScaled = stepSize * scale;
 
     ScaleUpPaths(paths, scale);
@@ -612,18 +694,18 @@ void SmoothPaths(Paths64& paths, double stepSize, long pointCount, long iteratio
                 continue;
             }
             size_t lastPathIndex = back.first;
-            const long steps = max(long(l / stepScaled), 1L);
-            const long left = pointCount * iterations * 2;
-            const long right = steps - pointCount * iterations * 2;
-            for (long idx = 0; idx <= steps; idx++) {
+            const int64_t steps = max(int64_t(l / stepScaled), int64_t(1));  // a count: floor, as upstream
+            const int64_t left = pointCount * iterations * 2;
+            const int64_t right = steps - pointCount * iterations * 2;
+            for (int64_t idx = 0; idx <= steps; idx++) {
                 if (idx > left && idx < right) {
                     idx = right;
                     continue;
                 }
-                const double p = double(idx) / steps;
+                const double p = double(idx) / double(steps);
                 const Point64 ptx(
-                    long(lastPt.x + double(pt.x - lastPt.x) * p),
-                    long(lastPt.y + double(pt.y - lastPt.y) * p)
+                    Rnd(lastPt.x + double(pt.x - lastPt.x) * p),
+                    Rnd(lastPt.y + double(pt.y - lastPt.y) * p)
                 );
 
                 if (idx == 0 && DistanceSqrd(back.second, ptx) < scale && points.size() > 1) {
@@ -642,25 +724,25 @@ void SmoothPaths(Paths64& paths, double stepSize, long pointCount, long iteratio
     if (points.empty()) {
         return;
     }
-    const long size = long(points.size());
-    for (long iter = 0; iter < iterations; iter++) {
-        for (long i = 1; i < size - 1; i++) {
+    const int64_t size = int64_t(points.size());
+    for (int64_t iter = 0; iter < iterations; iter++) {
+        for (int64_t i = 1; i < size - 1; i++) {
             Point64& cp = points[i].second;
             Point64 avgPoint(cp);
-            long cnt = 1;
+            int64_t cnt = 1;
 
-            long ptsToAverage = pointCount;
+            int64_t ptsToAverage = pointCount;
             if (i <= ptsToAverage) {
-                ptsToAverage = max(i - 1, 0L);
+                ptsToAverage = max(i - 1, int64_t(0));
             }
             else if (i + ptsToAverage >= size - 1) {
                 ptsToAverage = size - 1 - i;
             }
-            for (long j = i - ptsToAverage; j <= i + ptsToAverage; j++) {
+            for (int64_t j = i - ptsToAverage; j <= i + ptsToAverage; j++) {
                 if (j == i) {
                     continue;
                 }
-                long index = j;
+                int64_t index = j;
                 if (index < 0) {
                     index = 0;
                 }
@@ -672,8 +754,8 @@ void SmoothPaths(Paths64& paths, double stepSize, long pointCount, long iteratio
                 avgPoint.y += p.y;
                 cnt++;
             }
-            cp.x = avgPoint.x / cnt;
-            cp.y = avgPoint.y / cnt;
+            cp.x = Rnd(double(avgPoint.x) / double(cnt));  // RayCAD: rounds (upstream truncated)
+            cp.y = Rnd(double(avgPoint.y) / double(cnt));
         }
     }
 
@@ -773,6 +855,10 @@ bool PopNextFinishingPass(
 
     // Apply extraDistanceAround to advance further along the path before starting
     // Interpolate as needed
+    if (closestPath.empty()
+        || PathLength(closestPath) + sqrt(DistanceSqrd(closestPath.back(), closestPath.front())) < NTOL) {
+        extraDistanceAround = 0;  // RayCAD: a path of zero length would never use the distance up (endless loop)
+    }
     while (extraDistanceAround > 0) {
         size_t nexti = (closestPointIndex + 1) % closestPath.size();
         const Point64& p1 = closestPath[closestPointIndex];
@@ -787,8 +873,8 @@ bool PopNextFinishingPass(
             // Interpolate to produce the first vertex
             double interp = extraDistanceAround / distToNext;  // Fraction along the edge
             Point64 interpolated(
-                static_cast<int64_t>(p1.x * (1 - interp) + p2.x * interp),
-                static_cast<int64_t>(p1.y * (1 - interp) + p2.y * interp),
+                Rnd(p1.x * (1 - interp) + p2.x * interp),
+                Rnd(p1.y * (1 - interp) + p2.y * interp),
                 p1.z
             );
             result.push_back(interpolated);
@@ -902,67 +988,8 @@ void ConnectPaths(Paths64 input, Paths64& output)
     }
 }
 
-// helper class for measuring performance
-class PerfCounter
-{
-public:
-    PerfCounter(string p_name)
-    {
-        name = p_name;
-        count = 0;
-        running = false;
-        start_ticks = 0;
-        total_ticks = 0;
-    }
-    inline void Start()
-    {
-#ifdef DEV_MODE
-        start_ticks = clock();
-        if (running) {
-            cerr << "PerfCounter already running:" << name << endl;
-        }
-        running = true;
-#endif
-    }
-    inline void Stop()
-    {
-#ifdef DEV_MODE
-        if (!running) {
-            cerr << "PerfCounter not running:" << name << endl;
-        }
-        total_ticks += clock() - start_ticks;
-        start_ticks = clock();
-        count++;
-        running = false;
-#endif
-    }
-    void DumpResults()
-    {
-        double total_time = double(total_ticks) / CLOCKS_PER_SEC;
-        cout << "Perf: " << name.c_str() << " total_time: " << total_time
-             << " sec, call_count:" << count << " per_call:" << double(total_time / count) << endl;
-        start_ticks = clock();
-        total_ticks = 0;
-        count = 0;
-    }
-
-private:
-    string name;
-    clock_t start_ticks;
-    clock_t total_ticks;
-    size_t count;
-    bool running = false;
-};
-
-PerfCounter Perf_ProcessPolyNode("ProcessPolyNode");
-PerfCounter Perf_CalcCutAreaCirc("CalcCutArea");
-PerfCounter Perf_NextEngagePoint("NextEngagePoint");
-PerfCounter Perf_PointIterations("PointIterations");
-PerfCounter Perf_ExpandCleared("ExpandCleared");
-PerfCounter Perf_DistanceToBoundary("DistanceToBoundary");
-PerfCounter Perf_AppendToolPath("AppendToolPath");
-PerfCounter Perf_IsAllowedToCutTrough("IsAllowedToCutTrough");
-PerfCounter Perf_IsClearPath("IsClearPath");
+// RayCAD: upstream's PerfCounter class and its nine file-scope instances (state shared by every instance of the
+// engine, and clock() readings) are removed, with every Start() and Stop() call.
 
 //***********************************
 // Cleared area bounding support
@@ -995,17 +1022,15 @@ public:
         if (toClearToolPath.empty()) {
             return;
         }
-        Perf_ExpandCleared.Start();
-        Paths64 toolCoverPoly = OffsetPath(toClearToolPath, toolRadiusScaled + 1, EndType::Round);
+        Paths64 toolCoverPoly = OffsetPath(toClearToolPath, double(toolRadiusScaled + 1), EndType::Round);
         clearedPaths = Union(clearedPaths, toolCoverPoly, FillRule::EvenOdd);
         clearedPaths = SimplifyPathsFilterPancakes(clearedPaths, CLEAN_POLYGONS_TOLERANCE);
         bboxPathsInvalid = true;
         bboxClippedInvalid = true;
-        Perf_ExpandCleared.Stop();
     }
 
     // get cleared area/poly bounded to toolbox
-    const Paths64& GetBoundedClearedAreaClipped(const Point64& toolPos, int delta)
+    const Paths64& GetBoundedClearedAreaClipped(const Point64& toolPos, int64_t delta)
     {
         // first, attempt to serve this query from cache
         BoundBox toolBB(toolPos, delta);
@@ -1015,7 +1040,7 @@ public:
 
         // second, check if the window needs to be recomputed
         if (bboxClippedInvalid || !clearedBBWindow.Contains(toolBB)) {
-            const int deltaWindow = delta * clearedBoundedWindowScale;
+            const int64_t deltaWindow = delta * clearedBoundedWindowScale;
             clearedBBWindow.SetFirstPoint(Point64(toolPos.x - deltaWindow, toolPos.y - deltaWindow));
             clearedBBWindow.AddPoint(Point64(toolPos.x + deltaWindow, toolPos.y + deltaWindow));
 
@@ -1040,6 +1065,18 @@ public:
 
         bboxClippedInvalid = false;
         return clearedBoundedClipped;
+    }
+
+    // RayCAD: the same query without reading or changing the cache, for the depth estimates (EstimateDepth), so that
+    // they leave the step search's sequence of cache states, and with it its floating-point results, as upstream's
+    Paths64 GetBoundedClearedAreaUncached(const Point64& toolPos, int64_t delta) const
+    {
+        Path64 bbPath;
+        bbPath.push_back(Point64(toolPos.x - delta, toolPos.y - delta));
+        bbPath.push_back(Point64(toolPos.x + delta, toolPos.y - delta));
+        bbPath.push_back(Point64(toolPos.x + delta, toolPos.y + delta));
+        bbPath.push_back(Point64(toolPos.x - delta, toolPos.y + delta));
+        return Intersect(Paths64 {bbPath}, clearedPaths, FillRule::EvenOdd);
     }
 
     // get full cleared area
@@ -1232,14 +1269,13 @@ Adaptive2d::Adaptive2d()
 //     3) if x<c2.X, additionally accumulate area in conventionalArea, for detection of conventional
 //     cutting
 // 4) Return <totalArea, conventionalArea>
-std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, ClearedArea& clearedArea)
+std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, ClearedArea& clearedArea, bool useCache)
 {
     double dist = sqrt(DistanceSqrd(c1, c2));
     if (dist < NTOL) {
         return {0, 0};
     }
-
-    Perf_CalcCutAreaCirc.Start();
+    stats.cutAreaCalls++;
 
     // 0) Extract from clearedArea a set of polygons close enough to potentially affect the bounded area
     vector<vector<PointD>> polygons;
@@ -1247,9 +1283,16 @@ std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, Cleare
     const BoundBox c2BB(c2, toolRadiusScaled);
     // get curves from slightly enlarged region that will cover all points tested in this iteration
     const bool useC2 = dist > 2 * toolRadiusScaled;
-    const Paths64& clearedBounded = clearedArea.GetBoundedClearedAreaClipped(
+    Paths64 uncached;  // RayCAD
+    if (!useCache) {
+        uncached = clearedArea.GetBoundedClearedAreaUncached(
+            useC2 ? c2 : c1,
+            toolRadiusScaled + (useC2 ? 0 : int64_t(dist)) + 4
+        );
+    }
+    const Paths64& clearedBounded = !useCache ? uncached : clearedArea.GetBoundedClearedAreaClipped(
         useC2 ? c2 : c1,
-        toolRadiusScaled + (useC2 ? 0 : (int)dist) + 4
+        toolRadiusScaled + (useC2 ? 0 : int64_t(dist)) + 4
     );
 
     for (const Path64& path : clearedBounded) {
@@ -1275,11 +1318,11 @@ std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, Cleare
 
     // 0.5) Rotate all geometry so the vector from c1 to c2 points up (y+)
     {
-        const double angle = std::numbers::pi / 2 - atan2(c2.y - c1.y, c2.x - c1.x);
-        const double ca = cos(angle);
-        const double sa = sin(angle);
-        c1 = {(long long)(ca * c1.x - sa * c1.y), (long long)(sa * c1.x + ca * c1.y)};
-        c2 = {(long long)(ca * c2.x - sa * c2.y), (long long)(sa * c2.x + ca * c2.y)};
+        const double angle = std::numbers::pi / 2 - dmath::atan2(double(c2.y - c1.y), double(c2.x - c1.x));
+        const double ca = dmath::cos(angle);
+        const double sa = dmath::sin(angle);
+        c1 = {Rnd(ca * c1.x - sa * c1.y), Rnd(sa * c1.x + ca * c1.y)};
+        c2 = {Rnd(ca * c2.x - sa * c2.y), Rnd(sa * c2.x + ca * c2.y)};
         vector<vector<PointD>> rotatedPolygons;
         for (vector<PointD>& pgon : polygons) {
             vector<PointD> rotated;
@@ -1400,12 +1443,13 @@ std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, Cleare
         }
 
         // 3.b) Sort these intersection on their y-coordinate.
+        // RayCAD: equal y-coordinates are ordered by shape and part (the whole tuple), not left to the library
         std::sort(
             ys.begin(),
             ys.end(),
             [](const std::tuple<double, size_t, size_t>& a,
                const std::tuple<double, size_t, size_t>& b) {
-                return std::get<0>(a) < std::get<0>(b);
+                return a < b;
             }
         );
 
@@ -1453,8 +1497,8 @@ std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, Cleare
                         return max(-1.0, min(1.0, a));
                     };
                     // clamp is required only because of floating point rounding errors
-                    const double phi0 = acos(clamp((x0 - c.x) / toolRadiusScaled)) * circleSign;
-                    const double phi1 = acos(clamp((x1 - c.x) / toolRadiusScaled)) * circleSign;
+                    const double phi0 = dmath::acos(clamp((x0 - c.x) / toolRadiusScaled)) * circleSign;
+                    const double phi1 = dmath::acos(clamp((x1 - c.x) / toolRadiusScaled)) * circleSign;
                     const double areaSector = toolRadiusScaled * toolRadiusScaled / 2
                         * abs(phi1 - phi0);
 
@@ -1487,8 +1531,6 @@ std::pair<double, double> Adaptive2d::CalcCutArea(Point64 c1, Point64 c2, Cleare
         }
     }
 
-    Perf_CalcCutAreaCirc.Stop();
-
     return {area, conventionalArea};
 }
 
@@ -1512,229 +1554,17 @@ void Adaptive2d::ApplyStockToLeave(Paths64& inputPaths)
     }
 }
 
-//*****************************************
-// SVG Debug Info
-//*****************************************
-// Write combined SVG with all accumulated paths from all regions
-void writePreprocessingSVG(const DebugSVGInfo& svgInfo)
-{
-    // Calculate overall bounding box
-    int64_t minX = INT64_MAX, minY = INT64_MAX, maxX = INT64_MIN, maxY = INT64_MIN;
-
-    auto updateBBox = [&](const Paths64& paths) {
-        for (const Path64& path : paths) {
-            for (const auto& pt : path) {
-                minX = std::min(minX, pt.x);
-                minY = std::min(minY, pt.y);
-                maxX = std::max(maxX, pt.x);
-                maxY = std::max(maxY, pt.y);
-            }
-        }
-    };
-
-    // Regional collections (need unwrapping)
-    for (const Paths64& regionPaths : svgInfo.allFinishingPaths) {
-        updateBBox(regionPaths);
-    }
-    for (const Paths64& regionPaths : svgInfo.allToolBoundPaths) {
-        updateBBox(regionPaths);
-    }
-
-    // Single collections (direct)
-    updateBBox(svgInfo.step3Paths);
-    updateBBox(svgInfo.step4Paths);
-    updateBBox(svgInfo.step5e_inputPaths);
-
-    long long padding = std::max(maxX - minX, maxY - minY) / 10;
-    long long legendWidth = (maxX - minX) / 5;  // Legend takes 20% of width
-    minX -= padding + legendWidth;
-    minY -= padding;
-    maxX += padding;
-    maxY += padding;
-
-    std::ofstream svg("adaptive_preprocessing.svg");
-    svg << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"" << minX << " " << -maxY << " "
-        << (maxX - minX) << " " << (maxY - minY) << "\">\n";
-
-    // Add JavaScript for toggling visibility
-    svg << "<script type=\"text/javascript\"><![CDATA[\n";
-    svg << "function toggle(id) {\n";
-    svg << "  var el = document.getElementById(id);\n";
-    svg << "  var box = document.getElementById(id + '-box');\n";
-    svg << "  if (el.style.display === 'none') {\n";
-    svg << "    el.style.display = 'inline';\n";
-    svg << "    box.setAttribute('fill', box.getAttribute('data-color'));\n";
-    svg << "  } else {\n";
-    svg << "    el.style.display = 'none';\n";
-    svg << "    box.setAttribute('fill', '#cccccc');\n";
-    svg << "  }\n";
-    svg << "}\n";
-    svg << "]]></script>\n";
-
-    auto renderPathGroup =
-        [&](const std::string& groupId, const std::string& strokeColor, const Paths64& paths) {
-            svg << "<g id=\"" << groupId << "\">\n";
-            for (size_t i = 0; i < paths.size(); i++) {
-                const Path64& ip = paths[i];
-                if (!ip.empty()) {
-                    // Merge consecutive edges of the same dashedness into one <path> so that
-                    // stroke-dasharray renders continuously across short segments.
-                    bool inPath = false;
-                    bool curDash = false;
-                    for (size_t j = 0; j < ip.size(); j++) {
-                        const Point64& p1 = ip[j];
-                        const Point64& p2 = (j + 1 < ip.size()) ? ip[j + 1] : ip[0];
-                        bool edgeDash = !(p1.z == 1 && p2.z == 1);
-
-                        if (!inPath || edgeDash != curDash) {
-                            if (inPath) {
-                                svg << "\"/>\n";
-                            }
-                            curDash = edgeDash;
-                            inPath = true;
-                            svg << "<path stroke=\"" << strokeColor << "\" stroke-width=\""
-                                << (padding / 100) << "\" fill=\"none\"";
-                            if (curDash) {
-                                svg << " stroke-dasharray=\"" << (padding / 8) << ","
-                                    << (padding / 8) << "\"";
-                            }
-                            svg << " d=\"M" << p1.x << "," << -p1.y;
-                        }
-                        svg << " L" << p2.x << "," << -p2.y;
-                    }
-                    if (inPath) {
-                        svg << "\"/>\n";
-                    }
-                    // Add markers for Z=1 vertices
-                    for (const auto& pt : ip) {
-                        if (pt.z == 1) {
-                            svg << "<circle cx=\"" << pt.x << "\" cy=\"" << -pt.y << "\" r=\""
-                                << (3 * padding / 50) << "\" fill=\"" << strokeColor << "\"/>\n";
-                        }
-                    }
-                }
-            }
-            svg << "</g>\n";
-        };
-
-    // Render all path groups
-    renderPathGroup("step3-paths", "green", svgInfo.step3Paths);
-    renderPathGroup("step4-paths", "orange", svgInfo.step4Paths);
-    renderPathGroup("step5a-paths", "cyan", svgInfo.step5a_stockRev);
-    renderPathGroup("step5b-paths", "magenta", svgInfo.step5b_outsideOfStock);
-    renderPathGroup("step5c-paths", "yellow", svgInfo.step5c_inputPathsUnion);
-    renderPathGroup("step5d-paths", "brown", svgInfo.step5d_clearedArea);
-    renderPathGroup("step5-paths", "purple", svgInfo.step5e_inputPaths);
-    for (size_t regionIdx = 0; regionIdx < svgInfo.allToolBoundPaths.size(); regionIdx++) {
-        renderPathGroup(
-            "tool-bound-paths-" + std::to_string(regionIdx + 1),
-            "blue",
-            svgInfo.allToolBoundPaths[regionIdx]
-        );
-    }
-    for (size_t regionIdx = 0; regionIdx < svgInfo.allFinishingPaths.size(); regionIdx++) {
-        renderPathGroup(
-            "finishing-paths-" + std::to_string(regionIdx + 1),
-            "red",
-            svgInfo.allFinishingPaths[regionIdx]
-        );
-    }
-    for (size_t regionIdx = 0; regionIdx < svgInfo.allFinalClearedPaths.size(); regionIdx++) {
-        renderPathGroup(
-            "final-cleared-paths-" + std::to_string(regionIdx + 1),
-            "lime",
-            svgInfo.allFinalClearedPaths[regionIdx]
-        );
-    }
-
-    // Legend (positioned in top-left within viewBox)
-    long long legendX = minX + padding / 2;
-    long long legendY = -maxY + padding;
-    long long boxSize = legendWidth / 15;
-    long long lineHeight = boxSize * 2;
-
-    // Calculate legend height based on number of entries
-    size_t numRegions = svgInfo.allToolBoundPaths.size();
-    size_t numLegendItems = 7 + numRegions * 3;  // 7 for steps 3,4,5a,5b,5c,5d,5 + 3 per region
-                                                 // (step 6, step 8, final cleared)
-    long long headingOffset = lineHeight;        // Space for heading
-
-    svg << "<g id=\"legend\">\n";
-
-    // Background for legend
-    svg << "<rect x=\"" << legendX << "\" y=\"" << legendY << "\" width=\"" << legendWidth
-        << "\" height=\"" << (lineHeight * numLegendItems + padding + headingOffset)
-        << "\" fill=\"white\" stroke=\"black\" stroke-width=\"" << (padding / 200)
-        << "\" opacity=\"0.9\"/>\n";
-
-    // Legend heading
-    svg << "<text x=\"" << (legendX + legendWidth / 2) << "\" y=\"" << (legendY + boxSize)
-        << "\" font-size=\"" << (boxSize * 1.2) << "\" text-anchor=\"middle\" font-weight=\"bold\""
-        << ">Click to Toggle</text>\n";
-
-    // Legend items (in step order)
-    int legendItem = 0;
-
-    auto renderLegendItem =
-        [&](const std::string& groupId, const std::string& color, const std::string& label) {
-            svg << "<rect id=\"" << groupId << "-box\" data-color=\"" << color << "\" x=\""
-                << (legendX + boxSize) << "\" y=\""
-                << (legendY + headingOffset + lineHeight * legendItem + boxSize) << "\" width=\""
-                << boxSize << "\" height=\"" << boxSize << "\" fill=\"" << color
-                << "\" stroke=\"black\" stroke-width=\"" << (padding / 400)
-                << "\" style=\"cursor:pointer\" onclick=\"toggle('" << groupId << "')\"/>\n";
-            svg << "<text x=\"" << (legendX + boxSize * 3) << "\" y=\""
-                << (legendY + headingOffset + lineHeight * legendItem + boxSize * 1.5)
-                << "\" font-size=\"" << boxSize << "\" style=\"cursor:pointer\" onclick=\"toggle('"
-                << groupId << "')\">" << label << "</text>\n";
-            legendItem++;
-        };
-
-    renderLegendItem("step3-paths", "green", "Step 3: Input Paths");
-    renderLegendItem("step4-paths", "orange", "Step 4: Profiling Areas");
-    renderLegendItem("step5a-paths", "cyan", "Step 5a: Stock Reversed");
-    renderLegendItem("step5b-paths", "magenta", "Step 5b: Outside Stock");
-    renderLegendItem("step5c-paths", "yellow", "Step 5c: Input Paths Union");
-    renderLegendItem("step5d-paths", "brown", "Step 5d: Cleared Area");
-    renderLegendItem("step5-paths", "purple", "Step 5e: Input Paths to be Finished");
-
-    for (size_t regionIdx = 0; regionIdx < numRegions; regionIdx++) {
-        std::string regionLabel = (numRegions > 1) ? " (Region " + std::to_string(regionIdx + 1) + ")"
-                                                   : "";
-        renderLegendItem(
-            "tool-bound-paths-" + std::to_string(regionIdx + 1),
-            "blue",
-            "Step 6: Tool Bound Paths" + regionLabel
-        );
-        renderLegendItem(
-            "finishing-paths-" + std::to_string(regionIdx + 1),
-            "red",
-            "Step 8: Finishing Paths" + regionLabel
-        );
-        renderLegendItem(
-            "final-cleared-paths-" + std::to_string(regionIdx + 1),
-            "lime",
-            "Final Cleared Area" + regionLabel
-        );
-    }
-
-    svg << "</g>\n";
-
-    svg << "</svg>";
-    svg.close();
-}
-
+// RayCAD: upstream's writePreprocessingSVG (DEBUG_SVG), which wrote adaptive_preprocessing.svg into the current
+// folder, is removed with the DebugSVGInfo it drew.
 
 //********************************************
 // Adaptive2d - Execute
 //********************************************
 
 std::list<AdaptiveOutput> Adaptive2d::Execute(
-    const DPaths& stockPaths,
-    const DPaths& paths,
-    const DPaths& clearedPaths,
-    std::function<bool(TPaths)> progressCallbackFn
+    const Paths64& stockPaths,
+    const Paths64& paths,
+    const Paths64& clearedPaths
 )
 {
     //**********************************
@@ -1746,18 +1576,20 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     tolerance = min(tolerance, 1.0);
 
     // 1/"tolerance" = number of min-size adaptive steps per stepover
-    scaleFactor = MIN_STEP_CLIPPER / tolerance / min(1.0, stepOverFactor * toolDiameter);
+    // RayCAD: scaleFactor (MIN_STEP_CLIPPER / tolerance / min(1.0, stepOverFactor * toolDiameter), rounded) is set
+    // by the caller, which converts the inputs with it.
+
+    // RayCAD: an instance may run Execute again; nothing carries over (upstream kept appending to results and
+    // stockInputPaths).
+    results.clear();
+    stockInputPaths.clear();
+    stats = Stats {};
+    region_count = 0;
 
     current_region = 0;
-    cout << "Tool Diameter: " << toolDiameter << endl;
-    cout << "Min step size: " << round(MIN_STEP_CLIPPER / scaleFactor * 1000 * 10) / 10 << " um"
-         << endl;
-    cout << flush;
 
-    toolRadiusScaled = long(toolDiameter * scaleFactor / 2);
-    stepOverScaled = toolRadiusScaled * stepOverFactor;
-    progressCallback = &progressCallbackFn;
-    lastProgressTime = clock();
+    toolRadiusScaled = Rnd(toolDiameter * double(scaleFactor) / 2);
+    stepOverScaled = double(toolRadiusScaled) * stepOverFactor;
     stopProcessing = false;
 
     if (helixRampTargetDiameter < NTOL) {
@@ -1767,37 +1599,25 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     helixRampMinDiameter = max(helixRampMinDiameter, toolDiameter / 8);
     helixRampTargetDiameter = max(helixRampTargetDiameter, helixRampMinDiameter);
 
-    helixRampMaxRadiusScaled = long(helixRampTargetDiameter * scaleFactor / 2);
-    helixRampMinRadiusScaled = long(helixRampMinDiameter * scaleFactor / 2);
-    finishPassOffsetScaled = finishingProfile ? long(stepOverScaled * FINISHING_THICKNESS_SCALE) : 0;
-
-    // Debug variables for SVG visualization
-    DebugSVGInfo svgInfo;
+    helixRampMaxRadiusScaled = Rnd(helixRampTargetDiameter * double(scaleFactor) / 2);
+    helixRampMinRadiusScaled = Rnd(helixRampMinDiameter * double(scaleFactor) / 2);
+    finishPassOffsetScaled = finishingProfile ? Rnd(stepOverScaled * FINISHING_THICKNESS_SCALE) : 0;
 
     // generate tool shape
-    Paths64 toolGeometryPaths = OffsetPath(Path64 {{{0, 0}}}, toolRadiusScaled, EndType::Round);
+    Paths64 toolGeometryPaths = OffsetPath(Path64 {{{0, 0}}}, double(toolRadiusScaled), EndType::Round);
     Path64& toolGeometry = toolGeometryPaths[0];
     // calculate reference area
     Path64 slotCut = TranslatePath(toolGeometry, (int64_t)(toolRadiusScaled / 2), (int64_t)0);
     Paths64 crossing = Difference(Paths64 {toolGeometry}, Paths64 {slotCut}, FillRule::EvenOdd);
     referenceCutArea = fabs(Area(crossing[0]));
-    optimalCutAreaPD = 2 * stepOverFactor * referenceCutArea / toolRadiusScaled;
-#ifdef DEV_MODE
-    cout << "optimalCutAreaPD:" << optimalCutAreaPD << " scaleFactor:" << scaleFactor
-         << " toolRadiusScaled:" << toolRadiusScaled
-         << " helixRampMaxRadiusScaled:" << helixRampMaxRadiusScaled << endl;
-#endif
+    optimalCutAreaPD = 2 * stepOverFactor * referenceCutArea / double(toolRadiusScaled);
     //******************************
     // Convert input paths to clipper
     //******************************
+    // RayCAD: the paths arrive in grid units
     Paths64 converted;
     for (size_t i = 0; i < paths.size(); i++) {
-        Path64 path;
-        for (size_t j = 0; j < paths[i].size(); j++) {
-            std::pair<double, double> pt = paths[i][j];
-            path.push_back(Point64(long(pt.first * scaleFactor), long(pt.second * scaleFactor)));
-        }
-        converted.push_back(SimplifyPath(path, FINISHING_CLEAN_PATH_TOLERANCE, false));
+        converted.push_back(SimplifyPath(paths[i], FINISHING_CLEAN_PATH_TOLERANCE, false));
     }
     Paths64 inputPaths;
     DeduplicatePaths(converted, inputPaths);
@@ -1809,25 +1629,11 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     // convert stock paths
     //*************************
     for (size_t i = 0; i < stockPaths.size(); i++) {
-        Path64 path;
-        for (size_t j = 0; j < stockPaths[i].size(); j++) {
-            std::pair<double, double> pt = stockPaths[i][j];
-            path.push_back(Point64(long(pt.first * scaleFactor), long(pt.second * scaleFactor)));
-        }
-        stockInputPaths.push_back(path);
+        stockInputPaths.push_back(stockPaths[i]);
     }
 
     // Convert cleared area
-    Paths64 initialClearedPaths;
-    for (size_t i = 0; i < clearedPaths.size(); i++) {
-        Path64 p;
-        for (size_t j = 0; j < clearedPaths[i].size(); j++) {
-            long x = long(clearedPaths[i][j].first * scaleFactor);
-            long y = long(clearedPaths[i][j].second * scaleFactor);
-            p.push_back({x, y});
-        }
-        initialClearedPaths.push_back(p);
-    }
+    Paths64 initialClearedPaths = clearedPaths;
     initialClearedPaths = Union(initialClearedPaths, FillRule::EvenOdd);
 
     stockInputPaths = Union(stockInputPaths, FillRule::EvenOdd);
@@ -1874,7 +1680,6 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
             p.z = 1;
         }
     }
-    svgInfo.step3Paths = inputPaths;
 
     // 4) Turn profiles into areas; mark new paths as unfinished (Z=0) and then union
     //
@@ -1883,8 +1688,8 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     // finished. The far sides of those areas do not require a finishing pass
     if (opType == OperationType::otProfilingOutside || opType == OperationType::otProfilingInside) {
         // offset by an extra finishPassOffsetScaled to compensate for undoing that later
-        long offset = 2 * (toolRadiusScaled + helixRampMaxRadiusScaled + finishPassOffsetScaled)
-            + MIN_STEP_CLIPPER;
+        int64_t offset = 2 * (toolRadiusScaled + helixRampMaxRadiusScaled + finishPassOffsetScaled)
+            + int64_t(MIN_STEP_CLIPPER);
         if (opType == OperationType::otProfilingInside) {
             offset = -offset;
         }
@@ -1892,7 +1697,7 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
         Paths64 fullPaths;
 
         for (Path64& inputPath : inputPaths) {
-            Paths64 offsetPaths = OffsetPath(inputPath, offset);
+            Paths64 offsetPaths = OffsetPath(inputPath, double(offset));
 
             if (IsPositive(inputPath) ^ (offset > 0)) {
                 std::reverse(inputPath.begin(), inputPath.end());
@@ -1911,10 +1716,6 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
         }
 
         inputPaths = fullPaths;
-        svgInfo.step4Paths = fullPaths;
-    }
-    else {
-        svgInfo.step4Paths = inputPaths;  // No change for non-profiling operations
     }
 
     // 5) If going outside the stock is allowed, add regionOutsideStock to both inputPaths and
@@ -1936,13 +1737,11 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
         for (Path64& p : stockRev) {
             std::reverse(p.begin(), p.end());
         }
-        svgInfo.step5a_stockRev = stockRev;
 
         // 5b) Create outside-of-stock region
-        double overshootDistance = 4 * toolRadiusScaled + stockToLeave * scaleFactor;
+        double overshootDistance = double(4 * toolRadiusScaled) + stockToLeave * double(scaleFactor);
         Paths64 outsideOfStock
             = OffsetPaths(stockInputPaths, overshootDistance, EndType::Polygon, JoinType::Square);
-        svgInfo.step5b_outsideOfStock = outsideOfStock;
 
         // 5c) Union input paths with stock regions
         Clipper64 clip;
@@ -1964,18 +1763,16 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
         });
 
         clip.Execute(ClipType::Union, FillRule::EvenOdd, inputPaths);
-        svgInfo.step5c_inputPathsUnion = inputPaths;
 
         // 5d) Update cleared area
         outsideOfStock
-            = OffsetPaths(stockInputPaths, 100 * toolRadiusScaled, EndType::Polygon, JoinType::Square);
+            = OffsetPaths(stockInputPaths, double(100 * toolRadiusScaled), EndType::Polygon, JoinType::Square);
 
         clip.Clear();
         clip.AddSubject(initialClearedPaths);
         clip.AddClip(stockRev);
         clip.AddClip(outsideOfStock);
         clip.Execute(ClipType::Union, FillRule::EvenOdd, initialClearedPaths);
-        svgInfo.step5d_clearedArea = initialClearedPaths;
     }
 
     // 5e) Use initialClearedPaths to zero out Z-values for parts of the input paths that do not
@@ -2143,13 +1940,17 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
             // (z-value for original points, newZPosition for new points). This allows us to
             // reassemble with a single pass, simultaneously iterating through both the original
             // input points and the intersection results in order of increasing position.
+            // RayCAD: equal positions are ordered by z (unique here), not left to the library
             std::sort(
                 nonclearedPoints.begin(),
                 nonclearedPoints.end(),
                 [&newZPosition, &firstNewZ](const Point64& p1, const Point64& p2) {
-                    double val1 = (p1.z >= firstNewZ) ? newZPosition.at(p1.z) : (double)p1.z;
-                    double val2 = (p2.z >= firstNewZ) ? newZPosition.at(p2.z) : (double)p2.z;
-                    return val1 < val2;
+                    double val1 = (p1.z >= firstNewZ) ? newZPosition.at(int(p1.z)) : (double)p1.z;
+                    double val2 = (p2.z >= firstNewZ) ? newZPosition.at(int(p2.z)) : (double)p2.z;
+                    if (val1 != val2) {
+                        return val1 < val2;
+                    }
+                    return p1.z < p2.z;
                 }
             );
 
@@ -2209,7 +2010,6 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
         }
 
         inputPaths = updatedPaths;
-        svgInfo.step5e_inputPaths = inputPaths;
     }
 
     // 6) Compute toolBounds = offset(input paths, -(toolRadius + finishingThickness)).
@@ -2239,7 +2039,15 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     });
 
     Paths64 toolBounds;
-    clipof.Execute(-(toolRadiusScaled + finishPassOffsetScaled), toolBounds);
+    clipof.Execute(-double(toolRadiusScaled + finishPassOffsetScaled), toolBounds);
+
+    // RayCAD: the number of regions, for progress
+    for (const auto& current : toolBounds) {
+        if (getPathNestingLevel(current, toolBounds) % 2 != 0) {
+            region_count++;
+        }
+    }
+    stats.regions = region_count;
 
     // 7) Loop over connected components of toolBounds
     //
@@ -2299,7 +2107,7 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
             clipof.AddPaths(currentTBP, JoinType::Round, EndType::Polygon);
 
             Paths64 finishingPass;
-            clipof.Execute(finishPassOffsetScaled, finishingPass);
+            clipof.Execute(double(finishPassOffsetScaled), finishingPass);
 
             // 9) Compute bounds = offset(currentTBP, toolRadius)
             //
@@ -2322,7 +2130,7 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
             // checking a correct interior clearing pass. This process is a bit finicky -- take
             // great care if you modify it!
             Paths64 boundPath
-                = OffsetPaths(currentTBP, toolRadiusScaled - ceil(3 * std::numbers::sqrt2));
+                = OffsetPaths(currentTBP, double(toolRadiusScaled) - ceil(3 * std::numbers::sqrt2));
 
             // Skip path generation if bounds are fully cleared
             //
@@ -2340,32 +2148,31 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
                 }
             }
 
-            svgInfo.allToolBoundPaths.push_back(currentTBP);
-            svgInfo.allFinishingPaths.push_back(finishingPass);
+            // RayCAD: stop between regions when cancelled or when a hard limit was reached
+            if (StopRequested()) {
+                break;
+            }
 
             // 10) Run core algorithm on (bounds, toolBounds, finishingPass, clearedArea)
-            ProcessPolyNode(boundPath, currentTBP, finishingPass, initialClearedPaths, svgInfo);
+            ProcessPolyNode(boundPath, currentTBP, finishingPass, initialClearedPaths);
         }
     }
 
-#ifdef DEBUG_SVG
-    writePreprocessingSVG(svgInfo);
-#else
-    UNUSED(svgInfo);
-#endif
-
+    // RayCAD: regions skipped as already cleared count as done
+    if (progress && !StopRequested()) {
+        progress(1.0);
+    }
     return results;
 }
 
 bool Adaptive2d::FindEntryPoint(
-    TPaths& progressPaths,
     const Paths64& toolBoundPaths,
     const Paths64& boundPaths,
     ClearedArea& clearedArea /*output-initial cleared area by helix*/,
     Point64& entryPoint /*output*/,
     Point64& toolPos,
     PointD& toolDir,
-    long& helixRadiusScaled,
+    int64_t& helixRadiusScaled,
     AdaptiveOutput& adaptiveOutput
 )
 {
@@ -2381,6 +2188,9 @@ bool Adaptive2d::FindEntryPoint(
         double currentDelta = -1;
         incOffset = OffsetPaths(checkPaths, currentDelta, EndType::Polygon, JoinType::Square);
         while (!incOffset.empty()) {
+            if (StopRequested()) {
+                return false;  // RayCAD
+            }
             incOffset = OffsetPaths(checkPaths, currentDelta, EndType::Polygon, JoinType::Square);
             if (!incOffset.empty()) {
                 lastValidOffset = incOffset;
@@ -2406,7 +2216,7 @@ bool Adaptive2d::FindEntryPoint(
             }
         }
         // check if helix fits
-        const auto checkHelixFit = [&](long testHelixRadiusScaled) {
+        const auto checkHelixFit = [&](int64_t testHelixRadiusScaled) {
             Path64 p1;
             p1.push_back(entryPoint);
             clearedPaths
@@ -2427,10 +2237,10 @@ bool Adaptive2d::FindEntryPoint(
             else {
                 // find the largest helix that fits
                 // minSize = largest known fit; maxSize = largest possible fit
-                long minSize = helixRampMinRadiusScaled;
-                long maxSize = helixRampMaxRadiusScaled;
+                int64_t minSize = helixRampMinRadiusScaled;
+                int64_t maxSize = helixRampMaxRadiusScaled;
                 while (minSize < maxSize) {
-                    long testSize = (minSize + maxSize + 1) / 2;  // always testSize > minSize
+                    int64_t testSize = (minSize + maxSize + 1) / 2;  // always testSize > minSize
                     if (checkHelixFit(testSize)) {
                         minSize = testSize;
                     }
@@ -2460,17 +2270,12 @@ bool Adaptive2d::FindEntryPoint(
 
     if (!found) {
         adaptiveOutput.StartPointNotFound = true;
-        cerr << "Start point not found!" << endl;
     }
     if (found) {
-        // visualize/progress for helix
-        Path64 hp;
-        hp.push_back(entryPoint);
-        Paths64 hps = OffsetPath(hp, helixRadiusScaled, EndType::Round);
-        AddPathsToProgress(progressPaths, hps);
-
         toolPos = Point64(entryPoint.x, entryPoint.y - helixRadiusScaled);
         toolDir = PointD(1.0, 0.0);
+        adaptiveOutput.HelixEntry = true;  // RayCAD
+        adaptiveOutput.HelixRadius = helixRadiusScaled;
     }
     return found;
 }
@@ -2480,14 +2285,12 @@ bool Adaptive2d::FindEntryPoint(
 //***********************************************************
 bool Adaptive2d::IsClearPath(const Path64& tp, ClearedArea& cleared, double safetyClearance)
 {
-    Perf_IsClearPath.Start();
     Paths64 toolShape = OffsetPath(tp, toolRadiusScaled + safetyClearance, EndType::Round);
     Paths64 crossing = Difference(toolShape, cleared.GetCleared(), FillRule::EvenOdd);
     double collisionArea = 0;
     for (auto& p : crossing) {
         collisionArea += fabs(Area(p));
     }
-    Perf_IsClearPath.Stop();
     return collisionArea < 1.0;
 }
 
@@ -2500,23 +2303,19 @@ bool Adaptive2d::IsAllowedToCutTrough(
     bool skipBoundsCheck
 )
 {
-    Perf_IsAllowedToCutTrough.Start();
 
     if (!skipBoundsCheck && !IsPointWithinCutRegion(toolBoundPaths, p2)) {
         // last point outside boundary - its not clear to cut
-        Perf_IsAllowedToCutTrough.Stop();
         return false;
     }
     else if (!skipBoundsCheck && !IsPointWithinCutRegion(toolBoundPaths, p1)) {
         // first point outside boundary - its not clear to cut
-        Perf_IsAllowedToCutTrough.Stop();
         return false;
     }
     else {
         double distance = sqrt(DistanceSqrd(p1, p2));
         double stepSize = min(0.5 * stepOverScaled, 8 * MIN_STEP_CLIPPER);
         if (distance < stepSize / 2) {  // not significant cut
-            Perf_IsAllowedToCutTrough.Stop();
             return true;
         }
         if (distance < stepSize) {  // adjust for numeric instability with small distances
@@ -2524,26 +2323,26 @@ bool Adaptive2d::IsAllowedToCutTrough(
         }
 
         Point64 toolPos1 = p1;
-        long steps = long(distance / stepSize) + 1;
-        stepSize = distance / steps;
-        for (long i = 1; i <= steps; i++) {
-            double p = double(i) / steps;
-            Point64 toolPos2(long(p1.x + double(p2.x - p1.x) * p), long(p1.y + double(p2.y - p1.y) * p));
+        int64_t steps = int64_t(distance / stepSize) + 1;  // a count: floor, as upstream
+        stepSize = distance / double(steps);
+        for (int64_t i = 1; i <= steps; i++) {
+            if (StopRequested()) {
+                return false;  // RayCAD
+            }
+            double p = double(i) / double(steps);
+            Point64 toolPos2(Rnd(p1.x + double(p2.x - p1.x) * p), Rnd(p1.y + double(p2.y - p1.y) * p));
             double area = CalcCutArea(toolPos1, toolPos2, cleared).first;
             // if we are cutting above optimal -> not clear to cut
             if (area > areaFactor * stepSize * optimalCutAreaPD) {
-                Perf_IsAllowedToCutTrough.Stop();
                 return false;
             }
             // if tool is outside boundary -> its not clear to cut
             if (!skipBoundsCheck && !IsPointWithinCutRegion(toolBoundPaths, toolPos2)) {
-                Perf_IsAllowedToCutTrough.Stop();
                 return false;
             }
             toolPos1 = toolPos2;
         }
     }
-    Perf_IsAllowedToCutTrough.Stop();
     return true;
 }
 
@@ -2581,7 +2380,8 @@ bool Adaptive2d::ResolveLinkPath(
     if (scanStep < scaleFactor * 0.01) {
         scanStep = scaleFactor * 0.01;
     }
-    long limit = 10000;
+    int64_t limit = 10000;
+    stats.linkSearches++;  // RayCAD
 
     double clearance = stepOverScaled;
     double offClearance = 2 * stepOverScaled;
@@ -2590,32 +2390,31 @@ bool Adaptive2d::ResolveLinkPath(
         clearance = 0;
     }
 
-    long cnt = 0;
+    int64_t cnt = 0;
 
     // to hold CLP results
     Point64 clp;
-    size_t pindex;
-    size_t sindex;
-    double par;
+    size_t pindex = 0;
+    size_t sindex = 0;
+    double par = 0;
 
     // put a time limit on the resolving the link path
-    clock_t time_limit = (clock_t)(max(keepToolDownDistRatio, 3.0) * CLOCKS_PER_SEC / 6);
-
-    clock_t time_out = clock() + time_limit;
+    // RayCAD: a limit on the segments examined (Limits::linkSearchSteps), not on wall-clock time: upstream gave up
+    // after max(keepToolDownDistRatio, 3) / 6 seconds, so a loaded machine produced a different toolpath.
+    int64_t sideSteps = 0;
 
     while (!queue.empty()) {
-        if (stopProcessing) {
+        if (StopRequested()) {
             return false;
         }
-        if (clock() > time_out) {
-            cout << "Unable to resolve tool down linking path (limit reached)." << endl;
+        if (cnt >= limits.linkSearchSteps) {
+            stats.linkSearchLimitHits++;
             return false;
         }
 
         cnt++;
+        stats.linkSearchSteps++;
         if (cnt > limit) {
-            cout << "Unable to resolve tool down linking path @(" << endPoint.x / scaleFactor << ","
-                 << endPoint.y / scaleFactor << ") (" << limit << " points limit reached)." << endl;
             return false;
         }
         pair<Point64, Point64> pointPair = queue.back();
@@ -2632,7 +2431,6 @@ bool Adaptive2d::ResolveLinkPath(
                     pointPair.second,
                     clp
                 )) {
-                cout << "Unable to resolve tool down linking path (self-intersects)." << endl;
                 return false;
             }
         }
@@ -2641,8 +2439,8 @@ bool Adaptive2d::ResolveLinkPath(
         checkPath.clear();
         if (pointPair.first == startPoint) {
             checkPath.push_back(Point64(
-                pointPair.first.x + offClearance * direction.x,
-                pointPair.first.y + offClearance * direction.y
+                Rnd(pointPair.first.x + offClearance * direction.x),
+                Rnd(pointPair.first.y + offClearance * direction.y)
             ));
         }
         else {
@@ -2650,8 +2448,8 @@ bool Adaptive2d::ResolveLinkPath(
         }
         if (pointPair.second == endPoint) {
             checkPath.push_back(Point64(
-                pointPair.second.x - offClearance * direction.x,
-                pointPair.second.y - offClearance * direction.y
+                Rnd(pointPair.second.x - offClearance * direction.x),
+                Rnd(pointPair.second.y - offClearance * direction.y)
             ));
         }
         else {
@@ -2679,11 +2477,19 @@ bool Adaptive2d::ResolveLinkPath(
                 0.5 * double(pointPair.first.x + pointPair.second.x),
                 0.5 * double(pointPair.first.y + pointPair.second.y)
             );
-            for (long i = 1;; i++) {
-                if (stopProcessing) {
+            for (int64_t i = 1;; i++) {
+                if (StopRequested()) {
                     return false;
                 }
-                double offset = i * scanStep;
+                // RayCAD: upstream probed until the offset passed keepToolDownDistRatio times the link's length,
+                // with no other limit (a long link examined thousands of points, each against the whole cleared
+                // area)
+                stats.linkSideProbes++;
+                if (++sideSteps > limits.linkSideSteps) {
+                    stats.linkSearchLimitHits++;
+                    return false;
+                }
+                double offset = double(i) * scanStep;
                 Point64 checkPoint1(midPoint.x + offset * pDir.x, midPoint.y + offset * pDir.y);
                 Point64 checkPoint2(midPoint.x - offset * pDir.x, midPoint.y - offset * pDir.y);
 
@@ -2756,9 +2562,9 @@ bool Adaptive2d::MakeLeadPath(
 
     if (getPathNestingLevel(Path64 {beaconPoint}, cleared) % 2 == 0) {
         Point64 clp;  // to store closest point
-        size_t clpPathIndex;
-        size_t clpSegmentIndex;
-        double clpParameter;
+        size_t clpPathIndex = 0;
+        size_t clpSegmentIndex = 0;
+        double clpParameter = 0;
         DistancePointToPathsSqrd(cleared, beaconPoint, clp, clpPathIndex, clpSegmentIndex, clpParameter);
         beaconPoint = clp;
     }
@@ -2778,7 +2584,10 @@ bool Adaptive2d::MakeLeadPath(
     double alfa = std::numbers::pi / 64;
     double pathLen = 0;
     checkPath.push_back(currentPoint);
-    for (int i = 0; i < 10000; i++) {
+    for (int64_t i = 0; i < limits.leadSteps; i++) {  // RayCAD: upstream's 10000, as a limit
+        if (StopRequested()) {
+            return false;  // RayCAD
+        }
         if (IsAllowedToCutTrough(currentPoint, nextPoint, clearedArea, toolBoundPaths)) {
             if (!leadIn) {
                 // For lead out paths, update/recompute the cleared area
@@ -2822,7 +2631,6 @@ bool Adaptive2d::MakeLeadPath(
                 }
                 else {
                     adaptiveOutput.LeadPathFailed = true;
-                    cerr << "MakeLeadPath failed: overtravel without getting to cleared area" << endl;
                     return false;
                 }
             }
@@ -2846,7 +2654,6 @@ std::optional<TPaths> Adaptive2d::FindLinkPath(
     AdaptiveOutput& adaptiveOutput
 )
 {
-    Perf_AppendToolPath.Start();
     TPaths result;
 
     Point64 endPoint(pathStart);
@@ -2854,9 +2661,9 @@ std::optional<TPaths> Adaptive2d::FindLinkPath(
     // if the link distance is very short, no special linking is required
     double linkDistance = prevPoint ? sqrt(DistanceSqrd(*prevPoint, endPoint)) : stepOverScaled;
     if (linkDistance >= NTOL) {
-        size_t clpPathIndex;
-        size_t clpSegmentIndex;
-        double clpParameter;
+        size_t clpPathIndex = 0;
+        size_t clpSegmentIndex = 0;
+        double clpParameter = 0;
         Point64 clp;
 
         double beaconOffset = max(min(stepOverScaled, linkDistance / 2) * 1.5, 8 * MIN_STEP_CLIPPER);
@@ -2873,7 +2680,9 @@ std::optional<TPaths> Adaptive2d::FindLinkPath(
 
         PointD revEndDir = {-pathDir.x, -pathDir.y};
 
-        PointD endBoundaryDir = GetPathDirectionV(toolBoundPaths[clpPathIndex], clpSegmentIndex);
+        PointD endBoundaryDir = toolBoundPaths.empty()  // RayCAD: no boundary (upstream read out of range)
+            ? pathDir
+            : GetPathDirectionV(toolBoundPaths[clpPathIndex], clpSegmentIndex);
         if (eDistToBounds > beaconOffset) {
             endBoundaryDir = pathDir;  // if boundary is far away, use beacon to leave the path
         }
@@ -2899,7 +2708,6 @@ std::optional<TPaths> Adaptive2d::FindLinkPath(
         std::reverse(leadInPath.begin(), leadInPath.end());
 
         if (!leadInOk) {
-            Perf_AppendToolPath.Stop();
             return {};
         }
 
@@ -2949,7 +2757,8 @@ std::optional<TPaths> Adaptive2d::FindLinkPath(
             else {
                 linkType = MotionType::mtLinkNotClear;
                 double dist = sqrt(DistanceSqrd(*prevPoint, leadInPath.front()));
-                if (dist < 2 * stepOverScaled
+                if (dist >= NTOL  // RayCAD: upstream divided by a zero distance
+                    && dist < 2 * stepOverScaled
                     && IsAllowedToCutTrough(
                         Point64(
                             prevPoint->x + (leadInPath.front().x - prevPoint->x) / dist,
@@ -2986,64 +2795,57 @@ std::optional<TPaths> Adaptive2d::FindLinkPath(
 
         if (prevPoint) {
             // add linking path
+            // RayCAD: in grid units (upstream: millimetre doubles); the caller adds the depth estimates of the link
+            // it chooses (EstimateDepth)
             TPath linkPath1;
-            linkPath1.first = linkType;
-            for (const auto& pt : linkPath) {
-                linkPath1.second.emplace_back(double(pt.x) / scaleFactor, double(pt.y) / scaleFactor);
-            }
+            linkPath1.motion = linkType;
+            linkPath1.role = prLink;
+            linkPath1.points = linkPath;
             result.push_back(linkPath1);
         }
 
         // add lead-in move
         TPath linkPath2;
-        linkPath2.first = MotionType::mtCutting;
-        for (const auto& pt : leadInPath) {
-            linkPath2.second.emplace_back(double(pt.x) / scaleFactor, double(pt.y) / scaleFactor);
-        }
+        linkPath2.motion = MotionType::mtCutting;
+        linkPath2.role = prLeadIn;
+        linkPath2.points = leadInPath;
 
         result.push_back(linkPath2);
     }
 
-    Perf_AppendToolPath.Stop();
     return {result};
 }
 
 std::optional<std::pair<Point64, PointD>> Adaptive2d::AppendToolPath(
     AdaptiveOutput& output,
-    const Path64& passToolPath,
+    const TPath& passToolPathTagged,
     TPaths& linkPath,
     ClearedArea& cleared,
     const Paths64& toolBoundPaths
 )
 {
     std::optional<std::pair<Point64, PointD>> result;  // new toolPos and toolDir after lead out
+    const Path64& passToolPath = passToolPathTagged.points;  // RayCAD: the pass comes with its role and depths
 
-    Perf_AppendToolPath.Start();
 
     for (TPath& lp : linkPath) {
         output.AdaptivePaths.push_back(lp);
     }
 
-    TPath cutPath;
-    cutPath.first = MotionType::mtCutting;
-    for (const auto& p : passToolPath) {
-        DPoint nextT;
-        nextT.first = double(p.x) / scaleFactor;
-        nextT.second = double(p.y) / scaleFactor;
-        cutPath.second.push_back(nextT);
-    }
+    TPath cutPath = passToolPathTagged;  // RayCAD: in grid units (upstream: millimetre doubles)
+    cutPath.motion = MotionType::mtCutting;
 
-    if (!cutPath.second.empty()) {
+    if (!cutPath.points.empty()) {
         output.AdaptivePaths.push_back(cutPath);
 
         // plan the lead out
-        if (passToolPath.size() >= 2) {
+        if (passToolPath.size() >= 2 && !toolBoundPaths.empty()) {  // RayCAD: a boundary to read
             Point64 prevPoint = passToolPath.back();
             PointD prevDir = GetPathDirectionV(passToolPath, passToolPath.size() - 1);
 
-            size_t clpPathIndex;
-            size_t clpSegmentIndex;
-            double clpParameter;
+            size_t clpPathIndex = 0;
+            size_t clpSegmentIndex = 0;
+            double clpParameter = 0;
             Point64 clp;
             double distToBounds = DistancePointToPathsSqrd(
                 toolBoundPaths,
@@ -3088,11 +2890,12 @@ std::optional<std::pair<Point64, PointD>> Adaptive2d::AppendToolPath(
                 leadOutPath = leadOutPaths[0];
 
                 // scale and output
+                // RayCAD: in grid units, with the depth estimate against the cleared area before it
                 TPath out;
-                out.first = MotionType::mtCutting;
-                for (auto& p : leadOutPath) {
-                    out.second.push_back({((double)p.x) / scaleFactor, ((double)p.y) / scaleFactor});
-                }
+                out.motion = MotionType::mtCutting;
+                out.role = prLeadOut;
+                out.points = leadOutPath;
+                out.depth = EstimateDepth(leadOutPath, cleared);
                 output.AdaptivePaths.push_back(out);
                 cleared.ExpandCleared(leadOutPath);
 
@@ -3105,66 +2908,77 @@ std::optional<std::pair<Point64, PointD>> Adaptive2d::AppendToolPath(
             }
         }
     }
-    Perf_AppendToolPath.Stop();
 
     return result;
 }
 
-void Adaptive2d::CheckReportProgress(TPaths& progressPaths, bool force)
+// RayCAD: upstream's CheckReportProgress (a callback with a copy of the progress paths every 0.1 s of clock()) and
+// AddPathsToProgress are replaced by these.
+bool Adaptive2d::StopRequested()
 {
-    if (!force && (clock() - lastProgressTime < PROGRESS_TICKS)) {
-        return;  // not yet
+    if (!stopProcessing && cancel != nullptr && cancel->cancelled()) {
+        stopProcessing = true;
     }
-    lastProgressTime = clock();
-    if (progressPaths.empty()) {
-        return;
-    }
-    if (progressCallback) {
-        if ((*progressCallback)(progressPaths)) {
-            stopProcessing = true;  // call python function, if returns true signal stop processing
-        }
-    }
-    // clean the paths - keep the last point
-    if (progressPaths.back().second.empty()) {
-        return;
-    }
-    TPath* lastPath = &progressPaths.back();
-    DPoint* lastPoint = &lastPath->second.back();
-    DPoint next(lastPoint->first, lastPoint->second);
-    while (progressPaths.size() > 1) {
-        progressPaths.pop_back();
-    }
-    while (!progressPaths.front().second.empty()) {
-        progressPaths.front().second.pop_back();
-    }
-    progressPaths.front().first = MotionType::mtCutting;
-    progressPaths.front().second.push_back(next);
+    return stopProcessing;
 }
 
-void Adaptive2d::AddPathsToProgress(TPaths& progressPaths, const Paths64& paths, MotionType mt)
+void Adaptive2d::HitLimit(AdaptiveOutput& output, const char* name)
 {
-    for (const auto& pth : paths) {
-        if (!pth.empty()) {
-            progressPaths.push_back(TPath());
-            progressPaths.back().first = mt;
-            for (const auto pt : pth) {
-                progressPaths.back().second.emplace_back(
-                    double(pt.x) / scaleFactor,
-                    double(pt.y) / scaleFactor
-                );
+    output.LimitReached = true;
+    output.LimitName = name;
+    stopProcessing = true;
+}
+
+void Adaptive2d::ReportProgress(double regionFraction)
+{
+    if (!progress || region_count <= 0) {
+        return;
+    }
+    double f = (double(current_region - 1) + max(0.0, min(1.0, regionFraction))) / double(region_count);
+    progress(max(0.0, min(1.0, f)));
+}
+
+std::vector<double> Adaptive2d::EstimateDepth(const Path64& path, ClearedArea& cleared)
+{
+    // The cut area per unit of travel, as the step search measures it (CalcCutArea against the cleared area, the
+    // disc at the previous position counting as cut), over pieces no longer than the longest step the search takes,
+    // the largest over the pieces of each segment.
+    std::vector<double> depth(path.size(), -1.0);
+    const double maxPiece = 8 * MIN_STEP_CLIPPER;
+    for (size_t i = 1; i < path.size(); i++) {
+        if (StopRequested()) {
+            break;
+        }
+        const Point64& a = path[i - 1];
+        const Point64& b = path[i];
+        double len = sqrt(DistanceSqrd(a, b));
+        if (len < NTOL) {
+            depth[i] = 0;
+            continue;
+        }
+        int64_t pieces = int64_t(ceil(len / maxPiece));
+        double best = 0;
+        Point64 from = a;
+        for (int64_t k = 1; k <= pieces; k++) {
+            double t = double(k) / double(pieces);
+            Point64 to = k == pieces ? b : Point64(Rnd(a.x + double(b.x - a.x) * t), Rnd(a.y + double(b.y - a.y) * t));
+            double pieceLen = sqrt(DistanceSqrd(from, to));
+            if (pieceLen >= NTOL) {
+                best = max(best, CalcCutArea(from, to, cleared, false).first / pieceLen);
             }
-            progressPaths.back().second.emplace_back(
-                double(pth.front().x) / scaleFactor,
-                double(pth.front().y) / scaleFactor
-            );
+            from = to;
         }
+        depth[i] = best;
     }
+    return depth;
 }
-
 // performs the intersection of the path (subject) and the area (obj), preserving
 // orientation and (closed-path) connectivity
 Paths64 PathIntersectArea(const Path64& subject, const Paths64& obj, bool isClosed = true)
 {
+    if (subject.empty()) {
+        return {};  // RayCAD: upstream read the first point of an empty path
+    }
     // local copies, since the z-data below must be overwritten
     Path64 indexedSubject = subject;
     Paths64 clipObj = obj;
@@ -3217,7 +3031,7 @@ Paths64 PathIntersectArea(const Path64& subject, const Paths64& obj, bool isClos
 
     // restore orientation
     for (Path64& p : diff) {
-        for (size_t i = 0; i < p.size() - 1; i++) {
+        for (size_t i = 0; i + 1 < p.size(); i++) {  // RayCAD: no underflow on an empty path
             if (p[i].z != 0 && p[i + 1].z != 0) {
                 if (p[i].z + 1 != p[i + 1].z && p[i].z + 2 != p[i + 1].z) {
                     std::reverse(p.begin(), p.end());
@@ -3229,11 +3043,14 @@ Paths64 PathIntersectArea(const Path64& subject, const Paths64& obj, bool isClos
     }
 
     // collect result, joining any path that goes through the end point
-    const int zstart = 1;
-    const int zend = indexedSubject.size() * 2 - 1;
+    const int64_t zstart = 1;
+    const int64_t zend = int64_t(indexedSubject.size()) * 2 - 1;
     std::optional<Path64> start, end;
     Paths64 result;
     for (Path64& p : diff) {
+        if (p.empty()) {
+            continue;  // RayCAD
+        }
         if (p[0].z == zstart) {
             start = {p};
         }
@@ -3266,11 +3083,12 @@ Paths64 PathIntersectArea(const Path64& subject, const Paths64& obj, bool isClos
 
 struct IterateNextStepOutput
 {
+    // RayCAD: every field initialised
     std::optional<double> iterationAngle;
     bool tooManyIterations = false;
-    bool failed;
-    double area;
-    double errorFraction;
+    bool failed = false;
+    double area = 0;
+    double errorFraction = 0;
     Point64 newToolPos;
     PointD newToolDir;
 };
@@ -3279,20 +3097,15 @@ void Adaptive2d::ProcessPolyNode(
     Paths64 boundPaths,
     Paths64 toolBoundPaths,
     Paths64 finishingPaths,
-    const Paths64& initialClearedPaths,
-    DebugSVGInfo& svgInfo
+    const Paths64& initialClearedPaths
 )
 {
-    Perf_ProcessPolyNode.Start();
     current_region++;
-    cout << "** Processing region: " << current_region << endl;
 
     // node paths are already constrained to tool boundary path for adaptive path before finishing
     // pass
     Point64 entryPoint;
-    long helixRadiusScaled;
-    TPaths progressPaths;
-    progressPaths.reserve(10000);
+    int64_t helixRadiusScaled = 0;
 
     toolBoundPaths = SimplifyPaths(toolBoundPaths, CLEAN_POLYGONS_TOLERANCE);
     toolBoundPaths = Union(toolBoundPaths, FillRule::EvenOdd);
@@ -3305,8 +3118,6 @@ void Adaptive2d::ProcessPolyNode(
     tbpMinus = SimplifyPaths(tbpMinus, CLEAN_POLYGONS_TOLERANCE);
     tbpMinus = Union(tbpMinus, FillRule::EvenOdd);
 
-    AddPathsToProgress(progressPaths, toolBoundPaths, MotionType::mtLinkClear);
-
     Point64 toolPos;
     PointD toolDir;
 
@@ -3314,35 +3125,41 @@ void Adaptive2d::ProcessPolyNode(
     ClearedArea cleared(toolRadiusScaled);
     cleared.SetClearedPaths(initialClearedPaths);
 
-    long stepScaled = long(MIN_STEP_CLIPPER);
+    int64_t stepScaled = int64_t(MIN_STEP_CLIPPER);
 
-    CheckReportProgress(progressPaths, true);
+    // RayCAD: the area this region has to clear, for progress
+    double areaToClear = 0;
+    for (const Path64& p : Difference(boundPaths, initialClearedPaths, FillRule::EvenOdd)) {
+        areaToClear += Area(p);
+    }
+    double clearedAtStart = 0;
+    for (const Path64& p : cleared.GetCleared()) {
+        clearedAtStart += Area(p);
+    }
+    ReportProgress(0);
 
     Path64 passToolPath;  // to store pass toolpath
+    std::vector<double> passDepth;  // RayCAD: the cut area per unit of travel of each step of the pass
     Path64 toClearPath;
     Point64 clp;  // to store closest point
-    size_t clpPathIndex;
-    size_t clpSegmentIndex;
-    double clpParameter;
+    size_t clpPathIndex = 0;
+    size_t clpSegmentIndex = 0;
+    double clpParameter = 0;
     vector<PointD> gyro;          // used to average tool direction
     vector<double> angleHistory;  // use to predict deflection angle
     double angle = std::numbers::pi;
     Interpolation interp;  // interpolation instance
 
-    long total_iterations = 0;
-    long total_points = 0;
-    long total_exceeded = 0;
-    long total_output_points = 0;
-    long over_cut_count = 0;
-    long bad_engage_count = 0;
-
-    double perf_total_len = 0;
+    int64_t total_iterations = 0;
+    int64_t total_points = 0;
+    int64_t total_exceeded = 0;
+    int64_t total_output_points = 0;
+    int64_t over_cut_count = 0;
+    int64_t bad_engage_count = 0;
 
     AdaptiveOutput output;
     output.clipperScale = double(scaleFactor);
-#ifdef DEV_MODE
-    clock_t start_clock = clock();
-#endif
+    output.ToolBoundPaths = toolBoundPaths;  // RayCAD
     ClearedArea clearedBeforePass(toolRadiusScaled);
     clearedBeforePass.SetClearedPaths(cleared.GetCleared());
 
@@ -3352,37 +3169,44 @@ void Adaptive2d::ProcessPolyNode(
         IterateNextStepOutput out;
         out.tooManyIterations = false;
         out.failed = false;
+        // RayCAD: the hard limit on steps
+        if (++stats.steps > limits.steps) {
+            HitLimit(output, "steps");
+        }
+        if (StopRequested()) {
+            out.failed = true;
+            return out;
+        }
 
-        Perf_DistanceToBoundary.Start();
 
         double distanceToBoundary = sqrt(
             DistancePointToPathsSqrd(toolBoundPaths, toolPos, clp, clpPathIndex, clpSegmentIndex, clpParameter)
         );
         PointD boundaryDir = GetPathDirectionV(toolBoundPaths[clpPathIndex], clpSegmentIndex);
 
-        Perf_DistanceToBoundary.Stop();
         double distanceToEngage = sqrt(DistanceSqrd(toolPos, entryPoint));
 
         double targetAreaPD = optimalCutAreaPD;
 
         // set the step size: 1x to 8x base size
         double slowDownDistance = max(double(toolRadiusScaled) / 4, MIN_STEP_CLIPPER * 8);
+        // RayCAD: step lengths are counts of grid units; the conversions floor as upstream's did
         if (distanceToBoundary < slowDownDistance || distanceToEngage < slowDownDistance) {
-            stepScaled = long(MIN_STEP_CLIPPER);
+            stepScaled = int64_t(MIN_STEP_CLIPPER);
         }
         else if (fabs(angle) > NTOL) {
-            stepScaled = long(MIN_STEP_CLIPPER / fabs(angle));
+            stepScaled = int64_t(min(MIN_STEP_CLIPPER / fabs(angle), 1e9));
         }
         else {
-            stepScaled = long(MIN_STEP_CLIPPER * 8);
+            stepScaled = int64_t(MIN_STEP_CLIPPER * 8);
         }
 
         // clamp the step size - for stability
-        if (stepScaled > min(long(toolRadiusScaled / 4), long(MIN_STEP_CLIPPER * 8))) {
-            stepScaled = min(long(toolRadiusScaled / 4), long(MIN_STEP_CLIPPER * 8));
+        if (stepScaled > min(int64_t(toolRadiusScaled / 4), int64_t(MIN_STEP_CLIPPER * 8))) {
+            stepScaled = min(int64_t(toolRadiusScaled / 4), int64_t(MIN_STEP_CLIPPER * 8));
         }
-        if (stepScaled < MIN_STEP_CLIPPER) {
-            stepScaled = long(MIN_STEP_CLIPPER);
+        if (double(stepScaled) < MIN_STEP_CLIPPER) {
+            stepScaled = int64_t(MIN_STEP_CLIPPER);
         }
 
         //*****************************
@@ -3397,13 +3221,16 @@ void Adaptive2d::ProcessPolyNode(
         double areaPD = 0;
         interp.clear();
         /******************************/
-        Perf_PointIterations.Start();
         int iteration;
-        bool pointNotInterp;
+        bool pointNotInterp = true;  // RayCAD: initialised
         bool foundArea = false;
         Point64 newToolPos;
         PointD newToolDir;
         for (iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+            if (StopRequested()) {
+                out.failed = true;  // RayCAD
+                return out;
+            }
             total_iterations++;
             if (iteration == 0) {
                 angle = predictedAngle;
@@ -3439,14 +3266,14 @@ void Adaptive2d::ProcessPolyNode(
                 Path64 triangle = {toolPos};
                 triangle.push_back(
                     Point64 {
-                        (long long)(toolPos.x + rightAngle.x * dist),
-                        (long long)(toolPos.y + rightAngle.y * dist)
+                        Rnd(toolPos.x + rightAngle.x * dist),
+                        Rnd(toolPos.y + rightAngle.y * dist)
                     }
                 );
                 triangle.push_back(
                     Point64 {
-                        (long long)(toolPos.x + leftAngle.x * dist),
-                        (long long)(toolPos.y + leftAngle.y * dist)
+                        Rnd(toolPos.x + leftAngle.x * dist),
+                        Rnd(toolPos.y + leftAngle.y * dist)
                     }
                 );
 
@@ -3465,10 +3292,13 @@ void Adaptive2d::ProcessPolyNode(
                     clpSegmentIndex,
                     clpParameter
                 );
-                double dy = clp.y - toolPos.y;
-                double dx = clp.x - toolPos.x;
+                double dy = double(clp.y - toolPos.y);
+                double dx = double(clp.x - toolPos.x);
                 double len = sqrt(dx * dx + dy * dy);
-                angle = asin((dy * toolDir.x - dx * toolDir.y) / len);
+                if (len < NTOL) {
+                    continue;  // RayCAD: the closest point is the tool position (upstream: asin of 0 / 0)
+                }
+                angle = dmath::asin(max(-1.0, min(1.0, (dy * toolDir.x - dx * toolDir.y) / len)));
             }
             else if (!foundArea) {
                 // if the previous iteration didn't cut area then nothing will; exit early
@@ -3485,8 +3315,8 @@ void Adaptive2d::ProcessPolyNode(
 
             newToolDir = rotate(toolDir, angle);
             newToolPos = Point64(
-                long(toolPos.x + newToolDir.x * stepScaled),
-                long(toolPos.y + newToolDir.y * stepScaled)
+                Rnd(toolPos.x + newToolDir.x * stepScaled),
+                Rnd(toolPos.y + newToolDir.y * stepScaled)
             );
 
             // Skip iteration if this Point64 has already been processed
@@ -3575,7 +3405,6 @@ void Adaptive2d::ProcessPolyNode(
                 out.tooManyIterations = true;
             }
         }
-        Perf_PointIterations.Stop();
 
         bool recalcArea = false;
 
@@ -3583,11 +3412,11 @@ void Adaptive2d::ProcessPolyNode(
             //**********************************************
             // CHECK AND RECORD NEW TOOL POS
             //**********************************************
-            long rotateStep = 0;
+            int64_t rotateStep = 0;
             double rotateIncrement;
             {
-                double boundaryAngle = atan2(boundaryDir.y, boundaryDir.x);
-                double toolAngle = atan2(newToolDir.y, newToolDir.x);
+                double boundaryAngle = dmath::atan2(boundaryDir.y, boundaryDir.x);
+                double toolAngle = dmath::atan2(newToolDir.y, newToolDir.x);
                 double delta = boundaryAngle - toolAngle;
                 if (delta > std::numbers::pi) {
                     delta -= 2 * std::numbers::pi;
@@ -3603,19 +3432,12 @@ void Adaptive2d::ProcessPolyNode(
                 recalcArea = true;
                 newToolDir = rotate(newToolDir, rotateIncrement);
                 newToolPos = Point64(
-                    long(toolPos.x + newToolDir.x * stepScaled),
-                    long(toolPos.y + newToolDir.y * stepScaled)
+                    Rnd(toolPos.x + newToolDir.x * stepScaled),
+                    Rnd(toolPos.y + newToolDir.y * stepScaled)
                 );
             }
             if (rotateStep >= 180) {
-#ifdef DEV_MODE
-                if (warnRotate) {
-                    output.UnexpectedRotateIterations = true;
-                    cerr << "Warning: unexpected number of rotate iterations." << endl;
-                }
-#else
-                UNUSED(warnRotate);
-#endif
+                UNUSED(warnRotate);  // RayCAD: upstream's DEV_MODE warning is gone
                 out.failed = true;
             }
 
@@ -3632,7 +3454,7 @@ void Adaptive2d::ProcessPolyNode(
             }
 
             // safety condition
-            if (area > stepScaled * optimalCutAreaPD && areaPD > 2 * optimalCutAreaPD) {
+            if (area > double(stepScaled) * optimalCutAreaPD && areaPD > 2 * optimalCutAreaPD) {
                 over_cut_count++;
                 out.failed = true;
             }
@@ -3674,7 +3496,7 @@ void Adaptive2d::ProcessPolyNode(
         else if (allZero) {
             Paths64 clearedArea = cleared.GetCleared();
             if (DistancePointToPathsSqrd(clearedArea, toolPos, clp, clpPathIndex, clpSegmentIndex, clpParameter)
-                < toolRadiusScaled * toolRadiusScaled) {
+                < double(toolRadiusScaled * toolRadiusScaled)) {
                 Point64 p2 = Compute2DPolygonCentroid(clearedArea[clpPathIndex]);
                 return std::optional<PointD> {DirectionV(toolPos, p2)};
             }
@@ -3686,12 +3508,13 @@ void Adaptive2d::ProcessPolyNode(
     };
 
     const auto _getEngagePoint = [&](const std::optional<Point64>& prevPos,
-                                     long engagementProtrusion) {
+                                     int64_t engagementProtrusion) {
+        stats.engageSearches++;  // RayCAD
         // engagePoint, engageDir, heuristicCost
         std::vector<std::tuple<Point64, PointD, double>> engagePoints;
 
         const auto addEngagePoint = [&](const Point64& engagePoint, const PointD& engageDir) {
-            double cost_mm = (prevPos ? sqrt(DistanceSqrd(*prevPos, engagePoint)) / scaleFactor : 0);
+            double cost_mm = (prevPos ? sqrt(DistanceSqrd(*prevPos, engagePoint)) / double(scaleFactor) : 0);
             engagePoints.emplace_back(
                 std::tuple<Point64, PointD, double> {engagePoint, engageDir, cost_mm}
             );
@@ -3700,12 +3523,12 @@ void Adaptive2d::ProcessPolyNode(
         Paths64 clearedArea = cleared.GetCleared();
 
         // offset inward to find places the tool can start
-        long engageBuffer = 2;  // smooths out the integer rounding in the two offsets, +toolRadius
-                                // and -toolRadius
-        Paths64 preEngage = OffsetPaths(clearedArea, -(toolRadiusScaled + engageBuffer));
+        int64_t engageBuffer = 2;  // smooths out the integer rounding in the two offsets, +toolRadius
+                                   // and -toolRadius
+        Paths64 preEngage = OffsetPaths(clearedArea, -double(toolRadiusScaled + engageBuffer));
 
         // offset outward to find places that would protrude outside the cleared area
-        Paths64 engagePaths = OffsetPaths(preEngage, engageBuffer + engagementProtrusion);
+        Paths64 engagePaths = OffsetPaths(preEngage, double(engageBuffer + engagementProtrusion));
 
         // clip engage candidates with tool bounds
         for (Path64& engagePath : engagePaths) {
@@ -3718,7 +3541,7 @@ void Adaptive2d::ProcessPolyNode(
                 rotated = engagePath;
             }
             else {
-                int iClosest = 0;
+                size_t iClosest = 0;
                 double dsqClosest = __DBL_MAX__;
                 for (size_t i = 0; i < engagePath.size(); i++) {
                     double dsq = DistanceSqrd(*prevPos, engagePath[i]);
@@ -3743,7 +3566,10 @@ void Adaptive2d::ProcessPolyNode(
                 double dToGo = 0;  // first step is 0 -- start point
                 size_t seg = 0;
                 double segD = 0;
-                while (!added && seg < open.size() - 1) {
+                while (!added && seg + 1 < open.size()) {  // RayCAD: no underflow on an empty path
+                    if (StopRequested()) {
+                        break;  // RayCAD
+                    }
                     // step to next point
                     Point64 p;
                     PointD segDir;
@@ -3751,15 +3577,17 @@ void Adaptive2d::ProcessPolyNode(
                         Point64 p1 = open[seg];
                         Point64 p2 = open[seg + 1];
                         double segLen = sqrt(DistanceSqrd(p1, p2));
-                        segDir = PointD {(p2.x - p1.x) / segLen, (p2.y - p1.y) / segLen};
+                        if (segLen >= NTOL) {  // RayCAD: no direction from a zero-length segment (upstream: NaN)
+                            segDir = PointD {double(p2.x - p1.x) / segLen, double(p2.y - p1.y) / segLen};
+                        }
                         if (segLen - segD > dToGo) {
                             // interpolate current segment
                             segD += dToGo;
                             dToGo = 0;
                             double interp = segD / segLen;
                             p = Point64 {
-                                (long long)(p2.x * interp + p1.x * (1 - interp)),
-                                (long long)(p2.y * interp + p1.y * (1 - interp))
+                                Rnd(p2.x * interp + p1.x * (1 - interp)),
+                                Rnd(p2.y * interp + p1.y * (1 - interp))
                             };
                         }
                         else {
@@ -3768,7 +3596,7 @@ void Adaptive2d::ProcessPolyNode(
                             seg++;
                             p = p2;  // ensures that we try the endpoint too
                         }
-                    } while (dToGo > 0 && seg < open.size() - 1);
+                    } while (dToGo > 0 && seg + 1 < open.size());
 
                     // Attempt to add the point
                     const auto toolDir = initToolDir(p, segDir);
@@ -3783,10 +3611,11 @@ void Adaptive2d::ProcessPolyNode(
         }
 
         // sort engagePoints based on connection cost
-        std::sort(
+        // RayCAD: stable, so engagement points of equal cost keep their order on every standard library
+        std::stable_sort(
             engagePoints.begin(),
             engagePoints.end(),
-            [](std::tuple<Point64, PointD, double> aa, std::tuple<Point64, PointD, double> bb) {
+            [](const std::tuple<Point64, PointD, double>& aa, const std::tuple<Point64, PointD, double>& bb) {
                 return std::get<double>(aa) < std::get<double>(bb);
             }
         );
@@ -3797,6 +3626,9 @@ void Adaptive2d::ProcessPolyNode(
         PointD bestDir;
 
         for (const auto& ep : engagePoints) {
+            if (StopRequested()) {
+                break;  // RayCAD
+            }
             if (std::get<double>(ep) < bestCost) {
                 std::optional<TPaths> link = FindLinkPath(
                     prevPos,
@@ -3810,21 +3642,17 @@ void Adaptive2d::ProcessPolyNode(
                     continue;
                 }
 
+                // RayCAD: the paths are in grid units; the cost stays in millimetres
                 double cost_mm = 0;
-                std::optional<DPoint> prev = prevPos
-                    ? std::optional<DPoint> {{prevPos->x / (double)scaleFactor, prevPos->y / (double)scaleFactor}}
-                    : std::optional<DPoint> {};
-                for (TPath tp : *link) {
-                    if (tp.first == MotionType::mtLinkNotClear) {
+                std::optional<Point64> prev = prevPos;
+                for (const TPath& tp : *link) {
+                    if (tp.motion == MotionType::mtLinkNotClear) {
                         cost_mm += 10000;  // prioritize links that don't require retraction
                     }
-                    for (size_t i = 0; i < tp.second.size(); i++) {
-                        DPoint cur = tp.second[i];
+                    for (size_t i = 0; i < tp.points.size(); i++) {
+                        const Point64& cur = tp.points[i];
                         if (prev) {
-                            double dx = cur.first - prev->first;
-                            double dy = cur.second - prev->second;
-                            double dist = sqrt(dx * dx + dy * dy);
-                            cost_mm += dist;
+                            cost_mm += sqrt(DistanceSqrd(cur, *prev)) / double(scaleFactor);
                         }
                         prev = {cur};
                     }
@@ -3848,17 +3676,16 @@ void Adaptive2d::ProcessPolyNode(
     };
 
     const auto getEngagePoint = [&](const std::optional<Point64>& prevPos) {
-        Perf_NextEngagePoint.Start();
 
         // Compute how far into the material the first engagement should be
         const double targetArea = optimalCutAreaPD * MIN_STEP_CLIPPER;
         // Area of a segment of a circle: A = R^2 / 2 * (theta - sin(theta))
         // 2nd order Taylor expansion: A = R^2 / 2 * (theta^3/6) = R^2 * theta^3 / 12
         // Solve for theta: theta = (12 * A / R^2)^(1/3)
-        const double theta = std::pow(12 * targetArea / toolRadiusScaled / toolRadiusScaled, 1 / 3.);
-        const double protrusion = toolRadiusScaled - cos(theta / 2) * toolRadiusScaled;
-        const long engagementProtrusion
-            = (long)min(protrusion, stepOverScaled * FINISHING_THICKNESS_SCALE);
+        const double theta = CubeRoot(12 * targetArea / double(toolRadiusScaled) / double(toolRadiusScaled));
+        const double protrusion = double(toolRadiusScaled) - dmath::cos(theta / 2) * double(toolRadiusScaled);
+        const int64_t engagementProtrusion
+            = Rnd(min(protrusion, stepOverScaled * FINISHING_THICKNESS_SCALE));
 
         // Get engagement point. First attempt with the desired offsets, then fallback
         auto result = _getEngagePoint(prevPos, engagementProtrusion);
@@ -3869,23 +3696,17 @@ void Adaptive2d::ProcessPolyNode(
 
         // update cleared area
         if (result) {
+            // RayCAD: the depth estimates of the chosen link and lead-in, against the area cleared before them
+            for (TPath& linkPath : std::get<TPaths>(*result)) {
+                linkPath.depth = EstimateDepth(linkPath.points, cleared);
+            }
             for (const TPath& linkPath : std::get<TPaths>(*result)) {
-                if (linkPath.first == MotionType::mtCutting) {
-                    Path64 p;
-                    for (const DPoint& dp : linkPath.second) {
-                        p.push_back(
-                            Point64 {
-                                (long long)(dp.first * scaleFactor),
-                                (long long)(dp.second * scaleFactor)
-                            }
-                        );
-                    }
-                    cleared.ExpandCleared(p);
+                if (linkPath.motion == MotionType::mtCutting) {
+                    cleared.ExpandCleared(linkPath.points);  // RayCAD: in grid units, no conversion
                 }
             }
         }
 
-        Perf_NextEngagePoint.Stop();
         return result;
     };
 
@@ -3895,16 +3716,14 @@ void Adaptive2d::ProcessPolyNode(
         toolPos = std::get<Point64>(*engagePoint);
         toolDir = std::get<PointD>(*engagePoint);
         linkPath = std::get<TPaths>(*engagePoint);
-        entryPoint = linkPath.size() > 0
-            ? Point64 {(long long)(linkPath[0].second[0].first * scaleFactor), (long long)(linkPath[0].second[0].second * scaleFactor)}
+        entryPoint = linkPath.size() > 0 && !linkPath[0].points.empty()
+            ? linkPath[0].points[0]
             : toolPos;
-        output.StartPoint
-            = DPoint(double(entryPoint.x) / scaleFactor, double(entryPoint.y) / scaleFactor);
+        output.StartPoint = entryPoint;  // RayCAD: grid units
     }
     else {
         // Engagement failed; instead helix down
         if (!FindEntryPoint(
-                progressPaths,
                 toolBoundPaths,
                 boundPaths,
                 cleared,
@@ -3914,51 +3733,43 @@ void Adaptive2d::ProcessPolyNode(
                 helixRadiusScaled,
                 output
             )) {
-            Perf_ProcessPolyNode.Stop();
+            if (StopRequested()) {
+                output.StartPointNotFound = false;  // RayCAD: cancelled or stopped, not a failed start
+                output.Stopped = true;
+            }
+            output.ClearedPaths = cleared.GetCleared();
             results.push_back(output);
             return;
         }
-        output.StartPoint = DPoint(double(toolPos.x) / scaleFactor, double(toolPos.y) / scaleFactor);
+        output.StartPoint = toolPos;  // RayCAD: grid units
     }
 
     output.ReturnMotionType = 0;
-    output.HelixCenterPoint.first = double(entryPoint.x) / scaleFactor;
-    output.HelixCenterPoint.second = double(entryPoint.y) / scaleFactor;
+    output.HelixCenterPoint = entryPoint;  // RayCAD: grid units
 
     //*******************************
     // LOOP - PASSES
     //*******************************
-    for (long pass = 0; pass < PASSES_LIMIT; pass++) {
-        if (stopProcessing) {
+    for (int64_t pass = 0;; pass++) {
+        if (StopRequested()) {
             break;
         }
+        if (pass >= limits.passes) {
+            HitLimit(output, "passes");  // RayCAD: upstream's limit was LONG_MAX
+            break;
+        }
+        stats.passes++;
 
         passToolPath.clear();
+        passDepth.clear();
         toClearPath.clear();
         angleHistory.clear();
         angleHistory.push_back(0);
 
         // include linking path in cleared area
-        for (TPath lp : linkPath) {
-            if (lp.first == MotionType::mtCutting || lp.first == MotionType::mtLinkClear) {
-                Path64 scaledP;
-                for (auto& p : lp.second) {
-                    scaledP.push_back(
-                        Point64 {(long long)(p.first * scaleFactor), (long long)(p.second * scaleFactor)}
-                    );
-                }
-                cleared.ExpandCleared(scaledP);
-            }
-        }
-
-        // append a new path to progress info paths
-        if (progressPaths.empty()) {
-            progressPaths.push_back(TPath());
-        }
-        else {
-            // append new path if previous not empty
-            if (!progressPaths.back().second.empty()) {
-                progressPaths.push_back(TPath());
+        for (const TPath& lp : linkPath) {
+            if (lp.motion == MotionType::mtCutting || lp.motion == MotionType::mtLinkClear) {
+                cleared.ExpandCleared(lp.points);  // RayCAD: in grid units, no conversion
             }
         }
 
@@ -3973,8 +3784,12 @@ void Adaptive2d::ProcessPolyNode(
         //*******************************
         // LOOP - POINTS
         //*******************************
-        for (long point_index = 0; point_index < POINTS_PER_PASS_LIMIT; point_index++) {
-            if (stopProcessing) {
+        for (int64_t point_index = 0;; point_index++) {
+            if (StopRequested()) {
+                break;
+            }
+            if (point_index >= limits.pointsPerPass) {
+                HitLimit(output, "points per pass");  // RayCAD: upstream's limit was LONG_MAX
                 break;
             }
 
@@ -4000,7 +3815,7 @@ void Adaptive2d::ProcessPolyNode(
                 // update cleared paths
                 if (lastExpandToolDir.x * itResult.newToolDir.x
                         + lastExpandToolDir.y * itResult.newToolDir.y
-                    < cos(std::numbers::pi / 4)) {
+                    < dmath::cos(std::numbers::pi / 4)) {
                     cleared.ExpandCleared(toClearPath);
                     toClearPath.clear();
                     lastExpandToolDir = toolDir;
@@ -4018,28 +3833,22 @@ void Adaptive2d::ProcessPolyNode(
                     passToolPath.push_back(toolPos);
                 }
                 passToolPath.push_back(itResult.newToolPos);
-                perf_total_len += stepScaled;
+                passDepth.push_back(itResult.area / double(stepScaled));  // RayCAD
                 toolPos = itResult.newToolPos;
-
-                // append to progress info paths
-                if (progressPaths.empty()) {
-                    progressPaths.push_back(TPath());
-                }
-                progressPaths.back().second.emplace_back(
-                    double(itResult.newToolPos.x) / scaleFactor,
-                    double(itResult.newToolPos.y) / scaleFactor
-                );
 
                 // append gyro
                 gyro.push_back(itResult.newToolDir);
                 gyro.erase(gyro.begin());
-                CheckReportProgress(progressPaths);
             }
             else {
                 // cout<<"Break: no cut @" << point_index << endl;
                 break;
             }
         } /* end of points loop*/
+
+        if (StopRequested()) {
+            break;  // RayCAD: the pass is incomplete; leave it out
+        }
 
         if (!toClearPath.empty()) {
             cleared.ExpandCleared(toClearPath);
@@ -4048,36 +3857,81 @@ void Adaptive2d::ProcessPolyNode(
 
         Paths64 newlyClearedAreas
             = Difference(cleared.GetCleared(), clearedBeforePass.GetCleared(), FillRule::EvenOdd);
+        // RayCAD: the signed areas Clipper2 returns (outer loops positive, holes negative) summed. Upstream signed
+        // each loop by a nesting test of its first point, which a point on another loop misjudges: on the S5 islands
+        // pocket passes that cut thousands of mm2 came out negative, were dropped as cutting nothing, and left the
+        // tool position at their end and their area in the cleared model (links from where the tool never was, and
+        // material cut later at engagements far above the target).
         cumulativeCutArea = 0;
         for (Path64& a : newlyClearedAreas) {
-            int nesting = getPathNestingLevel(a, newlyClearedAreas);
-            cumulativeCutArea += (nesting % 2 == 1 ? 1 : -1) * fabs(Area(a));
+            cumulativeCutArea += Area(a);
         }
 
         if (cumulativeCutArea >= 1) {
             Path64 cleaned;
             cleaned = SimplifyPath(passToolPath, CLEAN_PATH_TOLERANCE, false);
-            total_output_points += long(cleaned.size());
-            auto newPos = AppendToolPath(output, cleaned, linkPath, cleared, toolBoundPaths);
+            total_output_points += int64_t(cleaned.size());
+            // RayCAD: the pass with its role and the depth of each kept segment: SimplifyPath keeps a subset of
+            // the points in order, and a kept segment's depth is the largest of the steps it replaces
+            TPath passTagged;
+            passTagged.motion = MotionType::mtCutting;
+            passTagged.role = prPass;
+            passTagged.points = cleaned;
+            passTagged.depth.assign(cleaned.size(), -1.0);
+            {
+                std::vector<size_t> kept;
+                size_t j = 0;
+                for (const Point64& q : cleaned) {
+                    while (j < passToolPath.size() && !(passToolPath[j] == q)) {
+                        j++;
+                    }
+                    kept.push_back(j);
+                    if (j < passToolPath.size()) {
+                        j++;
+                    }
+                }
+                for (size_t i = 1; i < kept.size(); i++) {
+                    if (kept[i] >= passToolPath.size() || kept[i - 1] >= kept[i]) {
+                        continue;
+                    }
+                    double d = -1;
+                    for (size_t k = kept[i - 1]; k < kept[i] && k < passDepth.size(); k++) {
+                        d = max(d, passDepth[k]);
+                    }
+                    passTagged.depth[i] = d;
+                }
+            }
+            auto newPos = AppendToolPath(output, passTagged, linkPath, cleared, toolBoundPaths);
             if (newPos) {
                 toolPos = newPos->first;
                 toolDir = newPos->second;
             }
-            CheckReportProgress(progressPaths);
             bad_engage_count = 0;
         }
         else {
             bad_engage_count++;
+            stats.failedPassesInARow = max(stats.failedPassesInARow, bad_engage_count);  // RayCAD
         }
 
-        if (bad_engage_count > 10000) {
+        // RayCAD: progress by area cleared
+        {
+            double clearedNow = 0;
+            for (const Path64& p : cleared.GetCleared()) {
+                clearedNow += Area(p);
+            }
+            ReportProgress(areaToClear > 0 ? (clearedNow - clearedAtStart) / areaToClear : 1.0);
+        }
+
+        if (bad_engage_count > limits.failedEngagements) {  // RayCAD: upstream's 10000, as a limit
             output.TooManyFailedEngagements = true;
-            cerr << "Break (next valid engage point not found)." << endl;
             break;
         }
 
         clearedBeforePass.SetClearedPaths(cleared.GetCleared());
         engagePoint = getEngagePoint(toolPos);
+        if (StopRequested()) {
+            break;  // RayCAD: the search was cut short; its result says nothing
+        }
         if (engagePoint) {
             toolPos = std::get<Point64>(*engagePoint);
             toolDir = std::get<PointD>(*engagePoint);
@@ -4096,44 +3950,38 @@ void Adaptive2d::ProcessPolyNode(
                            clpPathIndex,
                            clpSegmentIndex,
                            clpParameter
-                       ) > 4 * toolRadiusScaled * toolRadiusScaled) {
+                       ) > double(4 * toolRadiusScaled * toolRadiusScaled)) {
                     remaining.push_back(p);
                 }
             };
             if (remaining.empty()) {
-                cout << "All cleared." << endl;
                 break;
             }
 
             output.UnclearedAreaRemains = true;
-            cerr << "NO ENGAGEMENTS LEFT BUT NOT ALL CELARED!!! " << endl;
             break;
         }
     }
 
     // sanity check for finishing paths - check the area of finishing cut
-    Paths64 clearedLocations = OffsetPaths(cleared.GetCleared(), long(-toolRadiusScaled));
+    Paths64 clearedLocations = OffsetPaths(cleared.GetCleared(), -double(toolRadiusScaled));
 
     Paths64 tbpShrink = OffsetPaths(
         toolBoundPaths,
-        long(-stepOverScaled * FINISHING_THICKNESS_SCALE - MIN_STEP_CLIPPER)
+        double(Rnd(-stepOverScaled * FINISHING_THICKNESS_SCALE - MIN_STEP_CLIPPER))  // RayCAD: rounded
     );
 
     Paths64 uncut = Difference(tbpShrink, clearedLocations, FillRule::EvenOdd);
 
-    if (uncut.size() > 0) {
+    if (uncut.size() > 0 && !StopRequested()) {
         output.FailedToSetUpFinishingPass = true;
-        cerr << "Warning: some cuts may be above optimal step-over. Please double check the "
-                "results."
-             << endl
-             << "Hint: try to modify accuracy and/or step-over." << endl;
     }
 
 
     //**********************************
     //*  FINISHING PASS                *
     //**********************************
-    if (finishingProfile) {
+    if (finishingProfile && !StopRequested()) {
         // update tool bound paths to correspond to the finishing paths instead of the interior
         {
             Paths64 tbpModified;
@@ -4202,9 +4050,9 @@ void Adaptive2d::ProcessPolyNode(
 
 
         // Create offset version of stock boundary to check if finishing passes are within tool radius
-        Paths64 stockExpandedPaths = OffsetPaths(stockInputPaths, toolRadiusScaled);
+        Paths64 stockExpandedPaths = OffsetPaths(stockInputPaths, double(toolRadiusScaled));
 
-        while (!stopProcessing && (!closedFinishingPaths.empty() || !openFinishingPaths.empty())) {
+        while (!StopRequested() && (!closedFinishingPaths.empty() || !openFinishingPaths.empty())) {
             Path64 finShiftedPath;
             bool isClosedPath = PopNextFinishingPass(
                 closedFinishingPaths,
@@ -4221,24 +4069,6 @@ void Adaptive2d::ProcessPolyNode(
             Paths64 intersection = PathIntersectArea(finShiftedPath, stockExpandedPaths, isClosedPath);
             if (intersection.empty()) {
                 continue;
-            }
-
-            progressPaths.push_back(TPath());
-            progressPaths.back().first = MotionType::mtCutting;
-            // show in progress cb
-            for (auto& pt : finShiftedPath) {
-                progressPaths.back().second.emplace_back(
-                    double(pt.x) / scaleFactor,
-                    double(pt.y) / scaleFactor
-                );
-            }
-
-            // For closed paths, close the loop by adding the start point at the end
-            if (isClosedPath && !finShiftedPath.empty()) {
-                progressPaths.back().second.emplace_back(
-                    double(finShiftedPath.front().x) / scaleFactor,
-                    double(finShiftedPath.front().y) / scaleFactor
-                );
             }
 
             // Clean path
@@ -4264,12 +4094,24 @@ void Adaptive2d::ProcessPolyNode(
                 toolBoundPaths,
                 output
             );
+            if (StopRequested()) {
+                break;  // RayCAD
+            }
             if (!linkPath) {
                 output.FinishingLeadInFailed = true;
-                cerr << "Failed to generate lead-in for finishing pass; skipping pass" << endl;
             }
             else {
-                auto newPos = AppendToolPath(output, finCleaned, *linkPath, cleared, toolBoundPaths);
+                // RayCAD: the finishing pass with its role, and the depth estimates of it and of its link and
+                // lead-in, against the area cleared before them
+                for (TPath& lp : *linkPath) {
+                    lp.depth = EstimateDepth(lp.points, cleared);
+                }
+                TPath finTagged;
+                finTagged.motion = MotionType::mtCutting;
+                finTagged.role = prFinish;
+                finTagged.points = finCleaned;
+                finTagged.depth = EstimateDepth(finCleaned, cleared);
+                auto newPos = AppendToolPath(output, finTagged, *linkPath, cleared, toolBoundPaths);
                 if (newPos) {
                     toolPos = newPos->first;
                     toolDir = newPos->second;
@@ -4280,18 +4122,9 @@ void Adaptive2d::ProcessPolyNode(
                 }
 
                 cleared.ExpandCleared(finCleaned);
-                for (TPath lp : *linkPath) {
-                    if (lp.first == MotionType::mtCutting) {
-                        Path64 scaledP;
-                        for (auto& p : lp.second) {
-                            scaledP.push_back(
-                                Point64 {
-                                    (long long)(p.first * scaleFactor),
-                                    (long long)(p.second * scaleFactor)
-                                }
-                            );
-                        }
-                        cleared.ExpandCleared(scaledP);
+                for (const TPath& lp : *linkPath) {
+                    if (lp.motion == MotionType::mtCutting) {
+                        cleared.ExpandCleared(lp.points);  // RayCAD: in grid units, no conversion
                     }
                 }
             }
@@ -4303,51 +4136,29 @@ void Adaptive2d::ProcessPolyNode(
     }
 
     // dump performance results
-    Perf_ProcessPolyNode.Stop();
-#ifdef DEV_MODE
-    Perf_ProcessPolyNode.DumpResults();
-    Perf_PointIterations.DumpResults();
-    Perf_CalcCutAreaCirc.DumpResults();
-    Perf_NextEngagePoint.DumpResults();
-    Perf_ExpandCleared.DumpResults();
-    Perf_DistanceToBoundary.DumpResults();
-    Perf_AppendToolPath.DumpResults();
-    Perf_IsAllowedToCutTrough.DumpResults();
-    Perf_IsClearPath.DumpResults();
-#endif
-    CheckReportProgress(progressPaths, true);
-#ifdef DEV_MODE
-    double duration = ((double)(clock() - start_clock)) / CLOCKS_PER_SEC;
-    cout << "ProcessPolyNode perf:" << perf_total_len / double(scaleFactor) / duration << " mm/sec"
-         << " processed_points:" << total_points << " output_points:" << total_output_points
-         << " total_iterations:" << total_iterations
-         << " iter_per_point:" << (double(total_iterations) / ((double(total_points) + 0.001)))
-         << " total_exceeded:" << total_exceeded << " ("
-         << 100 * double(total_exceeded) / double(total_points) << "%)" << endl;
-#else
+    // RayCAD: upstream's DEV_MODE performance dump is gone; the counters of interest are in Stats
     (void)total_output_points;
     (void)over_cut_count;
     (void)total_exceeded;
     (void)total_points;
     (void)total_iterations;
-    (void)perf_total_len;
-#endif
+    output.Stopped = StopRequested();  // RayCAD: cancelled or a hard limit reached: the region is incomplete
+    ReportProgress(1.0);
 
     // Calculate newly cleared area (final - initial)
     // First calculate initial cleared area
+    // RayCAD: Clipper2's signed areas summed, as for cumulativeCutArea above (upstream: a nesting test per loop)
     double initialClearedArea = 0.0;
-    for (const Path64& path : initialClearedPaths) {
-        int nesting = getPathNestingLevel(path, initialClearedPaths);
-        initialClearedArea += (nesting % 2 == 1 ? 1 : -1) * fabs(Area(path));
+    for (const Path64& path : Union(initialClearedPaths, FillRule::EvenOdd)) {
+        initialClearedArea += Area(path);
     }
 
     // Then calculate final cleared area
     const Paths64& clearedPaths = cleared.GetCleared();
-    svgInfo.allFinalClearedPaths.push_back(clearedPaths);
+    output.ClearedPaths = clearedPaths;  // RayCAD
     double finalClearedArea = 0.0;
     for (const Path64& path : clearedPaths) {
-        int nesting = getPathNestingLevel(path, clearedPaths);
-        finalClearedArea += (nesting % 2 == 1 ? 1 : -1) * fabs(Area(path));
+        finalClearedArea += Area(path);
     }
 
     // Convert from scaled units to real units (scaleFactor is applied twice for area)
@@ -4357,4 +4168,5 @@ void Adaptive2d::ProcessPolyNode(
     results.push_back(output);
 }
 
-}  // namespace AdaptivePath
+}  // namespace ray::cam::adaptive2d::fork
+// clang-format on

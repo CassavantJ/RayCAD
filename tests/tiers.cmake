@@ -39,6 +39,7 @@ set(RAY_SLOW_TESTS
     ray_naming_random_holdout6
     ray_sketch_drag_agreement
     ray_cam_invariants_slow   # the property tests of every operation type on their large seed sets (T-058)
+    ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
     ray_render_backplot_cost) # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
@@ -98,6 +99,7 @@ set(RAY_WALLCLOCK_SPLITS
     ray_cam_cycletime_tests=ray_cam_cycletime_tests
     ray_cam_geom2d_tests=ray_cam_geom2d_tests
     ray_cam_link_tests=ray_cam_link_tests
+    ray_cam_adaptive_tests=ray_cam_adaptive_tests
     ray_sketch_tests=ray_sketch_tests
     ray_store_tests=ray_store_tests
     ray_sim_tests=ray_sim_tests

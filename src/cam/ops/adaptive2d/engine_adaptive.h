@@ -22,11 +22,21 @@
  *                                                                         *
  ***************************************************************************/
 
-#include "clipper2/clipper.h"
+// MODIFIED FILE. This is FreeCAD's src/Mod/CAM/libarea/Adaptive.hpp from FreeCAD main at commit
+// 56062b61c7085af5af12ead4c02ce5765d0107c4, changed for RayCAD by the RayCAD contributors in November 2026 (task
+// T-060). The list of changes is at the top of engine_adaptive.cpp; the unmodified upstream text is this file's first
+// version in the repository's history. Private to src/cam/ops/adaptive2d: the RayCAD interface is engine.h.
+// Upstream's layout is kept (no clang-format) so that the file stays comparable with upstream line by line.
+// clang-format off
+
+#include <clipper2/clipper.h>
+#include <ray/core.h>
+#include <cstdint>
+#include <functional>
 #include <vector>
 #include <list>
 #include <optional>
-#include <time.h>
+#include <string>
 
 #pragma once
 
@@ -34,16 +44,9 @@
 # define __DBL_MAX__ 1.7976931348623158e+308
 #endif
 
-#ifndef __LONG_MAX__
-# define __LONG_MAX__ 2147483647
-#endif
-
-// #define DEV_MODE
-// #define DEBUG_SVG
-
 #define NTOL 1.0e-7  // numeric tolerance
 
-namespace AdaptivePath
+namespace ray::cam::adaptive2d::fork
 {
 
 enum MotionType
@@ -62,11 +65,32 @@ enum OperationType
     otProfilingOutside = 3
 };
 
+// RayCAD: what an output path is for (upstream only has the MotionType).
+enum PathRole
+{
+    prPass = 0,     // a pass of the engagement regulator
+    prLeadIn = 1,   // the lead-in before a pass (mtCutting)
+    prLeadOut = 2,  // the lead-out after a pass (mtCutting)
+    prLink = 3,     // a link between passes (mtLinkClear, mtLinkNotClear, or mtCutting when allowed to cut through)
+    prFinish = 4    // a finishing pass along the boundary
+};
+
 typedef std::pair<double, double> DPoint;
 typedef std::vector<DPoint> DPath;
 typedef std::vector<DPath> DPaths;
-typedef std::pair<int, DPath> TPath;  // first parameter is MotionType, must use int due to problem
-                                      // with serialization to JSON in python
+
+// RayCAD: output paths stay in the engine's integer grid (upstream converted them to doubles in mm and back to
+// integers by truncation), with the engine's own estimate of the radial depth of cut of each segment.
+struct TPath
+{
+    int motion = mtCutting;  // MotionType
+    int role = prPass;       // PathRole
+    Clipper2Lib::Path64 points;
+    // depth[i] (i >= 1): the engine's estimate of the radial depth of cut, in grid units, of the segment from
+    // points[i - 1] to points[i] (the cut area per unit of travel against the engine's cleared area); depth[0] = -1.
+    // -1 where the engine has no estimate.
+    std::vector<double> depth;
+};
 
 class ClearedArea;
 
@@ -74,12 +98,17 @@ typedef std::vector<TPath> TPaths;
 
 struct AdaptiveOutput
 {
-    DPoint HelixCenterPoint;
-    DPoint StartPoint;
+    // RayCAD: every field is initialised (upstream left the first four undefined when no start point was found).
+    Clipper2Lib::Point64 HelixCenterPoint {};
+    Clipper2Lib::Point64 StartPoint {};
+    int64_t HelixRadius = 0;   // RayCAD: grid units; 0 when the region is entered from cleared area
+    bool HelixEntry = false;   // RayCAD: entered by a helix about HelixCenterPoint
     TPaths AdaptivePaths;
-    int ReturnMotionType;  // MotionType enum, problem with serialization if enum is used
-    double ClearedArea;    // Total area cleared in this operation
-    double clipperScale;   // Clipper integer units per mm used in this operation
+    int ReturnMotionType = mtLinkNotClear;  // MotionType, problem with serialization if enum is used
+    double ClearedArea = 0;    // Total area cleared in this operation (mm^2)
+    double clipperScale = 0;   // Clipper integer units per mm used in this operation
+    Clipper2Lib::Paths64 ToolBoundPaths;  // RayCAD: where the tool centre may go in this region (grid units)
+    Clipper2Lib::Paths64 ClearedPaths;    // RayCAD: the cleared area after this region (grid units)
 
     // Warning/error flags
     bool StartPointNotFound = false;
@@ -89,23 +118,42 @@ struct AdaptiveOutput
     bool UnclearedAreaRemains = false;
     bool FailedToSetUpFinishingPass = false;
     bool FinishingLeadInFailed = false;
+    // RayCAD
+    bool Stopped = false;           // cancelled, or a limit below was reached: the region is incomplete
+    bool LimitReached = false;      // one of Limits' hard limits was reached
+    std::string LimitName;          // which one
 };
 
-struct DebugSVGInfo
+// RayCAD: limits on work, in place of upstream's wall-clock limits (clock()) and its unlimited loops. Every limit
+// counts iterations or nodes, so a run gives the same output on any machine and under any load.
+struct Limits
 {
-    Clipper2Lib::Paths64 step3Paths;
-    Clipper2Lib::Paths64 step4Paths;
-    Clipper2Lib::Paths64 step5a_stockRev;
-    Clipper2Lib::Paths64 step5b_outsideOfStock;
-    Clipper2Lib::Paths64 step5c_inputPathsUnion;
-    Clipper2Lib::Paths64 step5d_clearedArea;
-    Clipper2Lib::Paths64 step5e_inputPaths;
-    std::vector<Clipper2Lib::Paths64> allToolBoundPaths;
-    std::vector<Clipper2Lib::Paths64> allFinishingPaths;
-    std::vector<Clipper2Lib::Paths64> allFinalClearedPaths;
+    // ResolveLinkPath: segments examined (upstream: 0.5 s of wall time); the link then retracts (mtLinkNotClear).
+    int64_t linkSearchSteps = 64;
+    // ResolveLinkPath: points tried sideways from one segment's midpoint (upstream: unlimited).
+    int64_t linkSideSteps = 256;
+    // Hard limits: reaching one stops the region and sets LimitReached (the result is incomplete).
+    int64_t passes = 100000;            // upstream: LONG_MAX
+    int64_t pointsPerPass = 1000000;    // upstream: LONG_MAX
+    int64_t steps = 20000000;           // engagement steps over the whole run (each up to 30 cut-area evaluations)
+    int64_t failedEngagements = 10000;  // upstream's limit on passes in a row that cut nothing
+    int64_t leadSteps = 10000;          // upstream's limit on the steps of one lead-in or lead-out
 };
 
-// used to isolate state -> enable potential adding of multi-threaded processing of separate regions
+// RayCAD: counters of one run, for tests and reports.
+struct Stats
+{
+    int64_t steps = 0;               // engagement steps (iterateNextStep calls)
+    int64_t cutAreaCalls = 0;        // CalcCutArea calls
+    int64_t passes = 0;
+    int64_t linkSearches = 0;        // ResolveLinkPath calls
+    int64_t linkSearchSteps = 0;     // segments examined over all link searches
+    int64_t linkSearchLimitHits = 0; // searches stopped by Limits::linkSearchSteps or linkSideSteps
+    int64_t linkSideProbes = 0;      // sideways probes over all link searches
+    int64_t engageSearches = 0;      // searches for the next engagement point
+    int64_t regions = 0;             // connected areas of the tool centre (0: the tool fits nowhere)
+    int64_t failedPassesInARow = 0;  // the longest run of passes that cut nothing (Limits::failedEngagements)
+};
 
 class Adaptive2d
 {
@@ -121,60 +169,70 @@ public:
     bool finishingProfile = true;
     double keepToolDownDistRatio = 3.0;  // keep tool down distance ratio
     OperationType opType = OperationType::otClearingInside;
+    // RayCAD: the grid (Clipper integer units per mm), chosen by the caller from the tolerance (engine.cpp), and the
+    // limits, the cancel token polled at every step, and a progress sink (fraction of the regions done).
+    int64_t scaleFactor = 100;
+    Limits limits;
+    const ray::CancelToken* cancel = nullptr;
+    std::function<void(double)> progress;
 
+    // RayCAD: the inputs are in grid units (scaleFactor per mm), converted by the caller.
     std::list<AdaptiveOutput> Execute(
-        const DPaths& stockPaths,
-        const DPaths& paths,
-        const DPaths& clearedPaths,
-        std::function<bool(TPaths)> progressCallbackFn
+        const Clipper2Lib::Paths64& stockPaths,
+        const Clipper2Lib::Paths64& paths,
+        const Clipper2Lib::Paths64& clearedPaths
     );
-
-#ifdef DEV_MODE
-    /*for debugging*/
-    std::function<void(double cx, double cy, double radius, int color)> DrawCircleFn;
-    std::function<void(const DPath&, int color)> DrawPathFn;
-    std::function<void()> ClearScreenFn;
-#endif
+    const Stats& GetStats() const
+    {
+        return stats;
+    }
+    int64_t GetToolRadiusScaled() const
+    {
+        return toolRadiusScaled;
+    }
 
 private:
     std::list<AdaptiveOutput> results;
     Clipper2Lib::Paths64 stockInputPaths;
-    long scaleFactor = 100;
     double stepOverScaled = 1;
-    long toolRadiusScaled = 10;
-    long finishPassOffsetScaled = 0;
-    long helixRampMaxRadiusScaled = 0;
-    long helixRampMinRadiusScaled = 0;
+    int64_t toolRadiusScaled = 10;
+    int64_t finishPassOffsetScaled = 0;
+    int64_t helixRampMaxRadiusScaled = 0;
+    int64_t helixRampMinRadiusScaled = 0;
     double referenceCutArea = 0;
     double optimalCutAreaPD = 0;
     bool stopProcessing = false;
     int current_region = 0;
-    clock_t lastProgressTime = 0;
+    int region_count = 0;   // RayCAD: for progress
+    Stats stats;            // RayCAD
 
-    std::function<bool(TPaths)>* progressCallback = NULL;
+    bool StopRequested();   // RayCAD: polls the cancel token and the hard limits
+    void HitLimit(AdaptiveOutput& output, const char* name);
+    void ReportProgress(double regionFraction);
+    // RayCAD: the engine's estimate of the radial depth of cut along a path, against the cleared area as it is.
+    std::vector<double> EstimateDepth(const Clipper2Lib::Path64& path, ClearedArea& cleared);
 
     void ProcessPolyNode(
         Clipper2Lib::Paths64 boundPaths,
         Clipper2Lib::Paths64 toolBoundPaths,
         Clipper2Lib::Paths64 finishingPaths,
-        const Clipper2Lib::Paths64& initialClearedPaths,
-        DebugSVGInfo& svgInfo
+        const Clipper2Lib::Paths64& initialClearedPaths
     );
     bool FindEntryPoint(
-        TPaths& progressPaths,
         const Clipper2Lib::Paths64& toolBoundPaths,
         const Clipper2Lib::Paths64& boundPaths,
         ClearedArea& cleared /*output*/,
         Clipper2Lib::Point64& entryPoint /*output*/,
         Clipper2Lib::Point64& toolPos,
         Clipper2Lib::PointD& toolDir,
-        long& helixRadiusScaled,
+        int64_t& helixRadiusScaled,
         AdaptiveOutput& adaptiveOutput
     );
     std::pair<double, double> CalcCutArea(
         Clipper2Lib::Point64 c1,
         Clipper2Lib::Point64 c2,
-        ClearedArea& clearedArea
+        ClearedArea& clearedArea,
+        bool useCache = true  // RayCAD
     );
     std::optional<TPaths> FindLinkPath(
         const std::optional<Clipper2Lib::Point64>& prevPoint,
@@ -186,7 +244,7 @@ private:
     );
     std::optional<std::pair<Clipper2Lib::Point64, Clipper2Lib::PointD>> AppendToolPath(
         AdaptiveOutput& output,
-        const Clipper2Lib::Path64& passToolPath,
+        const TPath& passToolPath,
         TPaths& linkPath,
         ClearedArea& cleared,
         const Clipper2Lib::Paths64& toolBoundPaths
@@ -222,12 +280,6 @@ private:
         Clipper2Lib::Path64& output
     );
 
-    void CheckReportProgress(TPaths& progressPaths, bool force = false);
-    void AddPathsToProgress(
-        TPaths& progressPaths,
-        const Clipper2Lib::Paths64& paths,
-        MotionType mt = MotionType::mtCutting
-    );
     void ApplyStockToLeave(Clipper2Lib::Paths64& inputPaths);
 
 private:
@@ -276,7 +328,9 @@ private:
     // Historically we have used MSC = 16. It might be convenient that MSC is
     // many-times divisible by 2, so I have chosen 16*3 (>38) for its new value.
 
-    const double MIN_STEP_CLIPPER = 16.0 * 3;
+public:
+    static constexpr double MIN_STEP_CLIPPER = 16.0 * 3;  // RayCAD: public and static (engine.cpp sizes the grid)
+private:
     const int MAX_ITERATIONS = 30;
     const double AREA_ERROR_FACTOR = 0.05;     /* how precise to match the cut area to optimal,
                                                   reasonable value: 0.05 = 5%*/
@@ -287,9 +341,6 @@ private:
     const double CLEAN_PATH_TOLERANCE = 1.415;            // should be >sqrt(2)
     const double FINISHING_CLEAN_PATH_TOLERANCE = 1.415;  // should be >sqrt(2)
     const double FINISHING_THICKNESS_SCALE = 1 / 10.;     // finish at this fraction of stepover
-
-    const long PASSES_LIMIT = __LONG_MAX__;              // limit used while debugging
-    const long POINTS_PER_PASS_LIMIT = __LONG_MAX__;     // limit used while debugging
-    const clock_t PROGRESS_TICKS = CLOCKS_PER_SEC / 10;  // progress report interval
 };
-}  // namespace AdaptivePath
+}  // namespace ray::cam::adaptive2d::fork
+// clang-format on

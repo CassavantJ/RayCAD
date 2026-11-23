@@ -264,3 +264,30 @@ target_compile_definitions(ray_cam_pocket2d_tests PRIVATE RAY_CORPUS_DIR="${CMAK
 set_property(TARGET ray_cam_pocket2d_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_pocket2d_tests COMMAND ray_cam_pocket2d_tests "~[wallclock]")
 ray_test_runtime_path(ray_cam_pocket2d_tests)
+# The constant-engagement engine of adaptive clearing (task T-060): its contract and refusals, determinism (repeats,
+# 1 to 32 concurrent runs, 20 processes of the probe, the integer goldens in tests/golden/adaptive2d), and the
+# acceptance numbers measured on spike S5's pockets by the independent sweep checker (tests/tools/sweepcheck). The
+# quick test leaves out the [slow] cases (ray_cam_adaptive_slow, the slow tier) and the [wallclock] ones (cancel
+# latency, run time; split by tests/tiers.cmake). src/ for the private header (cam/ops/adaptive2d/engine.h).
+add_executable(ray_cam_adaptive_probe adaptive_probe.cpp adaptive_test_util.h)
+target_link_libraries(ray_cam_adaptive_probe PRIVATE ray_sweepcheck ray_cam ray_core)
+target_include_directories(ray_cam_adaptive_probe PRIVATE "${CMAKE_SOURCE_DIR}/src")
+set_property(TARGET ray_cam_adaptive_probe PROPERTY FOLDER "tests")
+add_executable(ray_cam_adaptive_tests
+    adaptive_acceptance_test.cpp
+    adaptive_determinism_test.cpp
+    adaptive_engine_test.cpp
+    adaptive_test_util.h
+)
+target_link_libraries(ray_cam_adaptive_tests PRIVATE ray_sweepcheck ray_cam ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_adaptive_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(ray_cam_adaptive_tests PRIVATE
+    RAY_ADAPTIVE_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/adaptive2d"
+    RAY_ADAPTIVE_PROBE="$<TARGET_FILE:ray_cam_adaptive_probe>")
+add_dependencies(ray_cam_adaptive_tests ray_cam_adaptive_probe)
+set_property(TARGET ray_cam_adaptive_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_cam_adaptive_tests COMMAND ray_cam_adaptive_tests "~[wallclock]~[slow]")
+ray_test_runtime_path(ray_cam_adaptive_tests)
+add_test(NAME ray_cam_adaptive_slow COMMAND ray_cam_adaptive_tests "[slow]")
+ray_test_runtime_path(ray_cam_adaptive_slow)
+set_tests_properties(ray_cam_adaptive_slow PROPERTIES TIMEOUT 3600)
