@@ -12,7 +12,7 @@ namespace ray::cam {
 void registerBuiltinOperationTypes(OperationRegistry& registry)
 {
     registry.add(ops::makeDrillOperationType());
-    registry.add(ops::makeFaceOperationType()); // T-052
+    registry.add(ops::makeFaceOperationType());      // T-052
     registry.add(ops::makeContour2dOperationType()); // "contour2d" (T-053)
     // T-055: slot and chamfer2d
     registry.add(ops::makeSlotOperationType());
