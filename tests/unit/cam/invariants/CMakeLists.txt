@@ -32,6 +32,8 @@ add_executable(ray_cam_invariants_tests
     checker_reference_test.cpp
     checker_test_util.h
     property_drill_test.cpp
+    property_face_test.cpp # T-052
+    property_contour2d_test.cpp # T-053
     property_harness_test.cpp
     property_pocket2d_test.cpp # T-054
 )
@@ -45,3 +47,7 @@ add_test(NAME ray_cam_invariants_property COMMAND ray_cam_invariants_tests "[pro
 ray_test_runtime_path(ray_cam_invariants_property)
 add_test(NAME ray_cam_invariants_slow COMMAND ray_cam_invariants_tests "[slow]")
 ray_test_runtime_path(ray_cam_invariants_slow)
+# With an operation type more each (T-052 on): 200 seeds per type pass the presets' 300 s in Release, the 12 quick
+# seeds per type come near it in an MSVC Debug build (about 300 s with drill, the reference type and face).
+set_tests_properties(ray_cam_invariants_slow PROPERTIES TIMEOUT 3600)
+set_tests_properties(ray_cam_invariants_property PROPERTIES TIMEOUT 1200)

@@ -255,6 +255,18 @@ inline Program cutterComp()
     return p;
 }
 
+// Cutter compensation as the 2D contour operation makes it (T-053, tests/golden/toolpaths/contour2d_control): the
+// programmed outline at five depths, each entered by a feed descent, G41 on the straight part of the lead-in with the
+// lead arc and the contour's arcs under it, G40 on the straight end of the lead-out.
+inline Program contourComp()
+{
+    Program p = titled(1117, "Matrix: contour2d with compensation in the control, arc leads with straight parts");
+    cam::Toolpath& t = millSection(p, "Contour outline", 6, endMill(10, "10 mm 3FL end mill"), 6000);
+    p.ops.back().tool.diameterOffset = 16;
+    t = goldenToolpath("contour2d_control");
+    return p;
+}
+
 // Coolant: one tool through five operations with flood, mist, through-spindle, air and none, then a second tool.
 inline Program coolant()
 {
@@ -493,6 +505,7 @@ inline std::vector<Feature> matrix()
          {}},
         {"15-tap", [] { return tapping(true); }, {}},
         {"16-cycle-change", cycleChange, {}},
+        {"17-contour-comp", contourComp, {}}, // T-053
         {"20-realistic", realistic, {}},
     };
 }
