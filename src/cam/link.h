@@ -30,6 +30,9 @@
 //                   drilled hole given as Stock::cleared (the linker does not know an earlier drilling operation).
 //   T-061 adaptive  passes from the engine as moves (fitArcs, then passFromPath), maxStayDown with stayDownLift (lifted
 //                   feed links), Stock::cleared from the engine's cleared area if it has one, Entered for the stats.
+//                   As built (src/cam/ops/adaptive2d/op.h PASSES): keepOrder, a pass per run of the engine's paths up
+//                   to a link that must retract, Pass::helixCentre (added by T-061) for the engine's helix, a ramp
+//                   pass of its own for a ramp entry, stayDownEntry from one depth to the next.
 //
 // HOW (linkPasses):
 //   1. Check heights (clearance >= retract >= feed plane, retract >= stock top), the tool and every pass.
@@ -164,6 +167,18 @@ struct Pass {
     // nowhere off the pass itself (leads and helices are refused). unbounded() for a pass with no walls within reach.
     std::optional<Regions> room;
     std::vector<EntryKind> entryOrder; // empty: Options::entryOrder
+    // Added by T-061: the centre of an entry helix the operation planned (the adaptive engine's, whose cleared disc its
+    // first pass counts on). A Helix entry of this pass first tries the circle about it through where the pass (its
+    // lead-in) starts, of that radius, checked against the room and Options::helixMinDiameter like any helix; then the
+    // helices placed from the start direction (Options::helixDiameter, below). nullopt: only those.
+    std::optional<Pt> helixCentre;
+    // Added by T-061: the area this pass cuts (with its leads), when the operation knows it more cheaply than linking's
+    // own sweep of the pass (THE MATERIAL MODEL: an adaptive pass of a few metres of fitted arcs takes linking seconds
+    // to sweep; the engine has the area already). Linking counts it as free of material from the pass's start Z up
+    // (not its highest Z: the operation's lifted links inside a pass run through area it already cut), instead of the
+    // sweep. It must be free after the pass (cut by it, or before it): a smaller area only makes linking retract or
+    // enter where it could have stayed down; an empty one credits nothing. nullopt: linking sweeps the pass.
+    std::optional<Regions> cutArea;
 };
 // A pass along a path at height z: geom2d::appendMoves with that role and feed.
 Pass passFromPath(const Path& path, Nm z, std::int32_t feedMicronPerMin, MoveRole role = MoveRole::Cut);
@@ -208,7 +223,10 @@ struct Options {
     Feeds feeds;
     // Stay down: a link of at most this XY length stays at depth when it lies in free area; 0: always retract.
     Coord maxStayDown = 0;
-    Nm stayDownLift = 0; // a stay-down link runs this much above the higher of its two ends (lifted feed link)
+    // A stay-down link runs this much above the higher of its two ends (lifted feed link). T-061: with a lift (and
+    // maxStayDown), a link of no length (the next pass starts where the tool is, at its height) is no move at all,
+    // never a lift and a drop.
+    Nm stayDownLift = 0;
     // Step in (offset pocketing): when a link cannot stay down only because the next pass starts beside the cut area
     // (the next ring, one stepover out), the tool may move straight to the pass start at depth, as a Cut move, if
     // that move is no longer than maxStayDown, its centre line lies in cut area, and every bit of material it removes

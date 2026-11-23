@@ -516,6 +516,22 @@ Planned planHelix(EntryContext& e)
     const double tanA = dmath::tan(o.rampAngleDeg * kPi / 180.0);
     const bool firstCcw = o.spindleClockwise;
     const Pt a = xyOf(e.a);
+    // The circles tried, in order: the pass's own planned helix (Pass::helixCentre, T-061), then the diameters above
+    // placed from the start direction.
+    struct Circle {
+        Pt c;
+        Coord d = 0;
+        bool ccw = true;
+    };
+    std::vector<Circle> circles;
+    if (e.pass.helixCentre) {
+        const Coord rr = geom2d::roundNm(distXY(a, *e.pass.helixCentre));
+        // A few nanometres of slack: the operation's centre and the pass start are each rounded to the nanometre.
+        if (2 * rr + 4 >= dMin && rr >= 1000) {
+            circles.push_back(Circle{*e.pass.helixCentre, 2 * rr, firstCcw});
+            circles.push_back(Circle{*e.pass.helixCentre, 2 * rr, !firstCcw});
+        }
+    }
     for (const Coord d : diameters) {
         // Rounded up, and at the minimum 2 nm more: the centre and the points on the circle are rounded to the
         // nanometre, and no point may lie nearer the centre than half the minimum diameter.
@@ -524,7 +540,14 @@ Planned planHelix(EntryContext& e)
             continue;
         for (const bool ccw : {firstCcw, !firstCcw}) {
             const D2 n = ccw ? leftOf(e.tangent) : rightOf(e.tangent);
-            const Pt c = roundPt(d2(a) + n * static_cast<double>(r));
+            circles.push_back(Circle{roundPt(d2(a) + n * static_cast<double>(r)), d, ccw});
+        }
+    }
+    {
+        for (const Circle& cand : circles) {
+            const bool ccw = cand.ccw;
+            const Coord d = cand.d;
+            const Pt c = cand.c;
             const Coord rr = geom2d::roundNm(distXY(a, c));
             const geom2d::SpanKind kind = ccw ? geom2d::SpanKind::ArcCCW : geom2d::SpanKind::ArcCW;
             Path circle;
@@ -883,6 +906,12 @@ Status checkPass(const Pass& p, std::size_t no, const Options& o)
         for (const geom2d::Region& r : *p.room) {
             if (auto st = geom2d::checkRange(r.outer); !st)
                 return tl::unexpected(invalid(name + ": its room lies beyond 1 km."));
+        }
+    }
+    if (p.cutArea) {
+        for (const geom2d::Region& r : *p.cutArea) {
+            if (auto st = geom2d::checkRange(r.outer); !st)
+                return tl::unexpected(invalid(name + ": its cut area lies beyond 1 km."));
         }
     }
     return {};
@@ -1290,6 +1319,9 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
             cut.push_back(**lout);
         std::optional<Regions> cutArea;
         const auto passArea = [&]() -> Result<const Regions*> {
+            if (!cutArea && pass.cutArea) {
+                cutArea = *pass.cutArea; // T-061: the operation's own (link.h Pass::cutArea)
+            }
             if (!cutArea) {
                 auto s = Material::swept(cut, opts.toolRadius, ctx);
                 if (!s)
@@ -1304,7 +1336,13 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
         Coord helixD = 0;
         bool stayed = false;
         const std::int32_t linkF = feedOr(opts.feeds.link);
-        if (k > 0 && opts.maxStayDown > 0 && distXY(xyOf(em.cur), xyOf(a)) <= static_cast<double>(opts.maxStayDown)) {
+        if (k > 0 && opts.maxStayDown > 0 && opts.stayDownLift > 0 && em.cur == a) {
+            // T-061: with a lift, a link of no length (the pass starts where the tool is) is no move at all, not a lift
+            // and a drop (link.h stayDownLift).
+            stayed = true;
+            entered = Entered::StayDown;
+        } else if (k > 0 && opts.maxStayDown > 0 &&
+                   distXY(xyOf(em.cur), xyOf(a)) <= static_cast<double>(opts.maxStayDown)) {
             const Nm zl = std::max(em.cur.z, a.z) + opts.stayDownLift;
             if (zl <= opts.feedPlane) {
                 Path link;
@@ -1489,11 +1527,13 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
         em.append(outMoves);
 
         // What the pass cut.
-        if (!material.noMaterial() && sh.zMax < stock.top) {
+        // T-061: an area the operation gives is counted from the pass's start height (link.h Pass::cutArea).
+        const Nm cutZ = pass.cutArea ? pass.start.z : sh.zMax;
+        if (!material.noMaterial() && cutZ < stock.top) {
             auto area = passArea();
             if (!area)
                 return tl::unexpected(area.error());
-            material.addArea(std::move(*cutArea), sh.zMax);
+            material.addArea(std::move(*cutArea), cutZ);
         }
 
         result.order.push_back(pl);

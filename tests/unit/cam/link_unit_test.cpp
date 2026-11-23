@@ -618,6 +618,78 @@ TEST_CASE("link: stay down only through cut area or air, else retract", "[link][
     }
 }
 
+TEST_CASE("link: an operation's own helix, cut area and a link of no length (T-061)", "[link][helix][staydown]")
+{
+    SECTION("Pass::helixCentre: the planned circle through the pass start, else the placed ones")
+    {
+        Pass p = squareRing(20 * kMm, -3 * kMm);
+        p.room = unbounded();
+        Options o = baseOptions();
+        o.helixDiameter = 8 * kMm;
+        o.helixMinDiameter = 4 * kMm;
+        o.rampAngleDeg = 3;
+        p.helixCentre = Pt{-3 * kMm, 0}; // 3 mm from the start (0, 0): a 6 mm helix there, not the placed 8 mm one
+        const Linked l = run({p}, o, kBig);
+        REQUIRE(l.entered[0] == Entered::Helix);
+        CHECK(l.helixDiameter[0] == 6 * kMm);
+        checkHelix(l, Pt{-3 * kMm, 0}, 3 * kMm, 3);
+        // A planned circle under the minimum (2 mm across) is not used: the placed helix is.
+        p.helixCentre = Pt{0, -kMm};
+        const Linked placed = run({p}, o, kBig);
+        CHECK(placed.helixDiameter[0] == 8 * kMm);
+        checkHelix(placed, Pt{0, 4 * kMm}, 4 * kMm, 3);
+        // A planned circle outside the room is not used either.
+        p.helixCentre = Pt{-3 * kMm, 0};
+        p.room = regionOf(rect(-2'500'000, -kMm, 30 * kMm, 30 * kMm));
+        const Linked inRoom = run({p}, o, kBig);
+        REQUIRE(inRoom.entered[0] == Entered::Helix);
+        CHECK(inRoom.helixDiameter[0] != 6 * kMm);
+    }
+    const Stock stock = boxStock(0, 0, 50 * kMm, 30 * kMm, 0);
+    Options o = baseOptions();
+    o.keepOrder = true;
+    o.maxStayDown = 40 * kMm;
+    o.entryOrder = {EntryKind::Plunge};
+    o.centreCutting = true;
+    Pass p1 = linePass({-5 * kMm, 10 * kMm}, {55 * kMm, 10 * kMm}, -kMm);
+    const Pass back = linePass({20 * kMm, 10 * kMm}, {30 * kMm, 10 * kMm}, -kMm);
+    SECTION("Pass::cutArea: what linking counts as cut instead of its sweep")
+    {
+        // Empty: nothing counts as cut, so the way back along the cut is not free: retract and plunge.
+        p1.cutArea = Regions{};
+        CHECK(run({p1, back}, o, stock).entered[1] == Entered::Plunge);
+        // The area given: free again.
+        p1.cutArea = regionOf(rect(15 * kMm, 6 * kMm, 60 * kMm, 14 * kMm));
+        CHECK(run({p1, back}, o, stock).entered[1] == Entered::StayDown);
+        // Counted from the pass's start height, not its highest point: a pass that rises 0.25 mm on the way still
+        // leaves its area free at its depth.
+        Pass rising = p1;
+        Move up = rising.moves.back();
+        up.z = -kMm + 250'000;
+        rising.moves.push_back(up);
+        Move down = up;
+        down.x = 30 * kMm;
+        down.z = -kMm;
+        rising.moves.push_back(down);
+        const Pass after = linePass({30 * kMm, 10 * kMm}, {20 * kMm, 10 * kMm}, -kMm);
+        rising.cutArea = regionOf(rect(15 * kMm, 6 * kMm, 35 * kMm, 14 * kMm));
+        CHECK(run({rising, after}, o, stock).entered[1] == Entered::StayDown);
+    }
+    SECTION("with a lift, a link of no length is no move (not a lift and a drop)")
+    {
+        o.stayDownLift = kMm / 4;
+        const Pass first = linePass({20 * kMm, 10 * kMm}, {30 * kMm, 10 * kMm}, -kMm);
+        const Pass next = linePass({30 * kMm, 10 * kMm}, {30 * kMm, 20 * kMm}, -kMm);
+        o.entryOrder = {EntryKind::Plunge};
+        const Linked l = run({first, next}, o, stock);
+        CHECK(l.entered[1] == Entered::StayDown);
+        const Move& before = l.moves[l.passMove[1] - 1];
+        CHECK(before.role == MoveRole::Cut); // the first pass's own move: nothing between
+        CHECK(before.x == 30 * kMm);
+        CHECK(before.z == -kMm);
+    }
+}
+
 TEST_CASE("link: step in to the next pocket ring with the tool centre in cut area", "[link][staydown]")
 {
     const Stock stock = boxStock(0, 0, 50 * kMm, 30 * kMm, 0);
