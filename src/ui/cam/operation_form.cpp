@@ -165,6 +165,8 @@ FormField parseProperty(const QString& key, const QJsonValue& value)
         // x-format: what the text holds; a format the form does not know is edited as plain text.
         if (p.value(QStringLiteral("x-format")).toString() == QLatin1String("pointsXY"))
             f.format = QStringLiteral("pointsXY");
+        // x-multiline: several lines (not for a list of points, which has its own control).
+        f.multiline = p.value(QStringLiteral("x-multiline")).toBool() && f.format.isEmpty();
     } else {
         f.reason = tr("it is of type '%1'").arg(t);
         return f;
@@ -734,6 +736,7 @@ QVariantList SchemaFormModel::fields() const
             break;
         }
         m.insert(QStringLiteral("kind"), kind);
+        m.insert(QStringLiteral("multiline"), f.multiline);
         if (kind == QLatin1String("points")) {
             // Each coordinate as a length field shows it; what is being typed where it does not read.
             const auto e = entries_.find(f.key);

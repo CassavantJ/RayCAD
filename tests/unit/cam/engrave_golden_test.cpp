@@ -69,6 +69,37 @@ TEST_CASE("golden: engraving a line of text", "[cam][engrave][golden]")
     }
 }
 
+// After M3: two lines of text, centred each on its own, 150 % of the height apart.
+TEST_CASE("golden: engraving two lines of text", "[cam][engrave][golden][lines]")
+{
+    const std::string params =
+        R"j({"text":"RayCAD\nOp 20 - 1/4","textHeight":4,"lineSpacing":150,"textAlign":"centre","textX":40,"textY":14,)j"
+        R"j("depth":0.15})j";
+    OpCase c = engraveCase(plate(), {}, params);
+    TextLayout l;
+    l.text = "RayCAD\nOp 20 - 1/4";
+    l.height = 4;
+    const double w = textWidthMm(*engravingFont(), l); // the wider line
+    const Toolpath p = c.path([&](invariants::Claims& k) {
+        // The two lines' box: from 6 mm below the first baseline (the second's, with its descenders) to 4 mm above.
+        k.allowedCuts.push_back(invariants::AllowedCut{40, 14 - 1.5, std::hypot(w / 2, 6.5) + 0.5, -0.16, 5});
+        k.floorZ = -0.15;
+    });
+    matchesToolpathGolden("engrave_text_two_lines", p);
+    // Two baselines 6 mm apart: cut moves at Y 14 (the first line's foot) and at Y 8 (the second's).
+    bool first = false, second = false;
+    for (const Move& m : p.moves) {
+        if (m.role == MoveRole::Cut) {
+            first = first || m.y == 14'000'000;
+            second = second || m.y == 8'000'000;
+            CHECK(m.y <= 18'000'000 + 1);
+            CHECK(m.y >= 8'000'000 - 1'400'000);
+        }
+    }
+    CHECK(first);
+    CHECK(second);
+}
+
 TEST_CASE("golden: engraving the edges of a pocket and a hole in two levels", "[cam][engrave][golden]")
 {
     const std::vector<kernel::SubId> edges = rims(plate());

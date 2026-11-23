@@ -58,7 +58,7 @@ The eight operation types (`docs/operation_types.md` says how a type is written)
 - The shipped posts have not been proven on a real machine (above), and the cycle-time estimate assumes
   accelerations, as no measured data is behind it yet.
 - `pocket2d` takes the pocket's walls as vertical: drafted or undercut walls are not followed.
-- `engrave` writes one line of text.
+- `chamfer2d` and `engrave` take edges only; `contour2d` takes edges and planar faces.
 - CAM geometry is picked on the model's faces and edges; it cannot reference a sketch.
 - Each operation starts from the setup's stock: material removed by earlier operations is not carried to the next
   one (there is no stock simulation yet), so a later operation may cut air where an earlier one has been.

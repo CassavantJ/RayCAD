@@ -13,7 +13,8 @@
 //      (geom2d.h fitArcs), so the fitted spans are used as they come. Lines and arcs that came as lines and arcs are
 //      kept as they are.
 //   2. The text (param text, UTF-8, at most 200 characters), laid out by layoutText (engrave_font.h): height, extra
-//      spacing, alignment, position and angle on the plane.
+//      spacing, alignment, position and angle on the plane; after M3 in one or more lines (a line break starts one),
+//      each aligned on its own, lineSpacing (percent of the height) from one baseline to the next.
 //   Nothing at all (no edges, empty text or only spaces) is refused.
 // LEVELS (absolute WCS Z; Operation::heights: top is the plane, clearance >= retract >= feedPlane >= top):
 //   depth D = toNm(depth); with stepDown S > 0 the levels are n = ceil(D / toNm(S)) (computed in integers),

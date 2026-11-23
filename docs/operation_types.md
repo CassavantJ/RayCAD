@@ -18,12 +18,12 @@ Eight types are registered (`registerBuiltinOperationTypes`, `src/cam/ops/builti
 | `pocket2d` | T-054 | faces (floors) | Clears the area above each floor with offset rings, islands left standing, helix, ramp or pre-drilled entry |
 | `slot` | T-055 | faces (floors) | Cuts each slot along its centre line with an end mill as wide as the slot, ramping into each depth |
 | `chamfer2d` | T-055 | edges | Chamfers or deburrs the top edges of walls with the flank of a chamfer mill or a spot drill |
-| `engrave` | T-056 | edges (or none) | Engraves along edges projected onto a plane and a line of text in the RayCAD Single Line font |
+| `engrave` | T-056 | edges (or none) | Engraves along edges projected onto a plane and text of one or more lines in the RayCAD Single Line font |
 | `threadmill` | T-056 | faces | Mills internal and external threads with a helix, single-form or multi-form tool, in one or more radial passes |
 
-Known limits of the types as they are: `pocket2d` takes the walls as vertical (the footprint at the floor); `engrave`
-writes one line of text; `chamfer2d` and `engrave` take edges only (their generators refuse faces); geometry is picked
-on model faces and edges, never on a sketch; and no type knows the material earlier
+Known limits of the types as they are: `pocket2d` takes the walls as vertical (the footprint at the floor);
+`chamfer2d` and `engrave` take edges only (their generators refuse faces); geometry is picked on model faces and
+edges, never on a sketch; and no type knows the material earlier
 operations removed (linking is told nothing of it, `src/cam/link.h`), so a later operation may cut air.
 
 ## Files
@@ -116,6 +116,10 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
   (a document typed by hand) is shown as a text field with the reason until it does. The type parses the text itself
   (pocket2d: `parsePointList`); the form reads the same grammar. A format the form does not know is edited as plain
   text.
+- `x-multiline` (added after M3): `true` on a text makes its field a text area of several lines: Enter is a line
+  break (stored as `\n`), Ctrl+Enter accepts the panel as Enter does in other fields, Esc cancels. `maxLength` and
+  `pattern` apply to the whole text, line breaks included. The type says in its description what a line break means
+  (engrave: the next line of text).
 - `x-relevantWhen`: `{ "<property>": [values...], ... }`. The property matters only when every named property is
   relevant itself (so relevance is transitive) and has one of the listed values. Each named property must be a choice
   (values are its enum strings) or a boolean (values are `true` / `false`) of the same schema; a name that is not, or a

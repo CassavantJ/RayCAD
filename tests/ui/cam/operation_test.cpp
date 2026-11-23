@@ -2423,7 +2423,7 @@ TEST_CASE("a list of points: picked in the view, typed in inches, drawn", "[cam]
     const QString key = QStringLiteral("preDrillPoints");
     w.inView(w.shown(QStringLiteral("schemaPointPick.") + key));
     CHECK(w.shown(QStringLiteral("schemaPointCount.") + key)->property("text").toString() == QStringLiteral("None"));
-    CHECK_FALSE(w.find(QStringLiteral("schemaInput.") + key)->isVisible()); // no text field: the list
+    CHECK(w.find(QStringLiteral("schemaInput.") + key) == nullptr); // no text field: the list
     // Picking points: faces and vertices, and the geometry picker stops.
     w.click(QStringLiteral("schemaPointPick.") + key);
     REQUIRE(w.op()->pointPickKey() == key);
@@ -2637,6 +2637,70 @@ TEST_CASE("the starter single-profile thread mill threads M8 the plate's full de
     CHECK(helicalArcs(*w.op()->previewToolpath()) >= 16);
     w.click(QStringLiteral("operationCancel"));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+    w.checkNoWarnings();
+}
+
+// Gap 5: engraving text of two lines: the text area (x-multiline) takes Enter as a line break, the line spacing is a
+// percentage, each line is centred on its own; the preview has both lines and OK stores the line break.
+TEST_CASE("engraving two lines of text typed in the panel's text area", "[cam][e2e][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // top at Z 10, holes at Y 26.667 and 53.333
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w, 0, QStringLiteral("engrave"));
+    w.op()->chooseTool(kSpot10);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->toolId() == kSpot10; }, 5000));
+    QQuickItem* area = w.shown(QStringLiteral("schemaInput.text"));
+    CHECK(area->inherits("QQuickTextEdit")); // several lines, not a line field
+    // Typed as a user types it: a line, Enter, the next line (QTest has no key for the character '\n' itself).
+    w.typeInto(QStringLiteral("schemaInput.text"), QStringLiteral("RayCAD"));
+    QTest::keyClick(w.window(), Qt::Key_Return);
+    for (const QChar c : QStringLiteral("T-056"))
+        QTest::keyClick(w.window(), c.toLatin1());
+    QCoreApplication::processEvents();
+    CHECK(w.op()->form()->params().value(QStringLiteral("text")).toString() == QStringLiteral("RayCAD\nT-056"));
+    CHECK(area->property("text").toString() == QStringLiteral("RayCAD\nT-056"));
+    CHECK(w.op()->active()); // Enter was a line break, not OK
+    QQuickItem* spacing = w.shown(QStringLiteral("schemaInput.lineSpacing"));
+    CHECK(spacing->property("text").toString() == QStringLiteral("160 %"));
+    w.typeInto(QStringLiteral("schemaInput.lineSpacing"), QStringLiteral("150"));
+    w.op()->form()->setValue(QStringLiteral("textAlign"), QStringLiteral("centre"));
+    w.op()->form()->setValue(QStringLiteral("textHeight"), QStringLiteral("5 mm"));
+    w.op()->form()->setValue(QStringLiteral("textX"), QStringLiteral("60 mm"));
+    w.op()->form()->setValue(QStringLiteral("textY"), QStringLiteral("42 mm"));
+    w.op()->form()->setValue(QStringLiteral("depth"), QStringLiteral("0.3 mm"));
+    w.op()->setValue(QStringLiteral("rpm"), QStringLiteral("6000"));
+    w.op()->setValue(QStringLiteral("feedCut"), QStringLiteral("300"));
+    w.op()->setValue(QStringLiteral("feedPlunge"), QStringLiteral("100"));
+    w.window()->contentItem()->forceActiveFocus();
+    w.previewed("ok");
+    REQUIRE(w.op()->previewToolpath() != nullptr);
+    // Cuts on both baselines: Y 42 and 42 - 1.5 x 5 = Y 34.5 (WCS from the plate's corner).
+    bool first = false, second = false;
+    for (const cam::Move& m : w.op()->previewToolpath()->moves) {
+        if (m.role == cam::MoveRole::Cut) {
+            first = first || m.y == 42'000'000;
+            second = second || m.y == 34'500'000;
+        }
+    }
+    CHECK(first);
+    CHECK(second);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    w.inView(w.find(QStringLiteral("schemaRow.text")));
+    w.view()->setCamera(w.view()->framed(w.view()->camera(), Box3{{38, 28, 0}, {82, 50, 10}}));
+    w.shot(QStringLiteral("gaps_5_multiline_text_dark"));
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+    const cam::Operation& op = w.document()->state()->cam->operations.begin()->second;
+    CHECK(op.paramsJson.find("\"text\":\"RayCAD\\nT-056\"") != std::string::npos);
+    CHECK(op.paramsJson.find("\"lineSpacing\":150") != std::string::npos);
     w.checkNoWarnings();
 }
 

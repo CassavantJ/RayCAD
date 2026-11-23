@@ -6,6 +6,7 @@
 // matter for the other values (x-relevantWhen) are hidden. What the form cannot edit is a row saying so. A list of
 // points (x-format "pointsXY") is a line per point with its X and Y, add, remove and pick-in-the-view buttons.
 import QtQuick
+import QtQuick.Templates as T
 import RayCad.Ui
 
 Column {
@@ -108,17 +109,21 @@ Column {
             spacing: Theme.spacingXs / 2
 
             Row {
-                spacing: Theme.spacingS
+                id: textRow
                 // A list of points whose stored text does not read as points is edited as text, to fix it.
-                visible: row.kind === "number" || row.kind === "integer" || row.kind === "string"
-                         || (row.kind === "points" && row.modelData.pointsRead === false)
+                readonly property bool used: row.kind === "number" || row.kind === "integer"
+                                             || (row.kind === "string" && row.modelData.multiline !== true)
+                                             || (row.kind === "points" && row.modelData.pointsRead === false)
+                spacing: Theme.spacingS
+                visible: used
                 RowLabel {
-                    objectName: "schemaLabel." + row.key
+                    // (named only when it is the row's: a multi-line text and a list of points have their own)
+                    objectName: textRow.used ? "schemaLabel." + row.key : ""
                     text: row.modelData.title
                     hint: row.modelData.description
                 }
                 TextField {
-                    objectName: "schemaInput." + row.key
+                    objectName: textRow.used ? "schemaInput." + row.key : ""
                     width: root.fieldWidth
                     // At rest a stored length shows in the app's display format; being edited, in full.
                     text: !row.visible || row.modelData.value === undefined ? ""
@@ -132,6 +137,64 @@ Column {
                     Keys.onReturnPressed: root.accepted()
                     Keys.onEnterPressed: root.accepted()
                     Keys.onEscapePressed: root.cancelled()
+                }
+                ResetButton {
+                    key: row.key
+                    isDefault: row.modelData.isDefault
+                    defaultText: row.modelData.defaultText
+                }
+            }
+
+            // A text on several lines (x-multiline): Enter is a line break, Ctrl+Enter accepts as Enter does elsewhere.
+            Row {
+                id: areaRow
+                readonly property bool used: row.kind === "string" && row.modelData.multiline === true
+                spacing: Theme.spacingS
+                visible: used
+                RowLabel {
+                    objectName: areaRow.used ? "schemaLabel." + row.key : ""
+                    anchors.verticalCenter: undefined
+                    y: Theme.spacingXs
+                    text: row.modelData.title
+                    hint: row.modelData.description
+                }
+                T.TextArea {
+                    id: area
+                    objectName: areaRow.used ? "schemaInput." + row.key : ""
+                    width: root.fieldWidth
+                    height: Math.max(Theme.controlHeight * 2.5, Math.min(implicitHeight, Theme.controlHeight * 6))
+                    text: !areaRow.used || row.modelData.value === undefined ? "" : String(row.modelData.value)
+                    wrapMode: TextEdit.NoWrap
+                    font: Theme.uiFont
+                    color: Theme.textPrimary
+                    selectionColor: Theme.selectionFill
+                    selectedTextColor: Theme.textPrimary
+                    selectByMouse: true
+                    hoverEnabled: true
+                    leftPadding: Theme.spacingM
+                    rightPadding: Theme.spacingM
+                    topPadding: Theme.spacingXs
+                    bottomPadding: Theme.spacingXs
+                    clip: true
+                    Accessible.name: row.modelData.title
+                    Accessible.description: row.modelData.description
+                    onTextChanged: if (activeFocus && root.form && text !== String(row.modelData.value)) root.form.setValue(row.key, text)
+                    Keys.onPressed: event => {
+                        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                && (event.modifiers & Qt.ControlModifier)) {
+                            root.accepted()
+                            event.accepted = true
+                        }
+                    }
+                    Keys.onEscapePressed: root.cancelled()
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.fieldBg
+                        border.width: area.activeFocus ? Theme.focusRingWidth : Theme.borderWidth
+                        border.color: row.erroneous ? Theme.error
+                                      : area.activeFocus ? Theme.focusRing
+                                      : area.hovered ? Theme.controlBorder : Theme.panelBorder
+                    }
                 }
                 ResetButton {
                     key: row.key

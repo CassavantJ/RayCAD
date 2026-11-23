@@ -49,7 +49,8 @@ struct FormField {
     QStringList enumDescriptions;       // x-enumDescriptions, empty when the schema has none
     std::optional<int> minLength, maxLength;
     QString pattern;
-    QString format; // a text's x-format: "pointsXY" (a list of points on the setup's XY plane), "" plain text
+    QString format;         // a text's x-format: "pointsXY" (a list of points on the setup's XY plane), "" plain text
+    bool multiline = false; // a text's x-multiline: edited on several lines (Enter is a line break)
     QJsonValue defaultValue = QJsonValue(QJsonValue::Undefined);
     std::vector<std::pair<QString, QJsonArray>> relevantWhen; // x-relevantWhen, in key order
     QString reason;                                           // Unsupported: why
@@ -105,6 +106,7 @@ class SchemaFormModel : public QObject {
     // [{key, title, description, kind ("number", "integer", "boolean", "enum", "string", "points", "unsupported"),
     //   unit (label), value (text, or bool), fullValue (the text to edit while it shows a stored value, else ""),
     //   choices [{value, text}], relevant, message, isDefault, defaultText, reason}]
+    // A "string" field has multiline (x-multiline: true, a text area where Enter is a line break).
     // A "points" field (a text with x-format "pointsXY") also has points [{x, y, xFull, yFull, xBad, yBad}] (each
     // coordinate in the display unit as a length field shows it, the text being typed where it does not read) and
     // pointsRead (false: the stored text does not read as points, and is edited as text, `value`).

@@ -6,9 +6,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
 using namespace ray;
@@ -160,6 +163,88 @@ TEST_CASE("text layout against hand-computed points", "[cam][engrave][font]")
     CHECK(circle.centre == geom2d::Pt{14'000'000, 24'000'000});
     CHECK(circle.radius == 4'000'000);
     CHECK(circle.end == o->front().start);
+}
+
+// After M3: text of several lines, each on its own baseline lineSpacing below the one before, each aligned on its own.
+TEST_CASE("text layout in lines, each aligned on its own", "[cam][engrave][font][lines]")
+{
+    const StrokeFont& f = font();
+    CHECK(textLines("HI") == std::vector<std::string>{"HI"});
+    CHECK(textLines("H\nII") == std::vector<std::string>{"H", "II"});
+    CHECK(textLines("H\r\nI\rI\n") == std::vector<std::string>{"H", "I", "I", ""});
+    CHECK(textLines("") == std::vector<std::string>{""});
+    // "H" over "II", 12 mm high (1 mm per unit), 20 mm between baselines, at (10, 20).
+    TextLayout l;
+    l.text = "H\nII";
+    l.height = 12;
+    l.lineSpacing = 20;
+    l.x = 10;
+    l.y = 20;
+    // The widest line: "II" = 7 + 7 units = 14 mm (H is 11).
+    CHECK(std::abs(textWidthMm(f, l) - 14) < 1e-12);
+    auto two = layoutText(f, l);
+    REQUIRE(two);
+    REQUIRE(two->size() == 3 + 2 * 3); // H: three strokes; I: a stem and two bars each
+    CHECK((*two)[0].start == geom2d::Pt{10'000'000, 20'000'000});
+    // The second line's first "I": its top bar from (0, 12) units, on the baseline 20 mm lower (Y 0): Y 12.
+    CHECK((*two)[3].start == geom2d::Pt{10'000'000, 12'000'000});
+    // Centred: each line about the anchor by its own width (H 11 mm, II 14 mm).
+    l.align = TextAlign::Centre;
+    auto centred = layoutText(f, l);
+    REQUIRE(centred);
+    CHECK(centred->at(0).start.x == 10'000'000 - 5'500'000);
+    geom2d::Coord minX2 = std::numeric_limits<geom2d::Coord>::max(), maxX2 = std::numeric_limits<geom2d::Coord>::min();
+    for (std::size_t i = 3; i < centred->size(); ++i) {
+        const geom2d::Path& p = centred->at(i);
+        minX2 = std::min(minX2, p.start.x);
+        maxX2 = std::max(maxX2, p.start.x);
+        for (const geom2d::Span& s : p.spans) {
+            minX2 = std::min(minX2, s.end.x);
+            maxX2 = std::max(maxX2, s.end.x);
+        }
+    }
+    CHECK(minX2 == 10'000'000 - 7'000'000); // the second line starts 7 mm left of the anchor
+    // Right: each line ends at the anchor.
+    l.align = TextAlign::Right;
+    auto right = layoutText(f, l);
+    REQUIRE(right);
+    CHECK(right->at(0).start.x == 10'000'000 - 11'000'000);
+    // Lines go down the text's own up direction: turned 90 degrees, the second line is 20 mm towards +X.
+    l.align = TextAlign::Left;
+    l.angleDeg = 90;
+    l.text = "H\nH";
+    auto turned = layoutText(f, l);
+    REQUIRE(turned);
+    CHECK(turned->at(3).start == geom2d::Pt{10'000'000 + 20'000'000, 20'000'000});
+    // The default line spacing (0): 1.6 times the height.
+    l.angleDeg = 0;
+    l.lineSpacing = 0;
+    auto byDefault = layoutText(f, l);
+    REQUIRE(byDefault);
+    CHECK(byDefault->at(3).start == geom2d::Pt{10'000'000, 20'000'000 - 19'200'000});
+    // An empty line keeps its place; a single line lays out as it always did (the first line's arithmetic).
+    l.text = "H\n\nH";
+    l.lineSpacing = 20;
+    auto gap = layoutText(f, l);
+    REQUIRE(gap);
+    CHECK(gap->at(3).start == geom2d::Pt{10'000'000, 20'000'000 - 40'000'000});
+    TextLayout one;
+    one.text = "Op 10";
+    one.height = 4;
+    one.x = 40;
+    one.y = 10;
+    one.angleDeg = 30;
+    TextLayout first = one;
+    first.text = "Op 10\nX";
+    auto a = layoutText(f, one);
+    auto b = layoutText(f, first);
+    REQUIRE(a);
+    REQUIRE(b);
+    REQUIRE(b->size() > a->size());
+    for (std::size_t i = 0; i < a->size(); ++i) {
+        CHECK(a->at(i).start == b->at(i).start);
+        CHECK(a->at(i).spans.size() == b->at(i).spans.size());
+    }
 }
 
 TEST_CASE("text the font cannot draw is refused, naming the character", "[cam][engrave][font]")

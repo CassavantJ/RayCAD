@@ -21,6 +21,10 @@
 //   point exactly: its centre is then the transformed centre moved onto the perpendicular bisector of its two ends and
 //   rounded, and R the rounded mean of the two distances (both within 1.2 nm of R, their difference under 1.5 nm).
 //   A stroke whose end is its start in the font is a closed path.
+//   LINES (after M3): a line break ("\n"; "\r\n" and "\r" too) starts a new line. Line i (from 0) has its baseline
+//   lineSpacing * i below the first one's (local ly - lineSpacing * i, added only for i > 0, so a single line lays out
+//   with exactly the arithmetic it had), and is aligned on its own: its offset is 0, -W_i / 2 or -W_i by its own
+//   width W_i. The anchor (x, y) is on the first line's baseline. An empty line takes its place and draws nothing.
 // Deterministic: integer font data, IEEE double arithmetic with dmath (src/cam is built with strict floating point),
 // one rounding rule; no locale, no clock.
 #pragma once
@@ -75,19 +79,23 @@ std::optional<std::u32string> decodeUtf8(std::string_view text);
 // ---------- Layout ----------
 enum class TextAlign : std::uint8_t { Left, Centre, Right };
 struct TextLayout {
-    std::string text;   // UTF-8, one line
-    double height = 5;  // mm: the height of the capitals (and digits)
-    double spacing = 0; // mm added between two characters
-    TextAlign align = TextAlign::Left;
-    double x = 0, y = 0; // mm, WCS: the anchor on the baseline
-    double angleDeg = 0; // the baseline's direction, counter-clockwise from +X
+    std::string text;                  // UTF-8; line breaks separate lines (LINES above)
+    double height = 5;                 // mm: the height of the capitals (and digits)
+    double spacing = 0;                // mm added between two characters
+    TextAlign align = TextAlign::Left; // of each line on its own
+    double x = 0, y = 0;               // mm, WCS: the anchor on the first line's baseline
+    double angleDeg = 0;               // the baseline's direction, counter-clockwise from +X
+    double lineSpacing = 0;            // mm from one baseline to the next; 0: 1.6 times the height
 };
-// The text's width W in mm (LAYOUT above).
+// The lines of a text (split at "\n", "\r\n" and "\r"); one line, the text itself, when it has no break.
+std::vector<std::string> textLines(std::string_view text);
+// The text's width in mm: its widest line's W (LAYOUT above).
 double textWidthMm(const StrokeFont& font, const TextLayout& layout);
-// The strokes of the text as paths (open, or closed where a stroke ends at its start), in reading order: characters
-// left to right, each character's strokes in the font's order, each stroke in its drawn direction. Characters without
-// strokes (the space) give none. InvalidArgument when the text is not UTF-8, or names a character the font has not
-// (the message says which, with its code point), or when the text is so small that an arc's radius rounds below 1 nm.
+// The strokes of the text as paths (open, or closed where a stroke ends at its start), in reading order: lines top
+// down, characters left to right, each character's strokes in the font's order, each stroke in its drawn direction.
+// Characters without strokes (the space) give none. InvalidArgument when the text is not UTF-8, or names a character
+// the font has not (the message says which, with its code point), or when the text is so small that an arc's radius
+// rounds below 1 nm.
 Result<geom2d::Paths> layoutText(const StrokeFont& font, const TextLayout& layout);
 
 } // namespace ray::cam::ops

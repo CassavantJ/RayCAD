@@ -321,9 +321,28 @@ std::optional<std::u32string> decodeUtf8(std::string_view text)
     return out;
 }
 
-double textWidthMm(const StrokeFont& font, const TextLayout& layout)
+std::vector<std::string> textLines(std::string_view text)
 {
-    const auto codes = decodeUtf8(layout.text);
+    std::vector<std::string> out(1);
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\r' || text[i] == '\n') {
+            if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') {
+                ++i;
+            }
+            out.emplace_back();
+            continue;
+        }
+        out.back() += text[i];
+    }
+    return out;
+}
+
+namespace {
+
+// The width W of one line (LAYOUT, engrave_font.h).
+double lineWidthMm(const StrokeFont& font, std::string_view line, double height, double spacing)
+{
+    const auto codes = decodeUtf8(line);
     if (!codes || codes->empty() || font.cap <= 0) {
         return 0;
     }
@@ -333,8 +352,19 @@ double textWidthMm(const StrokeFont& font, const TextLayout& layout)
             advance += it->second.advance;
         }
     }
-    const double s = layout.height / static_cast<double>(font.cap); // mm per milli-unit
-    return static_cast<double>(advance) * s + layout.spacing * static_cast<double>(codes->size() - 1);
+    const double s = height / static_cast<double>(font.cap); // mm per milli-unit
+    return static_cast<double>(advance) * s + spacing * static_cast<double>(codes->size() - 1);
+}
+
+} // namespace
+
+double textWidthMm(const StrokeFont& font, const TextLayout& layout)
+{
+    double widest = 0;
+    for (const std::string& line : textLines(layout.text)) {
+        widest = std::max(widest, lineWidthMm(font, line, layout.height, layout.spacing));
+    }
+    return widest;
 }
 
 namespace {
@@ -378,11 +408,15 @@ std::string utf8Of(char32_t c)
 
 struct Frame {
     double x = 0, y = 0, c = 1, s = 0, scale = 0; // scale: mm per milli-unit
-    // The WCS point, mm, of local (pen + u scale, v scale).
+    double base = 0;                              // the line's baseline, local mm (0: the first line)
+    // The WCS point, mm, of local (pen + u scale, base + v scale).
     std::pair<double, double> at(double pen, std::int64_t u, std::int64_t v) const
     {
         const double lx = pen + static_cast<double>(u) * scale;
-        const double ly = static_cast<double>(v) * scale;
+        double ly = static_cast<double>(v) * scale;
+        if (base != 0) {
+            ly += base; // only below the first line: the first lays out as a single line always did
+        }
         return {x + c * lx - s * ly, y + s * lx + c * ly};
     }
 };
@@ -409,6 +443,9 @@ Result<geom2d::Paths> layoutText(const StrokeFont& font, const TextLayout& layou
         return tl::unexpected(Error{ErrorCode::InvalidArgument, "The text is not valid UTF-8", {}});
     }
     for (const char32_t c : *codes) {
+        if (c == U'\n' || c == U'\r') {
+            continue; // a line break
+        }
         if (font.glyphs.count(c) == 0) {
             const std::string shown = c >= 0x20 && c != 0x7F ? "'" + utf8Of(c) + "' " : std::string();
             return tl::unexpected(Error{ErrorCode::InvalidArgument,
@@ -429,88 +466,96 @@ Result<geom2d::Paths> layoutText(const StrokeFont& font, const TextLayout& layou
     f.c = dmath::cos(a);
     f.s = dmath::sin(a);
     f.scale = layout.height / static_cast<double>(font.cap);
-    const double width = textWidthMm(font, layout);
-    double pen = layout.align == TextAlign::Left ? 0.0 : layout.align == TextAlign::Centre ? -width / 2 : -width;
     const auto tooSmall = [] {
         return tl::unexpected(Error{
             ErrorCode::InvalidArgument, "The text is too small to engrave: an arc of a character is under 1 nm", {}});
     };
-    for (const char32_t c : *codes) {
-        const FontGlyph& g = font.glyphs.at(c);
-        for (const FontStroke& st : g.strokes) {
-            geom2d::Path p;
-            p.start = rounded(f.at(pen, st.x, st.y));
-            Pt cur = p.start;
-            for (std::size_t k = 0; k < st.segments.size(); ++k) {
-                const FontSegment& seg = st.segments[k];
-                const bool closes = seg.x == st.x && seg.y == st.y;
-                if (!seg.arc) {
-                    const Pt e = closes ? p.start : rounded(f.at(pen, seg.x, seg.y));
-                    if (e != cur) {
-                        p.spans.push_back(Span{SpanKind::Line, e, {}, 0});
+    const std::vector<std::string> lines = textLines(layout.text);
+    const double lineSpacing = layout.lineSpacing > 0 ? layout.lineSpacing : 1.6 * layout.height;
+    for (std::size_t line = 0; line < lines.size(); ++line) {
+        // Each line on its own baseline, aligned by its own width (LINES, engrave_font.h).
+        f.base = line == 0 ? 0.0 : -lineSpacing * static_cast<double>(line);
+        const double width = lineWidthMm(font, lines[line], layout.height, layout.spacing);
+        double pen = layout.align == TextAlign::Left ? 0.0 : layout.align == TextAlign::Centre ? -width / 2 : -width;
+        const auto lineCodes = decodeUtf8(lines[line]);
+        for (const char32_t c : lineCodes ? *lineCodes : std::u32string()) {
+            const FontGlyph& g = font.glyphs.at(c);
+            for (const FontStroke& st : g.strokes) {
+                geom2d::Path p;
+                p.start = rounded(f.at(pen, st.x, st.y));
+                Pt cur = p.start;
+                for (std::size_t k = 0; k < st.segments.size(); ++k) {
+                    const FontSegment& seg = st.segments[k];
+                    const bool closes = seg.x == st.x && seg.y == st.y;
+                    if (!seg.arc) {
+                        const Pt e = closes ? p.start : rounded(f.at(pen, seg.x, seg.y));
+                        if (e != cur) {
+                            p.spans.push_back(Span{SpanKind::Line, e, {}, 0});
+                        }
+                        cur = e;
+                        continue;
                     }
-                    cur = e;
-                    continue;
-                }
-                const SpanKind kind = seg.ccw ? SpanKind::ArcCCW : SpanKind::ArcCW;
-                const auto cMm = f.at(pen, seg.cx, seg.cy);
-                const std::pair<double, double> cNm{cMm.first * kNmPerMm, cMm.second * kNmPerMm};
-                const bool whole = k == 0 ? closes : (seg.x == st.segments[k - 1].x && seg.y == st.segments[k - 1].y);
-                if (whole) {
+                    const SpanKind kind = seg.ccw ? SpanKind::ArcCCW : SpanKind::ArcCW;
+                    const auto cMm = f.at(pen, seg.cx, seg.cy);
+                    const std::pair<double, double> cNm{cMm.first * kNmPerMm, cMm.second * kNmPerMm};
+                    const bool whole =
+                        k == 0 ? closes : (seg.x == st.segments[k - 1].x && seg.y == st.segments[k - 1].y);
+                    if (whole) {
+                        const Pt centre = rounded(cMm);
+                        const geom2d::Coord r =
+                            geom2d::roundNm(dist(cur, {static_cast<double>(centre.x), static_cast<double>(centre.y)}));
+                        if (r < 1) {
+                            return tooSmall();
+                        }
+                        p.spans.push_back(Span{kind, cur, centre, r});
+                        continue;
+                    }
+                    const auto eMm = f.at(pen, seg.x, seg.y);
+                    if (closes) {
+                        // The end is the stroke's start: the centre onto the bisector of the two ends, then rounded.
+                        const Pt e = p.start;
+                        const double mx = (static_cast<double>(cur.x) + static_cast<double>(e.x)) / 2;
+                        const double my = (static_cast<double>(cur.y) + static_cast<double>(e.y)) / 2;
+                        double nx = -(static_cast<double>(e.y) - static_cast<double>(cur.y));
+                        double ny = static_cast<double>(e.x) - static_cast<double>(cur.x);
+                        const double nl = dmath::hypot(nx, ny);
+                        Pt centre = rounded(cMm);
+                        if (nl > 0) {
+                            nx /= nl;
+                            ny /= nl;
+                            const double t = (cNm.first - mx) * nx + (cNm.second - my) * ny;
+                            centre = Pt{geom2d::roundNm(mx + t * nx), geom2d::roundNm(my + t * ny)};
+                        }
+                        const double cx = static_cast<double>(centre.x), cy = static_cast<double>(centre.y);
+                        const geom2d::Coord r = geom2d::roundNm((dist(cur, {cx, cy}) + dist(e, {cx, cy})) / 2);
+                        if (r < 1) {
+                            return tooSmall();
+                        }
+                        p.spans.push_back(Span{kind, e, centre, r});
+                        cur = e;
+                        continue;
+                    }
                     const Pt centre = rounded(cMm);
-                    const geom2d::Coord r =
-                        geom2d::roundNm(dist(cur, {static_cast<double>(centre.x), static_cast<double>(centre.y)}));
-                    if (r < 1) {
-                        return tooSmall();
-                    }
-                    p.spans.push_back(Span{kind, cur, centre, r});
-                    continue;
-                }
-                const auto eMm = f.at(pen, seg.x, seg.y);
-                if (closes) {
-                    // The end is the stroke's start: the centre onto the bisector of the two ends, then rounded.
-                    const Pt e = p.start;
-                    const double mx = (static_cast<double>(cur.x) + static_cast<double>(e.x)) / 2;
-                    const double my = (static_cast<double>(cur.y) + static_cast<double>(e.y)) / 2;
-                    double nx = -(static_cast<double>(e.y) - static_cast<double>(cur.y));
-                    double ny = static_cast<double>(e.x) - static_cast<double>(cur.x);
-                    const double nl = dmath::hypot(nx, ny);
-                    Pt centre = rounded(cMm);
-                    if (nl > 0) {
-                        nx /= nl;
-                        ny /= nl;
-                        const double t = (cNm.first - mx) * nx + (cNm.second - my) * ny;
-                        centre = Pt{geom2d::roundNm(mx + t * nx), geom2d::roundNm(my + t * ny)};
-                    }
                     const double cx = static_cast<double>(centre.x), cy = static_cast<double>(centre.y);
-                    const geom2d::Coord r = geom2d::roundNm((dist(cur, {cx, cy}) + dist(e, {cx, cy})) / 2);
-                    if (r < 1) {
+                    const geom2d::Coord r = geom2d::roundNm(dist(cur, {cx, cy}));
+                    const double ex = eMm.first * kNmPerMm - cx, ey = eMm.second * kNmPerMm - cy;
+                    const double el = dmath::hypot(ex, ey);
+                    if (r < 1 || !(el > 0)) {
                         return tooSmall();
                     }
+                    const Pt e{geom2d::roundNm(cx + static_cast<double>(r) * ex / el),
+                               geom2d::roundNm(cy + static_cast<double>(r) * ey / el)};
                     p.spans.push_back(Span{kind, e, centre, r});
                     cur = e;
-                    continue;
                 }
-                const Pt centre = rounded(cMm);
-                const double cx = static_cast<double>(centre.x), cy = static_cast<double>(centre.y);
-                const geom2d::Coord r = geom2d::roundNm(dist(cur, {cx, cy}));
-                const double ex = eMm.first * kNmPerMm - cx, ey = eMm.second * kNmPerMm - cy;
-                const double el = dmath::hypot(ex, ey);
-                if (r < 1 || !(el > 0)) {
-                    return tooSmall();
+                const FontSegment& last = st.segments.back();
+                p.closed = last.x == st.x && last.y == st.y && !p.spans.empty() && p.spans.back().end == p.start;
+                if (!p.spans.empty()) {
+                    out.push_back(std::move(p));
                 }
-                const Pt e{geom2d::roundNm(cx + static_cast<double>(r) * ex / el),
-                           geom2d::roundNm(cy + static_cast<double>(r) * ey / el)};
-                p.spans.push_back(Span{kind, e, centre, r});
-                cur = e;
             }
-            const FontSegment& last = st.segments.back();
-            p.closed = last.x == st.x && last.y == st.y && !p.spans.empty() && p.spans.back().end == p.start;
-            if (!p.spans.empty()) {
-                out.push_back(std::move(p));
-            }
+            pen += static_cast<double>(g.advance) * f.scale + layout.spacing;
         }
-        pen += static_cast<double>(g.advance) * f.scale + layout.spacing;
     }
     return out;
 }

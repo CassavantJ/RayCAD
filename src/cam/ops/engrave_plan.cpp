@@ -128,6 +128,7 @@ struct Params {
     double depth = 0, stepDown = 0;
     std::string text;
     double height = 0, spacing = 0, x = 0, y = 0, angle = 0;
+    double lineSpacing = 0; // percent of the height, baseline to baseline
     TextAlign align = TextAlign::Left;
     bool fitArcs = true;
 };
@@ -161,6 +162,7 @@ Result<Params> readParams(std::string_view paramsJson)
     out.x = p->number("textX");
     out.y = p->number("textY");
     out.angle = p->number("textAngle");
+    out.lineSpacing = p->number("lineSpacing");
     const std::string& align = p->text("textAlign");
     out.align = align == "centre" ? TextAlign::Centre : align == "right" ? TextAlign::Right : TextAlign::Left;
     out.fitArcs = p->flag("fitArcs");
@@ -355,6 +357,7 @@ private:
         layout.x = p_.x;
         layout.y = p_.y;
         layout.angleDeg = p_.angle;
+        layout.lineSpacing = p_.height * p_.lineSpacing / 100; // baseline to baseline, mm
         auto strokes = layoutText(*font, layout);
         if (!strokes) {
             return tl::unexpected(strokes.error());

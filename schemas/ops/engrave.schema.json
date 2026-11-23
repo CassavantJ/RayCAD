@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raycad.org/schemas/ops/engrave.schema.json",
   "title": "Engraving",
-  "description": "Parameters of an 'engrave' operation (cam.h Operation::paramsJson, task T-056): the tool centre follows picked edges and a line of text on a plane, at a depth below it, plunging straight in (a centre-cutting engraving cutter, spot drill, pointed chamfer mill or ball end mill). The operation's geometry is any number of edges of the part, projected along the setup's Z onto the plane; the text is laid out in the RayCAD Single Line font. Its heights are absolute WCS Z: 'top' is the engraving plane, 'clearance', 'retract' and 'feedPlane' are the usual levels above it; 'bottom' is not used (the depth is a parameter). Feeds: the cutting feed along the strokes, the plunge feed into the material. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' (the members of the operation's heights this type reads, each with what it is measured from), 'x-cuttingUsed' (the members of its cutting data this type reads), 'x-geometry' (what the geometry picker selects: here edges) and 'x-toolTypes' (the tools the picker offers first); docs/operation_types.md defines each.",
+  "description": "Parameters of an 'engrave' operation (cam.h Operation::paramsJson, task T-056): the tool centre follows picked edges and text of one or more lines on a plane, at a depth below it, plunging straight in (a centre-cutting engraving cutter, spot drill, pointed chamfer mill or ball end mill). The operation's geometry is any number of edges of the part, projected along the setup's Z onto the plane; the text is laid out in the RayCAD Single Line font. Its heights are absolute WCS Z: 'top' is the engraving plane, 'clearance', 'retract' and 'feedPlane' are the usual levels above it; 'bottom' is not used (the depth is a parameter). Feeds: the cutting feed along the strokes, the plunge feed into the material. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, count, percent), 'x-multiline' (a text edited on several lines), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' (the members of the operation's heights this type reads, each with what it is measured from), 'x-cuttingUsed' (the members of its cutting data this type reads), 'x-geometry' (what the geometry picker selects: here edges) and 'x-toolTypes' (the tools the picker offers first); docs/operation_types.md defines each.",
   "type": "object",
   "additionalProperties": false,
   "x-heightsUsed": { "clearance": "workZero", "retract": "workZero", "feedPlane": "workZero", "top": "workZero" },
   "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "coolant"],
   "x-geometry": { "kind": "edge", "count": "any", "description": "Click the edges to engrave (none for text alone)." },
   "x-toolTypes": ["engraveCutter", "spotDrill", "chamferMill", "ballEndMill"],
-  "x-propertyOrder": ["depth", "stepDown", "text", "font", "textHeight", "textSpacing", "textAlign", "textX", "textY",
+  "x-propertyOrder": ["depth", "stepDown", "text", "font", "textHeight", "textSpacing", "lineSpacing", "textAlign", "textX", "textY",
                       "textAngle", "fitArcs"],
   "properties": {
     "depth": {
@@ -32,10 +32,11 @@
     },
     "text": {
       "title": "Text",
-      "description": "A line of text to engrave (empty: edges only). Letters A to Z and a to z, digits, space and . , : ; - + = / # ( ) [ ] < > _ ! ? * ' \" % and the degree and diameter signs.",
+      "description": "The text to engrave, on one or more lines (a line break starts the next line; empty: edges only). Letters A to Z and a to z, digits, space and . , : ; - + = / # ( ) [ ] < > _ ! ? * ' \" % and the degree and diameter signs.",
       "type": "string",
       "maxLength": 200,
-      "default": ""
+      "default": "",
+      "x-multiline": true
     },
     "font": {
       "title": "Font",
@@ -63,9 +64,18 @@
       "default": 0,
       "x-unit": "length"
     },
+    "lineSpacing": {
+      "title": "Line spacing",
+      "description": "From one line's baseline to the next, in percent of the text height (text of more than one line).",
+      "type": "number",
+      "minimum": 50,
+      "maximum": 1000,
+      "default": 160,
+      "x-unit": "percent"
+    },
     "textAlign": {
       "title": "Alignment",
-      "description": "Where the text's position is: at the left end, the middle or the right end of its baseline.",
+      "description": "Where the text's position is: at the left end, the middle or the right end of the baseline, each line aligned on its own; the position is on the first line's baseline.",
       "enum": ["left", "centre", "right"],
       "x-enumTitles": ["Left", "Centre", "Right"],
       "default": "left"

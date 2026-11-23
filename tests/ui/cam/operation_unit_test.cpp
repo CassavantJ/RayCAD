@@ -444,6 +444,51 @@ TEST_CASE("percent: shown with %, read with or without it, limits in percent", "
     CHECK(form.params().value(QStringLiteral("helixDiameter")).toDouble() == 120.0);
 }
 
+// After M3: x-multiline (engrave's text): a text area; line breaks are part of the value; the line spacing in percent.
+TEST_CASE("multi-line text: engrave's text on several lines", "[cam][form][multiline]")
+{
+    api::AppOptions options;
+    options.userDataDir = "";
+    options.builtinLibraryDir = "";
+    auto app = api::makeHeadlessApp(options);
+    REQUIRE(app);
+    std::string schemaJson;
+    for (const auto& t : api::cam_operation::operationTypes(*app)) {
+        if (t.name == "engrave")
+            schemaJson = t.schemaJson;
+    }
+    SchemaFormModel form;
+    form.setSchemaJson(QString::fromStdString(schemaJson));
+    const QVariantMap text = fieldOf(form, QStringLiteral("text"));
+    CHECK(text.value(QStringLiteral("kind")).toString() == QStringLiteral("string"));
+    CHECK(text.value(QStringLiteral("multiline")).toBool());
+    CHECK_FALSE(fieldOf(form, QStringLiteral("textHeight")).value(QStringLiteral("multiline")).toBool());
+    form.setValue(QStringLiteral("text"), QStringLiteral("RayCAD\nOp 20"));
+    CHECK(form.valid());
+    CHECK(form.params().value(QStringLiteral("text")).toString() == QStringLiteral("RayCAD\nOp 20"));
+    // The length limit counts the whole text, line breaks included.
+    form.setValue(QStringLiteral("text"),
+                  QString(150, QLatin1Char('A')) + QLatin1Char('\n') + QString(49, QLatin1Char('B')));
+    CHECK(form.valid());
+    form.setValue(QStringLiteral("text"),
+                  QString(150, QLatin1Char('A')) + QLatin1Char('\n') + QString(50, QLatin1Char('B')));
+    REQUIRE(form.firstError().has_value());
+    CHECK(form.firstError()->first == QStringLiteral("text"));
+    // The line spacing: a percentage of the text height, after the character spacing.
+    const QVariantMap spacing = fieldOf(form, QStringLiteral("lineSpacing"));
+    CHECK(spacing.value(QStringLiteral("value")).toString() == QStringLiteral("160 %"));
+    QStringList keys;
+    for (const FormField& f : form.schema().fields)
+        keys << f.key;
+    CHECK(keys.indexOf(QStringLiteral("lineSpacing")) == keys.indexOf(QStringLiteral("textSpacing")) + 1);
+    // x-multiline on a text that is a list of points does not apply (the list is its control).
+    SchemaFormModel both;
+    both.setSchemaJson(QStringLiteral(R"({"type":"object","properties":{"p":{"title":"P","description":"d",)"
+                                      R"("type":"string","default":"","x-format":"pointsXY","x-multiline":true}}})"));
+    CHECK(fieldOf(both, QStringLiteral("p")).value(QStringLiteral("kind")).toString() == QStringLiteral("points"));
+    CHECK_FALSE(fieldOf(both, QStringLiteral("p")).value(QStringLiteral("multiline")).toBool());
+}
+
 TEST_CASE("the form covers each construct of the subset and says what it cannot edit", "[cam][t045][form]")
 {
     SchemaFormModel form;
