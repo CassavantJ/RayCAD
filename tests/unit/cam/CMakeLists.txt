@@ -136,3 +136,24 @@ target_compile_definitions(ray_cam_geom2d_tests PRIVATE RAY_GEOM2D_GOLDEN_DIR="$
 set_property(TARGET ray_cam_geom2d_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_geom2d_tests COMMAND ray_cam_geom2d_tests "~[wallclock]")
 ray_test_runtime_path(ray_cam_geom2d_tests)
+# Linking (task T-051): each lead, ramp and helix with its exact geometry and the entry fall-back order, the two
+# acceptance properties on seeded random cases (an independent height field, and the invariant checker of
+# tests/unit/cam/invariants on part of them), the order against a brute-force best order on small cases and on passes
+# shaped like the benchmark parts, the integer goldens (tests/golden/link) and, tagged [wallclock], the ordering time
+# and the cancel latency. src/ for the private headers (cam/link.h, cam/geom2d.h).
+add_executable(ray_cam_link_tests
+    link_golden_test.cpp
+    link_order_test.cpp
+    link_parts.h
+    link_perf_test.cpp
+    link_property_test.cpp
+    link_test_util.h
+    link_unit_test.cpp
+)
+target_link_libraries(ray_cam_link_tests PRIVATE ray_cam_invariants ray_cam ray_kernel ray_lib ray_naming ray_core
+    Catch2::Catch2WithMain)
+target_include_directories(ray_cam_link_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(ray_cam_link_tests PRIVATE RAY_LINK_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/link")
+set_property(TARGET ray_cam_link_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_cam_link_tests COMMAND ray_cam_link_tests "~[wallclock]")
+ray_test_runtime_path(ray_cam_link_tests)

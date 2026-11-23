@@ -52,6 +52,8 @@
 // Amended by T-059 (cycle time): CycleTimeOperation, CycleTimePart, CycleTimeAssumptions, CycleTimeOptions and the
 // default constants; CycleTime derives from CycleTimePart (its four members unchanged) and carries the operations'
 // parts, the assumptions and notes; estimateCycleTime takes tool numbers (the plan draft's form stays).
+// Amended by T-051 (linking): EntryKind::Plunge, PreDrillPoint, LinkOptions' added members, LinkPass, and linkPasses
+// takes LinkPass and a JobContext (the Linking section says why).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -565,10 +567,41 @@ std::unique_ptr<ICamEngine> makeCamEngine(IJobSystem& jobs, std::shared_ptr<cons
 // ---------- Linking (shared by all milling operation types) ----------
 // Entry falls back in order helix -> ramp along the cut -> pre-drill point (if given); if none fits, generation
 // fails with the minimum width needed (S5: upstream adaptive produced nothing for a slot 1.8 mm wider than the tool).
-enum class EntryKind : std::uint8_t { Helix, Ramp, PreDrill };
-struct LinkOptions { double maxStayDownDistance = 0; bool allowRapidRetract = false; double leadRadius = 0; double rampAngleDeg = 0; double helixDiameter = 0; double helixMinDiameter = 0; std::vector<EntryKind> entryOrder; };
-// Orders cut passes and inserts leads, ramps, retracts and links. Never rapids below feedPlane inside stock bounds.
-Result<std::vector<Move>> linkPasses(std::span<const std::vector<Move>> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&);
+// Amended by T-051 (src/cam/link.cpp; each also in docs/interfaces/cam.h):
+//  - EntryKind::Plunge: a straight plunge, for a centre-cutting tool only, when the entry order lists it;
+//  - LinkOptions grew what linking cannot work without: the tool (diameter, centre cutting), the feeds of plunges,
+//    ramps and links, the stay-down lift, the ramp's minimum run, the entry clearance, pre-drilled points and keeping
+//    the given order. allowRapidRetract: retract from the cut by a rapid straight up (else feed up to the feed plane);
+//  - passes are LinkPass (a list of moves does not say where the tool starts it; ordering constraints) and linkPasses
+//    takes a JobContext (long work polls cancellation).
+// The operation types in src/cam link through the full form, src/cam/link.h (2D regions where leads and helices may
+// go, the area already cut, rotatable closed passes, per-pass leads and entries). This public form is that function
+// for callers without the 2D geometry core: no room is known, so leadRadius must be 0 (InvalidArgument otherwise)
+// and a helix never fits (the entry falls back to the next kind in entryOrder).
+enum class EntryKind : std::uint8_t { Helix, Ramp, PreDrill, Plunge };
+struct PreDrillPoint { double x = 0, y = 0, diameter = 0, bottom = 0; };   // WCS mm; the tool enters if it fits the hole
+struct LinkOptions { double maxStayDownDistance = 0; bool allowRapidRetract = false; double leadRadius = 0; double rampAngleDeg = 0; double helixDiameter = 0; double helixMinDiameter = 0; std::vector<EntryKind> entryOrder;
+    // Added by T-051. Lengths mm, feeds mm/min (0: the cut feed of the pass being entered); entryOrder empty: helix,
+    // ramp, pre-drill.
+    double toolDiameter = 0;            // > 0
+    bool centreCutting = false;         // the tool may plunge straight into material
+    double feedPlunge = 0, feedRamp = 0, feedLink = 0;
+    double stayDownLift = 0;            // a stay-down link runs this much above its two ends (a lifted feed link)
+    double minRampRun = 0;              // a zigzag ramp's run along the cut is at least this; 0: the tool diameter
+    double entryClearance = 0;          // a helix or ramp starts this far above the material it enters
+    std::vector<PreDrillPoint> preDrillPoints;
+    bool keepOrder = false;             // cut the passes in the order given
+};
+// One cut pass: the tool is at (startX, startY, startZ) before moves[0]; feed moves (lines, XY arcs, helical ones).
+// Passes are cut in non-decreasing sequence and, inside a cluster (>= 0), non-decreasing level (depths of a pocket).
+struct LinkPass { Nm startX = 0, startY = 0, startZ = 0; std::vector<Move> moves; bool reversible = false; int sequence = 0, cluster = -1, level = 0; };
+// Orders cut passes and inserts ramps, retracts and links. Never rapids below feedPlane inside stock bounds, never
+// links across stock that is not cut. Heights: clearance, retract and feedPlane as absolute WCS Z in mm (top and
+// bottom are not read); the stock is ResolvedGeometry::stockBounds. moves[0] is a rapid to the toolpath's start
+// (Toolpath::startX/Y/Z): the clearance above where the first pass is entered. Errors: InvalidArgument for options or
+// passes linking cannot use (heights out of order, the retract plane under the stock top), ToolpathFailed for a pass
+// no allowed entry reaches (the message names why each did not fit), Cancelled.
+Result<std::vector<Move>> linkPasses(std::span<const LinkPass> passes, const Heights&, const LinkOptions&, const ResolvedGeometry&, JobContext&);
 
 // ---------- Hole recognition (v1: cylinders with planar/conical bottoms; full AFR is v2) ----------
 // Task T-034, src/cam/holes.cpp, which states every rule and tolerance. Amended by T-034: recognition takes the setup

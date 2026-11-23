@@ -13,6 +13,10 @@ add_library(ray_cam STATIC
     geom2d_internal.h
     geom2d_model.cpp
     holes.cpp    # recognizeHoles, orderHolesShortestPath (task T-034)
+    link.cpp     # linking: leads, entries, retracts and stay-down links of the milling operations (task T-051)
+    link.h
+    link_internal.h
+    link_order.cpp
     json.cpp     # the JSON reader of operation params (a copy of src/lib's; task T-035)
     json.h
     json_number.cpp

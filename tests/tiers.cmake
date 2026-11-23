@@ -97,6 +97,7 @@ set(RAY_WALLCLOCK_SPLITS
     ray_cam_holes_tests=ray_cam_holes_tests
     ray_cam_cycletime_tests=ray_cam_cycletime_tests
     ray_cam_geom2d_tests=ray_cam_geom2d_tests
+    ray_cam_link_tests=ray_cam_link_tests
     ray_sketch_tests=ray_sketch_tests
     ray_store_tests=ray_store_tests
     ray_sim_tests=ray_sim_tests
