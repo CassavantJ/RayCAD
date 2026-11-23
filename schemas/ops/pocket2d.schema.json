@@ -21,7 +21,7 @@
       "default": "climb"
     },
     "stepover": {
-      "title": "Stepover",
+      "title": "Stepover (% of the tool)",
       "description": "Distance between neighbouring rings, in percent of the tool diameter. Above 50 % rings are added where the pocket's middle would keep material.",
       "type": "number",
       "minimum": 5,
@@ -99,7 +99,7 @@
       "default": "helix"
     },
     "helixDiameter": {
-      "title": "Helix diameter",
+      "title": "Helix diameter (% of the tool)",
       "description": "Diameter of the helix the tool centre follows, in percent of the tool diameter; made smaller (down to 30 %) where it does not fit.",
       "type": "number",
       "minimum": 30,
