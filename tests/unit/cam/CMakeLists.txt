@@ -157,3 +157,25 @@ target_compile_definitions(ray_cam_link_tests PRIVATE RAY_LINK_GOLDEN_DIR="${CMA
 set_property(TARGET ray_cam_link_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_link_tests COMMAND ray_cam_link_tests "~[wallclock]")
 ray_test_runtime_path(ray_cam_link_tests)
+# Engraving and thread milling (task T-056): the font and the text layout, the rules against hand-computed values, each
+# refusal, the golden toolpaths (tests/golden/toolpaths/engrave_* and threadmill_*, with the full invariant checker of
+# tests/unit/cam/invariants on each) and both types end to end through the document and the engine. src/ for the
+# types' private headers, the rest as the drilling tests.
+foreach(_t056 IN ITEMS engrave threadmill)
+    add_executable(ray_cam_${_t056}_tests
+        ${_t056}_test.cpp
+        ${_t056}_golden_test.cpp
+        engrave_test_util.h
+        drill_test_util.h
+        toolpath_dump.h
+    )
+    target_link_libraries(ray_cam_${_t056}_tests PRIVATE ray_cam_invariants ray_api ray_store ray_doc ray_cam ray_sim
+        ray_post ray_naming ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+    target_include_directories(ray_cam_${_t056}_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+        "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+    target_compile_definitions(ray_cam_${_t056}_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+        RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths" RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
+        RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+    ray_add_test(ray_cam_${_t056}_tests)
+endforeach()

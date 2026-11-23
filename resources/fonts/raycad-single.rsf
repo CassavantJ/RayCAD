@@ -1,0 +1,347 @@
+# RayCAD Single Line: a single-stroke (centre-line) engraving font.
+#
+# Original work drawn for RayCAD (task T-056) by the project and released under the project's licence,
+# LGPL-2.1-or-later (see LICENSE). No glyph data was taken from any other font, CAD or CAM product, or the Hershey
+# sets: every glyph below was designed for this file on a plain grid of lines and circular arcs.
+#
+# FORMAT (read by src/cam/ops/engrave_font.cpp, which is the reference; resources/fonts/README.md says the same):
+#   One statement per line. '#' starts a comment that runs to the end of the line; blank lines are ignored.
+#   font <name>             the font's name (one word)
+#   cap <units>             the cap height in font units: text of height h mm scales one unit to h / cap mm
+#   glyph U+XXXX <advance>  starts the glyph of that Unicode code point (hexadecimal) with that advance width
+#   M x y [segments]        one stroke on one line: its start point, then any number of segments:
+#        L x y              a straight line to (x, y)
+#        A x y cx cy +      an arc to (x, y) about the centre (cx, cy), counter-clockwise (+) or clockwise (-);
+#        A x y cx cy -      an arc that ends where it starts is a whole circle
+#   end                     ends the glyph
+# Numbers are decimals with at most three decimals ("4", "2.5", "-0.75"). y points up; the baseline is y = 0 and
+# the pen is at x = 0 when a glyph starts, so the advance includes the space to the next glyph. An arc's start and
+# end lie on its circle (within 0.001 unit). A stroke has at least one segment: a dot is a short line.
+# Metrics: capitals and digits 12 high, x-height 8, ascenders 12, descenders to -4.
+
+font RayCAD-Single-Line
+cap 12
+
+# ---------- Capitals ----------
+glyph U+0041 11 # A
+M 0 0 L 4 12 L 8 0
+M 1 3 L 7 3
+end
+glyph U+0042 11 # B
+M 0 0 L 0 12 L 4 12 A 4 6 4 9 - L 0 6
+M 4 6 L 5 6 A 5 0 5 3 - L 0 0
+end
+glyph U+0043 11 # C
+M 8 12 L 4 12 A 0 8 4 8 + L 0 4 A 4 0 4 4 + L 8 0
+end
+glyph U+0044 11 # D
+M 0 0 L 0 12 L 4 12 A 8 8 4 8 - L 8 4 A 4 0 4 4 - L 0 0
+end
+glyph U+0045 10 # E
+M 7 12 L 0 12 L 0 0 L 7 0
+M 0 6 L 5 6
+end
+glyph U+0046 10 # F
+M 7 12 L 0 12 L 0 0
+M 0 6 L 5 6
+end
+glyph U+0047 11 # G
+M 8 12 L 4 12 A 0 8 4 8 + L 0 4 A 4 0 4 4 + L 8 0 L 8 6 L 5 6
+end
+glyph U+0048 11 # H
+M 0 0 L 0 12
+M 8 0 L 8 12
+M 0 6 L 8 6
+end
+glyph U+0049 7 # I
+M 0 12 L 4 12
+M 2 12 L 2 0
+M 0 0 L 4 0
+end
+glyph U+004A 10 # J
+M 7 12 L 7 3 A 1 3 4 3 -
+end
+glyph U+004B 10 # K
+M 0 0 L 0 12
+M 7 12 L 0 5
+M 2 7 L 7 0
+end
+glyph U+004C 9 # L
+M 0 12 L 0 0 L 6 0
+end
+glyph U+004D 13 # M
+M 0 0 L 0 12 L 5 4 L 10 12 L 10 0
+end
+glyph U+004E 11 # N
+M 0 0 L 0 12 L 8 0 L 8 12
+end
+glyph U+004F 11 # O
+M 0 4 L 0 8 A 8 8 4 8 - L 8 4 A 0 4 4 4 -
+end
+glyph U+0050 11 # P
+M 0 0 L 0 12 L 5 12 A 5 6 5 9 - L 0 6
+end
+glyph U+0051 12 # Q
+M 0 4 L 0 8 A 8 8 4 8 - L 8 4 A 0 4 4 4 -
+M 5.5 2.5 L 9 -1
+end
+glyph U+0052 11 # R
+M 0 0 L 0 12 L 5 12 A 5 6 5 9 - L 0 6
+M 4 6 L 8 0
+end
+glyph U+0053 11 # S
+M 8 12 L 3 12 A 3 6 3 9 + L 5 6 A 5 0 5 3 - L 0 0
+end
+glyph U+0054 11 # T
+M 0 12 L 8 12
+M 4 12 L 4 0
+end
+glyph U+0055 11 # U
+M 0 12 L 0 4 A 8 4 4 4 + L 8 12
+end
+glyph U+0056 11 # V
+M 0 12 L 4 0 L 8 12
+end
+glyph U+0057 13 # W
+M 0 12 L 2.5 0 L 5 8 L 7.5 0 L 10 12
+end
+glyph U+0058 11 # X
+M 0 0 L 8 12
+M 0 12 L 8 0
+end
+glyph U+0059 11 # Y
+M 0 12 L 4 6 L 8 12
+M 4 6 L 4 0
+end
+glyph U+005A 11 # Z
+M 0 12 L 8 12 L 0 0 L 8 0
+end
+
+# ---------- Small letters ----------
+glyph U+0061 11 # a
+M 8 4 A 8 4 4 4 +
+M 8 8 L 8 0
+end
+glyph U+0062 11 # b
+M 0 12 L 0 0
+M 8 4 A 8 4 4 4 +
+end
+glyph U+0063 10 # c
+M 7 8 L 4 8 A 4 0 4 4 + L 7 0
+end
+glyph U+0064 11 # d
+M 8 12 L 8 0
+M 8 4 A 8 4 4 4 +
+end
+glyph U+0065 11 # e
+M 0 4 L 8 4 A 4 0 4 4 + L 7 0
+end
+glyph U+0066 8 # f
+M 6 12 L 4 12 A 2 10 4 10 + L 2 0
+M 0 8 L 5 8
+end
+glyph U+0067 11 # g
+M 8 4 A 8 4 4 4 +
+M 8 8 L 8 -1 A 5 -4 5 -1 - L 1 -4
+end
+glyph U+0068 11 # h
+M 0 12 L 0 0
+M 0 4 A 8 4 4 4 - L 8 0
+end
+glyph U+0069 5 # i
+M 1 8 L 1 0
+M 1 10.5 L 1 11
+end
+glyph U+006A 7 # j
+M 4 8 L 4 -2 A 0 -2 2 -2 -
+M 4 10.5 L 4 11
+end
+glyph U+006B 9 # k
+M 0 12 L 0 0
+M 6 8 L 0 2
+M 2 4 L 6 0
+end
+glyph U+006C 6 # l
+M 1 12 L 1 2 A 3 0 3 2 +
+end
+glyph U+006D 13 # m
+M 0 8 L 0 0
+M 0 5.5 A 5 5.5 2.5 5.5 - L 5 0
+M 5 5.5 A 10 5.5 7.5 5.5 - L 10 0
+end
+glyph U+006E 11 # n
+M 0 8 L 0 0
+M 0 4 A 8 4 4 4 - L 8 0
+end
+glyph U+006F 11 # o
+M 8 4 A 8 4 4 4 +
+end
+glyph U+0070 11 # p
+M 0 8 L 0 -4
+M 8 4 A 8 4 4 4 +
+end
+glyph U+0071 11 # q
+M 8 8 L 8 -4
+M 8 4 A 8 4 4 4 +
+end
+glyph U+0072 9 # r
+M 0 8 L 0 0
+M 0 4 A 4 8 4 4 - L 6 8
+end
+glyph U+0073 9 # s
+M 6 8 L 2 8 A 2 4 2 6 + L 4 4 A 4 0 4 2 - L 0 0
+end
+glyph U+0074 8 # t
+M 2 12 L 2 2 A 4 0 4 2 + L 5 0
+M 0 8 L 5 8
+end
+glyph U+0075 11 # u
+M 0 8 L 0 4 A 8 4 4 4 +
+M 8 8 L 8 0
+end
+glyph U+0076 10 # v
+M 0 8 L 3.5 0 L 7 8
+end
+glyph U+0077 13 # w
+M 0 8 L 2.5 0 L 5 6 L 7.5 0 L 10 8
+end
+glyph U+0078 9 # x
+M 0 8 L 6 0
+M 0 0 L 6 8
+end
+glyph U+0079 10 # y
+M 0 8 L 3.5 0
+M 7 8 L 1.75 -4
+end
+glyph U+007A 9 # z
+M 0 8 L 6 8 L 0 0 L 6 0
+end
+
+# ---------- Digits (all the same advance, so columns of numbers line up) ----------
+glyph U+0030 11 # 0, slashed so it never reads as the letter O
+M 0 4 L 0 8 A 8 8 4 8 - L 8 4 A 0 4 4 4 -
+M 1 2 L 7 10
+end
+glyph U+0031 11 # 1
+M 1.5 9 L 4.5 12 L 4.5 0
+M 1.5 0 L 7.5 0
+end
+glyph U+0032 11 # 2
+M 0 8 A 8 8 4 8 - L 0 0 L 8 0
+end
+glyph U+0033 11 # 3
+M 0 12 L 8 12 L 3.5 7 L 4.5 7 A 4.5 0 4.5 3.5 - L 0 0
+end
+glyph U+0034 11 # 4
+M 6 0 L 6 12 L 0 3 L 8 3
+end
+glyph U+0035 11 # 5
+M 8 12 L 1 12 L 0 7 L 4.5 7 A 4.5 0 4.5 3.5 - L 0 0
+end
+glyph U+0036 11 # 6
+M 7 12 L 4 12 A 0 8 4 8 + L 0 4 A 0 4 4 4 +
+end
+glyph U+0037 11 # 7
+M 0 12 L 8 12 L 3 0
+end
+glyph U+0038 11 # 8
+M 4 6.5 A 4 6.5 4 9.25 + A 4 6.5 4 3.25 -
+end
+glyph U+0039 11 # 9
+M 8 8 A 8 8 4 8 + L 8 4 A 4 0 4 4 - L 1 0
+end
+
+# ---------- Punctuation and signs ----------
+glyph U+0020 6 # space
+end
+glyph U+002E 4 # .
+M 1 0 L 1 0.5
+end
+glyph U+002C 4 # ,
+M 1.5 0.5 L 1.5 0 L 0.5 -2
+end
+glyph U+003A 4 # :
+M 1 0 L 1 0.5
+M 1 7.5 L 1 8
+end
+glyph U+003B 4 # ;
+M 1 7.5 L 1 8
+M 1.5 0.5 L 1.5 0 L 0.5 -2
+end
+glyph U+002D 8 # -
+M 0 5 L 5 5
+end
+glyph U+002B 10 # +
+M 0 5 L 7 5
+M 3.5 1.5 L 3.5 8.5
+end
+glyph U+003D 10 # =
+M 0 3.5 L 7 3.5
+M 0 6.5 L 7 6.5
+end
+glyph U+002F 9 # /
+M 0 0 L 6 12
+end
+glyph U+0023 11 # #
+M 2 0 L 3 12
+M 5 0 L 6 12
+M 0 4 L 8 4
+M 0 8 L 8 8
+end
+glyph U+0028 6 # (
+M 3 12 A 3 0 11 6 +
+end
+glyph U+0029 6 # )
+M 1 12 A 1 0 -7 6 -
+end
+glyph U+005B 6 # [
+M 3 12 L 1 12 L 1 0 L 3 0
+end
+glyph U+005D 6 # ]
+M 1 12 L 3 12 L 3 0 L 1 0
+end
+glyph U+003C 9 # <
+M 6 9 L 0 5 L 6 1
+end
+glyph U+003E 9 # >
+M 0 9 L 6 5 L 0 1
+end
+glyph U+005F 10 # _
+M 0 -2 L 8 -2
+end
+glyph U+0021 4 # !
+M 1 12 L 1 3
+M 1 0 L 1 0.5
+end
+glyph U+003F 10 # ?
+M 1 9 A 7 9 4 9 - L 4 6 L 4 3
+M 4 0 L 4 0.5
+end
+glyph U+002A 9 # *
+M 3 6.5 L 3 11.5
+M 0.835 7.75 L 5.165 10.25
+M 0.835 10.25 L 5.165 7.75
+end
+glyph U+0027 4 # '
+M 1 12 L 1 9
+end
+glyph U+0022 6 # "
+M 1 12 L 1 9
+M 3 12 L 3 9
+end
+glyph U+0025 11 # %
+M 0 0 L 8 12
+M 3 10 A 3 10 1.5 10 +
+M 8 2 A 8 2 6.5 2 +
+end
+glyph U+00B0 6 # degree sign
+M 4 10.5 A 4 10.5 2.5 10.5 +
+end
+glyph U+00D8 11 # capital O with stroke
+M 0 4 L 0 8 A 8 8 4 8 - L 8 4 A 0 4 4 4 -
+M 0 0 L 8 12
+end
+glyph U+2300 12 # diameter sign
+M 9 6 A 9 6 5 6 +
+M 1 1 L 9 11
+end

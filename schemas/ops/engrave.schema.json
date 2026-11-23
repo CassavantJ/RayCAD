@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/engrave.schema.json",
+  "title": "Engraving",
+  "description": "Parameters of an 'engrave' operation (cam.h Operation::paramsJson, task T-056): the tool centre follows picked edges and a line of text on a plane, at a depth below it, plunging straight in (a centre-cutting engraving cutter, spot drill, pointed chamfer mill or ball end mill). The operation's geometry is any number of edges of the part, projected along the setup's Z onto the plane; the text is laid out in the RayCAD Single Line font. Its heights are absolute WCS Z: 'top' is the engraving plane, 'clearance', 'retract' and 'feedPlane' are the usual levels above it; 'bottom' is not used (the depth is a parameter). Feeds: the cutting feed along the strokes, the plunge feed into the material. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here edges) and 'x-toolTypes' (the tools the picker offers first); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane", "top"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "coolant"],
+  "x-geometry": { "kind": "edge", "count": "any", "description": "Click the edges to engrave (none for text alone)." },
+  "x-toolTypes": ["engraveCutter", "spotDrill", "chamferMill", "ballEndMill"],
+  "x-propertyOrder": ["depth", "stepDown", "text", "font", "textHeight", "textSpacing", "textAlign", "textX", "textY",
+                      "textAngle", "fitArcs"],
+  "properties": {
+    "depth": {
+      "title": "Depth",
+      "description": "How deep the tool tip goes below the engraving plane (the top height).",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 50,
+      "default": 0.2,
+      "x-unit": "length"
+    },
+    "stepDown": {
+      "title": "Step down",
+      "description": "The most depth one pass takes; 0: the whole depth in one pass.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "text": {
+      "title": "Text",
+      "description": "A line of text to engrave (empty: edges only). Letters A to Z and a to z, digits, space and . , : ; - + = / # ( ) [ ] < > _ ! ? * ' \" % and the degree and diameter signs.",
+      "type": "string",
+      "maxLength": 200,
+      "default": ""
+    },
+    "font": {
+      "title": "Font",
+      "description": "The single-line (stroke) font the text is drawn in.",
+      "enum": ["raycad-single"],
+      "x-enumTitles": ["RayCAD Single Line"],
+      "x-enumDescriptions": ["Lines and arcs, capitals and digits 12 units high"],
+      "default": "raycad-single"
+    },
+    "textHeight": {
+      "title": "Text height",
+      "description": "The height of the capital letters and digits.",
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 500,
+      "default": 5,
+      "x-unit": "length"
+    },
+    "textSpacing": {
+      "title": "Extra spacing",
+      "description": "Space added between two characters, beyond the font's own.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "textAlign": {
+      "title": "Alignment",
+      "description": "Where the text's position is: at the left end, the middle or the right end of its baseline.",
+      "enum": ["left", "centre", "right"],
+      "x-enumTitles": ["Left", "Centre", "Right"],
+      "default": "left"
+    },
+    "textX": {
+      "title": "Text X",
+      "description": "X of the text's position on the plane (WCS).",
+      "type": "number",
+      "minimum": -10000,
+      "maximum": 10000,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "textY": {
+      "title": "Text Y",
+      "description": "Y of the text's position on the plane (WCS).",
+      "type": "number",
+      "minimum": -10000,
+      "maximum": 10000,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "textAngle": {
+      "title": "Text angle",
+      "description": "The direction of the baseline, counter-clockwise from +X.",
+      "type": "number",
+      "minimum": -360,
+      "maximum": 360,
+      "default": 0,
+      "x-unit": "angle"
+    },
+    "fitArcs": {
+      "title": "Fit arcs to sampled curves",
+      "description": "Edges that are not lines or circles (splines, ellipses) reach the operation as many short lines; on: runs of three or more of them are replaced by arcs within 0.001 mm.",
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

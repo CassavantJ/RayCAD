@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/threadmill.schema.json",
+  "title": "Thread milling",
+  "description": "Parameters of a 'threadmill' operation (cam.h Operation::paramsJson, task T-056): helical thread milling of internal threads (in drilled holes) and external threads (on bosses and pins), with a single-form or a multi-form thread mill, climb or conventional, in one or more radial passes, entering and leaving by a half-circle arc (inside: from the hole's centre). The operation's geometry is a face of each hole (its wall), or the cylindrical face of each boss. The thread's pitch, diameter and hand come from the hole's thread where the model gives one; otherwise they are entered here. Its heights are measured from the highest top of the picked holes and bosses: 'clearance', 'retract' and 'feedPlane'; 'top' and 'bottom' are not used (the thread's length is a parameter or comes from the hole). The cutting feed is the feed at the tool's cutting edge (see 'edgeFeed'); plunge, lead-in and lead-out feeds are the operation's own. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here faces) and 'x-toolTypes' (the tools the picker offers first); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "feedLeadIn", "feedLeadOut", "coolant"],
+  "x-geometry": { "kind": "face", "count": "oneOrMore",
+                  "description": "Click the wall of each hole to thread, or the cylinder of each boss for an outside thread." },
+  "x-toolTypes": ["threadMill"],
+  "x-propertyOrder": ["location", "form", "pitch", "diameter", "threadLength", "threadDepth", "leftHand", "direction",
+                      "radialPasses", "springPass", "overlap", "edgeFeed"],
+  "properties": {
+    "location": {
+      "title": "Thread",
+      "description": "Inside a hole, or outside a boss or pin.",
+      "enum": ["internal", "external"],
+      "x-enumTitles": ["Internal", "External"],
+      "x-enumDescriptions": ["In a drilled hole: pick the hole's wall", "On a boss or pin: pick its cylinder"],
+      "default": "internal"
+    },
+    "form": {
+      "title": "Tool form",
+      "description": "Single-form: a tool with one tooth goes one revolution per pitch over the whole length. Multi-form: a tool with teeth over its flute length at the thread's pitch goes one revolution (and the overlap) per step of its toothed length.",
+      "enum": ["single", "multi"],
+      "x-enumTitles": ["Single-form", "Multi-form"],
+      "x-enumDescriptions": ["One revolution per pitch over the whole length", "One revolution plus overlap per tool-length step"],
+      "default": "single"
+    },
+    "pitch": {
+      "title": "Pitch",
+      "description": "The thread's pitch; 0: the hole's thread (from its hole feature). External threads, and holes without a thread in the model, need it.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "diameter": {
+      "title": "Major diameter",
+      "description": "The thread's major (nominal) diameter; 0: inside, the hole's thread; outside, the cylinder's diameter.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "threadLength": {
+      "title": "Thread length",
+      "description": "How far the thread runs down from the top of the bore or the boss; 0: inside, the hole's thread depth, else its whole bore; outside, the whole cylinder.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "threadDepth": {
+      "title": "Thread depth",
+      "description": "The radial depth of the thread; 0: the ISO 68-1 basic profile, 0.5413 x pitch inside (5/8 H) and 0.6134 x pitch outside (17/24 H).",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "leftHand": {
+      "title": "Left-hand thread",
+      "description": "Cut a left-hand thread: external threads, and holes without a thread spec. A hole with a thread spec is cut by its spec.",
+      "type": "boolean",
+      "default": false
+    },
+    "direction": {
+      "title": "Direction",
+      "description": "Climb or conventional milling; the tool goes up or down the thread to match, by the hand of the thread.",
+      "enum": ["climb", "conventional"],
+      "x-enumTitles": ["Climb", "Conventional"],
+      "default": "climb"
+    },
+    "radialPasses": {
+      "title": "Radial passes",
+      "description": "The thread depth is cut in this many equal steps.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "default": 1,
+      "x-unit": "count"
+    },
+    "springPass": {
+      "title": "Spring pass",
+      "description": "One more pass at the full thread depth.",
+      "type": "boolean",
+      "default": false
+    },
+    "overlap": {
+      "title": "Overlap",
+      "description": "Multi-form: how far each step turns beyond one revolution, so the start of the cut is cut again.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 90,
+      "default": 15,
+      "x-unit": "angle",
+      "x-relevantWhen": { "form": ["multi"] }
+    },
+    "edgeFeed": {
+      "title": "Feed at the cutting edge",
+      "description": "On: the cutting feed is what the cutting edge sees, so the tool centre moves at the feed times its radius over the edge's radius (slower inside a hole, faster outside a boss). Off: the tool centre moves at the cutting feed.",
+      "type": "boolean",
+      "default": true
+    }
+  }
+}
