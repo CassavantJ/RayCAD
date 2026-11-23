@@ -33,6 +33,7 @@ add_executable(ray_cam_invariants_tests
     checker_test_util.h
     property_drill_test.cpp
     property_face_test.cpp # T-052
+    property_contour2d_test.cpp # T-053
     property_harness_test.cpp
 )
 target_link_libraries(ray_cam_invariants_tests PRIVATE ray_cam_invariants Catch2::Catch2WithMain)

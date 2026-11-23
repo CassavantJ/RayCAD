@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/contour2d.schema.json",
+  "title": "2D contour",
+  "description": "Parameters of a 'contour2d' operation (cam.h Operation::paramsJson, task T-053): the tool runs beside a chain of picked edges (or the loops of picked planar faces) at one or more depths, climb or conventional, with tangent arc or line leads, radial roughing passes, a finish and a spring pass, tabs, and cutter compensation in the computer, in the control or both (wear). The geometry is edges (open or closed chains; tangent edges are followed when 'Follow tangent edges' is on) or planar faces perpendicular to the setup's Z. Heights: 'clearance', 'retract', 'feedPlane' and 'top' are measured from the top of the stock; 'bottom' from the height of each chain (the lowest point of its edges, or the face), so the default bottom 0 cuts down to the picked edges. All five are read. Feeds: the cutting feed along the contour, the plunge feed for plunges and tab moves straight up and down, the ramp feed for ramps, the lead-in and lead-out feeds for the leads. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here edges) and 'x-toolTypes' (the tools the picker offers); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane", "top", "bottom"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "feedRamp", "feedLeadIn", "feedLeadOut", "coolant"],
+  "x-geometry": { "kind": "edge", "count": "oneOrMore", "description": "Click the edges of the contour (tangent edges are followed)." },
+  "x-toolTypes": ["flatEndMill", "bullEndMill", "ballEndMill", "faceMill"],
+  "x-propertyOrder": ["side", "direction", "compensation", "followTangent", "faceLoops", "stockToLeave",
+                      "stockToLeaveAxial", "maxStepdown", "roughPasses", "roughStepover", "finishPass",
+                      "finishAllowance", "springPass", "leadType", "leadRadius", "leadSweep", "leadLength", "rampAngle",
+                      "tabs", "tabShape", "tabCount", "tabWidth", "tabHeight"],
+  "properties": {
+    "side": {
+      "title": "Tool side",
+      "description": "Which side of the chain the tool runs on. 'auto': away from the material (found by looking at the part beside the chain). 'outside' and 'inside': of a closed chain. 'left' and 'right': seen along the chain, which runs from its end with the lowest X (then Y) for an open chain and counter-clockwise for a closed one.",
+      "enum": ["auto", "outside", "inside", "left", "right"],
+      "x-enumTitles": ["Automatic", "Outside", "Inside", "Left", "Right"],
+      "x-enumDescriptions": ["away from the material", "closed chains", "closed chains", "of the chain's direction", "of the chain's direction"],
+      "default": "auto"
+    },
+    "direction": {
+      "title": "Direction",
+      "description": "Climb: the tool keeps the material on its right (spindle clockwise). Conventional: on its left.",
+      "enum": ["climb", "conventional"],
+      "x-enumTitles": ["Climb", "Conventional"],
+      "default": "climb"
+    },
+    "compensation": {
+      "title": "Compensation",
+      "description": "'computer': the toolpath is the tool centre. 'control': the toolpath is the contour (plus stock to leave) and the control offsets it by the radius in its offset register (G41/G42); the leads need a straight part to switch it on and off. 'wear': the toolpath is the tool centre and G41/G42 is on too, so the register holds only the wear.",
+      "enum": ["computer", "control", "wear"],
+      "x-enumTitles": ["In computer", "In control", "Wear"],
+      "x-enumDescriptions": ["tool centre path, no G41/G42", "contour path, G41/G42 with the full radius", "tool centre path, G41/G42 for wear"],
+      "default": "computer"
+    },
+    "followTangent": {
+      "title": "Follow tangent edges",
+      "description": "Continue each open chain through edges of the part that meet its ends tangentially, so one click picks a filleted outline.",
+      "type": "boolean",
+      "default": true
+    },
+    "faceLoops": {
+      "title": "Face loops",
+      "description": "For picked faces: which of each face's loops are contoured: its outer boundary, its inner loops (holes), or all.",
+      "enum": ["outer", "inner", "all"],
+      "x-enumTitles": ["Outer", "Inner", "All"],
+      "default": "outer"
+    },
+    "stockToLeave": {
+      "title": "Stock to leave",
+      "description": "Material left on the wall, beside the chain.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "stockToLeaveAxial": {
+      "title": "Floor stock to leave",
+      "description": "The bottom is raised by this much.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 50,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "maxStepdown": {
+      "title": "Maximum stepdown",
+      "description": "The deepest cut of one depth: the depths from the top to the bottom are equal steps of at most this; 0: one depth, at the bottom.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 500,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "roughPasses": {
+      "title": "Roughing passes",
+      "description": "Passes beside each other at every depth, from the outermost in, 'Roughing stepover' apart.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "default": 1,
+      "x-unit": "count"
+    },
+    "roughStepover": {
+      "title": "Roughing stepover",
+      "description": "The distance between roughing passes (with more than one).",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100,
+      "default": 1,
+      "x-unit": "length"
+    },
+    "finishPass": {
+      "title": "Finish pass",
+      "description": "After the roughing at every depth, one pass at the full depth that removes the finish allowance.",
+      "type": "boolean",
+      "default": false
+    },
+    "finishAllowance": {
+      "title": "Finish allowance",
+      "description": "What the roughing leaves for the finish pass, beside the stock to leave.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 20,
+      "default": 0.2,
+      "x-unit": "length",
+      "x-relevantWhen": { "finishPass": [true] }
+    },
+    "springPass": {
+      "title": "Spring pass",
+      "description": "The last pass once more at the same place and depth, for the tool's deflection.",
+      "type": "boolean",
+      "default": false
+    },
+    "leadType": {
+      "title": "Leads",
+      "description": "How the tool joins the contour and leaves it, tangentially: an arc (with an optional straight part), a straight line along the contour's tangent, or none (the tool goes down on the contour).",
+      "enum": ["arc", "line", "none"],
+      "x-enumTitles": ["Arc", "Line", "None"],
+      "default": "arc"
+    },
+    "leadRadius": {
+      "title": "Lead radius",
+      "description": "Of the lead arc's tool-centre path; 0: the tool's diameter. Made smaller (down to a quarter) where it does not fit; with compensation in the control it stays larger than the tool radius.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 500,
+      "default": 0,
+      "x-unit": "length",
+      "x-relevantWhen": { "leadType": ["arc"] }
+    },
+    "leadSweep": {
+      "title": "Lead sweep",
+      "description": "The angle the lead arc turns through.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 180,
+      "default": 90,
+      "x-unit": "angle",
+      "x-relevantWhen": { "leadType": ["arc"] }
+    },
+    "leadLength": {
+      "title": "Lead straight length",
+      "description": "Arc leads: a straight part before the lead-in arc and after the lead-out arc (needed with compensation in the control or wear, where it switches G41/G42 on and off). Line leads: the line's length; 0: the tool's diameter.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 500,
+      "default": 0,
+      "x-unit": "length",
+      "x-relevantWhen": { "leadType": ["arc", "line"] }
+    },
+    "rampAngle": {
+      "title": "Ramp angle",
+      "description": "Where the tool must enter material at a depth (not from outside the stock nor through area cut already), it ramps down along the lead-in or the contour at most this steeply; 0: no ramps (only a tool that cuts at its centre may then go straight down). Also the slope of the tool's way back down after a rectangular tab when it does not cut at its centre.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 45,
+      "default": 3,
+      "x-unit": "angle"
+    },
+    "tabs": {
+      "title": "Tabs",
+      "description": "Leave tabs (bridges) holding the part: at the depths below the tab height the tool rises over each tab.",
+      "type": "boolean",
+      "default": false
+    },
+    "tabShape": {
+      "title": "Tab shape",
+      "description": "Rectangular: the tool goes straight up and over. Triangular: up and down at a slope, the tab a triangle as wide as 'Tab width' at its foot.",
+      "enum": ["rectangular", "triangular"],
+      "x-enumTitles": ["Rectangular", "Triangular"],
+      "default": "rectangular",
+      "x-relevantWhen": { "tabs": [true] }
+    },
+    "tabCount": {
+      "title": "Tab count",
+      "description": "Tabs per chain, spread evenly along it.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 4,
+      "x-unit": "count",
+      "x-relevantWhen": { "tabs": [true] }
+    },
+    "tabWidth": {
+      "title": "Tab width",
+      "description": "The material each tab keeps, along the tool-centre path (at its foot for a triangular tab).",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100,
+      "default": 5,
+      "x-unit": "length",
+      "x-relevantWhen": { "tabs": [true] }
+    },
+    "tabHeight": {
+      "title": "Tab height",
+      "description": "The height of the tabs above the bottom.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100,
+      "default": 1,
+      "x-unit": "length",
+      "x-relevantWhen": { "tabs": [true] }
+    }
+  }
+}
