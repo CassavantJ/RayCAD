@@ -160,11 +160,11 @@ Result<Params> readParams(std::string_view paramsJson)
 struct Feature {
     bool internal = true;
     Nm x = 0, y = 0;
-    Nm diameter = 0;           // the drilled bore, or the cylinder
-    Nm top = 0;                // the bore's top, or the cylinder's
-    Nm bottom = 0;             // the bore's bottom, or the cylinder's
-    Nm featureTop = 0;         // the hole's top (above a counterbore), or the cylinder's
-    Nm freeBottom = 0;         // internal: the drilled hole is free above this
+    Nm diameter = 0;   // the drilled bore, or the cylinder
+    Nm top = 0;        // the bore's top, or the cylinder's
+    Nm bottom = 0;     // the bore's bottom, or the cylinder's
+    Nm featureTop = 0; // the hole's top (above a counterbore), or the cylinder's
+    Nm freeBottom = 0; // internal: the drilled hole is free above this
     bool through = false;
     const RecognizedHole* hole = nullptr;
     std::size_t part = 0;
@@ -220,8 +220,8 @@ private:
             const Nm pitch = toNm(t.threadPitch);
             plan_.teeth = toNm(t.fluteLength) / std::max<Nm>(1, pitch);
             if (plan_.teeth < 1) {
-                return invalid("The thread mill's flutes (" + mmText(t.fluteLength) + " mm) are shorter than one pitch (" +
-                               mmText(t.threadPitch) + " mm)");
+                return invalid("The thread mill's flutes (" + mmText(t.fluteLength) +
+                               " mm) are shorter than one pitch (" + mmText(t.threadPitch) + " mm)");
             }
         }
         return {};
@@ -490,11 +490,13 @@ private:
         } else if (holePitch > 0) {
             th.pitch = holePitch;
         } else {
-            return invalid(f.internal ? "The model gives no thread for " + at +
-                                            " (an imported part, or a hole not made as tapped) and no pitch is entered: "
-                                            "enter the pitch and the major diameter"
-                                      : "Enter the pitch of the thread on " + at + ": the model has no thread data for "
-                                                                                   "bosses");
+            return invalid(f.internal
+                               ? "The model gives no thread for " + at +
+                                     " (an imported part, or a hole not made as tapped) and no pitch is entered: "
+                                     "enter the pitch and the major diameter"
+                               : "Enter the pitch of the thread on " + at +
+                                     ": the model has no thread data for "
+                                     "bosses");
         }
         if (th.pitch <= 0) {
             return invalid("The pitch must be more than 0");
@@ -570,8 +572,8 @@ private:
             last = divHalfEven(minor + dt, 2);
             if (th.majorDiameter > f.diameter + toNm(kThreadDiameterTolMm)) {
                 plan_.warnings.push_back("The " + mmText(f.diameter) + " mm boss at X" + mmText(f.x) + " Y" +
-                                         mmText(f.y) + " is smaller than the thread's " +
-                                         mmText(th.majorDiameter) + " mm major diameter: the crests stay flat");
+                                         mmText(f.y) + " is smaller than the thread's " + mmText(th.majorDiameter) +
+                                         " mm major diameter: the crests stay flat");
             } else if (th.majorDiameter + toNm(kThreadDiameterTolMm) < f.diameter) {
                 plan_.warnings.push_back("The " + mmText(f.diameter) + " mm boss at X" + mmText(f.x) + " Y" +
                                          mmText(f.y) + " is larger than the thread's " + mmText(th.majorDiameter) +
@@ -579,7 +581,9 @@ private:
             }
         }
         for (int k = 1; k <= n; ++k) {
-            const Nm inset = divHalfEven(th.depth * (n - k), n);
+            // An even number of nanometres, so every pass's radius has the parity of the last one and the leads of all
+            // passes inside a hole start and end at one point.
+            const Nm inset = 2 * divHalfEven(th.depth * (n - k), 2 * static_cast<std::int64_t>(n));
             th.radii.push_back(f.internal ? last - inset : last + inset);
         }
         if (p_.springPass) {
@@ -592,16 +596,18 @@ private:
                            mmText(smallest) + " mm from the axis (at least " + mmText(kMinThreadPathRadiusNm) +
                            " mm); choose a smaller thread mill");
         }
-        // The shank: above the shoulder the tool has the shank's diameter; it must not reach into the bore or the thread.
+        // The shank: above the shoulder the tool has the shank's diameter; it must not reach into the bore or the
+        // thread.
         const Nm deep = f.top - th.bottom;
         if (t.shoulderLength > 0 && t.shankDiameter > 0 && toNm(t.shoulderLength) < deep) {
             const Nm ds = toNm(t.shankDiameter);
-            const bool rubs = f.internal ? last + (ds + 1) / 2 > f.diameter / 2 : smallest - ds / 2 < th.majorDiameter / 2;
+            const bool rubs =
+                f.internal ? last + (ds + 1) / 2 > f.diameter / 2 : smallest - ds / 2 < th.majorDiameter / 2;
             if (rubs) {
                 return invalid("At " + at + " the thread is " + mmText(deep) + " mm long, but the thread mill's " +
                                mmText(t.shankDiameter) + " mm shank starts " + mmText(t.shoulderLength) +
-                               " mm above its tip and would " +
-                               (f.internal ? "rub the bore" : "hit the thread") + ": use a tool with a longer reach");
+                               " mm above its tip and would " + (f.internal ? "rub the bore" : "hit the thread") +
+                               ": use a tool with a longer reach");
             }
         }
         const double stickOut = in_.op.tool.stickOut;
@@ -632,6 +638,7 @@ private:
     struct Layout {
         std::int64_t steps = 1, revolutions = 1;
         Nm step = 0, overlapZ = 0;
+        double overlapDeg = 0;
     };
     Layout layoutOf(const PlannedThread& th) const
     {
@@ -641,7 +648,11 @@ private:
             l.step = plan_.teeth * th.pitch;
             l.steps = std::max<std::int64_t>(1, (length + l.step - 1) / l.step);
             l.revolutions = 1;
-            l.overlapZ = roundHalfEven(static_cast<double>(th.pitch) * plan_.overlapDeg / 360.0);
+            // An overlap whose arc would be shorter than kMinOverlapChordNm on the smallest pass is left out.
+            const Nm smallest = *std::min_element(th.radii.begin(), th.radii.end());
+            const double chord = 2 * static_cast<double>(smallest) * dmath::sin(plan_.overlapDeg * kPi / 360.0);
+            l.overlapDeg = chord >= static_cast<double>(kMinOverlapChordNm) ? plan_.overlapDeg : 0;
+            l.overlapZ = l.overlapDeg > 0 ? roundHalfEven(static_cast<double>(th.pitch) * l.overlapDeg / 360.0) : 0;
         } else {
             l.revolutions = std::max<std::int64_t>(1, (length + th.pitch - 1) / th.pitch);
         }
@@ -671,10 +682,9 @@ private:
             const Layout l = layoutOf(th);
             const geom2d::Pt centre{th.x, th.y};
             if (th.internal) {
-                stock.cleared.push_back(
-                    link::Cleared{th.boreBottom, Regions{geom2d::Region{geom2d::Path::circle(centre, th.boreDiameter / 2,
-                                                                                            true),
-                                                                       {}}}});
+                stock.cleared.push_back(link::Cleared{
+                    th.boreBottom,
+                    Regions{geom2d::Region{geom2d::Path::circle(centre, th.boreDiameter / 2, true), {}}}});
                 o.preDrills.push_back(link::PreDrill{centre, th.boreDiameter, th.boreBottom});
             } else if (slices.count(th.boreBottom) == 0) {
                 auto free = freeAround(stock, th.boreBottom);
@@ -729,8 +739,8 @@ private:
                     }
                     link::Pass pass;
                     pass.start = link::Pt3{th.x + r, th.y, zs};
-                    pass.moves = helixMoves(th.x, th.y, r, th.ccw, zs, pitch, l.revolutions, plan_.overlapDeg,
-                                            overlapZ, feed);
+                    pass.moves =
+                        helixMoves(th.x, th.y, r, th.ccw, zs, pitch, l.revolutions, l.overlapDeg, overlapZ, feed);
                     pass.leadIn = lead;
                     pass.leadOut = lead;
                     pass.room = room;
@@ -739,18 +749,43 @@ private:
                 }
             }
         }
-        // Inside a hole, consecutive passes stay down: the link is a straight move in Z at the hole's centre (the lead-out
-        // ends and the next lead-in starts there, 1 nm apart at most), inside the drilled hole. Every other link retracts.
+        // Inside a hole, consecutive passes stay down: the link is a straight move in Z at the hole's centre (the
+        // lead-out ends and the next lead-in starts there, 1 nm apart at most), inside the drilled hole. Every other
+        // link retracts.
         o.maxStayDown = p_.internal ? 1000 : 0;
         auto linked = link::linkPasses(passes, o, stock, ctx_);
         if (!linked) {
             return tl::unexpected(linked.error());
         }
         plan_.linked = std::move(*linked);
+        dropMicroLinks(plan_.linked);
         for (const std::string& w : plan_.linked.warnings) {
             plan_.warnings.push_back(w);
         }
         return {};
+    }
+
+    // Linking joins a lead-out's end and the next lead-in's start, both rounded points on their arcs, which can be a
+    // nanometre or two apart: such a link (under 1 um) followed by a straight move is merged into that move, so the
+    // toolpath has no move a control could not write.
+    static void dropMicroLinks(link::Linked& l)
+    {
+        std::vector<Move> kept;
+        kept.reserve(l.moves.size());
+        link::Pt3 at = l.start;
+        for (std::size_t i = 0; i < l.moves.size(); ++i) {
+            const Move& m = l.moves[i];
+            const double d =
+                dmath::hypot(dmath::hypot(static_cast<double>(m.x - at.x), static_cast<double>(m.y - at.y)),
+                             static_cast<double>(m.z - at.z));
+            const bool next = i + 1 < l.moves.size() && l.moves[i + 1].kind == MoveKind::Linear;
+            if (m.kind == MoveKind::Linear && m.role == MoveRole::Link && next && d < 1000) {
+                continue;
+            }
+            kept.push_back(m);
+            at = link::Pt3{m.x, m.y, m.z};
+        }
+        l.moves = std::move(kept);
     }
 
     // The stock region less the part's material just above z: free around a boss (the part taken as machined).

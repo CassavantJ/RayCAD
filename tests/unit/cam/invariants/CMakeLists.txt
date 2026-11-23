@@ -32,7 +32,9 @@ add_executable(ray_cam_invariants_tests
     checker_reference_test.cpp
     checker_test_util.h
     property_drill_test.cpp
+    property_engrave_test.cpp    # T-056
     property_harness_test.cpp
+    property_threadmill_test.cpp # T-056
 )
 target_link_libraries(ray_cam_invariants_tests PRIVATE ray_cam_invariants Catch2::Catch2WithMain)
 set_property(TARGET ray_cam_invariants_tests PROPERTY FOLDER "tests")

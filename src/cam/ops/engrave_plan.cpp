@@ -196,8 +196,8 @@ private:
                            mmText(h.feedPlane) + ")");
         }
         if (h.clearance < h.retract) {
-            return invalid("The clearance height (Z" + mmText(h.clearance) + ") must not be below the retract height (Z" +
-                           mmText(h.retract) + ")");
+            return invalid("The clearance height (Z" + mmText(h.clearance) +
+                           ") must not be below the retract height (Z" + mmText(h.retract) + ")");
         }
         plan_.plane = toNm(h.top);
         return {};
@@ -213,10 +213,10 @@ private:
         const bool centreCutting = t.type == T::EngraveCutter || t.type == T::SpotDrill || t.type == T::BallEndMill ||
                                    (t.type == T::ChamferMill && pointed(t) && !(t.tipDiameter > 0));
         if (!centreCutting) {
-            return invalid(std::string("Engraving plunges straight into the material, so it needs a tool that cuts at ") +
-                           "its centre: an engraving cutter, a spot drill, a pointed chamfer mill or a ball end mill; " +
-                           "the tool is a " + toolWord(t.type) +
-                           (t.type == T::ChamferMill ? " with a flat tip" : std::string()));
+            return invalid(
+                std::string("Engraving plunges straight into the material, so it needs a tool that cuts at ") +
+                "its centre: an engraving cutter, a spot drill, a pointed chamfer mill or a ball end mill; " +
+                "the tool is a " + toolWord(t.type) + (t.type == T::ChamferMill ? " with a flat tip" : std::string()));
         }
         const Nm depth = toNm(p_.depth);
         if (pointed(t)) {
@@ -350,9 +350,10 @@ private:
         }
         const double width = engraveWidthMm(in_.tool, p_.depth);
         if (!strokes->empty() && width > p_.height / 4) {
-            plan_.warnings.push_back("The tool cuts a groove " + mmText(width) + " mm wide at this depth, more than a "
-                                     "quarter of the " + mmText(p_.height) +
-                                     " mm text height: the strokes may run together");
+            plan_.warnings.push_back("The tool cuts a groove " + mmText(width) +
+                                     " mm wide at this depth, more than a "
+                                     "quarter of the " +
+                                     mmText(p_.height) + " mm text height: the strokes may run together");
         }
         return {};
     }
@@ -388,8 +389,10 @@ private:
                 link::Pass pass = link::passFromPath(path, plan_.levels[k], feed_);
                 pass.cluster = static_cast<int>(i);
                 pass.level = static_cast<int>(k);
-                pass.reversible = !path.closed;
-                pass.rotatable = path.closed;
+                // Closed paths are not rotatable: linking may start one within 1 um of a vertex, which leaves an arc
+                // shorter than 1 um there (a full turn or nothing to a control; reported with T-056).
+                pass.reversible = true;
+                pass.rotatable = false;
                 pass.entryOrder = {EntryKind::Plunge};
                 passes.push_back(std::move(pass));
             }
@@ -398,6 +401,15 @@ private:
         o.clearance = toNm(h.clearance);
         o.retract = toNm(h.retract);
         o.feedPlane = toNm(h.feedPlane);
+        // Linking takes the tool as a cylinder of its radius and the area a cut swept as free above the cut, which a
+        // pointed tool does not clear (its cone is narrower than its diameter above the tip). So rapids stay at or
+        // above the stock's top: below it the tool always feeds.
+        const Nm stockTop = toNm(in_.geom.stockBounds.max.z);
+        if (o.feedPlane < stockTop && stockTop <= o.retract) {
+            plan_.warnings.push_back("The feed plane (Z" + mmText(o.feedPlane) + ") is below the top of the stock (Z" +
+                                     mmText(stockTop) + "): the tool feeds down from the stock's top");
+            o.feedPlane = stockTop;
+        }
         o.toolRadius = std::max<Nm>(1, toNm(in_.tool.diameter) / 2);
         o.centreCutting = true;
         o.feeds.plunge = plungeFeed_;
@@ -459,8 +471,7 @@ geom2d::Path recentreArcs(geom2d::Path p)
             const double nl = dmath::hypot(nx, ny);
             nx /= nl;
             ny /= nl;
-            const double t =
-                (static_cast<double>(s.centre.x) - mx) * nx + (static_cast<double>(s.centre.y) - my) * ny;
+            const double t = (static_cast<double>(s.centre.x) - mx) * nx + (static_cast<double>(s.centre.y) - my) * ny;
             s.centre = geom2d::Pt{geom2d::roundNm(mx + t * nx), geom2d::roundNm(my + t * ny)};
             const double cx = static_cast<double>(s.centre.x), cy = static_cast<double>(s.centre.y);
             s.radius = geom2d::roundNm((dmath::hypot(ax - cx, ay - cy) + dmath::hypot(bx - cx, by - cy)) / 2);

@@ -41,7 +41,8 @@ const kernel::Shape& pin()
     return s;
 }
 
-OpCase internal(const std::string& params, lib::Tool t, const std::vector<std::pair<double, double>>& holes = {{15, 20}})
+OpCase internal(const std::string& params, lib::Tool t,
+                const std::vector<std::pair<double, double>>& holes = {{15, 20}})
 {
     std::vector<kernel::SubId> faces;
     for (const auto& [x, y] : holes) {
@@ -107,8 +108,7 @@ std::vector<Nm> checkRevolutions(const Toolpath& p, Nm x, Nm y, Nm pitch, bool c
 
 } // namespace
 
-TEST_CASE("thread milling: the direction of travel for every hand, location, cut mode and spindle",
-          "[cam][threadmill]")
+TEST_CASE("thread milling: the direction of travel for every hand, location, cut mode and spindle", "[cam][threadmill]")
 {
     struct Row {
         bool internal, rightHand, climb, cw;
@@ -117,14 +117,14 @@ TEST_CASE("thread milling: the direction of travel for every hand, location, cut
     // M3 (cw): climb inside is counter-clockwise, around a boss clockwise; conventional and M4 each reverse it. A
     // right-hand thread rises going counter-clockwise.
     const Row rows[] = {
-        {true, true, true, true, true, true},       {true, false, true, true, true, false},
-        {true, true, false, true, false, false},    {true, false, false, true, false, true},
-        {false, true, true, true, false, false},    {false, false, true, true, false, true},
-        {false, true, false, true, true, true},     {false, false, false, true, true, false},
-        {true, true, true, false, false, false},    {true, false, true, false, false, true},
-        {true, true, false, false, true, true},     {true, false, false, false, true, false},
-        {false, true, true, false, true, true},     {false, false, true, false, true, false},
-        {false, true, false, false, false, false},  {false, false, false, false, false, true},
+        {true, true, true, true, true, true},      {true, false, true, true, true, false},
+        {true, true, false, true, false, false},   {true, false, false, true, false, true},
+        {false, true, true, true, false, false},   {false, false, true, true, false, true},
+        {false, true, false, true, true, true},    {false, false, false, true, true, false},
+        {true, true, true, false, false, false},   {true, false, true, false, false, true},
+        {true, true, false, false, true, true},    {true, false, false, false, true, false},
+        {false, true, true, false, true, true},    {false, false, true, false, true, false},
+        {false, true, false, false, false, false}, {false, false, false, false, false, true},
     };
     for (const Row& r : rows) {
         INFO("internal " << r.internal << " right " << r.rightHand << " climb " << r.climb << " M3 " << r.cw);
@@ -183,9 +183,9 @@ TEST_CASE("thread milling inside: M8x1.25, single-form, two radial passes and a 
         k.direction = invariants::Direction::Climb;
     });
     // Right hand, climb, M3: counter-clockwise and up. Rf = (8 - 5) / 2 = 1.5 mm; h = 676582 nm (5/8 H); the first
-    // pass at 1.5 mm - 676582 / 2 (338291) = 1.161709 mm.
+    // pass at 1.5 mm - 2 round(676582 / 4) (338292, an even inset) = 1.161708 mm.
     const std::vector<Nm> radii = checkRevolutions(p, 15'000'000, 20'000'000, 1'250'000, true, true);
-    CHECK(radii == std::vector<Nm>{1'161'709, 1'500'000, 1'500'000});
+    CHECK(radii == std::vector<Nm>{1'161'708, 1'500'000, 1'500'000});
     // The thread's diameter: 2 Rf + the tool = 8 mm exactly. 16 revolutions each (the 20 mm bore / 1.25).
     CHECK(cutArcs(p).size() == 3 * 16 * 2);
     // The lead-in starts at the hole's centre, at the bottom of the thread (the through bore's exit, Z 0), and is a
@@ -194,7 +194,7 @@ TEST_CASE("thread milling inside: M8x1.25, single-form, two radial passes and a 
     const Move& lead = p.moves.at(first - 1);
     CHECK(lead.role == MoveRole::LeadIn);
     CHECK(lead.kind == MoveKind::ArcCCW);
-    CHECK(lead.x == 15'000'000 + 1'161'709);
+    CHECK(lead.x == 15'000'000 + 1'161'708);
     CHECK(lead.z == 0);
     const Move& before = p.moves.at(first - 2);
     CHECK(std::abs(before.x - 15'000'000) <= 1);
@@ -309,8 +309,8 @@ TEST_CASE("thread milling refuses, naming the cause", "[cam][threadmill][validat
                 "enter the thread's major (nominal) diameter");
         refused(internal(R"({"pitch":1.25,"diameter":6.5})", threadMill(5)), ErrorCode::InvalidArgument,
                 "is not smaller than the 6.5 mm thread");
-        refused(internal(R"({"pitch":1.25,"diameter":8,"threadLength":25})", threadMill(5)),
-                ErrorCode::InvalidArgument, "is 25 mm long, but the hole's bore is 20 mm long");
+        refused(internal(R"({"pitch":1.25,"diameter":8,"threadLength":25})", threadMill(5)), ErrorCode::InvalidArgument,
+                "is 25 mm long, but the hole's bore is 20 mm long");
         refused(internal(R"({"pitch":1,"diameter":6,"threadLength":13})", threadMill(3), {{52, 8}}),
                 ErrorCode::InvalidArgument, "but the drilled bore is 12 mm long: thread less deep, or drill deeper");
         refused(internal(R"({"pitch":1.25,"diameter":8,"threadDepth":4})", threadMill(5)), ErrorCode::InvalidArgument,
@@ -326,7 +326,8 @@ TEST_CASE("thread milling refuses, naming the cause", "[cam][threadmill][validat
                 "is the wall of a hole, not of a boss");
         OpCase top = threadCase(threadBlock(), topEdges(threadBlock(), 20, 15, 20, 3.4), m8, threadMill(5));
         refused(top, ErrorCode::InvalidArgument, "Selection 1 is not a face");
-        refused(threadCase(threadBlock(), {}, m8, threadMill(5)), ErrorCode::InvalidArgument, "Pick the holes to thread");
+        refused(threadCase(threadBlock(), {}, m8, threadMill(5)), ErrorCode::InvalidArgument,
+                "Pick the holes to thread");
     }
     SECTION("the shank, the stick-out and the heights")
     {
@@ -370,14 +371,15 @@ TEST_CASE("thread milling warns about a bore smaller than the minor diameter", "
     CHECK_THAT(w->front(), ContainsSubstring("is smaller than the thread's minor diameter (6.917 mm)"));
 }
 
-
 // A problem of geom2d::sweptArea (T-050) found by T-056 and NOT fixed here: the area a disc of radius 3 mm sweeps along
-// a whole circle of radius 3 mm (its inner offset is the centre) together with a lead-out arc ending 1 nm from the centre
-// comes out as a disc of radius 7.5 mm (176.7 mm2) instead of 6 mm (113.1 mm2); either path alone is right. Linking's
-// cut-area model (link.cpp Material) is built from such sweeps, so a thread-milling pass whose radius equals the tool's
-// (an M12 thread with a 6 mm thread mill) with its lead-out gets a wrong cut area. The thread milling operation does not
-// rely on it (threadmill.h LINKING). [!shouldfail]: this case starts failing, i.e. reports, when geom2d is fixed.
-TEST_CASE("known problem: geom2d::sweptArea of a circle of the disc's radius with another path", "[cam][threadmill][!shouldfail]")
+// a whole circle of radius 3 mm (its inner offset is the centre) together with a lead-out arc ending 1 nm from the
+// centre comes out as a disc of radius 7.5 mm (176.7 mm2) instead of 6 mm (113.1 mm2); either path alone is right.
+// Linking's cut-area model (link.cpp Material) is built from such sweeps, so a thread-milling pass whose radius equals
+// the tool's (an M12 thread with a 6 mm thread mill) with its lead-out gets a wrong cut area. The thread milling
+// operation does not rely on it (threadmill.h LINKING). [!shouldfail]: this case starts failing, i.e. reports, when
+// geom2d is fixed.
+TEST_CASE("known problem: geom2d::sweptArea of a circle of the disc's radius with another path",
+          "[cam][threadmill][!shouldfail]")
 {
     JobContext ctx;
     const geom2d::Pt c{40'000'000, 20'000'000};

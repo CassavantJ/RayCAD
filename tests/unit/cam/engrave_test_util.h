@@ -73,9 +73,9 @@ inline lib::Tool engraver(double diameter = 3, double tipAngle = 60, double tipD
     return t;
 }
 
-// A thread mill: single-form (pitch 0) or multi-form (its pitch), with its teeth over fluteLength, then a neck 0.6 of its
-// diameter up to `reach` above the tip. libraries.h has no neck diameter, so the neck is described as the shank (both
-// the generator's shank check and the invariant checker's tool profile read it so).
+// A thread mill: single-form (pitch 0) or multi-form (its pitch), with its teeth over fluteLength, then a neck 0.6 of
+// its diameter up to `reach` above the tip. libraries.h has no neck diameter, so the neck is described as the shank
+// (both the generator's shank check and the invariant checker's tool profile read it so).
 inline lib::Tool threadMill(double diameter, double pitch = 0, double fluteLength = 1.5, double reach = 30)
 {
     lib::Tool t = tool(lib::ToolType::ThreadMill, diameter, 0, fluteLength);
@@ -148,7 +148,9 @@ inline OpCase engraveCase(const kernel::Shape& part, const std::vector<kernel::S
     c.op.cutting.feedPlunge = 100;
     c.tool = std::move(t);
     c.geom = geometryOn(part, edges);
-    c.make = [] { return ops::makeEngraveOperationType(); };
+    c.make = [] {
+        return ops::makeEngraveOperationType();
+    };
     return c;
 }
 
@@ -162,7 +164,9 @@ inline OpCase threadCase(const kernel::Shape& part, const std::vector<kernel::Su
     c.op.heights.feedPlane = 2;
     c.tool = std::move(t);
     c.geom = geometryOn(part, faces);
-    c.make = [] { return ops::makeThreadmillOperationType(); };
+    c.make = [] {
+        return ops::makeThreadmillOperationType();
+    };
     return c;
 }
 

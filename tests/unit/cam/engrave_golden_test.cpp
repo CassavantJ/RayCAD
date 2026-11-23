@@ -52,7 +52,8 @@ std::vector<kernel::SubId> rims(const kernel::Shape& s)
 
 TEST_CASE("golden: engraving a line of text", "[cam][engrave][golden]")
 {
-    OpCase c = engraveCase(plate(), {}, R"j({"text":"RayCAD 1/4-20 #8 (x)","textHeight":4,"textX":4,"textY":8,"depth":0.15})j");
+    OpCase c = engraveCase(plate(), {},
+                           R"j({"text":"RayCAD 1/4-20 #8 (x)","textHeight":4,"textX":4,"textY":8,"depth":0.15})j");
     // Allowed: a cylinder round the text's box (width from the font, 4 mm high, descenders 1.33 mm) and the groove.
     TextLayout l;
     l.text = "RayCAD 1/4-20 #8 (x)";
@@ -100,8 +101,8 @@ TEST_CASE("golden: a spline edge comes as short lines and is engraved as arcs", 
     loop.curves.push_back(kernel::ProfileCurve{K::Line, {{50, 40}, {10, 40}}, 0, false, 0});
     loop.curves.push_back(kernel::ProfileCurve{K::Line, {{10, 40}, {10, 10}}, 0, false, 0});
     JobContext ctx;
-    auto slab = kernel::extrude(kernel::Profile{kernel::Plane{Vec3{0, 0, -5}, Vec3{0, 0, 1}, Vec3{1, 0, 0}}, {loop}},
-                                5, 0, ctx);
+    auto slab = kernel::extrude(kernel::Profile{kernel::Plane{Vec3{0, 0, -5}, Vec3{0, 0, 1}, Vec3{1, 0, 0}}, {loop}}, 5,
+                                0, ctx);
     REQUIRE(slab);
     const kernel::Shape s = slab->op.shape;
     std::vector<kernel::SubId> spline;
@@ -164,7 +165,8 @@ TEST_CASE("golden: engraving the counterbore rims of a corpus part", "[cam][engr
 TEST_CASE("engraving gives the same bytes every time", "[cam][engrave][golden]")
 {
     const auto make = [] {
-        return engraveCase(plate(), rims(plate()), R"({"text":"Op 10","textX":40,"textY":10,"textAngle":30,"depth":0.2})")
+        return engraveCase(plate(), rims(plate()),
+                           R"({"text":"Op 10","textX":40,"textY":10,"textAngle":30,"depth":0.2})")
             .generate();
     };
     const auto first = make();

@@ -432,8 +432,8 @@ Result<geom2d::Paths> layoutText(const StrokeFont& font, const TextLayout& layou
     const double width = textWidthMm(font, layout);
     double pen = layout.align == TextAlign::Left ? 0.0 : layout.align == TextAlign::Centre ? -width / 2 : -width;
     const auto tooSmall = [] {
-        return tl::unexpected(
-            Error{ErrorCode::InvalidArgument, "The text is too small to engrave: an arc of a character is under 1 nm", {}});
+        return tl::unexpected(Error{
+            ErrorCode::InvalidArgument, "The text is too small to engrave: an arc of a character is under 1 nm", {}});
     };
     for (const char32_t c : *codes) {
         const FontGlyph& g = font.glyphs.at(c);
@@ -458,8 +458,8 @@ Result<geom2d::Paths> layoutText(const StrokeFont& font, const TextLayout& layou
                 const bool whole = k == 0 ? closes : (seg.x == st.segments[k - 1].x && seg.y == st.segments[k - 1].y);
                 if (whole) {
                     const Pt centre = rounded(cMm);
-                    const geom2d::Coord r = geom2d::roundNm(dist(cur, {static_cast<double>(centre.x),
-                                                                       static_cast<double>(centre.y)}));
+                    const geom2d::Coord r =
+                        geom2d::roundNm(dist(cur, {static_cast<double>(centre.x), static_cast<double>(centre.y)}));
                     if (r < 1) {
                         return tooSmall();
                     }

@@ -1051,3 +1051,49 @@ TEST_CASE("round trip: a peck clearance the native cycle cannot carry must be wa
     }
     FAIL("the FANUC chip-break golden is not in the matrix");
 }
+
+TEST_CASE("round trip: thread milling keeps the pitch per turn in every post's program", "[post][roundtrip]")
+{
+    // T-056: the thread milling goldens (17-thread-milling) as each post wrote them, read back by the interpreter. Over
+    // every run of helical arcs about one centre whose sweeps add up to a whole turn, Z changes by the thread's pitch
+    // (1.25 mm for the hole at X15 Y20, 1.75 mm for the pin at X30 Y20) within one least count of the written numbers.
+    std::size_t programs = 0, turns = 0;
+    for (const Run& r : goldenRuns()) {
+        if (r.file.rfind("17-thread-milling", 0) != 0) {
+            continue;
+        }
+        ++programs;
+        INFO(r.post << "/" << r.file);
+        const rtgc::Trace t = rtgc::interpret(readFile(goldenPath(r.post, r.file)), dialectFor(r.post, r.program));
+        REQUIRE(t.errors.empty());
+        const auto helical = [](const rtgc::Segment& s) {
+            return s.kind == rtgc::SegKind::Arc && s.plane == 17 && std::abs(s.to.z - s.from.z) > 1e-9;
+        };
+        for (std::size_t i = 0; i < t.segs.size(); ++i) {
+            if (!helical(t.segs[i])) {
+                continue;
+            }
+            const rtgc::Segment& a = t.segs[i];
+            double sweep = 0;
+            for (std::size_t j = i; j < t.segs.size() && helical(t.segs[j]); ++j) {
+                const rtgc::Segment& b = t.segs[j];
+                if (std::abs(b.centre.x - a.centre.x) > 1e-9 || std::abs(b.centre.y - a.centre.y) > 1e-9) {
+                    break;
+                }
+                sweep += b.sweep;
+                if (std::abs(sweep - 2 * 3.14159265358979323846) < 1e-6) {
+                    const double pitch = std::abs(a.centre.x - 15) < 1e-6 ? 1.25 : 1.75;
+                    INFO("line " << a.line << " to " << b.line);
+                    CHECK(std::abs(std::abs(b.to.z - a.from.z) - pitch) <= b.tol * 1.0001);
+                    ++turns;
+                    break;
+                }
+                if (sweep > 2 * 3.14159265358979323846) {
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(programs == 2 * std::size(kPosts));
+    CHECK(turns > 100);
+}

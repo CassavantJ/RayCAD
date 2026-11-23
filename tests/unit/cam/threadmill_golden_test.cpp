@@ -96,7 +96,8 @@ TEST_CASE("golden: thread milling M12x1.75 left-hand outside a pin", "[cam][thre
     pitchExact(p, 1'750'000);
 }
 
-TEST_CASE("golden: thread milling the counterbored holes of a corpus part, conventional", "[cam][threadmill][golden][corpus]")
+TEST_CASE("golden: thread milling the counterbored holes of a corpus part, conventional",
+          "[cam][threadmill][golden][corpus]")
 {
     // plate_counterbore_1: four 6.6 mm through holes from Z 8.5 to Z 0 under 11 mm counterbores from Z 15
     // (tests/unit/cam/holes_labels.txt). An M8x1.25 thread: the 6.6 mm bore is under its minor diameter (a warning).

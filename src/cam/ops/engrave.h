@@ -4,15 +4,15 @@
 //
 // WHAT IS ENGRAVED, in this order (each a geom2d path in the WCS XY, integer nanometres):
 //   1. The picked edges (ResolvedGeometry::selected, each must be an edge of a part body), per part, chained by
-//      geom2d::chainEdges along the setup's Z (edges along Z are skipped; ends within 1 um join; a point where more than
-//      two picked edges meet ends the chains there). Each chain is projected onto the plane whatever its own height; a
-//      chain more than 1 um above or below the plane gets a warning saying so. With fitArcs, every run of three or more
-//      consecutive line spans of a chain (what the kernel makes of a spline or an ellipse, kernel.h edgeCurves) is
-//      replaced by geom2d::fitArcs at its default tolerance (1 um); a closed chain of lines only is fitted as a closed
-//      polyline. fitArcs leaves an arc's ends within its tolerance of the circle, the IR wants 1 nm: each fitted arc keeps
-//      its ends and its centre moves onto the perpendicular bisector of them (rounded; the radius the rounded mean
-//      distance), so the arc moves by about the fit tolerance at most. Lines and arcs that came as lines and arcs are
-//      kept as they are.
+//      geom2d::chainEdges along the setup's Z (edges along Z are skipped; ends within 1 um join; a point where more
+//      than two picked edges meet ends the chains there). Each chain is projected onto the plane whatever its own
+//      height; a chain more than 1 um above or below the plane gets a warning saying so. With fitArcs, every run of
+//      three or more consecutive line spans of a chain (what the kernel makes of a spline or an ellipse, kernel.h
+//      edgeCurves) is replaced by geom2d::fitArcs at its default tolerance (1 um); a closed chain of lines only is
+//      fitted as a closed polyline. fitArcs leaves an arc's ends within its tolerance of the circle, the IR wants 1 nm:
+//      each fitted arc keeps its ends and its centre moves onto the perpendicular bisector of them (rounded; the radius
+//      the rounded mean distance), so the arc moves by about the fit tolerance at most. Lines and arcs that came as
+//      lines and arcs are kept as they are.
 //   2. The text (param text, UTF-8, at most 200 characters), laid out by layoutText (engrave_font.h): height, extra
 //      spacing, alignment, position and angle on the plane.
 //   Nothing at all (no edges, empty text or only spaces) is refused.
@@ -21,10 +21,15 @@
 //   z_k = top - D * k / n rounded half to even for k = 1..n, the last exactly top - D; with S = 0 one level, top - D.
 //   heights.bottom is not read.
 // PASSES AND LINKING: one pass per path and level (link::passFromPath at z_k, the cut feed), cluster = the path,
-//   level = k, so a path's levels are cut in order; open paths are reversible, closed ones rotatable; every pass is
-//   entered by a straight plunge (entryOrder {Plunge}: the tool must cut at its centre), at the plunge feed (feedPlunge,
-//   else the cut feed). link::linkPasses orders them (nearest neighbour and local improvement) and adds the plunges,
-//   retracts (feed up to the feed plane, rapid to the retract plane) and rapids; stock = the setup's stock box.
+//   level = k, so a path's levels are cut in order; every path is reversible, none rotatable (linking can start a
+//   closed pass within 1 um of a vertex and leave an arc under 1 um there, which a control reads as a full turn or
+//   nothing: a closed path starts where it was drawn or chained); every pass is
+//   entered by a straight plunge (entryOrder {Plunge}: the tool must cut at its centre), at the plunge feed
+//   (feedPlunge, else the cut feed). link::linkPasses orders them (nearest neighbour and local improvement) and adds
+//   the plunges, retracts (feed up to the feed plane, rapid to the retract plane) and rapids; stock = the setup's stock
+//   box. Linking takes the tool as a cylinder and the column above a cut as free, which a pointed tool does not clear,
+//   so a feed plane below the stock's top is raised to it for linking (with a warning): rapids never go below the
+//   stock's top, the tool feeds from there.
 // TOOL (refused otherwise, with the reason): an engraving cutter, a spot drill, a ball end mill, or a chamfer mill
 //   with a pointed tip (tipDiameter 0): tools that cut at their centre. A pointed tool (tip angle in (0, 180)) must
 //   reach the depth within its point: D <= drill.h pointLengthNm(diameter, tip angle, tip diameter). D must fit the
@@ -51,16 +56,16 @@ namespace ray::cam::ops {
 // The width of the groove a tool cuts at depth `depth` (mm), see TOOL above.
 double engraveWidthMm(const lib::Tool& tool, double depth);
 // A path with every run of three or more consecutive line spans fitted with arcs (geom2d::fitArcs, its defaults, then
-// each arc re-centred as WHAT IS ENGRAVED says); a closed path of lines only is fitted as a closed polyline. Other spans
-// are kept.
+// each arc re-centred as WHAT IS ENGRAVED says); a closed path of lines only is fitted as a closed polyline. Other
+// spans are kept.
 geom2d::Path fitLineRuns(const geom2d::Path& path);
 
 struct EngravePlan {
-    geom2d::Paths paths;          // what is engraved, edges first, then the text's strokes
-    std::size_t edgePaths = 0;    // how many of `paths` came from edges
-    std::vector<Nm> levels;       // the Z of each level, top down
-    Nm plane = 0;                 // heights.top
-    link::Linked linked;          // the whole toolpath's moves
+    geom2d::Paths paths;       // what is engraved, edges first, then the text's strokes
+    std::size_t edgePaths = 0; // how many of `paths` came from edges
+    std::vector<Nm> levels;    // the Z of each level, top down
+    Nm plane = 0;              // heights.top
+    link::Linked linked;       // the whole toolpath's moves
     std::vector<std::string> warnings;
 };
 

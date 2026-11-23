@@ -79,8 +79,8 @@ struct TextLayout {
     double height = 5;  // mm: the height of the capitals (and digits)
     double spacing = 0; // mm added between two characters
     TextAlign align = TextAlign::Left;
-    double x = 0, y = 0;  // mm, WCS: the anchor on the baseline
-    double angleDeg = 0;  // the baseline's direction, counter-clockwise from +X
+    double x = 0, y = 0; // mm, WCS: the anchor on the baseline
+    double angleDeg = 0; // the baseline's direction, counter-clockwise from +X
 };
 // The text's width W in mm (LAYOUT above).
 double textWidthMm(const StrokeFont& font, const TextLayout& layout);

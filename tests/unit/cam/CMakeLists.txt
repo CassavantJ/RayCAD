@@ -164,6 +164,7 @@ ray_test_runtime_path(ray_cam_link_tests)
 foreach(_t056 IN ITEMS engrave threadmill)
     add_executable(ray_cam_${_t056}_tests
         ${_t056}_test.cpp
+        ${_t056}_document_test.cpp
         ${_t056}_golden_test.cpp
         engrave_test_util.h
         drill_test_util.h

@@ -1622,6 +1622,166 @@ Rectangle {
     root->setParentItem(nullptr);
 }
 
+// T-056: the thread milling and engraving types in the real window, through the generic panel and nothing of their
+// own: a hole's wall and a bore picked as faces, a line of text typed into the schema's text field, a hole's rim picked
+// as an edge, the tool from the library, the preview drawn, OK. Screenshots (RAY_T045_SHOTS): t056_threadmill and
+// t056_engrave, the panel with the generated toolpath, in both themes.
+namespace {
+
+// The face of body 0 that is the cylinder of radius r about the vertical line through (x, y) (model mm), or the
+// circular edge of radius r about it at height z.
+std::uint32_t cylinderFace(const Window& w, double x, double y, double r)
+{
+    const kernel::Shape& s = w.host->scene()->body(0)->shape;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face); ++i) {
+        const auto info = kernel::surfaceInfo(s, kernel::SubId{kernel::SubKind::Face, i});
+        if (info && info->type == kernel::SurfaceType::Cylinder && std::abs(info->origin.x - x) < 1e-6 &&
+            std::abs(info->origin.y - y) < 1e-6 && std::abs(info->radius - r) < 1e-6)
+            return i;
+    }
+    FAIL("no cylinder of radius " << r << " at (" << x << ", " << y << ")");
+    return 0;
+}
+std::uint32_t circleEdge(const Window& w, double x, double y, double r, double z)
+{
+    const kernel::Shape& s = w.host->scene()->body(0)->shape;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Edge); ++i) {
+        const auto info = kernel::curveInfo(s, kernel::SubId{kernel::SubKind::Edge, i});
+        if (info && info->type == kernel::CurveType::Circle && std::abs(info->center.x - x) < 1e-6 &&
+            std::abs(info->center.y - y) < 1e-6 && std::abs(info->radius - r) < 1e-6 &&
+            std::abs(info->center.z - z) < 1e-6)
+            return i;
+    }
+    FAIL("no circle of radius " << r << " at (" << x << ", " << y << ", " << z << ")");
+    return 0;
+}
+
+void pickElement(const Window& w, kernel::SubKind kind, std::uint32_t index)
+{
+    w.host->selection()->applyClick(render::PickHit{w.host->scene()->itemForBody(0), kind, index, Vec3{}, 0},
+                                    Qt::NoModifier);
+    QCoreApplication::processEvents();
+}
+
+std::size_t helicalArcs(const cam::Toolpath& p)
+{
+    std::size_t n = 0;
+    Nm z = p.startZ;
+    for (const cam::Move& m : p.moves) {
+        n += (m.kind == cam::MoveKind::ArcCW || m.kind == cam::MoveKind::ArcCCW) && m.z != z ? 1 : 0;
+        z = m.z;
+    }
+    return n;
+}
+
+const QString kThreadMillPitch1 = QStringLiteral("d6855e29-d997-4c9a-8e02-d96d6af93a0f"); // multi-form, pitch 1
+const QString kSpot10 = QStringLiteral("2bc275c9-613e-4ad5-acc3-1c8db31262c9");           // 10 mm 90 deg spot drill
+
+} // namespace
+
+TEST_CASE("thread milling and engraving by the UI: the generic form, picks, text, the preview, OK", "[cam][e2e][t056]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // plate_thru_holes_1: 6.6 mm through holes at (30, 26.667), (60, 26.667) ..., top at Z 10
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+
+    // Thread milling: an M8x1 thread in the hole at (30, 26.667), multi-form, with the library's pitch 1 thread mill.
+    newOperation(w);
+    w.op()->setType(QStringLiteral("threadmill"));
+    REQUIRE(w.op()->type() == QStringLiteral("threadmill"));
+    CHECK(w.op()->geometryKind() == QStringLiteral("face"));
+    CHECK(w.op()->form()->problems().isEmpty());
+    for (const char* key : {"location", "form", "pitch", "diameter", "threadLength", "direction", "radialPasses"})
+        CHECK(w.find(QStringLiteral("schemaRow.") + QLatin1String(key)) != nullptr);
+    CHECK(w.find(QStringLiteral("operationField.feedPlane"))->isVisible());
+    CHECK(w.find(QStringLiteral("operationField.top")) == nullptr); // threadmill reads clearance, retract, feed plane
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    CHECK(pickerTypes(w) == std::set<QString>{QStringLiteral("threadMill")});
+    chooseTool(w, kThreadMillPitch1, QStringLiteral("Pitch 1.0"));
+    pickElement(w, kernel::SubKind::Face, cylinderFace(w, 30, 26.666666667, 3.3));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    w.op()->form()->setValue(QStringLiteral("form"), QStringLiteral("multi"));
+    w.op()->form()->setValue(QStringLiteral("pitch"), QStringLiteral("1 mm"));
+    w.op()->form()->setValue(QStringLiteral("diameter"), QStringLiteral("8 mm"));
+    w.op()->form()->setValue(QStringLiteral("radialPasses"), QStringLiteral("2"));
+    CHECK(w.find(QStringLiteral("schemaRow.overlap"))->isVisible()); // relevant for multi-form only
+    w.op()->setValue(QStringLiteral("rpm"), QStringLiteral("4000"));
+    w.op()->setValue(QStringLiteral("feedCut"), QStringLiteral("250"));
+    w.previewed("ok");
+    REQUIRE(w.op()->previewToolpath() != nullptr);
+    CHECK(helicalArcs(*w.op()->previewToolpath()) >= 4); // two radial passes of one turn, in halves
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    // The shot: the thread's parameters in the panel, the view framed on the hole and its helix.
+    w.inView(w.find(QStringLiteral("schemaRow.radialPasses")));
+    w.view()->setCamera(w.view()->framed(w.view()->camera(), Box3{{24, 20.5, 0}, {36, 32.5, 10}}));
+    w.shotsBothThemes(QStringLiteral("t056_threadmill"));
+    w.host->scene()->setBodyVisible(0, false); // the helix is inside the hole: a shot with the part hidden too
+    w.shotsBothThemes(QStringLiteral("t056_threadmill_part_hidden"));
+    w.host->scene()->setBodyVisible(0, true);
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+    REQUIRE(w.document()->state()->cam->operations.size() == 1);
+    CHECK(w.document()->state()->cam->operations.begin()->second.type == "threadmill");
+
+    // Engraving: the rim of the hole at (60, 26.667) and a line of text, with the 10 mm spot drill.
+    newOperation(w);
+    w.op()->setType(QStringLiteral("engrave"));
+    REQUIRE(w.op()->type() == QStringLiteral("engrave"));
+    CHECK(w.op()->geometryKind() == QStringLiteral("edge"));
+    CHECK(w.op()->form()->problems().isEmpty());
+    CHECK(w.find(QStringLiteral("schemaInput.text")) != nullptr); // the text field from "type": "string"
+    CHECK(w.find(QStringLiteral("schemaCombo.font")) != nullptr); // the font as a choice
+    w.op()->chooseTool(kSpot10);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->toolId() == kSpot10; }, 5000));
+    CHECK(w.host->selection()->filterMask() == static_cast<std::uint8_t>(render::PickFilter::Edges));
+    pickElement(w, kernel::SubKind::Edge, circleEdge(w, 60, 26.666666667, 3.3, 10));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    w.typeInto(QStringLiteral("schemaInput.text"), QStringLiteral("RayCAD T-056"));
+    w.op()->form()->setValue(QStringLiteral("textHeight"), QStringLiteral("6 mm"));
+    w.op()->form()->setValue(QStringLiteral("textX"), QStringLiteral("20 mm"));
+    w.op()->form()->setValue(QStringLiteral("textY"), QStringLiteral("8 mm"));
+    w.op()->form()->setValue(QStringLiteral("depth"), QStringLiteral("0.3 mm"));
+    w.op()->setValue(QStringLiteral("rpm"), QStringLiteral("6000"));
+    w.op()->setValue(QStringLiteral("feedCut"), QStringLiteral("300"));
+    w.op()->setValue(QStringLiteral("feedPlunge"), QStringLiteral("100"));
+    w.previewed("ok");
+    REQUIRE(w.op()->previewToolpath() != nullptr);
+    CHECK(w.op()->previewToolpath()->moves.size() > 40);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    // The shot: the text field in the panel, the view framed on the text and the rim.
+    w.inView(w.find(QStringLiteral("schemaRow.textHeight")));
+    w.view()->setCamera(w.view()->framed(w.view()->camera(), Box3{{15, 4, 0}, {68, 32, 10}}));
+    w.shotsBothThemes(QStringLiteral("t056_engrave"));
+    w.host->scene()->setBodyVisible(0, false); // the strokes are 0.3 mm under the top face: the part hidden too
+    w.shotsBothThemes(QStringLiteral("t056_engrave_part_hidden"));
+    w.host->scene()->setBodyVisible(0, true);
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+    const doc::DocStatePtr state = w.document()->state();
+    REQUIRE(state->cam->operations.size() == 2);
+    bool engraved = false;
+    for (const auto& [id, op] : state->cam->operations) {
+        if (op.type == "engrave") {
+            engraved = true;
+            CHECK(op.paramsJson.find("\"text\":\"RayCAD T-056\"") != std::string::npos);
+            CHECK(op.geometry.size() == 1);
+        }
+    }
+    CHECK(engraved);
+    w.checkNoWarnings();
+}
 int main(int argc, char** argv)
 {
     // The real user profile is never touched.

@@ -381,6 +381,25 @@ inline Program cycleChange()
     return p;
 }
 
+// Thread milling (T-056), from the operation's golden toolpaths: an internal M8x1.25 thread (single-form, two radial
+// passes and a spring pass, counter-clockwise up) and an external M12x1.75 left-hand thread (clockwise up). Helical
+// arcs of 180 degrees with Z; every whole turn rises exactly one pitch in the IR (the round trip checks the posted Z).
+inline Program threadMilling()
+{
+    Program p = titled(1117, "Matrix: thread milling, helical arcs, one pitch per turn");
+    {
+        cam::Toolpath& t = p.section("Thread M8x1.25", "threadmill", 17,
+                                     makeTool("5 mm thread mill", lib::ToolType::ThreadMill, 5, 3), 3000);
+        t = goldenToolpath("threadmill_internal");
+    }
+    {
+        cam::Toolpath& t = p.section("Thread M12x1.75 LH", "threadmill", 18,
+                                     makeTool("6 mm thread mill", lib::ToolType::ThreadMill, 6, 3), 2500);
+        t = goldenToolpath("threadmill_external");
+    }
+    return p;
+}
+
 // Several tools: face, contour with compensation and arcs, spot, drill, peck, tap and a chamfer.
 inline Program realistic()
 {
@@ -493,6 +512,7 @@ inline std::vector<Feature> matrix()
          {}},
         {"15-tap", [] { return tapping(true); }, {}},
         {"16-cycle-change", cycleChange, {}},
+        {"17-thread-milling", threadMilling, {}}, // T-056
         {"20-realistic", realistic, {}},
     };
 }

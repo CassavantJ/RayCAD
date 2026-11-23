@@ -175,7 +175,7 @@ TEST_CASE("text the font cannot draw is refused, naming the character", "[cam][e
     REQUIRE_FALSE(bad);
     CHECK_THAT(bad.error().message, ContainsSubstring("not valid UTF-8"));
     CHECK(decodeUtf8("\xE2\x8C\x80") == std::u32string(1, U'⌀'));
-    CHECK_FALSE(decodeUtf8("\xC0\x80").has_value()); // overlong
+    CHECK_FALSE(decodeUtf8("\xC0\x80").has_value());     // overlong
     CHECK_FALSE(decodeUtf8("\xED\xA0\x80").has_value()); // a surrogate
 }
 
@@ -238,8 +238,8 @@ TEST_CASE("every arc of laid-out text has both ends within 1 nm of its circle (1
     INFO(arcs << " arcs; worst distance from the circle " << worst << " nm, worst start-end difference "
               << worstDifference << " nm");
     CHECK(arcs > 10'000);
-    CHECK(worst <= 1.25);           // engrave_font.h: within 1.2 nm (the bisector case), else within 0.71 nm
-    CHECK(worstDifference <= 1.5);  // the invariant checker allows 2 nm
+    CHECK(worst <= 1.25);          // engrave_font.h: within 1.2 nm (the bisector case), else within 0.71 nm
+    CHECK(worstDifference <= 1.5); // the invariant checker allows 2 nm
 }
 
 TEST_CASE("runs of short lines are fitted with arcs; real lines and arcs stay", "[cam][engrave]")
@@ -270,8 +270,8 @@ TEST_CASE("runs of short lines are fitted with arcs; real lines and arcs stay", 
     geom2d::Path rect;
     rect.start = geom2d::Pt{0, 0};
     rect.closed = true;
-    for (const geom2d::Pt q : {geom2d::Pt{1'000'000, 0}, geom2d::Pt{1'000'000, 500'000}, geom2d::Pt{0, 500'000},
-                               geom2d::Pt{0, 0}}) {
+    for (const geom2d::Pt q :
+         {geom2d::Pt{1'000'000, 0}, geom2d::Pt{1'000'000, 500'000}, geom2d::Pt{0, 500'000}, geom2d::Pt{0, 0}}) {
         rect.spans.push_back(geom2d::Span{geom2d::SpanKind::Line, q, {}, 0});
     }
     const geom2d::Path same = fitLineRuns(rect);
