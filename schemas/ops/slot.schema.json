@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/slot.schema.json",
+  "title": "Slot",
+  "description": "Parameters of a 'slot' operation (cam.h Operation::paramsJson, task T-055): centre-line slotting with a flat end mill as wide as the slot, one pass along the slot's centre line per depth, each depth entered by a zigzag ramp along the slot. The operation's geometry is the floor face of each slot: a centre line of lines and arcs swept by the slot's width, each end closed by a half circle or open (running out of the part). A tool narrower than the slot by more than the width tolerance is refused: machine such a slot as a 2D pocket. Its heights are measured from the top of the stock: 'clearance', 'retract' and 'feedPlane' as their names say, 'top' where the first depth starts; 'bottom' is not used (the floor is the slot's own, plus the floor stock). The cut feed is the cutting feed (Operation cutting feedCut), ramps use feedRamp and straight descents feedPlunge (0: the cutting feed). Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (what the geometry picker selects: here faces) and 'x-toolTypes' (the tools the picker offers); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane", "top"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "feedRamp", "coolant"],
+  "x-geometry": { "kind": "face", "count": "oneOrMore", "description": "Click the floor of each slot." },
+  "x-toolTypes": ["flatEndMill"],
+  "x-propertyOrder": ["stepDown", "floorStock", "rampAngle", "minRampRun", "widthTolerance"],
+  "properties": {
+    "stepDown": {
+      "title": "Step down",
+      "description": "The most each depth goes below the one before; the depths are spread evenly from the top to the floor.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100,
+      "default": 1,
+      "x-unit": "length"
+    },
+    "floorStock": {
+      "title": "Floor stock",
+      "description": "Material left on the slot's floor (the last depth stops this far above it).",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "rampAngle": {
+      "title": "Ramp angle",
+      "description": "How steeply the tool ramps down into each depth, zigzagging along the slot.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 45,
+      "default": 3,
+      "x-unit": "angle"
+    },
+    "minRampRun": {
+      "title": "Shortest ramp run",
+      "description": "The shortest run along the slot a ramp may zigzag on; 0: the tool diameter. A slot whose centre line is shorter cannot be entered.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "widthTolerance": {
+      "title": "Width tolerance",
+      "description": "How much narrower than the slot the tool may be (the slot then comes out as wide as the tool, with a warning). A tool wider than the slot is always refused.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.05,
+      "x-unit": "length"
+    }
+  }
+}

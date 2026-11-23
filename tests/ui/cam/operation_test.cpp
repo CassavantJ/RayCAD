@@ -48,6 +48,8 @@
 #include <ray_api/cam_tools.h>
 #include <ray_api/viewer.h>
 
+#include <ray/kernel.h> // T-055: finding the faces and edges to pick
+
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
@@ -1581,6 +1583,120 @@ TEST_CASE("every registered operation type gets a working form with no type-spec
     w.checkNoWarnings();
 }
 
+// T-055: the slot and chamfer2d types in the real window from their schemas alone (no QML of their own): the type from
+// the panel's list, a library tool from the picker (the types the schema offers first), the geometry picked in the
+// view, calculated feeds, the preview generated and drawn, OK; the tree up to date. Screenshots t055_slot and
+// t055_chamfer2d (RAY_T045_SHOTS).
+TEST_CASE("a slot and a chamfer operation by the UI: picked in the view, previewed, added", "[cam][e2e][t055]")
+{
+    RAY_REQUIRE_RHI();
+    struct Run {
+        QString part, type, tool, search, toolType;
+        std::function<std::vector<render::PickHit>(const Window&)> picks;
+    };
+    const auto faceUpAt = [](const Window& w, double z) {
+        const kernel::Shape& s = w.host->scene()->body(0)->shape;
+        std::vector<render::PickHit> out;
+        for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face); ++i) {
+            const kernel::SubId f{kernel::SubKind::Face, i};
+            const auto info = kernel::surfaceInfo(s, f);
+            const auto sample = kernel::faceSample(s, f);
+            if (info && sample && info->type == kernel::SurfaceType::Plane && sample->normal.z > 0.999 &&
+                std::abs(info->bounds.min.z - z) < 1e-6) {
+                out.push_back(
+                    render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, i, info->centroid, 0});
+            }
+        }
+        return out;
+    };
+    const auto holeTopEdges = [](const Window& w) {
+        const kernel::Shape& s = w.host->scene()->body(0)->shape;
+        const double top = kernel::bounds(s).max.z;
+        std::vector<render::PickHit> out;
+        for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Edge); ++i) {
+            const auto c = kernel::curveInfo(s, kernel::SubId{kernel::SubKind::Edge, i});
+            if (c && c->type == kernel::CurveType::Circle && std::abs(c->center.z - top) < 1e-6 && out.size() < 4) {
+                out.push_back(render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Edge, i, c->start, 0});
+            }
+        }
+        return out;
+    };
+    const std::vector<Run> runs = {
+        // keyway_tslot_3: a 40 mm shaft along X with a 12 mm keyway, its floor at Z 15 (model), 5 below the top.
+        Run{QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/keyway_tslot_3.stp"), QStringLiteral("slot"),
+            QStringLiteral("82006b3d-f9fe-47c0-b84c-48620d9f23a2"), QStringLiteral("12 mm 4FL"),
+            QStringLiteral("flatEndMill"), [&](const Window& w) { return faceUpAt(w, 15); }},
+        // The plate's holes, chamfered at their top edges with the 1/4 in 90 degree chamfer mill.
+        Run{kPlate, QStringLiteral("chamfer2d"), QStringLiteral("3b8df723-7be6-494f-b0a4-8dc6a3c14e72"),
+            QStringLiteral("chamfer mill"), QStringLiteral("chamferMill"), holeTopEdges},
+    };
+    for (const Run& r : runs) {
+        INFO("operation type " << r.type.toStdString());
+        Window w;
+        w.open(r.part);
+        w.toWorkspace(ui::kCamWorkspace);
+        addSetup(w);
+        w.clickRow(QStringLiteral("setupRow.0"));
+        REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == 0; }, 5000));
+        w.click(w.shown(QStringLiteral("camRowNewOperation.0")));
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, 5000));
+        // The type from the panel's list, as the user steps to it.
+        stepDown(w, QStringLiteral("operationCombo.type"), [&] { return w.op()->type() == r.type; });
+        CHECK(w.op()->geometryKind() ==
+              (r.type == QStringLiteral("slot") ? QStringLiteral("face") : QStringLiteral("edge")));
+        // The picker offers the schema's tool types first.
+        REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+        CHECK(pickerTypes(w).count(r.toolType) == 1);
+        CHECK(pickerTypes(w).count(QStringLiteral("drill")) == 0);
+        chooseTool(w, r.tool, r.search);
+        const std::vector<render::PickHit> hits = r.picks(w);
+        REQUIRE_FALSE(hits.empty());
+        for (std::size_t k = 0; k < hits.size(); ++k) {
+            // One click at a time, as a user clicks: each pick becomes a reference before the next.
+            w.host->selection()->applyClick(hits[k], Qt::NoModifier);
+            QCoreApplication::processEvents();
+            REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == static_cast<int>(k + 1); }, kTimeoutMs));
+        }
+        if (w.op()->calculated().value(QStringLiteral("available")).toBool()) {
+            w.click(QStringLiteral("operationUseCalculated"));
+            REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+        } else {
+            w.typeInto(QStringLiteral("operationInput.rpm"), QStringLiteral("6000"));
+            w.typeInto(QStringLiteral("operationInput.feedCut"), QStringLiteral("600"));
+        }
+        w.previewed("ok");
+        REQUIRE(w.op()->previewToolpath() != nullptr);
+        const cam::Toolpath& preview = *w.op()->previewToolpath();
+        CHECK(std::count_if(preview.moves.begin(), preview.moves.end(),
+                            [](const cam::Move& m) { return m.role == cam::MoveRole::Cut; }) > 0);
+        REQUIRE(w.op()->previewBackplot() != nullptr);
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                const auto shown = w.display()->shown();
+                return std::any_of(shown.begin(), shown.end(),
+                                   [](const ToolpathDisplay::Shown& s) { return s.preview; });
+            },
+            10000));
+        CHECK(w.op()->errors().isEmpty());
+        REQUIRE(
+            QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the operation"); }, 10000));
+        checkPanelLayout(w);
+        w.shot(QStringLiteral("t055_") + r.type);
+        const QString id = w.op()->operationId();
+        w.click(QStringLiteral("operationOk"));
+        REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+        const int row = w.tree()->rowOf(id);
+        REQUIRE(row >= 0);
+        w.waitStatus(row, "upToDate");
+        const doc::DocStatePtr state = w.document()->state();
+        REQUIRE(state->cam);
+        REQUIRE(state->cam->operations.size() == 1);
+        CHECK(state->cam->operations.begin()->second.type == r.type.toStdString());
+        CHECK(state->cam->operations.begin()->second.geometry.size() == hits.size());
+        w.checkNoWarnings();
+    }
+}
+
 TEST_CASE("the operation panel's labels are not cut short at this scale", "[scale]")
 {
     RAY_REQUIRE_RHI();
@@ -1956,6 +2072,106 @@ TEST_CASE("a face operation by the UI: no geometry, a flat end mill, two passes,
     const int row = w.tree()->rowOf(id);
     REQUIRE(row >= 0);
     w.waitStatus(row, "upToDate");
+    w.checkNoWarnings();
+}
+
+// T-054: a 2D pocket made in the panel the schema builds (no type-specific QML): a floor face picked in the view, a
+// library end mill, calculated feeds, the preview drawn, OK, the tree up to date. With RAY_T054_SHOTS set to a folder,
+// the window with the panel and the previewed toolpath, and the committed toolpath, are saved there.
+TEST_CASE("a pocket2d operation by the panel: a floor face, a library end mill, the preview, OK", "[cam][e2e][t054]")
+{
+    RAY_REQUIRE_RHI();
+    // closed_pocket_1 (tools/corpus_gen): a block with a closed rectangular pocket with corner radii.
+    const QString part = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/closed_pocket_1.stp");
+    const QString endMill6 = QStringLiteral("08bc976f-3640-4b04-a389-eda6ba3e659b"); // 6 mm 3FL carbide flat end mill
+    Window w;
+    w.open(part);
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w);
+    w.op()->setType(QStringLiteral("pocket2d"));
+    REQUIRE(w.op()->type() == QStringLiteral("pocket2d"));
+    CHECK(w.op()->geometryKind() == QStringLiteral("face"));
+    CHECK(w.find(QStringLiteral("operationField.feedPlane"))->isVisible());
+    CHECK(w.find(QStringLiteral("operationField.bottom")) == nullptr);
+    w.shown(QStringLiteral("schemaCombo.cutMode"));
+    w.shown(QStringLiteral("schemaInput.stepover"));
+    CHECK_FALSE(w.find(QStringLiteral("schemaRow.wallAllowance"))->isVisible()); // until "Finish the walls"
+
+    // The tool: the picker offers end mills; the 6 mm one.
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    for (const QString& t : pickerTypes(w))
+        CHECK((t == QStringLiteral("flatEndMill") || t == QStringLiteral("bullEndMill")));
+    chooseTool(w, endMill6, QStringLiteral("6 mm 3FL"));
+
+    // The floor: the up-facing planar face below the top, picked as a click in the view picks it.
+    const kernel::Shape& shape = w.host->scene()->body(0)->shape;
+    const Box3 b = kernel::bounds(shape);
+    std::optional<std::uint32_t> floor;
+    Vec3 at{};
+    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face); ++i) {
+        const kernel::SubId f{kernel::SubKind::Face, i};
+        const auto info = kernel::surfaceInfo(shape, f);
+        const auto s = kernel::faceSample(shape, f);
+        if (info && s && info->type == kernel::SurfaceType::Plane && s->normal.z > 0.999 &&
+            info->bounds.max.z < b.max.z - 1e-6) {
+            floor = i;
+            at = info->centroid;
+        }
+    }
+    REQUIRE(floor.has_value());
+    w.host->selection()->applyClick(
+        render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, *floor, at, 0}, Qt::NoModifier);
+    QCoreApplication::processEvents();
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+
+    // Feeds calculated for the end mill in the setup's 6061; then the preview, generated by the pocket2d type.
+    w.click(QStringLiteral("operationUseCalculated"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+    w.previewed("ok");
+    REQUIRE(w.op()->previewToolpath() != nullptr);
+    const cam::Toolpath& tp = *w.op()->previewToolpath();
+    CHECK(tp.moves.size() > 50);
+    CHECK(std::none_of(tp.moves.begin(), tp.moves.end(),
+                       [](const cam::Move& m) { return m.role == cam::MoveRole::Plunge; }));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    CHECK(w.op()->errors().isEmpty());
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the operation"); }, 10000));
+    const QString dir = qEnvironmentVariable("RAY_T054_SHOTS");
+    const auto save = [&](const QString& name) {
+        if (dir.isEmpty())
+            return;
+        QDir().mkpath(dir);
+        w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                    Qt::NoButton);
+        QTest::qWait(300);
+        w.grab().save(QDir(dir).filePath(name + QStringLiteral(".png")), "PNG");
+    };
+    w.view()->fitAll();
+    w.inView(w.find(QStringLiteral("operationSection.parameters"))); // the type's own parameters in sight
+    QTest::qWait(200);
+    save(QStringLiteral("t054_pocket2d_panel_preview"));
+
+    // OK: the operation is added and up to date at once (the preview made its toolpath).
+    const QString id = w.op()->operationId();
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+    const doc::DocStatePtr state = w.document()->state();
+    REQUIRE(state->cam);
+    REQUIRE(state->cam->operations.size() == 1);
+    const cam::Operation& op = state->cam->operations.begin()->second;
+    CHECK(op.type == "pocket2d");
+    CHECK(op.geometry.size() == 1);
+    CHECK(op.paramsJson.find("\"stepover\":45") != std::string::npos); // the defaults are stored
+    const int row = w.tree()->rowOf(id);
+    REQUIRE(row >= 0);
+    w.waitStatus(row, "upToDate");
+    save(QStringLiteral("t054_pocket2d_up_to_date"));
     w.checkNoWarnings();
 }
 

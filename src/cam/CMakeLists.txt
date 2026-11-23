@@ -48,6 +48,18 @@ add_library(ray_cam STATIC
     ops/contour2d.cpp   # "contour2d" (task T-053)
     ops/contour2d.h
     ops/contour2d_plan.cpp
+    # T-055: "slot" and "chamfer2d", with the helpers they share
+    ops/slot.cpp
+    ops/slot.h
+    ops/slot_plan.cpp
+    ops/slot_common.cpp
+    ops/slot_common.h
+    ops/chamfer2d.cpp
+    ops/chamfer2d.h
+    ops/chamfer2d_plan.cpp
+    ops/pocket2d.cpp    # "pocket2d" (task T-054)
+    ops/pocket2d.h
+    ops/pocket2d_plan.cpp
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)
@@ -62,6 +74,8 @@ set(RAY_CAM_OP_SCHEMAS drill)
 list(APPEND RAY_CAM_OP_SCHEMAS engrave threadmill) # T-056
 list(APPEND RAY_CAM_OP_SCHEMAS face) # T-052
 list(APPEND RAY_CAM_OP_SCHEMAS contour2d) # T-053
+list(APPEND RAY_CAM_OP_SCHEMAS slot chamfer2d) # T-055
+list(APPEND RAY_CAM_OP_SCHEMAS pocket2d) # T-054
 set(_entries "")
 set(_arrays "")
 foreach(_name IN LISTS RAY_CAM_OP_SCHEMAS)

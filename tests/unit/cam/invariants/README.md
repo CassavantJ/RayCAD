@@ -46,7 +46,7 @@ the measured value and the allowed one, and a one-line message. The bounds are f
 | `rapidPart` | A rapid's tool (any zone) inside the part grown by `rapidClearance` deeper than `tolerance` | See "Part contacts" |
 | `rapidStock` | A rapid's tool inside remaining stock | See "Stock contacts" |
 | `fluteLength` | Remaining stock inside the tool above its flutes during a cut (engagement deeper than the flutes) | See "Stock contacts" |
-| `plunge` | A straight plunge into stock (stock within `deadZoneFraction` of the radius, 0.25, of the axis) with a tool that does not cut at its centre (`Claims::centreCutting`, default by type: drills, spot drills, ball, chamfer and engraving tools do) | Stock samples |
+| `plunge` | A straight plunge into stock (stock within `deadZoneFraction` of the radius, 0.25, of the axis; for a chamfer mill with a flat at its tip, within that flat, T-055) with a tool that does not cut at its centre (`Claims::centreCutting`, default by type: drills, spot drills, ball, chamfer and engraving tools do) | Stock samples |
 | `rampAngle` | A ramp or helix into stock steeper than `maxRampAngleDeg` | Exact angle; "into stock" by samples |
 | `helix` | A helix into stock narrower than `helixMinDiameter` | Exact diameter; "into stock" by samples |
 | `direction` | A cut along a part wall (within cutting radius + stock to leave + 0.5 mm, one side only) climb where conventional was asked, or the reverse (clockwise spindle: climb keeps the wall on the right) | Checked at each cut piece's middle on the 0.25 mm part grid |
@@ -143,12 +143,20 @@ seeds, `[.slow]`; ctest `ray_cam_invariants_slow`, slow tier). The checker's own
   `coverFeatures`), `walls` (finished walls), `stockToLeaveWall/Floor`, `direction`, `maxRampAngleDeg`,
   `helixMinDiameter`, `maxEngagementDeg`, `heights` (absolute), `containment`, `allowedCuts` (where cutting the model
   is intended: threads, chamfers the model lacks), `initialStock`. An empty claim is not checked.
+  An allowed cut (part_model.h `AllowedCut`) is a vertical cylinder about a point, or (T-055) a cone opening upwards
+  (`slope`) and/or measured from a polyline (`path`): `chamferCut` (property.h) makes the wedge a chamfer of an edge
+  removes. Only where the whole grid square lies inside the cut is its material left out; a square the cut reaches in
+  part keeps its material for the upper bound and gives a lower bound only from below the cut (`zset`'s `wholeBelow`),
+  so a contact is never reported from material the claim allows.
 - A refusal (generate returning an error) is a valid outcome and is listed; at least `minGenerated` (0.5) of the cases
   must produce a toolpath. A failure prints the seed, the part, the tool, the parameters and every finding; rerun one
   case by putting its seed in a test of its own with `runProperty(plugin(), {seed})`.
 
 `property_drill_test.cpp` is the drilling plug-in; `property_harness_test.cpp` plugs in a reference facing type and
-shows broken types being reported.
+shows broken types being reported. `property_slot_test.cpp` and `property_chamfer2d_test.cpp` (T-055) define the same
+two cases by hand with a tag of their own each, so CTest runs them as tests of their own (`ray_cam_invariants_slot`,
+about 40 s, and `ray_cam_invariants_chamfer2d`, about 25 s, in Release) and `ray_cam_invariants_property` stays short;
+their header comments say what the checker can and cannot judge for them.
 
 ## Resolution and time
 

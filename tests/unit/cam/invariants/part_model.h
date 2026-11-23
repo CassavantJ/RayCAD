@@ -29,9 +29,24 @@ struct Tri {
 };
 // A vertical cylinder of the WCS (mm) inside which cutting the part is intended (a thread, a tapped bore, a drill
 // point below a flat floor that the user asked for): material there is not protected.
+// Added by T-055 (chamfers the model does not have): with `slope` > 0 the cut is a cone opening upwards, of radius
+// radius + (z - zBottom) slope at height z (a chamfer mill's flank: slope = tan(half the tip angle)); with a `path` of
+// two or more points (WCS XY mm; `closed` joins the last to the first) the radius is measured from that polyline
+// instead of from (x, y), so the cut runs along it: a cone along an edge is the wedge a chamfer of that edge removes.
+// `pathLo` / `pathHi` are the path's box when known (lo.x <= hi.x; chamferCut sets them): points far from it are
+// rejected without measuring the path.
 struct AllowedCut {
     double x = 0, y = 0, radius = 0, zBottom = 0, zTop = 0;
+    double slope = 0;
+    std::vector<Vec2> path;
+    bool closed = false;
+    Vec2 pathLo{1, 1}, pathHi{0, 0};
 };
+// The horizontal distance from (px, py) to the cut's axis, or to its path.
+double allowedDistance(const AllowedCut& a, double px, double py);
+// The lowest height at which every point of a disc of radius `spread` about a point at distance d from the cut's
+// axis or path lies inside the cut (+infinity: none; the cut ends at zTop).
+double allowedFrom(const AllowedCut& a, double d, double spread);
 
 void mergeIntervals(std::vector<Iv>& v);
 void subtractInterval(std::vector<Iv>& v, double lo, double hi);
@@ -60,8 +75,11 @@ public:
 
     // The conservative Z-set of the square of half side s centred at (qx, qy), which lies in cell (i, j); material
     // inside an allowed cut is left out only where the whole square lies inside the cut's circle.
-    void zset(int i, int j, double qx, double qy, double s, std::span<const AllowedCut> allowed,
-              std::vector<Iv>& out) const;
+    // T-055: `wholeBelow`, when given, is set to the height below which no allowed cut reaches any point of the square
+    // (+infinity when none does): only there is every height of the set known to hold protected material, which is
+    // what a lower bound of a contact may rely on.
+    void zset(int i, int j, double qx, double qy, double s, std::span<const AllowedCut> allowed, std::vector<Iv>& out,
+              double* wholeBelow = nullptr) const;
     // The material intervals (of the mesh) on the vertical line through (x, y).
     void ray(double x, double y, std::vector<Iv>& out) const;
     // The highest material over block (bi, bj) (-inf: none).

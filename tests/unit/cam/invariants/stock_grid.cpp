@@ -45,9 +45,10 @@ void StockGrid::init(const Box3& stock, double cell, double margin, InitialStock
                 }
             }
             for (const AllowedCut& a : allowed) {
-                if (std::hypot(xv - a.x, yv - a.y) <= a.radius) {
+                const double from = allowedFrom(a, allowedDistance(a, xv, yv), 0); // T-055: cones and paths too
+                if (from < a.zTop) {
                     for (const Iv& q : p) {
-                        const double lo = std::max(q.lo, a.zBottom), hi = std::min(q.hi, a.zTop);
+                        const double lo = std::max(q.lo, from), hi = std::min(q.hi, a.zTop);
                         if (hi > lo) {
                             v.push_back(Iv{lo, hi});
                         }

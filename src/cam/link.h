@@ -14,12 +14,16 @@
 //                   with cluster/level so depths stay in order; tabs are z moves inside the pass (non-planar passes
 //                   are fine, they enter by Free, PreDrill or Plunge).
 //   T-054 pocket    rings as rotatable closed passes, cluster = pocket, level = depth index, maxStayDown with stepIn
-//                   for the step from one ring to the next (Entered::Step: the tool centre stays in cut area), plain
+//                   for the step from one ring to the next (Entered::Step: the tool centre stays in cut area, or with
+//                   stepInSlot, added by T-054 for stepovers above the tool radius, in what the next ring cuts), plain
 //                   stay-down links where the whole link lies in cut area, entryOrder {Helix, Ramp, PreDrill}, room =
 //                   the pocket shrunk by the tool radius plus stock to leave; Options::preDrills for pre-drilled
 //                   points.
 //   T-055 slot      the centre line as an open pass per depth, Ramp (zigzag along it; the run must be at least
-//                   minRampRun), helixDiameter 0 so no helix is tried; appendSloped for a ramp the op makes itself.
+//                   minRampRun), helixDiameter 0 so no helix is tried; appendSloped for a ramp the op makes itself;
+//                   maxStayDown with stayDownEntry (added by T-055) so each depth ramps in from the one above.
+//   T-055 chamfer   one pass per centre path at the tip's depth, closed ones rotatable, entryOrder {Plunge} beside
+//                   the edge (centreCutting), maxStayDown 0.
 //   T-056 engrave   entryOrder {Plunge} with a centre-cutting engraver, tipHeight its point length; threadmill: the
 //                   helical pass as moves, a
 //                   Lead::Arc of radius (thread radius / 2) and sweep 180 from the hole centre (a radial lead-in), the
@@ -211,6 +215,19 @@ struct Options {
     // lies in what the pass (with its leads) cuts anyway. So the tool centre never enters material, only its flank
     // does (a radial depth under the tool radius), and nothing outside the pass's own swept area is cut. Entered::Step.
     bool stepIn = false;
+    // Added by T-055 (multi-depth slots and other passes cut depth after depth in place): a link that cannot stay down
+    // only because the next pass lies deeper in material not cut yet still need not leave the cut. With
+    // stayDownEntry, when the next pass's entry (ramp, helix, pre-drill or plunge) starts within maxStayDown of the
+    // tool and the straight move there, at the higher of the tool's height and the entry's top, lies in free area
+    // (the same test as a stay-down link) and not above the feed plane, the tool feeds up to that height if it must,
+    // across, and down to the entry's top (Link moves, the link feed) and enters from there instead of retracting.
+    // Off (the default): such a link retracts.
+    bool stayDownEntry = false;
+    // Added by T-054: with stepIn, the step's centre line may also lie in what the pass itself cuts (with its leads),
+    // not only in area already cut: the tool moves sideways into material the pass removes anyway, a cut at most as
+    // wide as the tool (a slot, as the first ring of a pocket is). For offset pocketing with a stepover above the tool
+    // radius, where the next ring lies farther out than the cut area reaches. The removed-material rule is unchanged.
+    bool stepInSlot = false;
     bool rapidRetract = false; // retract from the cut by a rapid straight up; false: feed up to the feed plane first
     // Entry, in this order, the first that fits (a pass's own entryOrder replaces it).
     std::vector<EntryKind> entryOrder{EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill};

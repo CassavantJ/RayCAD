@@ -368,9 +368,17 @@ void PartModel::ray(double x, double y, std::vector<Iv>& out) const
 }
 
 void PartModel::zset(int i, int j, double qx, double qy, double s, std::span<const AllowedCut> allowed,
-                     std::vector<Iv>& out) const
+                     std::vector<Iv>& out, double* wholeBelow) const
 {
     out.clear();
+    if (wholeBelow != nullptr) {
+        *wholeBelow = std::numeric_limits<double>::infinity();
+        for (const AllowedCut& a : allowed) {
+            // The nearest point of the square to the cut's axis or path.
+            const double near = std::max(0.0, allowedDistance(a, qx, qy) - s * std::sqrt(2.0));
+            *wholeBelow = std::min(*wholeBelow, allowedFrom(a, near, 0));
+        }
+    }
     if (i < 0 || j < 0 || i >= nx_ || j >= ny_) {
         return;
     }
@@ -389,10 +397,51 @@ void PartModel::zset(int i, int j, double qx, double qy, double s, std::span<con
         mergeIntervals(out);
     }
     for (const AllowedCut& a : allowed) {
-        if (std::hypot(qx - a.x, qy - a.y) + s * std::sqrt(2.0) <= a.radius) {
-            subtractInterval(out, a.zBottom, a.zTop);
+        const double from = allowedFrom(a, allowedDistance(a, qx, qy), s * std::sqrt(2.0));
+        if (from < a.zTop) {
+            subtractInterval(out, from, a.zTop);
         }
     }
+}
+
+double allowedDistance(const AllowedCut& a, double px, double py)
+{
+    if (a.path.size() < 2) {
+        return std::hypot(px - a.x, py - a.y);
+    }
+    if (a.pathLo.x <= a.pathHi.x) {
+        // Beyond the widest the cut gets (at zTop) from the path's box: that distance is a lower bound, enough to say
+        // no.
+        const double bx = std::max({a.pathLo.x - px, 0.0, px - a.pathHi.x});
+        const double by = std::max({a.pathLo.y - py, 0.0, py - a.pathHi.y});
+        const double box = std::hypot(bx, by);
+        if (box > a.radius + std::max(0.0, a.slope) * std::max(0.0, a.zTop - a.zBottom) + 1) {
+            return box;
+        }
+    }
+    double best = std::numeric_limits<double>::infinity();
+    const std::size_t n = a.path.size();
+    for (std::size_t k = 0; k + 1 < n + (a.closed ? 1 : 0); ++k) {
+        const Vec2 p = a.path[k], q = a.path[(k + 1) % n];
+        const double dx = q.x - p.x, dy = q.y - p.y;
+        const double len2 = dx * dx + dy * dy;
+        double t = len2 > 0 ? ((px - p.x) * dx + (py - p.y) * dy) / len2 : 0;
+        t = std::clamp(t, 0.0, 1.0);
+        best = std::min(best, std::hypot(px - (p.x + t * dx), py - (p.y + t * dy)));
+    }
+    return best;
+}
+
+double allowedFrom(const AllowedCut& a, double d, double spread)
+{
+    const double reach = d + spread; // the farthest point of the disc
+    if (reach <= a.radius) {
+        return a.zBottom;
+    }
+    if (!(a.slope > 0)) {
+        return std::numeric_limits<double>::infinity();
+    }
+    return a.zBottom + (reach - a.radius) / a.slope;
 }
 
 double PartModel::blockTop(int bi, int bj) const
