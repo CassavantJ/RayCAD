@@ -268,6 +268,29 @@ target_compile_definitions(ray_cam_pocket2d_tests PRIVATE RAY_CORPUS_DIR="${CMAK
 set_property(TARGET ray_cam_pocket2d_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_pocket2d_tests COMMAND ray_cam_pocket2d_tests "~[wallclock]")
 ray_test_runtime_path(ray_cam_pocket2d_tests)
+# T-061: the 2D adaptive roughing operation: its rules on kernel-built parts and spike S5's pockets, each refusal, the
+# goldens (tests/golden/toolpaths/adaptive2d_*), stock slices, parallel generation through the engine, and (tagged
+# [wallclock], split by tests/tiers.cmake) PLAN.md section 9's run times. Every toolpath goes through the independent
+# invariant checker (invariants/).
+add_executable(ray_cam_adaptive2d_tests
+    adaptive2d_document_test.cpp
+    adaptive2d_golden_test.cpp
+    adaptive2d_test.cpp
+    adaptive2d_test_util.h
+    pocket2d_test_util.h
+    toolpath_dump.h
+)
+target_link_libraries(ray_cam_adaptive2d_tests PRIVATE ray_cam_invariants ray_api ray_store ray_doc ray_cam ray_sim
+    ray_post ray_naming ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_adaptive2d_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_adaptive2d_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths"
+    RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+set_property(TARGET ray_cam_adaptive2d_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_cam_adaptive2d_tests COMMAND ray_cam_adaptive2d_tests "~[wallclock]")
+ray_test_runtime_path(ray_cam_adaptive2d_tests)
 # The constant-engagement engine of adaptive clearing (task T-060): its contract and refusals, determinism (repeats,
 # 1 to 32 concurrent runs, 20 processes of the probe, the integer goldens in tests/golden/adaptive2d), and the
 # acceptance numbers measured on spike S5's pockets by the independent sweep checker (tests/tools/sweepcheck). The

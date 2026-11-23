@@ -71,6 +71,8 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_post_tests_wallclock
     # T-060: the adaptive engine's PLAN.md section 9 run times (islands pocket in 3 s; about 2.8 s in Release).
     ray_cam_adaptive_tests_wallclock
+    # T-061: the adaptive2d operation on the same pockets, and what it adds to the engine.
+    ray_cam_adaptive2d_tests_wallclock
     # The geometry core's three 10,000-case arc-fitting sweeps (split from ray_cam_geom2d_tests by the tag [sweeps]):
     # most of that suite's 5 to 9 minutes in MSVC Debug, seconds in Release. The rest of the suite stays in Debug.
     ray_cam_geom2d_sweeps)
@@ -106,6 +108,7 @@ set(RAY_WALLCLOCK_SPLITS
     ray_cam_geom2d_tests=ray_cam_geom2d_tests
     ray_cam_link_tests=ray_cam_link_tests
     ray_cam_adaptive_tests=ray_cam_adaptive_tests
+    ray_cam_adaptive2d_tests=ray_cam_adaptive2d_tests # T-061
     ray_sketch_tests=ray_sketch_tests
     ray_store_tests=ray_store_tests
     ray_sim_tests=ray_sim_tests

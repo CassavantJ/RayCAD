@@ -41,6 +41,7 @@ add_executable(ray_cam_invariants_tests
     property_chamfer2d_test.cpp
     property_slot_test.cpp
     property_pocket2d_test.cpp # T-054
+    property_adaptive2d_test.cpp # T-061
 )
 target_link_libraries(ray_cam_invariants_tests PRIVATE ray_cam_invariants Catch2::Catch2WithMain)
 set_property(TARGET ray_cam_invariants_tests PROPERTY FOLDER "tests")
@@ -51,7 +52,7 @@ set_property(TARGET ray_cam_invariants_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_invariants_tests COMMAND ray_cam_invariants_tests "~[property]")
 ray_test_runtime_path(ray_cam_invariants_tests)
 set(_ray_untyped "[property]~[slow]")
-foreach(_type drill face contour2d pocket2d slot chamfer2d engrave threadmill)
+foreach(_type drill face contour2d pocket2d slot chamfer2d engrave threadmill adaptive2d)
     add_test(NAME ray_cam_invariants_${_type} COMMAND ray_cam_invariants_tests "[property_${_type}]~[slow]")
     ray_test_runtime_path(ray_cam_invariants_${_type})
     # Measured alone at 8 seeds: at most about 25 s in Release (slot) and a few minutes in an MSVC Debug build; the
