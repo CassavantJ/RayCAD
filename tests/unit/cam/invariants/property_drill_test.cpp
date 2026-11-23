@@ -165,8 +165,9 @@ TEST_CASE("invariant property: drill, a short stick-out is refused or kept clear
     CHECK(o.failures.empty());
 }
 
-// Found by T-058 as a product gap and since fixed: the drill type used to ignore the spindle direction, so a spindle set
-// to turn counter-clockwise with a right-hand drill gave a toolpath. It now refuses, and this case holds it to that.
+// Found by T-058 as a product gap and since fixed: the drill type used to ignore the spindle direction, so a spindle
+// set to turn counter-clockwise with a right-hand drill gave a toolpath. It now refuses, and this case holds it to
+// that.
 TEST_CASE("drilling with the spindle turning backwards is refused", "[cam][invariants][property]")
 {
     PropertyPlugin p = drillPlugin();
