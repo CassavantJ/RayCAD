@@ -1556,10 +1556,11 @@ TEST_CASE("every registered operation type gets a working form with no type-spec
             }
             CHECK(row->isVisible());
             using K = ui::camui::FormField::Kind;
-            const char* control = field.kind == K::Enum          ? "schemaCombo."
-                                  : field.kind == K::Boolean     ? "schemaCheck."
-                                  : field.kind == K::Unsupported ? "schemaUnsupported."
-                                                                 : "schemaInput.";
+            const char* control = field.kind == K::Enum                       ? "schemaCombo."
+                                  : field.kind == K::Boolean                  ? "schemaCheck."
+                                  : field.kind == K::Unsupported              ? "schemaUnsupported."
+                                  : field.format == QLatin1String("pointsXY") ? "schemaPointPick." // a list of points
+                                                                              : "schemaInput.";
             QQuickItem* c = w.find(QLatin1String(control) + field.key);
             REQUIRE(c != nullptr);
             CHECK(c->isVisible());

@@ -288,7 +288,7 @@ Column {
                 Row {
                     spacing: Theme.spacingS
                     RowLabel {
-                        objectName: "schemaLabel." + row.key
+                        objectName: pointsBlock.shown ? "schemaLabel." + row.key : ""
                         text: row.modelData.title
                         hint: row.modelData.description
                     }

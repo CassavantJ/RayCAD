@@ -225,9 +225,25 @@ struct Window {
         QMouseEvent e(type, scenePos, window()->mapToGlobal(scenePos), button, buttons, Qt::NoModifier);
         QGuiApplication::sendEvent(window(), &e);
     }
+    // Scrolls the editor's fields so `item` is in view, as a user scrolls to it (the form is taller than the editor
+    // for a tool with many fields and presets).
+    void inView(QQuickItem* item) const
+    {
+        QQuickItem* flick = find(QStringLiteral("toolFieldsScroll"));
+        if (flick == nullptr || !flick->isAncestorOf(item))
+            return;
+        const double contentY = flick->property("contentY").toDouble();
+        const double h = flick->height();
+        const double y = item->mapToItem(flick, QPointF(0, 0)).y();
+        const double maxY = std::max(0.0, flick->property("contentHeight").toDouble() - h);
+        if (y < 0 || y + item->height() > h)
+            flick->setProperty("contentY", std::clamp(contentY + y - h / 3, 0.0, maxY));
+        QCoreApplication::processEvents();
+    }
     void click(QQuickItem* item) const
     {
         REQUIRE(item != nullptr);
+        inView(item);
         grab();
         const QPointF p = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
         sendMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
