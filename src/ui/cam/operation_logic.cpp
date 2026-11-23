@@ -158,10 +158,11 @@ QString heightFromText(const QString& from, const QString& kind)
 
 QStringList orderedTypeNames(const QStringList& names)
 {
-    static const QStringList fixed = {QStringLiteral("drill"),     QStringLiteral("face"),
-                                      QStringLiteral("contour2d"), QStringLiteral("pocket2d"),
-                                      QStringLiteral("slot"),      QStringLiteral("chamfer2d"),
-                                      QStringLiteral("engrave"),   QStringLiteral("threadmill")};
+    static const QStringList fixed = {QStringLiteral("drill"),      QStringLiteral("face"),
+                                      QStringLiteral("contour2d"),  QStringLiteral("pocket2d"),
+                                      QStringLiteral("adaptive2d"), // T-061
+                                      QStringLiteral("slot"),       QStringLiteral("chamfer2d"),
+                                      QStringLiteral("engrave"),    QStringLiteral("threadmill")};
     QStringList out;
     for (const QString& n : fixed) {
         if (names.contains(n))

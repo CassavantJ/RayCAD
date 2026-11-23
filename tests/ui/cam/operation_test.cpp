@@ -2112,12 +2112,12 @@ TEST_CASE("the panel: drill first, then the last type; heights from their refere
     QStringList names;
     for (const QVariant& t : w.op()->types())
         names << t.toMap().value(QStringLiteral("name")).toString();
-    REQUIRE(names.size() >= 8);
-    CHECK(names.mid(0, 8) ==
+    REQUIRE(names.size() >= 9);
+    CHECK(names.mid(0, 9) ==
           QStringList({QStringLiteral("drill"), QStringLiteral("face"), QStringLiteral("contour2d"),
-                       QStringLiteral("pocket2d"), QStringLiteral("slot"), QStringLiteral("chamfer2d"),
-                       QStringLiteral("engrave"), QStringLiteral("threadmill")}));
-    QStringList rest = names.mid(8);
+                       QStringLiteral("pocket2d"), QStringLiteral("adaptive2d"), QStringLiteral("slot"),
+                       QStringLiteral("chamfer2d"), QStringLiteral("engrave"), QStringLiteral("threadmill")}));
+    QStringList rest = names.mid(9);
     QStringList sorted = rest;
     std::sort(sorted.begin(), sorted.end());
     CHECK(rest == sorted);
@@ -2292,6 +2292,120 @@ TEST_CASE("a pocket2d operation by the panel: a floor face, a library end mill, 
     w.waitStatus(row, "upToDate");
     save(QStringLiteral("t054_pocket2d_up_to_date"));
     w.checkNoWarnings();
+}
+
+// T-061: 2D adaptive roughing made in the panel the schema builds (no type-specific QML), on a pocket with an island
+// and on a keyway too narrow for a helix: the floor picked in the view, a library end mill, calculated feeds, the
+// preview drawn, OK, the tree up to date, the toolpath shown. Screenshots: build/shots/t061_adaptive2d_<part>.png (the
+// panel with the previewed toolpath) and t061_adaptive2d_<part>_up_to_date.png.
+TEST_CASE("an adaptive2d operation by the panel: a pocket with an island and a slot, previewed, OK", "[cam][e2e][t061]")
+{
+    RAY_REQUIRE_RHI();
+    struct Part {
+        const char* file;
+        const char* name;
+        QString tool, search;
+        bool ramp; // the slot: entered by a ramp, the helix does not fit
+    };
+    const Part parts[] = {
+        // closed_pocket_5 (tools/corpus_gen): a 50 x 30 R3 pocket 12 deep with a round island 10 mm across.
+        {"closed_pocket_5.stp", "island", QStringLiteral("08bc976f-3640-4b04-a389-eda6ba3e659b"),
+         QStringLiteral("6 mm 3FL"), false},
+        // keyway_tslot_3: a 40 mm shaft with a blind keyway 12 mm wide and 5 deep, cut with a 10 mm end mill.
+        {"keyway_tslot_3.stp", "slot", QStringLiteral("3f550375-46eb-47d0-9b8c-4fedbcb8466d"),
+         QStringLiteral("10 mm 4FL"), true},
+    };
+    for (const Part& part : parts) {
+        INFO("part " << part.file);
+        Window w;
+        w.open(QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/") + QLatin1String(part.file));
+        w.toWorkspace(ui::kCamWorkspace);
+        addSetup(w);
+        newOperation(w, 0, QStringLiteral("adaptive2d"));
+        CHECK(w.op()->geometryKind() == QStringLiteral("face"));
+        CHECK(w.find(QStringLiteral("operationField.bottom")) == nullptr);
+        w.shown(QStringLiteral("schemaInput.stepover"));
+        w.shown(QStringLiteral("schemaInput.reducedFeed"));
+        w.shown(QStringLiteral("schemaCombo.entry"));
+        REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+        for (const QString& t : pickerTypes(w))
+            CHECK((t == QStringLiteral("flatEndMill") || t == QStringLiteral("bullEndMill")));
+        chooseTool(w, part.tool, part.search);
+
+        // The floor: the lowest up-facing planar face below the top, picked as a click in the view picks it.
+        const kernel::Shape& shape = w.host->scene()->body(0)->shape;
+        const Box3 b = kernel::bounds(shape);
+        std::optional<std::uint32_t> floor;
+        double floorZ = b.max.z;
+        Vec3 at{};
+        for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face); ++i) {
+            const kernel::SubId f{kernel::SubKind::Face, i};
+            const auto info = kernel::surfaceInfo(shape, f);
+            const auto s = kernel::faceSample(shape, f);
+            if (info && s && info->type == kernel::SurfaceType::Plane && s->normal.z > 0.999 &&
+                info->bounds.max.z < floorZ - 1e-6) {
+                floor = i;
+                floorZ = info->bounds.max.z;
+                at = info->centroid;
+            }
+        }
+        REQUIRE(floor.has_value());
+        w.host->selection()->applyClick(
+            render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, *floor, at, 0}, Qt::NoModifier);
+        QCoreApplication::processEvents();
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+
+        w.click(QStringLiteral("operationUseCalculated"));
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+        w.previewed("ok");
+        REQUIRE(w.op()->previewToolpath() != nullptr);
+        const cam::Toolpath tp = *w.op()->previewToolpath();
+        CHECK(tp.moves.size() > 50);
+        CHECK(std::none_of(tp.moves.begin(), tp.moves.end(),
+                           [](const cam::Move& m) { return m.role == cam::MoveRole::Plunge; }));
+        const auto helixArcs = std::count_if(tp.moves.begin(), tp.moves.end(), [](const cam::Move& m) {
+            return m.role == cam::MoveRole::Ramp && m.kind != cam::MoveKind::Linear;
+        });
+        CHECK((part.ramp ? helixArcs == 0 : helixArcs > 0));
+        CHECK(tp.stats.p99EngagementDeg > 0);
+        CHECK(w.op()->errors().isEmpty());
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                const auto shown = w.display()->shown();
+                return std::any_of(shown.begin(), shown.end(),
+                                   [](const ToolpathDisplay::Shown& s) { return s.preview; });
+            },
+            10000));
+        const QString dir = QStringLiteral(RAY_SHOTS_DIR);
+        const auto save = [&](const QString& name) {
+            QDir().mkpath(dir);
+            w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                        Qt::NoButton);
+            QTest::qWait(300);
+            w.grab().save(QDir(dir).filePath(name + QStringLiteral(".png")), "PNG");
+        };
+        w.view()->fitAll();
+        w.inView(w.find(QStringLiteral("operationSection.parameters")));
+        QTest::qWait(200);
+        save(QStringLiteral("t061_adaptive2d_%1").arg(QLatin1String(part.name)));
+
+        const QString id = w.op()->operationId();
+        w.click(QStringLiteral("operationOk"));
+        REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+        const doc::DocStatePtr state = w.document()->state();
+        REQUIRE(state->cam);
+        REQUIRE(state->cam->operations.size() == 1);
+        const cam::Operation& op = state->cam->operations.begin()->second;
+        CHECK(op.type == "adaptive2d");
+        CHECK(op.paramsJson.find("\"reducedFeed\":50") != std::string::npos); // the defaults are stored
+        const int row = w.tree()->rowOf(id);
+        REQUIRE(row >= 0);
+        w.waitStatus(row, "upToDate");
+        w.view()->fitAll();
+        w.settle();
+        save(QStringLiteral("t061_adaptive2d_%1_up_to_date").arg(QLatin1String(part.name)));
+        w.checkNoWarnings();
+    }
 }
 
 // ---------- After M3: the gaps left in the panel, closed ----------

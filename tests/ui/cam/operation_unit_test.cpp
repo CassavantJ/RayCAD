@@ -678,14 +678,15 @@ TEST_CASE("the panel's logic: heights, feeds in display units, records, tools an
 
     // The type list's order, and the type a new operation starts with.
     const QStringList registered = {
-        QStringLiteral("chamfer2d"), QStringLiteral("contour2d"), QStringLiteral("drill"), QStringLiteral("engrave"),
-        QStringLiteral("face"),      QStringLiteral("pocket2d"),  QStringLiteral("slot"),  QStringLiteral("threadmill"),
-        QStringLiteral("x.zeta"),    QStringLiteral("x.alpha")};
+        QStringLiteral("chamfer2d"), QStringLiteral("contour2d"),  QStringLiteral("drill"),
+        QStringLiteral("engrave"),   QStringLiteral("face"),       QStringLiteral("pocket2d"),
+        QStringLiteral("slot"),      QStringLiteral("threadmill"), QStringLiteral("x.zeta"),
+        QStringLiteral("x.alpha"),   QStringLiteral("adaptive2d")};
     CHECK(orderedTypeNames(registered) ==
           QStringList({QStringLiteral("drill"), QStringLiteral("face"), QStringLiteral("contour2d"),
-                       QStringLiteral("pocket2d"), QStringLiteral("slot"), QStringLiteral("chamfer2d"),
-                       QStringLiteral("engrave"), QStringLiteral("threadmill"), QStringLiteral("x.alpha"),
-                       QStringLiteral("x.zeta")}));
+                       QStringLiteral("pocket2d"), QStringLiteral("adaptive2d"), QStringLiteral("slot"),
+                       QStringLiteral("chamfer2d"), QStringLiteral("engrave"), QStringLiteral("threadmill"),
+                       QStringLiteral("x.alpha"), QStringLiteral("x.zeta")}));
     CHECK(defaultTypeName(registered, QString()) == QStringLiteral("drill"));
     CHECK(defaultTypeName(registered, QStringLiteral("pocket2d")) == QStringLiteral("pocket2d"));
     CHECK(defaultTypeName(registered, QStringLiteral("gone")) == QStringLiteral("drill"));

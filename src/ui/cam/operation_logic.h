@@ -46,8 +46,8 @@ QString heightFrom(const QJsonObject& schema, const QString& key);
 // "from the picked edges", ...; "" for an unknown or empty reference. `geometryKind` is one kind or several joined by
 // ',' (GeometrySpec::kinds): "edge,face" reads "from the picked edges and faces".
 QString heightFromText(const QString& from, const QString& geometryKind);
-// The registered type names in the panel's order: drill, face, contour2d, pocket2d, slot, chamfer2d, engrave,
-// threadmill, then any others by name.
+// The registered type names in the panel's order: drill, face, contour2d, pocket2d, adaptive2d, slot, chamfer2d,
+// engrave, threadmill, then any others by name.
 QStringList orderedTypeNames(const QStringList& names);
 // The type a new operation starts with: `lastUsed` when it is one of `names`, else drill, else the first of
 // orderedTypeNames; "" when there are none.

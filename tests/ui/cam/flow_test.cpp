@@ -9,10 +9,11 @@
 // Screenshots of every step, light theme: build/shots/m2_flow_<n>_<step>.png (RAY_M2_FLOW_SHOTS names another folder).
 //
 // And M3 in one window ([m3flow], its own CTest entry ray_ui_cam_flow_m3): the fixture plate with pockets and holes,
-// a setup, then a face, a pocket2d, a contour2d, a drill and a chamfer2d operation made in the generic operation panel
-// with library tools, all up to date, the cycle-time estimate with its assumptions, the program posted with haas-ngc
-// and with mazak-smooth and each program read back by the independent G-code interpreter of the post tests
-// (tests/unit/post/roundtrip, T-043) without an issue, saved, closed and opened again with the same operations.
+// a setup, then a face, a pocket2d, an adaptive2d (T-061), a contour2d, a drill and a chamfer2d operation made in the
+// generic operation panel with library tools, all up to date, the cycle-time estimate with its assumptions, the program
+// posted with haas-ngc and with mazak-smooth and each program read back by the independent G-code interpreter of the
+// post tests (tests/unit/post/roundtrip, T-043) without an issue, saved, closed and opened again with the same
+// operations.
 // Screenshots: build/shots/m3_flow_<step>.png (RAY_M3_FLOW_SHOTS names another folder).
 #include "../scene_graph_probe.h"
 #include "../window_focus.h"
@@ -1442,7 +1443,7 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
     }
     m3Shot(w, "01_setup");
 
-    // ---- 3. Five operations, each made in the generic panel with a library tool ----
+    // ---- 3. Six operations (T-061 added the adaptive one), each made in the generic panel with a library tool ----
     struct Step {
         const char* type;
         QString tool, search;
@@ -1453,6 +1454,9 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
     const std::vector<Step> steps = {
         {"face", kFaceMill, QStringLiteral("face mill"), {}, {}, 0},
         {"pocket2d", kEndMill6, QStringLiteral("6 mm 3FL"), [&] { return pocketFloors(w); }, {}, 2},
+        // T-061: the same pockets roughed adaptively (in the flow as an operation like the others; posted and read
+        // back below with them).
+        {"adaptive2d", kEndMill6, QStringLiteral("6 mm 3FL"), [&] { return pocketFloors(w); }, {}, 2},
         // The outline from the stock top down to the plate's bottom edges, in steps of at most 5 mm.
         {"contour2d", kEndMill10, QStringLiteral("10 mm 4FL"), [&] { return bottomOutline(w); },
          [&] { w.typeInto(QStringLiteral("schemaInput.maxStepdown"), QStringLiteral("5 mm")); }, 4},
@@ -1523,8 +1527,8 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
         w.waitStatus(row, "upToDate");
         ops.push_back(OperationId{Uuid::fromString(id.toStdString())});
     }
-    // All five in the setup, in that order, up to date; five tools with five numbers (the post changes tools by
-    // number).
+    // All six in the setup, in that order, up to date; five tools with five numbers (the post changes tools by
+    // number; the adaptive and the pocket operation share the 6 mm end mill and its number).
     {
         const doc::DocStatePtr s = w.document()->state();
         const cam::Setup& setup = s->cam->setups.front();
@@ -1539,15 +1543,15 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
         }
         CHECK(numbers.size() == 5);
     }
-    REQUIRE(w.tree()->count() == 6);
-    for (int row = 0; row < 6; ++row)
+    REQUIRE(w.tree()->count() == 7);
+    for (int row = 0; row < 7; ++row)
         w.waitStatus(row, "upToDate");
 
     // ---- 4. The cycle-time estimate: in the tree and the post dialog, marked as an estimate with its assumptions ----
     REQUIRE(QTest::qWaitFor(
         [&] {
             const SetupTreeModel::CycleTimeEstimate* e = w.tree()->cycleTimeOf(setupId);
-            return e != nullptr && e->input.complete && e->input.operations.size() == 5;
+            return e != nullptr && e->input.complete && e->input.operations.size() == 6;
         },
         kTimeoutMs * 2));
     const QVariantMap setupRow = w.tree()->get(0);
@@ -1627,7 +1631,7 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
     CHECK(mazak.contains("G21"));
     CHECK(mazak != haas);
 
-    // ---- 7. Saved, closed and opened again: the same five operations, parameters and toolpaths ----
+    // ---- 7. Saved, closed and opened again: the same six operations, parameters and toolpaths ----
     const doc::DocStatePtr before = w.document()->state();
     const cam::Setup setupBefore = before->cam->setups.front();
     CHECK(setupBefore.postId == "mazak-smooth"); // the post last used is written back to the setup
@@ -1656,7 +1660,7 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
     w.settle();
     if (w.host->context()->workspace() != ui::kCamWorkspace)
         w.click(QStringLiteral("workspaceTab.%1").arg(ui::kCamWorkspace));
-    REQUIRE(QTest::qWaitFor([&] { return w.tree()->count() == 6; }, 10000));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->count() == 7; }, 10000));
     {
         const doc::DocStatePtr s = w.document()->state();
         REQUIRE(s->cam);
@@ -1667,7 +1671,7 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
         CHECK(back.material == setupBefore.material);
         CHECK(back.postId == setupBefore.postId);
         CHECK(back.operations == setupBefore.operations);
-        REQUIRE(s->cam->operations.size() == 5);
+        REQUIRE(s->cam->operations.size() == 6);
         for (const OperationId& id : ops) {
             REQUIRE(s->cam->operations.count(id) == 1);
             const cam::Operation& a = before->cam->operations.at(id);
@@ -1697,16 +1701,16 @@ TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts
         }
     }
     // Up to date in this session (the engine keeps toolpaths by input hash) and drawn: the setup row is current, so all
-    // five toolpaths are shown, none stale or dimmed, each the one posted.
+    // six toolpaths are shown, none stale or dimmed, each the one posted.
     REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == 0; }, 10000));
-    for (int row = 0; row < 6; ++row)
+    for (int row = 0; row < 7; ++row)
         w.waitStatus(row, "upToDate");
     REQUIRE(QTest::qWaitFor(
         [&] {
             int drawn = 0;
             for (const ToolpathDisplay::Shown& s : w.display()->shown())
                 drawn += s.backplot && s.toolpath && !s.stale && !s.dim && !s.preview ? 1 : 0;
-            return drawn == 5;
+            return drawn == 6;
         },
         kTimeoutMs));
     for (const ToolpathDisplay::Shown& s : w.display()->shown()) {
