@@ -527,10 +527,27 @@ private:
             if (!(len > 0)) {
                 continue;
             }
-            const std::size_t n = static_cast<std::size_t>(std::ceil(len / static_cast<double>(kOpenPieceNm)));
+            // Pieces of at most kOpenPieceNm inside each span, so no piece straddles a corner (whose probe would look
+            // across the next edge).
+            std::vector<double> at{0.0};
+            Pt from = loop->start;
+            for (const geom2d::Span& sp : loop->spans) {
+                const double dx = static_cast<double>(sp.end.x - from.x), dy = static_cast<double>(sp.end.y - from.y);
+                const double ls = sp.kind == geom2d::SpanKind::Line
+                                      ? std::sqrt(dx * dx + dy * dy)
+                                      : static_cast<double>(sp.radius) * geom2d::sweepOf(from, sp);
+                const double s0 = at.back();
+                const std::size_t m = std::max<std::size_t>(
+                    1, static_cast<std::size_t>(std::ceil(ls / static_cast<double>(kOpenPieceNm))));
+                for (std::size_t i = 1; i <= m; ++i) {
+                    at.push_back(s0 + ls * static_cast<double>(i) / static_cast<double>(m));
+                }
+                from = sp.end;
+            }
+            const std::size_t n = at.size() - 1;
             std::vector<bool> isOpen(n, false);
             for (std::size_t j = 0; j < n; ++j) {
-                const double sm = len * (static_cast<double>(j) + 0.5) / static_cast<double>(n);
+                const double sm = std::min(len, (at[j] + at[j + 1]) / 2);
                 const Pt p = geom2d::pointAt(*loop, sm);
                 const Vec2 t = geom2d::tangentAt(*loop, sm);
                 const double d = static_cast<double>(kOpenProbeNm);
@@ -556,8 +573,12 @@ private:
                 while (end + 1 <= n && isOpen[(first + end + 1) % n]) {
                     ++end;
                 }
-                const double s0 = len * static_cast<double>(first + k) / static_cast<double>(n);
-                const double s1 = len * static_cast<double>(first + end + 1) / static_cast<double>(n);
+                // Arc lengths of piece boundaries, unwrapped past the loop's end.
+                const auto boundary = [&](std::size_t q) {
+                    return q >= n ? len + at[q - n] : at[q];
+                };
+                const double s0 = boundary(first + k);
+                const double s1 = std::min(boundary(first + end + 1), s0 + len);
                 const double wrap = s0 >= len ? len : 0;
                 open.push_back(geom2d::subPath(*loop, s0 - wrap, s1 - wrap));
                 k = end;
