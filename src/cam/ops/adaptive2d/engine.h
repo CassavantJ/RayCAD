@@ -36,7 +36,9 @@
 //
 // DETERMINISM AND RE-ENTRANCY. No clock, no unordered containers, no shared mutable state: any number of runEngine
 // calls may run at once on any threads, and the output depends on the input only (byte-identical on every platform:
-// src/cam is built with strict floating point and the engine's trigonometry is ray::dmath). Where upstream stopped
+// src/cam is built with strict floating point, and the engine's trigonometry, its offsets' included (engine_offset.h, a
+// copy of Clipper2's offsetting: Clipper2 itself calls the platform's libm), is ray::dmath; Clipper2's booleans are
+// built with RayCAD's patch for a stable intersection sort, ports/clipper2). Where upstream stopped
 // on wall-clock time, the engine stops on counted work (Limits). The tests in tests/unit/cam/adaptive* check 20
 // processes, 20 repeats, 1, 2, 16 and 32 concurrent runs and the goldens in tests/golden/adaptive2d.
 //

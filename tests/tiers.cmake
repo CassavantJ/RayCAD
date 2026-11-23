@@ -67,7 +67,9 @@ set(RAY_DEBUG_HEAVY_TESTS
     # 3000 holes with references in under 30 s (41 s in Debug), and a 1,000,000-move post, which runs into the post
     # sandbox's own time limit in Debug.
     ray_cam_holes_tests_wallclock
-    ray_post_tests_wallclock)
+    ray_post_tests_wallclock
+    # T-060: the adaptive engine's PLAN.md section 9 run times (islands pocket in 3 s; about 2.8 s in Release).
+    ray_cam_adaptive_tests_wallclock)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers

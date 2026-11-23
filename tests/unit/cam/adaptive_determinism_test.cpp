@@ -124,7 +124,7 @@ void concurrent(int jobs, const std::vector<std::string>& ids, double stepover,
 
 TEST_CASE("Twenty runs in one process give the same bytes", "[adaptive][determinism]")
 {
-    for (const char* id : {"p2", "p5"}) {
+    for (const char* id : {"p2"}) {
         const std::string first = textOf(id, 0.2);
         for (int i = 1; i < 20; i++) {
             INFO(id << " repeat " << i);
@@ -133,17 +133,35 @@ TEST_CASE("Twenty runs in one process give the same bytes", "[adaptive][determin
     }
 }
 
-TEST_CASE("1, 2, 16 and 32 concurrent runs give the same bytes; 32 finish in time", "[adaptive][determinism]")
+TEST_CASE("1, 2, 16 and 32 concurrent runs give the same bytes; 32 finish in time",
+          "[adaptive][determinism][concurrency]")
 {
-    const std::vector<std::string> ids = {"p2", "p5", "p6"};
+#ifdef NDEBUG
+    const std::vector<std::string> ids = {"p2", "p5"};
+#else
+    // MSVC Debug: its debug heap serialises the runs' allocations (16 runs of three pockets took 1400 s, 52 times one
+    // run), so one small pocket.
+    const std::vector<std::string> ids = {"p2"};
+#endif
     std::vector<std::string> expected;
     for (const std::string& id : ids) {
         expected.push_back(hashText(textOf(id, 0.2)));
     }
     // The limit is a guard against a hang (S5: one of 32 upstream instances never finished), not a budget: alone in
-    // Release the 32 runs take seconds; MSVC Debug on a loaded machine takes minutes.
+    // Release the 32 runs take seconds; MSVC Debug minutes.
     for (int jobs : {1, 2, 16, 32}) {
-        concurrent(jobs, ids, 0.2, expected, 600.0);
+        concurrent(jobs, ids, 0.2, expected, 1200.0);
+    }
+}
+
+TEST_CASE("Twenty runs in one process give the same bytes: the other S5 pockets", "[adaptive][determinism][slow]")
+{
+    for (const char* id : {"p1", "p3", "p5", "p6"}) {
+        const std::string first = textOf(id, 0.2);
+        for (int i = 1; i < 20; i++) {
+            INFO(id << " repeat " << i);
+            REQUIRE(textOf(id, 0.2) == first);
+        }
     }
 }
 

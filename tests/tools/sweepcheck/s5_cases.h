@@ -19,11 +19,39 @@ struct Case {
     Loops stock;  // stock outline at this depth
 };
 
-// An arc as a polyline with chord error 1 um, both ends included.
+// Sine and cosine from IEEE operations only (a Taylor series after reduction to a quarter turn), so the pockets are
+// the same bits on every platform: with the platform's libm a vertex can differ in its last bit between Windows and
+// Linux, round to another nanometre, and give the engine a different input (S5's arcs used std::cos and std::sin).
+inline void sinCos(double x, double& s, double& c)
+{
+    const double halfPi = kPi / 2;
+    double k = std::floor(x / halfPi + 0.5);
+    double r = x - k * halfPi;
+    double r2 = r * r;
+    double sr = r, cr = 1, term = r;
+    for (int i = 1; i <= 12; i++) {
+        term *= -r2 / ((2 * i) * (2 * i + 1));
+        sr += term;
+    }
+    term = 1;
+    for (int i = 1; i <= 12; i++) {
+        term *= -r2 / ((2 * i - 1) * (2 * i));
+        cr += term;
+    }
+    long q = static_cast<long>(k) % 4;
+    if (q < 0) {
+        q += 4;
+    }
+    s = q == 0 ? sr : q == 1 ? cr : q == 2 ? -sr : -cr;
+    c = q == 0 ? cr : q == 1 ? -sr : q == 2 ? -cr : sr;
+}
+
+// An arc as a polyline with chord error about 1 um (step 2 sqrt(2 sag / r), S5's 2 acos(1 - sag / r) to second
+// order), both ends included.
 inline void arc(Loop& l, double cx, double cy, double r, double a0deg, double a1deg)
 {
     const double sag = 0.001;
-    double step = 2.0 * std::acos(1.0 - sag / r);
+    double step = 2.0 * std::sqrt(2.0 * sag / r);
     double a0 = a0deg * kPi / 180.0, a1 = a1deg * kPi / 180.0;
     int n = static_cast<int>(std::ceil(std::fabs(a1 - a0) / step));
     if (n < 1) {
@@ -31,7 +59,9 @@ inline void arc(Loop& l, double cx, double cy, double r, double a0deg, double a1
     }
     for (int i = 0; i <= n; i++) {
         double a = a0 + (a1 - a0) * i / n;
-        l.push_back({cx + r * std::cos(a), cy + r * std::sin(a)});
+        double s = 0, c = 0;
+        sinCos(a, s, c);
+        l.push_back({cx + r * c, cy + r * s});
     }
 }
 inline Loop roundedRect(double x0, double y0, double x1, double y1, double r)

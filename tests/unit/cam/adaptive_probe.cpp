@@ -2,7 +2,9 @@
 // processes (adaptive_determinism_test.cpp starts it) and for measuring by hand.
 //   ray_cam_adaptive_probe hash <case> <stepover>    the BLAKE3 of the output's golden text
 //   ray_cam_adaptive_probe text <case> <stepover>    the golden text itself
-//   ray_cam_adaptive_probe stats|paths|roles <case> <stepover>   the engine's counters; each path; the checker by path role
+//   ray_cam_adaptive_probe stats <case> <stepover> [repeats]   the engine's counters and best time
+//   ray_cam_adaptive_probe paths <case> <stepover>   each path: role, motion, points, largest engagement estimate
+//   ray_cam_adaptive_probe roles <case> <stepover>   the sweep checker's statistics of one path role at a time
 //   ray_cam_adaptive_probe check <case> <stepover> [repeats]
 //                                                    run time (best and worst of the repeats), the engine's counters
 //                                                    and the sweep checker's report

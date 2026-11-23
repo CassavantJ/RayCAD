@@ -49,11 +49,23 @@
 //     and leads end a region with LimitReached instead of running on (upstream: LONG_MAX).
 //  7. Interface. Inputs arrive in grid units (engine.cpp converts from nanometres); the progress callback that
 //     received copies of the paths is replaced by the cancel token and a progress fraction.
+//  8. One bug fix: the area a pass cleared (and the cleared-area totals) is the sum of Clipper2's signed areas;
+//     upstream signed each loop by a nesting test that misjudged loops, so passes that cut thousands of square
+//     millimetres were dropped as cutting nothing (on S5's islands pocket: links from where the tool never was,
+//     material cut later far above the target engagement). The depth estimates of item 5 query the cleared area
+//     without touching its cache, so they change nothing the step search computes.
+//  9. Defensive guards against endless loops: a finishing path of zero length, and empty paths where upstream read
+//     the first point or looped to size() - 1.
+// 10. Offsets (OffsetPaths, OffsetPath, ClipperOffset) use engine_offset.h, a copy of Clipper2's offsetting with its
+//     trigonometry through ray::dmath (Clipper2 itself calls the platform's libm for round joins). The library's own
+//     Union, Intersect and Difference stay; ports/clipper2 patches its one unstable sort, which did make Linux and
+//     Windows differ on S5's thin-wall pocket.
 // The algorithm itself (the step search, the cut-area computation, engagement, linking, leads, finishing) is
 // upstream's, statement for statement, apart from these changes.
 // clang-format off
 
 #include "engine_adaptive.h"
+#include "engine_offset.h"
 #include <cstddef>
 #include <cmath>
 #include <cstring>
@@ -134,7 +146,7 @@ inline Paths64 OffsetPaths(
     JoinType jt = JoinType::Round
 )
 {
-    return InflatePaths(paths, delta, jt, et, 2.0, 0.25);
+    return offset::InflatePaths(paths, delta, jt, et, 2.0, 0.25);  // RayCAD: engine_offset.h
 }
 
 inline Paths64 OffsetPath(
@@ -144,7 +156,7 @@ inline Paths64 OffsetPath(
     JoinType jt = JoinType::Round
 )
 {
-    return InflatePaths(Paths64 {path}, delta, jt, et, 2.0, 0.25);
+    return offset::InflatePaths(Paths64 {path}, delta, jt, et, 2.0, 0.25);  // RayCAD: engine_offset.h
 }
 
 //*****************************************
@@ -2020,7 +2032,7 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     // Offset using a Z callback to preserve Z=1 marking
     // Note that PreserveCollinear must be set of ClipperOffset (it is already set by default on
     // Clipper64) to avoid accidentally optimizing out collinear points with differing z-values
-    ClipperOffset clipof(2.0, 0.25);
+    offset::ClipperOffset clipof(2.0, 0.25);  // RayCAD: engine_offset.h
     clipof.PreserveCollinear(true);
     clipof.AddPaths(inputPaths, JoinType::Round, EndType::Polygon);
 

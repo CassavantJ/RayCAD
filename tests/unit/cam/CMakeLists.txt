@@ -286,8 +286,12 @@ target_compile_definitions(ray_cam_adaptive_tests PRIVATE
     RAY_ADAPTIVE_PROBE="$<TARGET_FILE:ray_cam_adaptive_probe>")
 add_dependencies(ray_cam_adaptive_tests ray_cam_adaptive_probe)
 set_property(TARGET ray_cam_adaptive_tests PROPERTY FOLDER "tests")
-add_test(NAME ray_cam_adaptive_tests COMMAND ray_cam_adaptive_tests "~[wallclock]~[slow]")
+add_test(NAME ray_cam_adaptive_tests COMMAND ray_cam_adaptive_tests "~[wallclock]~[slow]~[concurrency]")
 ray_test_runtime_path(ray_cam_adaptive_tests)
+# 1 to 32 concurrent runs, on their own: about 15 s in Release, minutes in MSVC Debug (its debug heap).
+add_test(NAME ray_cam_adaptive_concurrency COMMAND ray_cam_adaptive_tests "[concurrency]~[slow]")
+ray_test_runtime_path(ray_cam_adaptive_concurrency)
+set_tests_properties(ray_cam_adaptive_concurrency PROPERTIES TIMEOUT 1200)
 add_test(NAME ray_cam_adaptive_slow COMMAND ray_cam_adaptive_tests "[slow]")
 ray_test_runtime_path(ray_cam_adaptive_slow)
 set_tests_properties(ray_cam_adaptive_slow PROPERTIES TIMEOUT 3600)

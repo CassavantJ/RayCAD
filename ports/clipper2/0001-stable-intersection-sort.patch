@@ -1,0 +1,26 @@
+RayCAD patch to Clipper2 2.0.1 (BSL-1.0; this file is under the same terms).
+
+What: the list of intersections of a sweep is sorted with std::stable_sort instead of std::sort.
+
+Why: intersections at the same point compare equal (IntersectListSort orders by y, then x), and std::sort leaves
+equal elements in an order of the standard library's choosing: Microsoft's and GNU's differ. The order changes the
+output: the same Union on the same input gave 451 vertices with MSVC and 452 with GCC (the tool-centre area of
+spike S5's thin-wall pocket in the adaptive engine, task T-060). A stable
+sort keeps the order in which the sweep found the intersections, which is the same everywhere, so every platform
+gives the same polygons (RayCAD's determinism rule, PLAN.md section 8). Measured: the same 451 vertices with MSVC
+and GCC after the change; Clipper2 already sorts its local minima and horizontal segments with std::stable_sort.
+
+Upstream: not reported yet.
+
+diff --git a/CPP/Clipper2Lib/src/clipper.engine.cpp b/CPP/Clipper2Lib/src/clipper.engine.cpp
+--- a/CPP/Clipper2Lib/src/clipper.engine.cpp
++++ b/CPP/Clipper2Lib/src/clipper.engine.cpp
+@@ -2453,7 +2453,7 @@ namespace Clipper2Lib {
+     //crucial that intersections only occur between adjacent edges.
+ 
+     //First we do a quicksort so intersections proceed in a bottom up order ...
+-    std::sort(intersect_nodes_.begin(), intersect_nodes_.end(), IntersectListSort);
++    std::stable_sort(intersect_nodes_.begin(), intersect_nodes_.end(), IntersectListSort);
+     //Now as we process these intersections, we must sometimes adjust the order
+     //to ensure that intersecting edges are always adjacent ...
+ 
