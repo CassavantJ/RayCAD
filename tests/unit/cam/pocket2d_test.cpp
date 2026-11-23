@@ -297,8 +297,8 @@ TEST_CASE("pocket2d open edges: the footprint runs out past the open side, so th
     const g2::Bounds fb = g2::bounds(pk.footprint.at(0));
     CHECK(fb.min.y == -8'300'000);
     CHECK(fb.max.y == 25 * kMm);
-    CHECK(fb.min.x == 62 * kMm - 8'300'000);
-    CHECK(fb.max.x == 95 * kMm + 8'300'000);
+    CHECK(fb.min.x == 62 * kMm); // square at the ends: it does not wrap round the faces beside the edge
+    CHECK(fb.max.x == 95 * kMm);
     // The rings reach past the edge (the outermost one 8.3 - 4.3 = 4 mm out), and stay 4.3 mm from the walls.
     Nm minY = std::numeric_limits<Nm>::max(), minX = minY, maxX = std::numeric_limits<Nm>::min(), maxY = maxX;
     for (const g2::Path& p : pathsAt(*plan, 14 * kMm)) {
@@ -310,9 +310,8 @@ TEST_CASE("pocket2d open edges: the footprint runs out past the open side, so th
     }
     CHECK(minY == -4 * kMm);
     CHECK(maxY == 25 * kMm - 4'300'000);
-    // Past the edge the room rounds the step's front corners (radius 4.3 about them) inside the strip.
-    CHECK(minX > 62 * kMm - 8'300'000 + 4'300'000);
-    CHECK(maxX < 95 * kMm + 8'300'000 - 4'300'000);
+    CHECK(minX == 62 * kMm + 4'300'000);
+    CHECK(maxX == 95 * kMm - 4'300'000);
     // No warning about the strip, which is room to run out, not pocket.
     const Toolpath p = c.path(c.claims(0.3));
     CHECK(p.warnings.empty());
@@ -631,4 +630,33 @@ TEST_CASE("pocket2d generation is deterministic and can be cancelled", "[cam][po
     auto cancelled = ops::makePocket2dOperationType()->generate(c.input(), ctx);
     REQUIRE_FALSE(cancelled);
     CHECK(cancelled.error().code == ErrorCode::Cancelled);
+}
+
+TEST_CASE("pocket2d rings end where the room does: a small rounded room shrunk past its middle", "[cam][pocket2d]")
+{
+    // Seed 255839108 of the invariant property test: geom2d::offset returned a region (growing with every ring) for
+    // this room shrunk past its inradius, so the rings never ended. pocket2d takes such a result as empty.
+    kernel::Shape s = box(Vec3{0, 0, -14}, Vec3{88, 50, 0});
+    s = cut(s, prism({roundedRect(37, 4.9, 51.4, 17.5, 2.8)}, -6.9, 1));
+    s = cut(s, prism({roundedRect(66.3, 4.1, 82.3, 20.9, 3.4)}, -6.1, 1));
+    Case c;
+    c.op = pocketOp(R"({"finishFloor":true,"finishWalls":true,"floorAllowance":0.302,"helixDiameter":70.582,)"
+                    R"("rampAngle":3.709,"stepdown":2.272,"stepover":80.499,"stockToLeaveFloor":0.041,)"
+                    R"("stockToLeaveWall":0.23,"wallAllowance":0.224})",
+                    6093, 1837);
+    c.op.heights.clearance = 20;
+    c.op.heights.feedPlane = 1.3;
+    c.tool = endMill(4, 12.1);
+    c.geom = geometryOn(s, {upFace(s, -6.9), upFace(s, -6.1)});
+    c.geom.stockBounds.max.z = 0.6;
+    auto plan = c.plan();
+    REQUIRE(plan);
+    for (const ops::PocketReport& pk : plan->pockets) {
+        for (const ops::PocketCoverage& cv : pk.coverage) {
+            CHECK(cv.rings <= 3);
+        }
+    }
+    c.clears = {clearClaim({rectPoly(37, 4.9, 51.4, 17.5, 2.8)}, -6.9, 0.01),
+                clearClaim({rectPoly(66.3, 4.1, 82.3, 20.9, 3.4)}, -6.1, 0.01)};
+    c.path(c.claims(0.23, 0.041, false, 3.709));
 }

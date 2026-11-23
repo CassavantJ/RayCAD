@@ -567,10 +567,35 @@ private:
         if (open.empty()) {
             return footprint;
         }
+        // Square-ended: the run, out to its offset, back along it, in again; a round-ended strip would wrap round the
+        // ends of the open edge and run the tool along the faces beside it. Where the offset comes in pieces (an
+        // open run folding back on itself) the run's swept area is used instead.
         const Nm width = 2 * r_ + stockWall_ + wallAllowance_;
-        Regions strip;
-        RAY_P2D_ASSIGN(strip, geom2d::sweptArea(open, width, ctx_));
-        return geom2d::unite(footprint, strip, ctx_);
+        for (const Path& run : open) {
+            RAY_P2D_TRY(ctx_.cancel.check());
+            Regions strip;
+            geom2d::Paths off;
+            if (!run.closed) {
+                RAY_P2D_ASSIGN(off, geom2d::offsetOpen(run, width, geom2d::Side::Right, ctx_));
+            }
+            if (off.size() == 1 && !off[0].spans.empty()) {
+                const Path back = geom2d::reverse(off[0]);
+                Path loop;
+                loop.start = run.start;
+                loop.spans = run.spans;
+                loop.spans.push_back(geom2d::Span{geom2d::SpanKind::Line, back.start, {}, 0});
+                loop.spans.insert(loop.spans.end(), back.spans.begin(), back.spans.end());
+                loop.spans.push_back(geom2d::Span{geom2d::SpanKind::Line, run.start, {}, 0});
+                loop.closed = true;
+                const Region r = geom2d::canonicalize(Region{geom2d::canonicalize(std::move(loop)), {}});
+                // Regularised through a union with nothing: the loop is simple for the runs this makes.
+                RAY_P2D_ASSIGN(strip, geom2d::unite(Regions{r}, Regions{}, ctx_));
+            } else {
+                RAY_P2D_ASSIGN(strip, geom2d::sweptArea(std::span<const Path>(&run, 1), width, ctx_));
+            }
+            RAY_P2D_ASSIGN(footprint, geom2d::unite(footprint, strip, ctx_));
+        }
+        return footprint;
     }
 
     Status findPockets()
@@ -740,7 +765,8 @@ private:
             for (const Nm z : pk.depths) {
                 RAY_P2D_TRY(ctx_.cancel.check());
                 const Regions* s = nullptr;
-                RAY_P2D_ASSIGN(s, slice(pk.part, z));
+                // Material from stockToLeaveFloor below z up: the stock left on a floor or an island's top is kept.
+                RAY_P2D_ASSIGN(s, slice(pk.part, z - stockFloor_));
                 if (material.empty()) {
                     material = *s;
                 } else if (!s->empty()) {
@@ -757,7 +783,7 @@ private:
                     }
                 }
                 Regions rough, finish;
-                RAY_P2D_ASSIGN(rough, geom2d::offset(kept, -(r_ + stockWall_ + wallAllowance_), ctx_));
+                RAY_P2D_ASSIGN(rough, shrink(kept, r_ + stockWall_ + wallAllowance_));
                 RAY_P2D_ASSIGN(rough, withoutSlivers(std::move(rough)));
                 if (rough.empty()) {
                     return cannot(capitalised(toolText()) + " does not fit " + pk.where + " at Z" + mmText(z) +
@@ -769,7 +795,7 @@ private:
                                   ") from every wall and island");
                 }
                 if (p_.finishWalls) {
-                    RAY_P2D_ASSIGN(finish, geom2d::offset(kept, -(r_ + stockWall_), ctx_));
+                    RAY_P2D_ASSIGN(finish, shrink(kept, r_ + stockWall_));
                     RAY_P2D_ASSIGN(finish, withoutSlivers(std::move(finish)));
                 }
                 pk.region.push_back(std::move(kept));
@@ -789,6 +815,34 @@ private:
         return {};
     }
 
+    // geom2d::offset shrinking by d >= 0, guarded: a part of the result reaching outside the input's box is taken as
+    // an empty result. geom2d::offset was seen to return such regions (non-empty, even larger than the input) for a
+    // small rounded region shrunk past its inradius, where the true result is empty (T-054 report, for T-050).
+    Result<Regions> shrink(const Regions& in, geom2d::Coord d)
+    {
+        Regions out;
+        RAY_P2D_ASSIGN(out, geom2d::offset(in, -d, ctx_));
+        geom2d::Bounds box;
+        for (const Region& r : in) {
+            const geom2d::Bounds b = geom2d::bounds(r);
+            if (b.empty) {
+                continue;
+            }
+            box = box.empty ? b
+                            : geom2d::Bounds{Pt{std::min(box.min.x, b.min.x), std::min(box.min.y, b.min.y)},
+                                             Pt{std::max(box.max.x, b.max.x), std::max(box.max.y, b.max.y)}, false};
+        }
+        constexpr geom2d::Coord kSlack = 1'000;
+        for (const Region& r : out) {
+            const geom2d::Bounds b = geom2d::bounds(r);
+            if (box.empty || b.min.x < box.min.x - kSlack || b.min.y < box.min.y - kSlack ||
+                b.max.x > box.max.x + kSlack || b.max.y > box.max.y + kSlack) {
+                return Regions{};
+            }
+        }
+        return out;
+    }
+
     // `rs` without its slivers: parts narrower than 2 kSliverNm (an offset landing within micrometres of a part's
     // half width), whose rings are a line of micrometre spans; what they would cut is the coverage check's to find.
     Result<Regions> withoutSlivers(Regions rs)
@@ -796,7 +850,7 @@ private:
         Regions out;
         for (Region& r : rs) {
             Regions inner;
-            RAY_P2D_ASSIGN(inner, geom2d::offset(Regions{r}, -kSliverNm, ctx_));
+            RAY_P2D_ASSIGN(inner, shrink(Regions{r}, kSliverNm));
             if (!inner.empty()) {
                 out.push_back(std::move(r));
             }
@@ -834,7 +888,7 @@ private:
             if (k == 0) {
                 ring = room;
             } else {
-                RAY_P2D_ASSIGN(ring, geom2d::offset(room, -static_cast<Nm>(k) * s_, ctx_));
+                RAY_P2D_ASSIGN(ring, shrink(room, static_cast<Nm>(k) * s_));
                 RAY_P2D_ASSIGN(ring, withoutSlivers(std::move(ring)));
             }
             if (ring.empty()) {
@@ -868,7 +922,7 @@ private:
             RAY_P2D_ASSIGN(swept, geom2d::sweptArea(paths, rf_, ctx_));
             RAY_P2D_ASSIGN(left, geom2d::subtract(reach, swept, ctx_));
             if (!left.empty()) {
-                RAY_P2D_ASSIGN(wide, geom2d::offset(left, -kScallopLimitNm / 2, ctx_));
+                RAY_P2D_ASSIGN(wide, shrink(left, kScallopLimitNm / 2));
             }
             rs.report.left = left;
             if (wide.empty()) {
@@ -893,7 +947,7 @@ private:
                 }
                 const int half = band + 1;
                 Regions ring;
-                RAY_P2D_ASSIGN(ring, geom2d::offset(rs.room, -(static_cast<Nm>(band / 2) * s_ + s_ / 2), ctx_));
+                RAY_P2D_ASSIGN(ring, shrink(rs.room, static_cast<Nm>(band / 2) * s_ + s_ / 2));
                 RAY_P2D_ASSIGN(ring, withoutSlivers(std::move(ring)));
                 Regions& into = halves[half];
                 bool any = false;
@@ -931,7 +985,7 @@ private:
         const std::size_t d = pk.depths.size() - 1;
         const Regions& room = p_.finishWalls ? pk.finishRoom[d] : pk.roughRoom[d];
         Regions target, near, far;
-        RAY_P2D_ASSIGN(target, geom2d::offset(pk.region[d], -stockWall_, ctx_));
+        RAY_P2D_ASSIGN(target, shrink(pk.region[d], stockWall_));
         if (pk.open) {
             // Only the floor's own footprint: the strip past the open edges is room to run out, not pocket.
             RAY_P2D_ASSIGN(target, geom2d::intersect(target, Regions{Region{pk.floorRegion.outer, {}}}, ctx_));
@@ -940,7 +994,7 @@ private:
         RAY_P2D_ASSIGN(far, geom2d::subtract(target, near, ctx_));
         for (const Region& piece : far) {
             Regions wide;
-            RAY_P2D_ASSIGN(wide, geom2d::offset(Regions{piece}, -kScallopLimitNm / 2, ctx_));
+            RAY_P2D_ASSIGN(wide, shrink(Regions{piece}, kScallopLimitNm / 2));
             if (wide.empty()) {
                 continue;
             }

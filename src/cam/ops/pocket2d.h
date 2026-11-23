@@ -6,13 +6,16 @@
 // THE POCKET. Each picked face is the floor of one pocket: a planar face looking up the setup's Z
 // (geom2d::faceBoundary).
 //   Closed pocket (geom2d::pocketAboveFace finds walls all round): the footprint is the wall loop at the floor.
-//   Open pocket (no wall all round): the footprint is the floor's outer loop united with a strip one tool diameter wide
-//   outside every open edge (geom2d::sweptArea of the open pieces), so the tool runs out past the open side. An edge
+//   Open pocket (no wall all round): the footprint is the floor's outer loop united with a strip 2 r + stockToLeaveWall
+//   + wallAllowance wide outside every run of open edges, square at its ends (the run and its geom2d::offsetOpen
+//   joined; geom2d::sweptArea where the offset comes in pieces), so the tool runs out past the open side without
+//   wrapping round the faces beside it. An edge
 //   is open where the point kOpenProbeNm outside it (at the middle of each piece of at most kOpenPieceNm) is not
 //   material just above the floor (geom2d::sliceRegions at the floor).
-// At each depth z the pocket region is the footprint minus the material at z and above (the union of the part's slices
-// at every depth of the pocket from the top down to z, so an island lower than the top is cut over until the depth
-// reaches it), keeping the pieces that meet the floor face.
+// At each depth z the pocket region is the footprint minus the material at z - stockToLeaveFloor and above (the union
+// of the part's slices at every depth of the pocket, each taken stockToLeaveFloor lower, from the top down to z, so an
+// island lower than the top is cut over until the depth reaches it, and the stock to leave on its top is kept),
+// keeping the pieces that meet the floor face.
 //
 // HEIGHTS (Operation::heights), all relative to the top of the stock box (ResolvedGeometry::stockBounds.max.z):
 //   clearance, retract, feedPlane as linking uses them (link.h Options), top = where the material starts (the first

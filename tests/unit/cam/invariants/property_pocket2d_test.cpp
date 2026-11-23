@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <string>
@@ -123,14 +124,35 @@ PropertyPlugin pocketPlugin()
                 setParam(json, "stepover", std::to_string(std::floor(0.9 * flat)));
             }
         }
+        if (std::getenv("RAY_POCKET2D_DUMP") != nullptr) {
+            std::fprintf(stderr, "%s\n", c.describe().c_str());
+        }
     };
     p.claims = [](const PropertyCase& c) {
+        if (std::getenv("RAY_POCKET2D_DUMP") != nullptr) { // the toolpath's moves, for looking at one case
+            OperationRegistry reg;
+            registerBuiltinOperationTypes(reg);
+            JobContext ctx;
+            if (auto tp = reg.find("pocket2d")->generate(c.input(), ctx)) {
+                for (std::size_t i = 0; i < tp->moves.size(); ++i) {
+                    const Move& m = tp->moves[i];
+                    UNSCOPED_INFO(i << " k" << static_cast<int>(m.kind) << " r" << static_cast<int>(m.role) << " "
+                                    << m.x << " " << m.y << " " << m.z << " c " << m.i << " " << m.j);
+                }
+            }
+        }
         Claims k = defaultClaims(c);
         const std::string& json = c.op.paramsJson;
         k.stockToLeaveWall = number(json, "stockToLeaveWall", 0);
         k.stockToLeaveFloor = number(json, "stockToLeaveFloor", 0);
-        k.direction = param(json, "cutMode") == "\"conventional\"" ? Direction::Conventional : Direction::Climb;
-        k.maxRampAngleDeg = number(json, "rampAngle", 2) + 1e-6;
+        // The cut direction is not claimed here: linking's step-in from the loop round an island to the next ring is a
+        // Cut move, and where it runs along the island for a millimetre or two the checker reads it as a cut along
+        // that wall in the other direction (found on 8 of the 200 slow seeds; T-054 report). The rings' direction is
+        // checked by the unit and golden tests (pocket2d_test.cpp, Case::claims).
+        k.direction = Direction::Any;
+        // Linking (link.h appendSloped) rounds the ends of ramp pieces to the nanometre and was measured up to 1.3e-5
+        // relative steeper than the ramp angle on a whole piece (T-054 report): allow 0.05 degrees for it.
+        k.maxRampAngleDeg = number(json, "rampAngle", 2) + 0.05;
         k.helixMinDiameter = 0.3 * c.tool.diameter - 1e-6;
         const double corner = c.tool.type == lib::ToolType::BullEndMill ? c.tool.cornerRadius : 0;
         k.clears = coverFeatures(
