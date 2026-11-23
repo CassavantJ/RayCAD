@@ -74,14 +74,15 @@ std::pair<double, double> threadFor(double d)
     return {d + 1, 1};
 }
 
-// A thread mill for a thread of `pitch`: single-form (pitch 0) or multi-form, with a neck 0.6 of its diameter up to
+// A thread mill for a thread of `pitch`: single-form (pitch 0) or multi-form, with a neck up to
 // `reach` (libraries.h has no neck: it is described as the shank).
 lib::Tool threadMill(Rng& rng, double diameter, double pitch, bool multi, double reach)
 {
     lib::Tool t = randomTool(rng, lib::ToolType::ThreadMill, diameter);
     t.threadPitch = multi ? pitch : 0;
     t.fluteLength = multi ? std::round(rng.uniform(3, 12)) : 1.5;
-    t.shankDiameter = std::round(diameter * 6) / 10;
+    // A neck that clears the thread's crests inside and out (1.4 pitches narrower than the teeth).
+    t.shankDiameter = std::max(std::round((diameter - 1.4 * pitch) * 10) / 10, std::round(diameter * 3) / 10);
     t.shoulderLength = std::max(reach, t.fluteLength);
     t.overallLength = t.shoulderLength + 40;
     return t;

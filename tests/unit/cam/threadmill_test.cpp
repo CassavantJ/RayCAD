@@ -334,6 +334,11 @@ TEST_CASE("thread milling refuses, naming the cause", "[cam][threadmill][validat
         lib::Tool stubby = threadMill(5, 0, 1.5, 10);
         stubby.shankDiameter = 6;
         refused(internal(m8, stubby), ErrorCode::InvalidArgument,
+                "above its 1.5 mm of flutes the thread mill is 5 mm wide");
+        lib::Tool shortReach = threadMill(5, 0, 1.5, 10);
+        shortReach.fluteLength = 25; // teeth over the whole thread, then a 6 mm shank from 10 mm up
+        shortReach.shankDiameter = 6;
+        refused(internal(m8, shortReach), ErrorCode::InvalidArgument,
                 "the thread mill's 6 mm shank starts 10 mm above its tip and would rub the bore");
         OpCase s = internal(m8, threadMill(5));
         s.op.tool.stickOut = 20.5;

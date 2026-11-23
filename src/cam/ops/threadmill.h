@@ -71,8 +71,10 @@
 // REFUSED, each naming its cause: a tool that is not a thread mill; a tool pitch that does not match the thread's;
 //   multi-form with a tool without a pitch or shorter than one pitch; no thread data; a thread mill that does not fit
 //   the hole (not smaller than the bore) or whose path radius would be under 0.01 mm; a bore not smaller than the
-//   thread; a thread depth that leaves no minor diameter; a shank (above the shoulder) that would enter the hole or
-//   the thread; flutes or stick-out too short; heights out of order; a thread longer than the bore or the boss.
+//   thread; a thread depth that leaves no minor diameter; a neck (above the flutes: the narrower of the cutting and
+//   shank diameters, libraries.h having no neck diameter) or a shank (above the shoulder) that goes into the thread's
+//   length and would rub the bore or hit the boss's thread; flutes or stick-out too short; heights out of order; a
+//   thread longer than the bore or the boss.
 #pragma once
 
 #include "../geom2d.h"
