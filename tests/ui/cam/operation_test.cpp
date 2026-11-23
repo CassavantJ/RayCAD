@@ -541,14 +541,20 @@ QString statusLine(const Window& w)
     return line->isVisible() ? line->property("text").toString() : QString();
 }
 
-// Opens the panel for a new operation from the setup's row in the tree, as the user does.
-void newOperation(const Window& w, int setupRow = 0)
+// Opens the panel for a new operation from the setup's row in the tree, as the user does, and makes it of `type` (the
+// panel starts with the last type used, else the first registered, which is not drill once other types exist).
+void newOperation(const Window& w, int setupRow = 0, const QString& type = QStringLiteral("drill"))
 {
     w.clickRow(QStringLiteral("setupRow.%1").arg(setupRow));
     REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == setupRow; }, 5000));
     w.click(w.shown(QStringLiteral("camRowNewOperation.%1").arg(setupRow)));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, 5000));
     w.shown(QStringLiteral("operationPanel"));
+    if (!type.isEmpty() && w.op()->type() != type) {
+        w.op()->setType(type);
+        REQUIRE(w.op()->type() == type);
+        QCoreApplication::processEvents();
+    }
 }
 
 // The list of the panel's tool picker (qml/cam/ToolPicker.qml, the tool library's).
@@ -877,7 +883,7 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
     const std::string before = w.stateHash();
     const std::size_t undoBefore = w.undoCount();
 
-    // A new operation from the setup's row: the type is the registry's (drill, the only built-in type).
+    // A new operation from the setup's row, made a drilling one.
     newOperation(w);
     CHECK(w.op()->type() == QStringLiteral("drill"));
     CHECK(w.op()->typeTitle() == QStringLiteral("Drilling"));
@@ -1028,6 +1034,100 @@ TEST_CASE("a drill operation by the UI: holes, a library tool, calculated feeds,
     w.undo(true);
     REQUIRE(QTest::qWaitFor([&] { return w.tree()->rowOf(id) >= 0; }, 10000));
     w.waitStatus(w.tree()->rowOf(id), "upToDate");
+    w.checkNoWarnings();
+}
+
+TEST_CASE("a 2D contour operation by the UI: edges picked in the view, a library end mill, the preview, OK",
+          "[cam][e2e][t053]")
+{
+    // The same form as every type (no type-specific QML): the plate's four top edges picked as a user clicks them,
+    // the 10 mm end mill from the picker, the bottom 5 mm below the edges, the preview drawn, OK.
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // metric
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    const std::size_t undoBefore = w.undoCount();
+    newOperation(w, 0, QStringLiteral("contour2d"));
+    CHECK(w.op()->typeTitle() == QStringLiteral("2D contour"));
+    CHECK(w.op()->geometryKind() == QStringLiteral("edge"));
+    CHECK(w.op()->picking());
+    CHECK(w.host->selection()->filterMask() == static_cast<std::uint8_t>(render::PickFilter::Edges));
+    for (const char* key : {"clearance", "retract", "feedPlane", "top", "bottom"})
+        CHECK(w.find(QStringLiteral("operationField.") + QLatin1String(key))->isVisible());
+    // Relevance from the schema: the finish allowance only with a finish pass, the tab fields only with tabs.
+    CHECK_FALSE(w.op()->form()->isRelevant(QStringLiteral("finishAllowance")));
+    CHECK_FALSE(w.op()->form()->isRelevant(QStringLiteral("tabShape")));
+
+    // The tool: end mills first (x-toolTypes).
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    CHECK(pickerTypes(w).count(QStringLiteral("drill")) == 0);
+    CHECK(pickerTypes(w).count(QStringLiteral("flatEndMill")) == 1);
+    const QString mill10 = QStringLiteral("3f550375-46eb-47d0-9b8c-4fedbcb8466d"); // 10 mm 4FL carbide flat end mill
+    chooseTool(w, mill10, QStringLiteral("10 mm 4FL"));
+
+    // The four top edges of the plate, each as a click on it in the view would pick it.
+    const kernel::Shape& shape = w.host->scene()->body(0)->shape;
+    const Box3 b = kernel::bounds(shape);
+    int picked = 0;
+    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Edge); ++i) {
+        auto c = kernel::curveInfo(shape, kernel::SubId{kernel::SubKind::Edge, i});
+        if (!c || c->type != kernel::CurveType::Line || std::abs(c->start.z - b.max.z) > 1e-6 ||
+            std::abs(c->end.z - b.max.z) > 1e-6)
+            continue;
+        const Vec3 mid{(c->start.x + c->end.x) / 2, (c->start.y + c->end.y) / 2, b.max.z};
+        const bool side = std::abs(mid.x - b.min.x) < 1e-6 || std::abs(mid.x - b.max.x) < 1e-6 ||
+                          std::abs(mid.y - b.min.y) < 1e-6 || std::abs(mid.y - b.max.y) < 1e-6;
+        if (!side)
+            continue;
+        w.host->selection()->applyClick(
+            render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Edge, i, mid, 0}, Qt::NoModifier);
+        QCoreApplication::processEvents();
+        ++picked;
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == picked; }, kTimeoutMs));
+    }
+    REQUIRE(picked == 4);
+    // Down 5 mm from the edges; feeds typed.
+    w.typeInto(QStringLiteral("operationInput.bottom"), QStringLiteral("-5"));
+    w.typeInto(QStringLiteral("operationInput.rpm"), QStringLiteral("8000"));
+    w.typeInto(QStringLiteral("operationInput.feedCut"), QStringLiteral("1200"));
+    w.window()->contentItem()->forceActiveFocus();
+    QCoreApplication::processEvents();
+
+    // The preview: the tool centre 5 mm outside the plate, drawn in the view.
+    w.previewed("ok");
+    const std::shared_ptr<const cam::Toolpath> tp = w.op()->previewToolpath();
+    REQUIRE(tp != nullptr);
+    bool outside = false;
+    for (const cam::Move& m : tp->moves) {
+        if (m.role == cam::MoveRole::Cut && m.x == -5'000'000)
+            outside = true;
+    }
+    CHECK(outside);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the operation"); }, 10000));
+    w.shotsBothThemes(QStringLiteral("t053_contour2d"));
+    w.inView(w.shown(QStringLiteral("schemaRow.side"))); // the type's own parameters, from its schema
+    w.shotsBothThemes(QStringLiteral("t053_contour2d_parameters"));
+
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active() && w.undoCount() == undoBefore + 1; }, kTimeoutMs));
+    const doc::DocStatePtr state = w.document()->state();
+    REQUIRE(state->cam);
+    REQUIRE(state->cam->operations.size() == 1);
+    const cam::Operation& op = state->cam->operations.begin()->second;
+    CHECK(op.type == "contour2d");
+    CHECK(op.geometry.size() == 4);
+    CHECK(op.heights.bottom == -5);
+    CHECK(op.paramsJson.find("\"direction\":\"climb\"") != std::string::npos); // the defaults are stored
+    const int row = w.tree()->rowOf(QString::fromStdString(op.id.value.toString()));
+    REQUIRE(row >= 0);
+    w.waitStatus(row, "upToDate");
     w.checkNoWarnings();
 }
 

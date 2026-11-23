@@ -92,6 +92,26 @@ target_compile_definitions(ray_cam_drill_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_S
     RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_drill_tests)
+# The 2D contour operation (task T-053): offsets, sides, leads, passes, tabs and compensation against hand-computed
+# values, each refusal, the goldens (tests/golden/toolpaths/contour2d_*) with the invariant checker on each, the chain
+# to G-code, and end to end through the document and the engine. Links as the drill tests, plus the checker.
+add_executable(ray_cam_contour2d_tests
+    contour2d_document_test.cpp
+    contour2d_golden_test.cpp
+    contour2d_rules_test.cpp
+    contour2d_test_util.h
+    contour2d_validate_test.cpp
+    toolpath_dump.h
+)
+target_link_libraries(ray_cam_contour2d_tests PRIVATE ray_cam_invariants ray_api ray_store ray_doc ray_cam ray_sim
+    ray_post ray_naming ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_contour2d_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_contour2d_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths"
+    RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_contour2d_tests)
 # Operation templates (task T-057): the core (src/cam/templates.h) against hand-made holes and the shipped library, the
 # shipped starter templates, and the cam.template.* actions on a part built like benchmark part 1 in a headless app.
 add_executable(ray_cam_templates_tests
