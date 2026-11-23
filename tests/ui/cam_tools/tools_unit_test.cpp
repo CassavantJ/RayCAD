@@ -238,9 +238,15 @@ TEST_CASE("the drawing changes when and only when the geometry does", "[tools][p
                         : key == "tipAngle"       ? &g.tipAngleDeg
                         : key == "tipDiameter"    ? &g.tipDiameter
                         : key == "threadPitch"    ? &g.threadPitch
+                        : key == "neckDiameter"   ? &g.neckDiameter
+                        : key == "neckLength"     ? &g.neckLength
                                                   : nullptr;
             REQUIRE(v != nullptr);
-            if (key == "tipAngle")
+            if (key == "neckLength" && base.neckDiameter <= 0) {
+                // A neck length means nothing without a neck: give the tool one, up to above its flutes.
+                g.neckDiameter = 0.7 * base.diameter;
+                *v = base.fluteLength + 1;
+            } else if (key == "tipAngle")
                 *v = *v > 0 ? *v - 10 : 100;
             else if (key == "threadPitch" && *v == 0)
                 *v = 0.5;

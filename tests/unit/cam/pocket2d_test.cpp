@@ -491,6 +491,17 @@ TEST_CASE("pocket2d refusals name the cause", "[cam][pocket2d]")
         c.tool.shankDiameter = 8;
         c.tool.shoulderLength = 4;
         refused(c, ErrorCode::InvalidArgument, "shank is wider than its cut");
+        // After M3: a neck no wider than the cut reaches down for the shank (libraries.h neckDiameter, neckLength); a
+        // neck wider than the cut does not. The pocket is 6 mm deep (Z 15 to its floor at Z 9).
+        c.tool.fluteLength = 4;
+        c.tool.neckDiameter = c.tool.diameter - 0.5;
+        c.tool.neckLength = 12;
+        CHECK(c.validate());
+        c.tool.neckLength = 5;
+        refused(c, ErrorCode::InvalidArgument, "it is only 5 mm long below the shank");
+        c.tool.neckDiameter = c.tool.diameter + 1;
+        c.tool.neckLength = 12;
+        refused(c, ErrorCode::InvalidArgument, "mm neck is wider than its cut");
         c = good;
         c.op.tool.stickOut = 6;
         refused(c, ErrorCode::InvalidArgument, "it sticks out only 6 mm");

@@ -10,8 +10,12 @@
 //
 // Shapes by tool type (radius R = diameter / 2, from the tip up):
 //   FlatEndMill, FaceMill, BoringBar, Reamer, Tap   a flat end: R from h = 0
-//   ThreadMill   flat, R (the tips of its teeth); its neck is taken as R - 0.6134 pitch (ISO 68-1 external thread depth
-//                H 17/24), since a thread mill's neck is not in libraries.h and must clear the thread it cuts
+//   ThreadMill   flat, R (the tips of its teeth); without a stated neck, its neck is taken as R - 0.6134 pitch (ISO
+//   68-1
+//                external thread depth H 17/24), as it must clear the thread it cuts
+// A tool that states a neck (libraries.h neckDiameter, after M3): the neck's radius from the top of the flutes up to
+// neckLength (else the shoulder), then to the shoulder min(cutting radius, shank radius); a widening is a 45 degree
+// cone.
 //   BullEndMill  a quarter circle of radius cornerRadius at the corner, then R   (cornerRadius >= R: a ball)
 //   BallEndMill  a quarter circle of radius R
 //   ChamferMill, SpotDrill, Drill, EngraveCutter   a cone of included angle tipAngleDeg from tipDiameter / 2 at the tip

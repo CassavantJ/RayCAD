@@ -167,6 +167,9 @@ lib::Tool newTool(lib::ToolType type, bool inch, const QString& material)
     case lib::ToolType::ThreadMill:
         t.tipAngleDeg = 60;
         t.fluteLength = d / 4;
+        // A single profile on a neck that clears the thread (after M3): 0.7 of the cut, three diameters long.
+        t.neckDiameter = 0.7 * d;
+        t.neckLength = 3 * d;
         break;
     case lib::ToolType::EngraveCutter:
         t.tipAngleDeg = 60;
@@ -176,7 +179,7 @@ lib::Tool newTool(lib::ToolType type, bool inch, const QString& material)
     case lib::ToolType::FlatEndMill:
         break;
     }
-    t.shoulderLength = t.fluteLength;
+    t.shoulderLength = std::max(t.fluteLength, t.neckLength);
     if (!material.isEmpty()) {
         toolsui::Units none;
         const toolsui::Row row = toolsui::newPresetRow(type, material, none);

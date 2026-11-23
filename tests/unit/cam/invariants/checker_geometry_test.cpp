@@ -416,6 +416,34 @@ TEST_CASE("invariants: the tool as radius at height, by type", "[cam][invariants
     CHECK(std::abs(th.radiusAt(6) - 5) < eps);                   // the teeth
     CHECK(std::abs(th.radiusAt(20) - (5 - 0.6134 * 1.5)) < eps); // the neck clears the thread
     CHECK(std::abs(th.maxRadius(Zone::Cutting) - 5) < eps);
+    // A stated neck (after M3): 6 mm single-profile, 1.5 mm of flutes, a 4.2 mm neck to 20 mm, a 6 mm shank from
+    // there (a 45 degree cone from 2.1 to 3 mm radius, 0.9 mm high), and a neck up to the shoulder when its length is
+    // 0.
+    lib::Tool single = tool(lib::ToolType::ThreadMill, 6);
+    single.fluteLength = 1.5;
+    single.shankDiameter = 6;
+    single.shoulderLength = 20;
+    single.neckDiameter = 4.2;
+    single.neckLength = 20;
+    const ToolProfile sn = makeProfile(single, nullptr, 0);
+    CHECK(std::abs(sn.radiusAt(1) - 3) < eps);
+    CHECK(std::abs(sn.radiusAt(1.6) - 2.1) < eps);
+    CHECK(std::abs(sn.radiusAt(19.9) - 2.1) < eps);
+    CHECK(std::abs(sn.radiusAt(20.45) - 2.55) < eps);
+    CHECK(std::abs(sn.radiusAt(25) - 3) < eps);
+    single.neckLength = 0;
+    single.shoulderLength = 15;
+    const ToolProfile ns = makeProfile(single, nullptr, 0);
+    CHECK(std::abs(ns.radiusAt(14.9) - 2.1) < eps);
+    CHECK(std::abs(ns.radiusAt(16) - 3) < eps);
+    // A neck below a longer shoulder: the body between them is min(cutting, shank) radius.
+    single.neckLength = 10;
+    single.shoulderLength = 20;
+    single.shankDiameter = 8;
+    const ToolProfile nb = makeProfile(single, nullptr, 0);
+    CHECK(std::abs(nb.radiusAt(9.9) - 2.1) < eps);
+    CHECK(std::abs(nb.radiusAt(15) - 3) < eps);
+    CHECK(std::abs(nb.radiusAt(25) - 4) < eps);
     // A collet chuck 30 mm above the tip: nose 24 mm, taper to 32 at 70, flange 44 from 70 to the gauge line at 90.
     lib::Holder holder;
     holder.segments = {lib::HolderSegment{20, 44, 44}, lib::HolderSegment{40, 24, 32}};

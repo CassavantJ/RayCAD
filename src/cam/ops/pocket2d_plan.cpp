@@ -760,8 +760,17 @@ private:
         }
         const Nm deep = stockTop_ - deepest;
         const lib::Tool& t = tool();
+        // A neck the tool states (libraries.h, after M3) is part of its reach unless it is wider than the cut.
+        if (t.neckDiameter > t.diameter + 0.001 && t.fluteLength > 0 && deep > toNm(t.fluteLength)) {
+            return invalid("The tool's " + mmText(t.neckDiameter) + " mm neck is wider than its cut and it goes " +
+                           mmText(deep) + " mm below the stock top, but its flutes are only " + mmText(t.fluteLength) +
+                           " mm long: the neck would rub the walls");
+        }
         if (t.shankDiameter > t.diameter + 0.001) {
-            const double reach = t.shoulderLength > 0 ? t.shoulderLength : t.fluteLength;
+            double reach = t.shoulderLength > 0 ? t.shoulderLength : t.fluteLength;
+            if (t.neckDiameter > 0) {
+                reach = std::max(reach, t.neckLength);
+            }
             if (reach > 0 && deep > toNm(reach)) {
                 return invalid("The tool's " + mmText(t.shankDiameter) + " mm shank is wider than its cut and " +
                                "it goes " + mmText(deep) + " mm below the stock top, but it is only " + mmText(reach) +

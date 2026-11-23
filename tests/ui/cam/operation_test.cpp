@@ -80,6 +80,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -2595,6 +2596,45 @@ TEST_CASE("a percentage in the form: shown, typed, out of range", "[cam][e2e][ga
     w.click(QStringLiteral("schemaReset.helixDiameter"));
     REQUIRE(QTest::qWaitFor([&] { return !w.find(QStringLiteral("schemaError.helixDiameter"))->isVisible(); }, 5000));
     CHECK(w.find(QStringLiteral("schemaInput.helixDiameter"))->property("text").toString() == QStringLiteral("90 %"));
+    w.click(QStringLiteral("operationCancel"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+    w.checkNoWarnings();
+}
+
+// Gap 4: the starter single-profile thread mill has its neck (4.2 mm to 20 mm from the tip), so it threads an M8x1.25
+// through the whole 10 mm plate in the real panel (before, the 6 mm "shank" 1.5 mm up refused anything past the
+// flutes).
+TEST_CASE("the starter single-profile thread mill threads M8 the plate's full depth", "[cam][e2e][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // 6.6 mm through holes, 10 mm deep
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w, 0, QStringLiteral("threadmill"));
+    const QString single = QStringLiteral("15348ad9-df0b-4ded-9fbb-5383bb22e0b7"); // tool.threadmill.single60.6mm
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    chooseTool(w, single, QStringLiteral("single-profile"));
+    pickElement(w, kernel::SubKind::Face, cylinderFace(w, 30, 26.666666667, 3.3));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    w.op()->form()->setValue(QStringLiteral("form"), QStringLiteral("single"));
+    w.op()->form()->setValue(QStringLiteral("pitch"), QStringLiteral("1.25 mm"));
+    w.op()->form()->setValue(QStringLiteral("diameter"), QStringLiteral("8 mm"));
+    w.op()->setValue(QStringLiteral("rpm"), QStringLiteral("6000"));
+    w.op()->setValue(QStringLiteral("feedCut"), QStringLiteral("300"));
+    w.previewed("ok");
+    CHECK(w.op()->errors().isEmpty());
+    REQUIRE(w.op()->previewToolpath() != nullptr);
+    // The helix from the bottom of the through hole (Z 0) up through its 10 mm: 8 turns of 1.25 mm, in halves.
+    Nm lowest = std::numeric_limits<Nm>::max(), highest = std::numeric_limits<Nm>::min();
+    for (const cam::Move& m : w.op()->previewToolpath()->moves) {
+        if (m.role == cam::MoveRole::Cut && (m.kind == cam::MoveKind::ArcCW || m.kind == cam::MoveKind::ArcCCW)) {
+            lowest = std::min(lowest, m.z);
+            highest = std::max(highest, m.z);
+        }
+    }
+    CHECK(highest - lowest >= 9'000'000);
+    CHECK(helicalArcs(*w.op()->previewToolpath()) >= 16);
     w.click(QStringLiteral("operationCancel"));
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
     w.checkNoWarnings();

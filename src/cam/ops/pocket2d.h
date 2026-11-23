@@ -63,7 +63,8 @@
 // there (link.h: the pass must start inside the hole).
 // CHECKS (refusals name the cause): the tool (a flat or bull nose end mill with a diameter, a corner radius under its
 // radius, flutes at least the stepdown, a shank no wider than the cut unless the pocket is shallower than the
-// shoulder, a stick-out that keeps the holder kHolderClearanceMm above the stock), the spindle (clockwise, within the
+// shoulder or the end of a neck the tool states (after M3; a neck wider than the cut counts from the flutes' top), a
+// stick-out that keeps the holder kHolderClearanceMm above the stock), the spindle (clockwise, within the
 // machine), feeds, heights out of order, a top not above the floor, the stepover of a bull nose wider than twice its
 // flat, a selection that is not an up-facing floor, a tool that does not fit a pocket at some depth (the room is
 // empty), pre-drilled points that cannot be read or are narrower than the tool, an area left uncut, and (from

@@ -1275,6 +1275,60 @@ TEST_CASE("5,000 tools: the list stays responsive and only visible rows exist", 
     w.checkNoWarnings();
 }
 
+// After M3: a tool's neck (libraries.h neckDiameter, neckLength) in the editor and the side view. The starter
+// single-profile thread mill shows its 4.2 mm neck to 20 mm; a copy's neck is edited (a neck shorter than the flutes is
+// named), drawn, and saved to the file; a drill has no neck fields. Screenshot (RAY_T046_SHOTS): gaps_4_tool_neck_dark.
+TEST_CASE("a tool's neck: shown, edited, drawn and saved", "[cam][tools][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open();
+    ToolLibraryModel* m = w.tools();
+    const QString single = QStringLiteral("15348ad9-df0b-4ded-9fbb-5383bb22e0b7"); // tool.threadmill.single60.6mm
+    w.selectRow(QStringLiteral("library"), single);
+    CHECK(m->readOnly());
+    CHECK(w.shown(QStringLiteral("toolText.neckDiameter"))->property("text").toString() == w.field("neckDiameter"));
+    CHECK(w.field("neckDiameter").startsWith(QLatin1String("4.2")));
+    CHECK(w.field("neckLength").startsWith(QLatin1String("20")));
+    // The side view: the neck narrower than the cut and the shank (6 mm), up to 20 mm.
+    bool neckDrawn = false;
+    for (const QVariant& v : m->profile().value(QStringLiteral("outline")).toList()) {
+        const QPointF p = v.toPointF();
+        neckDrawn = neckDrawn || (std::abs(p.x() - 2.1) < 1e-9 && std::abs(p.y() - 20) < 1e-9);
+    }
+    CHECK(neckDrawn);
+    w.shot("gaps_4_tool_neck_builtin_dark");
+
+    // A copy to edit: the neck's fields, a neck shorter than the flutes named, drawn anew, saved.
+    m->duplicate();
+    w.idle();
+    CHECK_FALSE(m->readOnly());
+    const int rev = m->profileRevision();
+    w.typeInto(QStringLiteral("toolInput.neckLength"), QStringLiteral("1 mm"));
+    w.idle();
+    REQUIRE(QTest::qWaitFor([&] { return !w.problem(QStringLiteral("neckLength")).isEmpty(); }, 5000));
+    CHECK(w.problem(QStringLiteral("neckLength")).contains(QLatin1String("shorter than the flute length")));
+    m->setValue(QStringLiteral("neckLength"), QStringLiteral("25 mm"));
+    m->setValue(QStringLiteral("neckDiameter"), QStringLiteral("4 mm"));
+    w.idle();
+    CHECK(w.problem(QStringLiteral("neckLength")).isEmpty());
+    CHECK(m->profileRevision() > rev);
+    w.shot("gaps_4_tool_neck_dark");
+    w.click("toolSave");
+    w.idle();
+    const lib::Tool saved =
+        fileTool(w.userLibrary() + QStringLiteral("/tools/") + m->selectedId() + QStringLiteral(".tool.json"));
+    CHECK(saved.neckDiameter == 4);
+    CHECK(saved.neckLength == 25);
+
+    // A drill has no neck.
+    REQUIRE(m->newItem(QStringLiteral("drill")));
+    w.idle();
+    CHECK_FALSE(w.find(QStringLiteral("toolInput.neckDiameter")));
+    m->revert();
+    w.checkNoWarnings();
+}
+
 TEST_CASE("screenshots of the manager", "[cam][tools][shots]")
 {
     if (qEnvironmentVariable("RAY_T046_SHOTS").isEmpty())

@@ -194,30 +194,36 @@ Value toValue(const Tool& t)
             presets.back() = Value::object(std::move(members));
         }
     }
-    return finish(
-        {
-            {"schema", num(kFormatVersion)},
-            {"id", uuid(t.id.value)},
-            {"name", str(t.name)},
-            {"vendor", str(t.vendor)},
-            {"productId", str(t.productId)},
-            {"type", str(std::string(toolTypeName(t.type)))},
-            {"flutes", num(t.flutes)},
-            {"diameter", num(t.diameter)},
-            {"shankDiameter", num(t.shankDiameter)},
-            {"fluteLength", num(t.fluteLength)},
-            {"shoulderLength", num(t.shoulderLength)},
-            {"overallLength", num(t.overallLength)},
-            {"cornerRadius", num(t.cornerRadius)},
-            {"tipAngle", num(t.tipAngleDeg)},
-            {"tipDiameter", num(t.tipDiameter)},
-            {"threadPitch", num(t.threadPitch)},
-            {"threadSpec", str(t.threadSpec)},
-            {"bodyMaterial", str(t.bodyMaterial)},
-            {"defaultToolNumber", num(t.defaultToolNumber)},
-            {"presets", Value::array(std::move(presets))},
-        },
-        t.comment, t.extraJson);
+    Value::Object members{
+        {"schema", num(kFormatVersion)},
+        {"id", uuid(t.id.value)},
+        {"name", str(t.name)},
+        {"vendor", str(t.vendor)},
+        {"productId", str(t.productId)},
+        {"type", str(std::string(toolTypeName(t.type)))},
+        {"flutes", num(t.flutes)},
+        {"diameter", num(t.diameter)},
+        {"shankDiameter", num(t.shankDiameter)},
+        {"fluteLength", num(t.fluteLength)},
+        {"shoulderLength", num(t.shoulderLength)},
+        {"overallLength", num(t.overallLength)},
+        {"cornerRadius", num(t.cornerRadius)},
+        {"tipAngle", num(t.tipAngleDeg)},
+        {"tipDiameter", num(t.tipDiameter)},
+        {"threadPitch", num(t.threadPitch)},
+        {"threadSpec", str(t.threadSpec)},
+        {"bodyMaterial", str(t.bodyMaterial)},
+        {"defaultToolNumber", num(t.defaultToolNumber)},
+        {"presets", Value::array(std::move(presets))},
+    };
+    // Optional (added after M3): written only when there is a neck, so a tool without one is the JSON it was.
+    if (t.neckDiameter != 0) {
+        members.push_back({"neckDiameter", num(t.neckDiameter)});
+    }
+    if (t.neckLength != 0) {
+        members.push_back({"neckLength", num(t.neckLength)});
+    }
+    return finish(std::move(members), t.comment, t.extraJson);
 }
 
 Value toValue(const Holder& h)
@@ -407,6 +413,8 @@ Result<Tool> decodeTool(const Value& v)
     t.threadSpec = stringOr(v, "threadSpec");
     t.bodyMaterial = stringOr(v, "bodyMaterial");
     t.defaultToolNumber = intOr(v, "defaultToolNumber");
+    t.neckDiameter = numberOr(v, "neckDiameter");
+    t.neckLength = numberOr(v, "neckLength");
     if (const Value* presets = v.find("presets")) {
         std::set<std::pair<Uuid, std::string>> seen;
         for (std::size_t i = 0; i < presets->asArray().size(); ++i) {
@@ -435,6 +443,15 @@ Result<Tool> decodeTool(const Value& v)
     }
     if (t.shoulderLength > t.overallLength) {
         return bad("/shoulderLength: longer than the overall length");
+    }
+    if (t.neckLength > 0 && t.neckDiameter <= 0) {
+        return bad("/neckLength: a neck length needs the neck's diameter");
+    }
+    if (t.neckLength > t.overallLength) {
+        return bad("/neckLength: longer than the overall length");
+    }
+    if (t.neckLength > 0 && t.neckLength < t.fluteLength) {
+        return bad("/neckLength: shorter than the flute length (the neck starts at the top of the flutes)");
     }
     if (t.cornerRadius > t.diameter / 2) {
         return bad("/cornerRadius: larger than half the diameter");
@@ -716,6 +733,10 @@ Hash256 Tool::geometryHash() const
     h.str(detail::toolTypeName(type)).i64(flutes);
     h.f64(diameter).f64(shankDiameter).f64(fluteLength).f64(shoulderLength).f64(overallLength);
     h.f64(cornerRadius).f64(tipAngleDeg).f64(tipDiameter).f64(threadPitch);
+    // The neck (after M3) only when there is one, so the hash of a tool without a neck is what it was.
+    if (neckDiameter != 0 || neckLength != 0) {
+        h.str("neck").f64(neckDiameter).f64(neckLength);
+    }
     return h.finish();
 }
 

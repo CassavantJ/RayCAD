@@ -55,12 +55,15 @@ Result<std::vector<Nm>> faceHeights(const kernel::Shape& shape, const Xform& fra
 
 // The tool as a solid of revolution, radius at a height above its tip (nm): the cutting part (a cone from the tip
 // diameter at the tip angle up to the diameter, for pointed tools; the diameter for flat ones) up to the flute length,
-// then the shank (its diameter, else the cutting diameter). The holder is not part of it.
+// then a neck the tool states (libraries.h neckDiameter, up to neckLength, else the shoulder; after M3), then the shank
+// (its diameter, else the cutting diameter). The holder is not part of it.
 struct ToolShape {
-    Coord radius = 0;    // cutting radius
-    Coord tipRadius = 0; // radius at the tip (pointed tools)
-    double tanHalf = 0;  // tan(tip angle / 2) for pointed tools, 0 for flat ones
-    Nm fluteLength = 0;  // 0: the cutting part has no stated length (it goes on up)
+    Coord radius = 0;     // cutting radius
+    Coord tipRadius = 0;  // radius at the tip (pointed tools)
+    double tanHalf = 0;   // tan(tip angle / 2) for pointed tools, 0 for flat ones
+    Nm fluteLength = 0;   // 0: the cutting part has no stated length (it goes on up)
+    Coord neckRadius = 0; // 0: no neck
+    Nm neckTop = 0;       // the neck's top above the tip
     Coord shankRadius = 0;
     Coord radiusAt(Nm heightAboveTip) const;
 };

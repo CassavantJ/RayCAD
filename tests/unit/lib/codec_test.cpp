@@ -86,6 +86,66 @@ TEST_CASE("a material's chip-thickness exponent mc is optional", "[lib][codec]")
     }
 }
 
+// After M3: a tool's neck (libraries.h Tool::neckDiameter, neckLength) is optional, so tool files and documents written
+// before read and write back unchanged, their hashes too.
+TEST_CASE("a tool's neck is optional", "[lib][codec][neck]")
+{
+    const auto plain = sampleTool(1);
+    const std::string text = ray::lib::toJson(plain);
+    CHECK(text.find("neck") == std::string::npos);
+    auto back = ray::lib::toolFromJson(text);
+    REQUIRE(back);
+    CHECK(back->neckDiameter == 0);
+    CHECK(back->neckLength == 0);
+    CHECK(ray::lib::toJson(*back) == text);
+    CHECK(back->geometryHash() == plain.geometryHash());
+    // The neck enters the geometry hash only when there is one, so a tool without one hashes as before necks existed
+    // (the input hashes of existing operations stay, and the toolpath goldens with them).
+    auto necked = sampleTool(1);
+    necked.fluteLength = 10;
+    necked.neckDiameter = 4.2;
+    necked.neckLength = 20;
+    const std::string withNeck = ray::lib::toJson(necked);
+    CHECK(withNeck.find("\"neckDiameter\":4.2") != std::string::npos);
+    CHECK(withNeck.find("\"neckLength\":20") != std::string::npos);
+    auto read = ray::lib::toolFromJson(withNeck);
+    REQUIRE(read);
+    CHECK(read->neckDiameter == 4.2);
+    CHECK(read->neckLength == 20);
+    CHECK(read->extraJson.empty());
+    CHECK(ray::lib::toJson(*read) == withNeck);
+    // The neck is shape: each of its numbers changes the geometry hash.
+    auto noNeck = necked;
+    noNeck.neckDiameter = 0;
+    noNeck.neckLength = 0;
+    CHECK(necked.geometryHash() != noNeck.geometryHash());
+    auto other = necked;
+    other.neckLength = 21;
+    CHECK(other.geometryHash() != necked.geometryHash());
+    other = necked;
+    other.neckDiameter = 4.3;
+    CHECK(other.geometryHash() != necked.geometryHash());
+    // Refused: a length without a diameter, a neck shorter than the flutes or longer than the tool, a negative one.
+    auto bad = necked;
+    bad.neckDiameter = 0;
+    CHECK_FALSE(ray::lib::toolFromJson(ray::lib::toJson(bad)));
+    bad = necked;
+    bad.neckLength = 5;
+    CHECK_FALSE(ray::lib::toolFromJson(ray::lib::toJson(bad)));
+    bad = necked;
+    bad.neckLength = bad.overallLength + 1;
+    CHECK_FALSE(ray::lib::toolFromJson(ray::lib::toJson(bad)));
+    bad = necked;
+    bad.neckDiameter = -1;
+    CHECK_FALSE(ray::lib::toolFromJson(ray::lib::toJson(bad)));
+    // A neck diameter alone: the neck runs up to the shoulder.
+    auto alone = necked;
+    alone.neckLength = 0;
+    auto aloneBack = ray::lib::toolFromJson(ray::lib::toJson(alone));
+    REQUIRE(aloneBack);
+    CHECK(ray::lib::toJson(*aloneBack).find("neckLength") == std::string::npos);
+}
+
 TEST_CASE("toJson is canonical JSON", "[lib][codec]")
 {
     const std::string text = ray::lib::toJson(sampleMaterial(3));

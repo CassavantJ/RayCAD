@@ -249,12 +249,41 @@ ToolProfile makeProfile(const lib::Tool& tool, const lib::Holder* holder, double
     rTop = shape.empty() ? R : shape.back().radiusAt(top);
     // The neck to the shoulder, the step to the shank, the shank.
     double neck = std::min(rTop, rs);
-    if (tool.type == T::ThreadMill && tool.threadPitch > 0) {
-        neck = std::min(neck, std::max(R - 0.6134 * tool.threadPitch, 0.1 * R));
-    }
-    if (tool.shoulderLength > h) {
-        shape.push_back(Band{h, tool.shoulderLength, neck, neck, false, 0, 0, 0, Zone::Body});
-        h = tool.shoulderLength;
+    if (tool.neckDiameter > 0) {
+        // A neck the tool states (libraries.h, after M3): neckDiameter from the flutes' top to neckLength (else to the
+        // shoulder), then up to the shoulder the narrower of the cutting and shank radius; a widening is a 45 degree
+        // cone, as the step to the shank.
+        const auto widen = [&](double from, double to) {
+            if (to > from + 1e-12) {
+                shape.push_back(Band{h, h + (to - from), from, to, false, 0, 0, 0, Zone::Body});
+                h += to - from;
+            }
+        };
+        const double rn = tool.neckDiameter / 2;
+        const double neckTop = tool.neckLength > 0 ? tool.neckLength : tool.shoulderLength;
+        widen(rTop, rn);
+        if (neckTop > h) {
+            shape.push_back(Band{h, neckTop, rn, rn, false, 0, 0, 0, Zone::Body});
+            h = neckTop;
+        }
+        neck = rn;
+        if (tool.shoulderLength > h) {
+            const double body = std::min(rTop, rs);
+            widen(rn, body);
+            neck = std::max(rn, body);
+            if (tool.shoulderLength > h) {
+                shape.push_back(Band{h, tool.shoulderLength, neck, neck, false, 0, 0, 0, Zone::Body});
+                h = tool.shoulderLength;
+            }
+        }
+    } else {
+        if (tool.type == T::ThreadMill && tool.threadPitch > 0) {
+            neck = std::min(neck, std::max(R - 0.6134 * tool.threadPitch, 0.1 * R));
+        }
+        if (tool.shoulderLength > h) {
+            shape.push_back(Band{h, tool.shoulderLength, neck, neck, false, 0, 0, 0, Zone::Body});
+            h = tool.shoulderLength;
+        }
     }
     if (std::abs(rs - neck) > 1e-12) {
         const double h1 = h + std::abs(rs - neck);

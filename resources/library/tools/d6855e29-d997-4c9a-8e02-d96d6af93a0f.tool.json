@@ -1,6 +1,6 @@
 {
   "bodyMaterial": "carbide",
-  "comment": "Generic carbide full-form thread mill for ISO metric pitch 1.0 mm; diameter 4.0 mm stays inside the M6x1 basic minor diameter 4.917 mm (resources/standards/threads.json, ISO 68-1). Dimensions: approximate catalogue proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
+  "comment": "Generic carbide full-form thread mill for ISO metric pitch 1.0 mm; diameter 4.0 mm stays inside the M6x1 basic minor diameter 4.917 mm (resources/standards/threads.json, ISO 68-1). A 2.7 mm neck (below the 2.77 mm root of its teeth) up to 16 mm from the tip. Dimensions: approximate generic proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
   "cornerRadius": 0,
   "defaultToolNumber": 0,
   "diameter": 4,
@@ -8,6 +8,8 @@
   "flutes": 3,
   "id": "d6855e29-d997-4c9a-8e02-d96d6af93a0f",
   "name": "Pitch 1.0 mm carbide thread mill (M6x1 and up)",
+  "neckDiameter": 2.7,
+  "neckLength": 16,
   "overallLength": 57,
   "presets": [
     {
@@ -86,7 +88,7 @@
   "productId": "",
   "schema": 1,
   "shankDiameter": 6,
-  "shoulderLength": 12,
+  "shoulderLength": 16,
   "threadPitch": 1,
   "threadSpec": "",
   "tipAngle": 0,

@@ -506,28 +506,35 @@ def reamers():
 
 def thread_mills(table):
     out = []
+    # Necks (added after M3; values chosen here as generic proportions, not taken from any catalogue): a thread mill's
+    # neck is narrower than the root of its teeth so it clears the thread it cuts, and long enough for a thread of about
+    # 2.5 times the smallest diameter it is for; the shank starts where the neck ends (shoulderLength = neckLength).
     single = ("Generic carbide single-profile 60 degree thread mill: cuts any 60 degree pitch it fits (threadPitch 0 "
-              "means any). The 60 degree profile is the ISO 68-1 / ASME B1.1 basic profile. Dimensions: approximate "
-              "catalogue proportions (measure the real tool). " + CUTTING_SOURCE)
+              "means any). The 60 degree profile is the ISO 68-1 / ASME B1.1 basic profile. A 4.2 mm neck from the "
+              "profile up to 20 mm from the tip, so an M8 internal thread (6.8 mm tap drill: 2 x 1 mm + 4.2 mm = "
+              "6.2 mm) can be milled 20 mm deep. Dimensions: approximate generic proportions (measure the real "
+              "tool). " + CUTTING_SOURCE)
     out.append(base_tool("tool.threadmill.single60.6mm", "6 mm single-profile 60 deg carbide thread mill",
-                         "threadMill", 3, 6, 6, 1.5, 57, "carbide", single, tipAngle=60))
+                         "threadMill", 3, 6, 6, 1.5, 57, "carbide", single, tipAngle=60, neckDiameter=4.2,
+                         neckLength=20.0, shoulderLength=20.0))
     m6 = table["M6x1"]
     unc = table["1/4-20 UNC"]
     out.append(base_tool(
         "tool.threadmill.p1_0", "Pitch 1.0 mm carbide thread mill (M6x1 and up)", "threadMill", 3, 4.0, 6, 12, 57,
         "carbide",
         "Generic carbide full-form thread mill for ISO metric pitch 1.0 mm; diameter 4.0 mm stays inside the M6x1 "
-        "basic minor diameter %s mm (resources/standards/threads.json, ISO 68-1). Dimensions: approximate catalogue "
-        "proportions (measure the real tool). " % r(m6["basicMinorDiameter"], 3) + CUTTING_SOURCE,
-        threadPitch=1.0))
+        "basic minor diameter %s mm (resources/standards/threads.json, ISO 68-1). A 2.7 mm neck (below the 2.77 mm "
+        "root of its teeth) up to 16 mm from the tip. Dimensions: approximate generic proportions (measure the real "
+        "tool). " % r(m6["basicMinorDiameter"], 3) + CUTTING_SOURCE,
+        threadPitch=1.0, neckDiameter=2.7, neckLength=16.0, shoulderLength=16.0))
     out.append(base_tool(
         "tool.threadmill.20tpi", "20 TPI carbide thread mill (1/4-20 UNC and up)", "threadMill", 3, 4.5, 6, 13, 57,
         "carbide",
         "Generic carbide full-form thread mill for 20 threads per inch (pitch 1.27 mm); diameter 4.5 mm stays inside "
-        "the 1/4-20 UNC basic minor diameter %s mm (resources/standards/threads.json, ASME B1.1). Dimensions: "
-        "approximate catalogue proportions (measure the real tool). " % r(unc["basicMinorDiameter"], 3)
-        + CUTTING_SOURCE,
-        threadPitch=r(unc["pitch"], 6)))
+        "the 1/4-20 UNC basic minor diameter %s mm (resources/standards/threads.json, ASME B1.1). A 2.9 mm neck "
+        "(below the 2.94 mm root of its teeth) up to 17 mm from the tip. Dimensions: approximate generic proportions "
+        "(measure the real tool). " % r(unc["basicMinorDiameter"], 3) + CUTTING_SOURCE,
+        threadPitch=r(unc["pitch"], 6), neckDiameter=2.9, neckLength=17.0, shoulderLength=17.0))
     return out
 
 

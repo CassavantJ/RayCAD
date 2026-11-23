@@ -43,6 +43,9 @@
 // Changed for the tool library UI (T-046), so that neither a rescan nor a save of a network share runs on the UI
 // thread: LibraryStack::refreshInBackground (refresh() on a worker, merged on the UI thread) and
 // LibraryStack::sharedLibrary (a writable root's library that a worker may keep using across a later setRoots).
+// Changed after M3 so a tool can say it has a neck (a thread mill's or a long-reach end mill's reduced body above its
+// flutes): Tool::neckDiameter and Tool::neckLength, optional (JSON written only when not 0, so files and documents
+// without a neck read and write as before, and their contentHash and geometryHash stay as they were).
 #pragma once
 #include "core.h"
 #include <chrono>
@@ -74,10 +77,16 @@ struct Tool {
     int defaultToolNumber = 0;
     std::string comment;        // free text (the shipped library names its sources here); written only when not empty
     std::string extraJson;      // keys this version does not know, as a canonical JSON object ("" for none); kept
+    // The neck (added after M3): a body of neckDiameter from the top of the flutes up to neckLength above the tip, then
+    // the shank from max(shoulderLength, neckLength) up (between the neck's top and the shoulder, if the shoulder is
+    // higher, the body is the narrower of the cutting and the shank diameter, as without a neck). neckDiameter 0: no
+    // neck. neckLength 0 with a neck diameter: the neck runs up to the shoulder. Optional: JSON "neckDiameter",
+    // "neckLength", written only when not 0.
+    double neckDiameter = 0, neckLength = 0;
     Hash256 contentHash() const;    // BLAKE3 of toJson(*this): every field above, name, presets and extraJson included
     // BLAKE3 of the shape alone: type, flutes, the five diameters and lengths, corner radius, tip angle and diameter,
-    // thread pitch. Not the id, names, vendor text, thread designation, body material, presets, tool number, comment
-    // or unknown keys.
+    // thread pitch, and the neck when there is one. Not the id, names, vendor text, thread designation, body material,
+    // presets, tool number, comment or unknown keys.
     Hash256 geometryHash() const;
 };
 struct HolderSegment { double height = 0, lowerDiameter = 0, upperDiameter = 0; };   // stacked cones/cylinders from the gauge line down

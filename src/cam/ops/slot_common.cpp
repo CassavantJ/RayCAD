@@ -233,7 +233,7 @@ Result<std::vector<Nm>> faceHeights(const kernel::Shape& shape, const Xform& fra
 Coord ToolShape::radiusAt(Nm h) const
 {
     if (fluteLength > 0 && h > fluteLength) {
-        return shankRadius;
+        return neckRadius > 0 && h <= neckTop ? neckRadius : shankRadius;
     }
     if (!(tanHalf > 0)) {
         return radius;
@@ -254,6 +254,10 @@ ToolShape toolShape(const lib::Tool& t)
     }
     s.fluteLength = t.fluteLength > 0 ? toNm(t.fluteLength) : 0;
     s.shankRadius = t.shankDiameter > 0 ? toNm(t.shankDiameter / 2) : s.radius;
+    if (t.neckDiameter > 0 && s.fluteLength > 0) {
+        s.neckRadius = toNm(t.neckDiameter / 2);
+        s.neckTop = toNm(t.neckLength > 0 ? t.neckLength : t.shoulderLength);
+    }
     return s;
 }
 

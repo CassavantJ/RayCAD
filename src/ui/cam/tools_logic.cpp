@@ -135,12 +135,33 @@ std::vector<Vec2> halfProfile(const lib::Tool& t)
     const double top = std::max(p.back().y, lf);
     if (p.back().y < top)
         p.push_back({p.back().x, top});
-    const double neck = std::min(p.back().x, rs);
-    if (std::abs(neck - p.back().x) > 1e-9)
-        p.push_back({neck, top});
-    if (ls > top)
-        p.push_back({neck, ls});
-    const double y0 = std::max(ls, top);
+    const double cutTop = p.back().x;
+    double neck = std::min(cutTop, rs);
+    double y0 = std::max(ls, top);
+    if (t.neckDiameter > 0) {
+        // A stated neck (after M3) from the flutes up to its length (else the shoulder), then up to the shoulder the
+        // narrower of the cut and the shank (a widening at 45 degrees), then the step to the shank.
+        const double rn = t.neckDiameter / 2;
+        const double nt = std::max(top, t.neckLength > 0 ? t.neckLength : ls);
+        p.push_back({rn, top});
+        p.push_back({rn, nt});
+        neck = rn;
+        y0 = nt;
+        if (ls > nt) {
+            const double body = std::min(cutTop, rs);
+            const double y1 = std::min(ls, nt + std::max(0.0, body - rn));
+            if (body > rn)
+                p.push_back({body, y1});
+            neck = std::max(body, rn);
+            p.push_back({neck, ls});
+            y0 = ls;
+        }
+    } else {
+        if (std::abs(neck - p.back().x) > 1e-9)
+            p.push_back({neck, top});
+        if (ls > top)
+            p.push_back({neck, ls});
+    }
     if (std::abs(rs - neck) > 1e-9) {
         const double y1 = std::min(l, y0 + std::abs(rs - neck));
         p.push_back({rs, y1});
@@ -259,6 +280,8 @@ const std::vector<Field>& allToolFields()
         RAY_F("shankDiameter", "Shank diameter", "length"),
         RAY_F("fluteLength", "Flute length", "length"),
         RAY_F("shoulderLength", "Shoulder length", "length"),
+        RAY_F("neckDiameter", "Neck diameter", "length"),
+        RAY_F("neckLength", "Neck length", "length"),
         RAY_F("overallLength", "Overall length", "length"),
         RAY_F("defaultToolNumber", "Tool number", "int"),
         RAY_F("comment", "Comment", "multiline"),
@@ -561,15 +584,21 @@ std::vector<int> sortEntries(const std::vector<Entry>& entries, SortKey sort)
 std::vector<Field> toolFields(lib::ToolType type)
 {
     std::vector<QString> extra;
+    // A neck (after M3): the milling cutters that are made with one (thread mills, long-reach end mills, ...).
+    const QString neckDiameter = QStringLiteral("neckDiameter"), neckLength = QStringLiteral("neckLength");
     switch (type) {
     case lib::ToolType::BallEndMill:
     case lib::ToolType::BullEndMill:
+        extra = {QStringLiteral("cornerRadius"), neckDiameter, neckLength};
+        break;
     case lib::ToolType::FaceMill:
         extra = {QStringLiteral("cornerRadius")};
         break;
     case lib::ToolType::ChamferMill:
-    case lib::ToolType::SpotDrill:
     case lib::ToolType::EngraveCutter:
+        extra = {QStringLiteral("tipAngle"), QStringLiteral("tipDiameter"), neckDiameter, neckLength};
+        break;
+    case lib::ToolType::SpotDrill:
         extra = {QStringLiteral("tipAngle"), QStringLiteral("tipDiameter")};
         break;
     case lib::ToolType::Drill:
@@ -579,16 +608,19 @@ std::vector<Field> toolFields(lib::ToolType type)
         extra = {QStringLiteral("threadPitch"), QStringLiteral("threadSpec")};
         break;
     case lib::ToolType::ThreadMill:
-        extra = {QStringLiteral("threadPitch"), QStringLiteral("tipAngle")};
+        extra = {QStringLiteral("threadPitch"), QStringLiteral("tipAngle"), neckDiameter, neckLength};
         break;
     case lib::ToolType::FlatEndMill:
+        extra = {neckDiameter, neckLength};
+        break;
     case lib::ToolType::Reamer:
     case lib::ToolType::BoringBar:
         break;
     }
     static const QStringList optional = {QStringLiteral("cornerRadius"), QStringLiteral("tipAngle"),
-                                         QStringLiteral("tipDiameter"), QStringLiteral("threadPitch"),
-                                         QStringLiteral("threadSpec")};
+                                         QStringLiteral("tipDiameter"),  QStringLiteral("threadPitch"),
+                                         QStringLiteral("threadSpec"),   QStringLiteral("neckDiameter"),
+                                         QStringLiteral("neckLength")};
     std::vector<Field> out;
     for (const Field& f : allToolFields()) {
         const QString key = QLatin1String(f.key);

@@ -596,10 +596,12 @@ private:
                            mmText(smallest) + " mm from the axis (at least " + mmText(kMinThreadPathRadiusNm) +
                            " mm); choose a smaller thread mill");
         }
-        // Above its flutes (libraries.h): up to the shoulder the neck, taken as the narrower of the cutting and the
-        // shank diameter (the library has no neck diameter; the invariant checker reads it so too), then the shank.
-        // Where either goes into the thread's length it must clear the bore (inside: the drilled hole, the thread's
-        // crests) or the boss (outside: the larger of the cylinder and the major diameter) on every pass.
+        // Above its flutes (libraries.h): a tool with a neck (neckDiameter) has it from the top of the flutes up to
+        // neckLength (else up to the shoulder), then up to the shoulder the narrower of the cutting and the shank
+        // diameter, and the shank from the larger of the two. Without a neck: up to the shoulder the narrower of the
+        // cutting and the shank diameter (the invariant checker reads it so too), then the shank. Where any of them
+        // goes into the thread's length it must clear the bore (inside: the drilled hole, the thread's crests) or the
+        // boss (outside: the larger of the cylinder and the major diameter) on every pass.
         const Nm deep = f.top - th.bottom;
         const Nm largest = *std::max_element(th.radii.begin(), th.radii.end());
         const Nm outer = std::max(th.majorDiameter, f.diameter);
@@ -607,15 +609,36 @@ private:
             return f.internal ? 2 * largest + width <= f.diameter : 2 * smallest - width >= outer;
         };
         const Nm ds = t.shankDiameter > 0 ? toNm(t.shankDiameter) : dt;
-        if (t.fluteLength > 0 && toNm(t.fluteLength) < deep && !clears(std::min(dt, ds))) {
-            return invalid(
-                "At " + at + " the thread is " + mmText(deep) + " mm long, but above its " + mmText(t.fluteLength) +
-                " mm of flutes the thread mill is " + mmText(std::min(dt, ds)) +
-                " mm wide (its neck, or its shank: the library gives no neck diameter), which would " +
-                (f.internal ? "rub the bore" : "hit the thread") +
-                ": set the shank diameter to the neck's in the tool library, or use a tool with longer flutes");
+        const char* const harm = f.internal ? "rub the bore" : "hit the thread";
+        if (t.neckDiameter > 0 && t.fluteLength > 0) {
+            const Nm flutes = toNm(t.fluteLength);
+            const Nm shoulder = std::max(toNm(t.shoulderLength), flutes);
+            const Nm neckTop = t.neckLength > 0 ? toNm(t.neckLength) : shoulder;
+            const Nm dn = toNm(t.neckDiameter);
+            if (flutes < deep && neckTop > flutes && !clears(dn)) {
+                return invalid("At " + at + " the thread is " + mmText(deep) + " mm long, but above its " +
+                               mmText(flutes) + " mm of flutes the thread mill's " + mmText(dn) + " mm neck would " +
+                               harm + ": use a tool with a narrower neck or longer flutes");
+            }
+            if (neckTop < deep && shoulder > neckTop && !clears(std::min(dt, ds))) {
+                return invalid("At " + at + " the thread is " + mmText(deep) + " mm long, but above its neck (" +
+                               mmText(neckTop) + " mm from its tip) the thread mill is " + mmText(std::min(dt, ds)) +
+                               " mm wide and would " + harm + ": use a tool with a longer neck");
+            }
+            const Nm shankStart = std::max(shoulder, neckTop);
+            if (shankStart < deep && !clears(ds)) {
+                return invalid("At " + at + " the thread is " + mmText(deep) + " mm long, but the thread mill's " +
+                               mmText(ds) + " mm shank starts " + mmText(shankStart) + " mm above its tip and would " +
+                               harm + ": use a tool with a longer reach");
+            }
+        } else if (t.fluteLength > 0 && toNm(t.fluteLength) < deep && !clears(std::min(dt, ds))) {
+            return invalid("At " + at + " the thread is " + mmText(deep) + " mm long, but above its " +
+                           mmText(t.fluteLength) + " mm of flutes the thread mill is " + mmText(std::min(dt, ds)) +
+                           " mm wide (its shank: the tool gives no neck diameter), which would " +
+                           (f.internal ? "rub the bore" : "hit the thread") +
+                           ": give the tool its neck diameter in the tool library, or use a tool with longer flutes");
         }
-        if (t.shoulderLength > 0 && toNm(t.shoulderLength) < deep && !clears(ds)) {
+        if (t.neckDiameter <= 0 && t.shoulderLength > 0 && toNm(t.shoulderLength) < deep && !clears(ds)) {
             return invalid("At " + at + " the thread is " + mmText(deep) + " mm long, but the thread mill's " +
                            mmText(ds) + " mm shank starts " + mmText(t.shoulderLength) +
                            " mm above its tip and would " + (f.internal ? "rub the bore" : "hit the thread") +

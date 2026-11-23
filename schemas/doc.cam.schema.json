@@ -142,6 +142,7 @@
         "diameter": { "type": "number", "exclusiveMinimum": 0 },
         "shankDiameter": { "type": "number", "minimum": 0 }, "fluteLength": { "type": "number", "minimum": 0 },
         "shoulderLength": { "type": "number", "minimum": 0 }, "overallLength": { "type": "number", "minimum": 0 },
+        "neckDiameter": { "type": "number", "minimum": 0 }, "neckLength": { "type": "number", "minimum": 0 },
         "cornerRadius": { "type": "number", "minimum": 0 }, "tipAngle": { "type": "number", "minimum": 0 },
         "tipDiameter": { "type": "number", "minimum": 0 }, "threadPitch": { "type": "number", "minimum": 0 },
         "threadSpec": { "type": "string" }, "bodyMaterial": { "type": "string" },

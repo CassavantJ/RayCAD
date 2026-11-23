@@ -99,8 +99,9 @@ Said plainly:
 - **In-process stock from earlier operations.** The stock is the stock box minus the part (or, `InitialStock::Part`,
   only the allowed cuts); `ResolvedGeometry::stockSlices` is not read. An operation that machines only the rest left
   by an earlier one shows contacts with stock that is already gone.
-- **The tool beyond what libraries.h says.** The neck below the shoulder is min(cutting radius, shank radius) (as the
-  tool library draws it); a thread mill's neck is taken as R - 0.6134 pitch; above the holder's gauge line the widest
+- **The tool beyond what libraries.h says.** Without a stated neck (libraries.h `neckDiameter`, `neckLength`, after
+  M3), the neck below the shoulder is min(cutting radius, shank radius) (as the tool library draws it) and a thread
+  mill's neck is taken as R - 0.6134 pitch; a stated neck is used as it is; above the holder's gauge line the widest
   holder segment carries on upward (the spindle nose is not described anywhere); without a holder the shank carries on
   upward and no holder is checked; stick-out 0 means the overall length.
 - **Cutter compensation in the control.** Coordinates are taken as the tool's centre (wear-mode compensation). A

@@ -21,6 +21,8 @@
     "fluteLength": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000, "description": "Length of cut, from the tip." },
     "shoulderLength": { "type": "number", "minimum": 0, "maximum": 2000, "description": "From the tip to where the body widens to the shank (0: same as the flute length)." },
     "overallLength": { "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+    "neckDiameter": { "type": "number", "minimum": 0, "maximum": 2000, "description": "Optional: the diameter of a reduced neck above the flutes (a thread mill's, a long-reach end mill's); 0 or absent: no neck." },
+    "neckLength": { "type": "number", "minimum": 0, "maximum": 2000, "description": "Optional: from the tip to the top of the neck, which starts at the top of the flutes; the shank starts at the larger of this and the shoulder length. 0 or absent with a neck diameter: the neck runs up to the shoulder." },
     "cornerRadius": { "type": "number", "minimum": 0, "maximum": 1000, "description": "Bull nose radius; half the diameter for a ball end mill." },
     "tipAngle": { "type": "number", "minimum": 0, "maximum": 180, "description": "Included point angle of a drill or spot drill, included angle of a chamfer mill (degrees; 0 = none)." },
     "tipDiameter": { "type": "number", "minimum": 0, "maximum": 2000, "description": "Flat at the tip of a chamfer mill or spot drill." },

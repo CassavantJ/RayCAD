@@ -376,6 +376,78 @@ TEST_CASE("thread milling warns about a bore smaller than the minor diameter", "
     CHECK_THAT(w->front(), ContainsSubstring("is smaller than the thread's minor diameter (6.917 mm)"));
 }
 
+// After M3: a thread mill with a neck (libraries.h Tool::neckDiameter, neckLength). A 6 mm single-profile thread mill
+// with 1.5 mm of flutes and a 6 mm shank cannot go past its flutes in the 6.8 mm M8 tap drill hole; with a 4.2 mm neck
+// it threads the whole 20 mm: the pass radius is at most (8 - 6) / 2 = 1 mm, so the neck takes 2 x 1 + 4.2 = 6.2 mm of
+// the 6.8 mm bore.
+TEST_CASE("thread milling: a thread mill's neck clears the bore past its flutes", "[cam][threadmill][neck]")
+{
+    const std::string m8 = R"({"pitch":1.25,"diameter":8})";
+    const auto refused = [](const OpCase& c, const std::string& words) {
+        const Status v = c.validate();
+        REQUIRE_FALSE(v);
+        CHECK(v.error().code == ErrorCode::InvalidArgument);
+        CHECK_THAT(v.error().message, ContainsSubstring(words));
+        auto g = c.generate();
+        REQUIRE_FALSE(g);
+        CHECK(g.error().message == v.error().message);
+    };
+    lib::Tool plain = threadMill(6, 0, 1.5, 1.5);
+    plain.shankDiameter = 6;
+    plain.tipAngleDeg = 60;
+    refused(internal(m8, plain), "above its 1.5 mm of flutes the thread mill is 6 mm wide");
+
+    lib::Tool necked = plain;
+    necked.neckDiameter = 4.2;
+    necked.neckLength = 25;
+    OpCase c = internal(m8, necked);
+    REQUIRE(c.validate());
+    const Toolpath p = c.path([](invariants::Claims& k) {
+        k.initialStock = invariants::InitialStock::Part;
+        k.allowedCuts.push_back(invariants::AllowedCut{15, 20, 4.01, -1, 30});
+        k.direction = invariants::Direction::Climb;
+    });
+    // The whole thread: 16 revolutions of the 20 mm bore, one radial pass, at (8 - 6) / 2 = 1 mm.
+    CHECK(checkRevolutions(p, 15'000'000, 20'000'000, 1'250'000, true, true) == std::vector<Nm>{1'000'000});
+    CHECK(cutArcs(p).size() == 16 * 2);
+
+    // The checks the neck brings, each on its own.
+    lib::Tool wide = necked;
+    wide.neckDiameter = 4.9; // 2 + 4.9 = 6.9 mm > 6.8
+    refused(internal(m8, wide), "the thread mill's 4.9 mm neck would rub the bore");
+    lib::Tool shortNeck = necked;
+    shortNeck.neckLength = 10; // the shank from 10 mm up, in the 20 mm thread
+    refused(internal(m8, shortNeck), "the thread mill's 6 mm shank starts 10 mm above its tip and would rub the bore");
+    lib::Tool body = shortNeck;
+    body.shoulderLength = 25; // the body between the neck and the shoulder: the narrower of 6 and 6 mm
+    refused(internal(m8, body), "above its neck (10 mm from its tip) the thread mill is 6 mm wide");
+    lib::Tool toShoulder = necked;
+    toShoulder.neckLength = 0; // the neck up to the shoulder
+    toShoulder.shoulderLength = 22;
+    CHECK(internal(m8, toShoulder).validate());
+
+    // The starter library's single-profile thread mill (resources/library, tools/gen_library.py) now has that neck: an
+    // M8x1.25 thread the whole 20 mm of the bore.
+    auto library = lib::ILibrary::open(std::string(RAY_SOURCE_DIR) + "/resources/library");
+    REQUIRE(library);
+    const lib::Tool* shipped = nullptr;
+    const std::vector<lib::Tool> tools = (*library)->tools();
+    for (const lib::Tool& t : tools) {
+        if (t.id.value.toString() == "15348ad9-df0b-4ded-9fbb-5383bb22e0b7") // tool.threadmill.single60.6mm
+            shipped = &t;
+    }
+    REQUIRE(shipped != nullptr);
+    CHECK(shipped->neckDiameter > 0);
+    OpCase s = internal(m8, generatorTool(*shipped));
+    REQUIRE(s.validate());
+    const Toolpath sp = s.path([](invariants::Claims& k) {
+        k.initialStock = invariants::InitialStock::Part;
+        k.allowedCuts.push_back(invariants::AllowedCut{15, 20, 4.01, -1, 30});
+        k.direction = invariants::Direction::Climb;
+    });
+    CHECK(cutArcs(sp).size() == 16 * 2);
+}
+
 // A problem of geom2d::sweptArea (T-050) found by T-056: the area a disc of radius 3 mm sweeps along a whole circle of
 // radius 3 mm (its inner offset is the centre) together with a lead-out arc ending 1 nm from the centre came out as
 // 176.7 mm2 (a whole 4.5 mm circle too many) instead of the 6 mm disc's 113.1 mm2. Linking's cut-area model (link.cpp
