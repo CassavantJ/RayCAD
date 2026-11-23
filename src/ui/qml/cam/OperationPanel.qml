@@ -398,49 +398,62 @@ Item {
                     font: Theme.smallFont
                     text: qsTr("Nothing picked yet")
                 }
-                // Each pick, marked in the view as well; the row under the pointer marks its own more strongly.
+                // Each pick, marked in the view as well; the row under the pointer marks its own more strongly. A type
+                // that takes several kinds (x-geometry) lists them by kind, each kind under its heading.
                 Repeater {
                     model: CamOperation.active ? CamOperation.picks : []
-                    delegate: Item {
-                        id: pickRow
+                    delegate: Column {
+                        id: pickEntry
                         required property var modelData
-                        required property int index
-                        readonly property bool emphasised: CamOperation.hoveredPick === index
-                        objectName: "operationPick." + index
-                        width: pickLine.implicitWidth
-                        height: pickLine.implicitHeight
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: Theme.radiusSmall
-                            color: pickRow.emphasised ? Theme.controlBgHover : "transparent"
+                        readonly property int pickIndex: modelData.index
+                        spacing: Theme.spacingXs / 2
+                        Label {
+                            objectName: "operationPickHeading." + pickEntry.modelData.kind
+                            visible: pickEntry.modelData.heading !== ""
+                            x: Theme.spacingM
+                            secondary: true
+                            font: Theme.smallFont
+                            text: pickEntry.modelData.heading
                         }
-                        HoverHandler {
-                            id: pickHover
-                            onHoveredChanged: {
-                                if (hovered)
-                                    CamOperation.hoveredPick = pickRow.index
-                                else if (CamOperation.hoveredPick === pickRow.index)
-                                    CamOperation.hoveredPick = -1
+                        Item {
+                            id: pickRow
+                            readonly property bool emphasised: CamOperation.hoveredPick === pickEntry.pickIndex
+                            objectName: "operationPick." + pickEntry.pickIndex
+                            width: pickLine.implicitWidth
+                            height: pickLine.implicitHeight
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Theme.radiusSmall
+                                color: pickRow.emphasised ? Theme.controlBgHover : "transparent"
                             }
-                        }
-                        Row {
-                            id: pickLine
-                            spacing: Theme.spacingS
-                            leftPadding: Theme.spacingM
-                            Label {
-                                width: root.labelWidth + root.fieldWidth - Theme.spacingM
-                                anchors.verticalCenter: parent.verticalCenter
-                                wrapMode: Text.Wrap
-                                elide: Text.ElideNone
-                                text: pickRow.modelData.text
+                            HoverHandler {
+                                id: pickHover
+                                onHoveredChanged: {
+                                    if (hovered)
+                                        CamOperation.hoveredPick = pickEntry.pickIndex
+                                    else if (CamOperation.hoveredPick === pickEntry.pickIndex)
+                                        CamOperation.hoveredPick = -1
+                                }
                             }
-                            ToolButton {
-                                objectName: "operationPickRemove." + pickRow.index
-                                anchors.verticalCenter: parent.verticalCenter
-                                compact: true
-                                iconName: "close"
-                                toolTipText: qsTr("Remove %1").arg(pickRow.modelData.text)
-                                onClicked: CamOperation.removePick(pickRow.index)
+                            Row {
+                                id: pickLine
+                                spacing: Theme.spacingS
+                                leftPadding: Theme.spacingM
+                                Label {
+                                    width: root.labelWidth + root.fieldWidth - Theme.spacingM
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    wrapMode: Text.Wrap
+                                    elide: Text.ElideNone
+                                    text: pickEntry.modelData.text
+                                }
+                                ToolButton {
+                                    objectName: "operationPickRemove." + pickEntry.pickIndex
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    compact: true
+                                    iconName: "close"
+                                    toolTipText: qsTr("Remove %1").arg(pickEntry.modelData.text)
+                                    onClicked: CamOperation.removePick(pickEntry.pickIndex)
+                                }
                             }
                         }
                     }

@@ -875,12 +875,12 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
     if (!build)
         return;
     const SetupId setup = *setup_;
-    const bool holes = geometry_.kind == QLatin1String("hole");
+    const bool holes = geometry_.accepts(QStringLiteral("hole"));
     std::vector<std::string> refTexts;
     for (const QJsonObject& r : refs)
         refTexts.push_back(jsonText(r));
-    using Out = std::pair<std::vector<api::cam_operation::Hole>, std::vector<int>>;
-    // The located element of each reference (its body and element as "index"), and for holes the hole it is in.
+    using Out = PickSupport;
+    // The located element of each reference (its body, element and kind), and for holes the hole it is in.
     holesJob_ = jobs->submit<std::shared_ptr<const Out>>(
         JobInfo{"Holes of the setup", JobPriority::Interactive, false},
         [state, build, setup, holes, refTexts](JobContext& ctx) -> Result<std::shared_ptr<const Out>> {
@@ -889,15 +889,17 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
                 auto found = api::cam_operation::holesOf(state, build, setup, ctx);
                 if (!found)
                     return tl::unexpected(found.error());
-                out->first = std::move(*found);
+                out->holes = std::move(*found);
             }
             for (const std::string& r : refTexts) {
                 const auto at = api::feature_edit::locate(*build, r);
                 int index = -1;
+                kernel::SubKind kind = kernel::SubKind::Face;
                 if (at && !at->elements.empty()) {
+                    kind = at->elements.front().kind;
                     if (holes) {
-                        for (std::size_t i = 0; i < out->first.size() && index < 0; ++i) {
-                            const auto& h = out->first[i];
+                        for (std::size_t i = 0; i < out->holes.size() && index < 0; ++i) {
+                            const auto& h = out->holes[i];
                             if (h.body == at->body &&
                                 std::binary_search(h.faces.begin(), h.faces.end(), at->elements.front().index))
                                 index = static_cast<int>(i);
@@ -906,7 +908,7 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
                         index = static_cast<int>(at->elements.front().index);
                     }
                 }
-                out->second.push_back(index);
+                out->located.emplace_back(index, kind);
             }
             return std::shared_ptr<const Out>(std::move(out));
         });
@@ -922,25 +924,28 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
                 self->setStatus(self->previewStatus_, qs(r.error().message), QStringLiteral("pick"));
             return;
         }
-        self->holes_ = (*r)->first;
+        self->holes_ = (*r)->holes;
         // The edited operation's picks, named.
-        for (std::size_t i = 0; i < refs.size() && i < (*r)->second.size(); ++i) {
+        for (std::size_t i = 0; i < refs.size() && i < (*r)->located.size(); ++i) {
             Pick p;
             p.ref = refs[i];
             p.body = refs[i].value(QStringLiteral("body")).toString();
-            const int index = (*r)->second[i];
+            const auto [index, kind] = (*r)->located[i];
             p.resolved = index >= 0;
             if (holes && index >= 0) {
                 const auto& h = self->holes_[static_cast<std::size_t>(index)];
                 p.element = h.boreFace;
+                p.kind = kernel::SubKind::Face;
                 p.text = self->holeText(h);
             } else {
                 p.element = index >= 0 ? static_cast<std::uint32_t>(index) : 0;
-                p.text = index >= 0
-                             ? trs("%1 %2")
-                                   .arg(self->geometry_.kind == QLatin1String("edge") ? trs("Edge") : trs("Face"))
-                                   .arg(index)
-                             : trs("A reference that does not resolve");
+                // Where it does not resolve, the kind the reference says it is.
+                const bool edge = index >= 0
+                                      ? kind == kernel::SubKind::Edge
+                                      : refs[i].value(QStringLiteral("kind")).toString() == QLatin1String("edge");
+                p.kind = edge ? kernel::SubKind::Edge : kernel::SubKind::Face;
+                p.text = index >= 0 ? trs("%1 %2").arg(edge ? trs("Edge") : trs("Face")).arg(index)
+                                    : trs("A reference that does not resolve");
             }
             self->picks_.push_back(std::move(p));
         }
@@ -1017,7 +1022,9 @@ QVariantList OperationToolModel::heights() const
     QVariantList out;
     for (const QString& key : heights_) {
         // What the type measures it from (x-heightsUsed), shown under the field and in its tooltip.
-        const QString from = camui::heightFromText(camui::heightFrom(schema_, key), geometry_.kind);
+        const QString from =
+            camui::heightFromText(camui::heightFrom(schema_, key),
+                                  geometry_.kinds.isEmpty() ? geometry_.kind : geometry_.kinds.join(QLatin1Char(',')));
         out.push_back(QVariantMap{
             {QStringLiteral("key"), key},
             {QStringLiteral("label"), heightLabel(key)},
@@ -1313,36 +1320,84 @@ void OperationToolModel::useCalculated()
 // ---------- geometry ----------
 QString OperationToolModel::geometryPrompt() const
 {
-    if (!geometry_.description.isEmpty())
-        return geometry_.description;
-    if (geometry_.kind == QLatin1String("hole"))
-        return trs("Click a face of each hole");
-    if (geometry_.kind == QLatin1String("edge"))
-        return trs("Click the edges to machine");
-    if (geometry_.kind == QLatin1String("face"))
-        return trs("Click the faces to machine");
-    return {};
+    QString prompt = geometry_.description;
+    if (prompt.isEmpty()) {
+        if (geometry_.accepts(QStringLiteral("hole")))
+            prompt = trs("Click a face of each hole");
+        else if (geometry_.several())
+            prompt = trs("Click the edges or faces to machine");
+        else if (geometry_.accepts(QStringLiteral("edge")))
+            prompt = trs("Click the edges to machine");
+        else if (geometry_.accepts(QStringLiteral("face")))
+            prompt = trs("Click the faces to machine");
+    }
+    // What the schema asks that the panel cannot do is said, not dropped.
+    if (!geometry_.problem.isEmpty())
+        prompt = prompt.isEmpty() ? geometry_.problem : trs("%1 (%2)").arg(prompt, geometry_.problem);
+    return prompt;
+}
+
+QString OperationToolModel::pickKind(const Pick& p) const
+{
+    if (geometry_.accepts(QStringLiteral("hole")))
+        return QStringLiteral("hole");
+    return p.kind == kernel::SubKind::Edge ? QStringLiteral("edge") : QStringLiteral("face");
 }
 
 QVariantList OperationToolModel::picks() const
 {
+    // Grouped by kind in x-geometry's order when the type takes several kinds (each group in pick order), with a
+    // heading on its first row; else in pick order.
     QVariantList out;
-    for (std::size_t i = 0; i < picks_.size(); ++i)
-        out.push_back(
-            QVariantMap{{QStringLiteral("index"), static_cast<int>(i)}, {QStringLiteral("text"), picks_[i].text}});
+    const QStringList order = geometry_.several() ? geometry_.kinds : QStringList{QString()};
+    for (const QString& kind : order) {
+        bool first = true;
+        for (std::size_t i = 0; i < picks_.size(); ++i) {
+            const QString k = pickKind(picks_[i]);
+            if (!kind.isEmpty() && k != kind)
+                continue;
+            QString heading;
+            if (!kind.isEmpty() && first)
+                heading = kind == QLatin1String("edge") ? trs("Edges") : trs("Faces");
+            first = false;
+            out.push_back(QVariantMap{{QStringLiteral("index"), static_cast<int>(i)},
+                                      {QStringLiteral("text"), picks_[i].text},
+                                      {QStringLiteral("kind"), k},
+                                      {QStringLiteral("heading"), heading}});
+        }
+    }
     return out;
 }
 
 QString OperationToolModel::pickCountText() const
 {
-    if (!active() || geometry_.kind == QLatin1String("none") || geometry_.kind.isEmpty())
+    if (!active() || geometry_.kinds.isEmpty())
         return {};
-    const int n = static_cast<int>(picks_.size());
-    if (geometry_.kind == QLatin1String("hole"))
-        return n == 0 ? trs("No holes picked") : n == 1 ? trs("1 hole") : trs("%1 holes").arg(n);
-    if (geometry_.kind == QLatin1String("edge"))
-        return n == 0 ? trs("No edges picked") : n == 1 ? trs("1 edge") : trs("%1 edges").arg(n);
-    return n == 0 ? trs("No faces picked") : n == 1 ? trs("1 face") : trs("%1 faces").arg(n);
+    const auto countOf = [&](const QString& kind) {
+        return static_cast<int>(
+            std::count_if(picks_.begin(), picks_.end(), [&](const Pick& p) { return pickKind(p) == kind; }));
+    };
+    const auto words = [](const QString& kind, int n) {
+        if (kind == QLatin1String("hole"))
+            return n == 1 ? trs("1 hole") : trs("%1 holes").arg(n);
+        if (kind == QLatin1String("edge"))
+            return n == 1 ? trs("1 edge") : trs("%1 edges").arg(n);
+        return n == 1 ? trs("1 face") : trs("%1 faces").arg(n);
+    };
+    if (picks_.empty()) {
+        if (geometry_.several())
+            return trs("No edges or faces picked");
+        if (geometry_.kind == QLatin1String("hole"))
+            return trs("No holes picked");
+        return geometry_.kind == QLatin1String("edge") ? trs("No edges picked") : trs("No faces picked");
+    }
+    // By kind, in x-geometry's order: "2 edges, 1 face".
+    QStringList parts;
+    for (const QString& kind : geometry_.kinds) {
+        if (const int n = countOf(kind); n > 0)
+            parts << words(kind, n);
+    }
+    return parts.join(QStringLiteral(", "));
 }
 
 void OperationToolModel::setHoveredPick(int index)
@@ -1377,7 +1432,7 @@ std::vector<render::PickHit> OperationToolModel::pickHits(int index) const
     const auto hit = [&](kernel::SubKind kind, std::uint32_t sub) {
         out.push_back(render::PickHit{item, kind, sub, Vec3{}, 0});
     };
-    if (geometry_.kind == QLatin1String("hole")) {
+    if (geometry_.accepts(QStringLiteral("hole"))) {
         // Every face of the hole (bore, countersink, floor), its bore first; the bore alone until the holes are found.
         hit(kernel::SubKind::Face, p.element);
         const auto h = std::find_if(holes_.begin(), holes_.end(), [&](const api::cam_operation::Hole& x) {
@@ -1391,7 +1446,7 @@ std::vector<render::PickHit> OperationToolModel::pickHits(int index) const
         }
         return out;
     }
-    hit(geometry_.kind == QLatin1String("edge") ? kernel::SubKind::Edge : kernel::SubKind::Face, p.element);
+    hit(p.kind, p.element);
     return out;
 }
 
@@ -1437,7 +1492,7 @@ QString OperationToolModel::holeText(const api::cam_operation::Hole& h) const
 
 void OperationToolModel::setPicking(bool on)
 {
-    if (!active() || geometry_.kind == QLatin1String("none") || on == picking_)
+    if (!active() || geometry_.kinds.isEmpty() || on == picking_)
         return;
     picking_ = on;
     ++pickSerial_;
@@ -1455,9 +1510,14 @@ void OperationToolModel::applyPickMode()
         return;
     using render::PickFilter;
     std::uint8_t mask = filterSaved_ ? savedFilter_ : selection_->filterMask();
-    if (picking_)
-        mask =
-            static_cast<std::uint8_t>(geometry_.kind == QLatin1String("edge") ? PickFilter::Edges : PickFilter::Faces);
+    if (picking_) {
+        // Every kind the type takes (a hole is picked by a face of it).
+        mask = 0;
+        if (geometry_.accepts(QStringLiteral("edge")))
+            mask |= static_cast<std::uint8_t>(PickFilter::Edges);
+        if (geometry_.accepts(QStringLiteral("face")) || geometry_.accepts(QStringLiteral("hole")))
+            mask |= static_cast<std::uint8_t>(PickFilter::Faces);
+    }
     selection_->setFilterMask(mask);
 }
 
@@ -1483,11 +1543,12 @@ void OperationToolModel::onSelectionChanged()
 {
     if (!active() || !picking_ || !selection_ || !scene_)
         return;
-    const kernel::SubKind kind =
-        geometry_.kind == QLatin1String("edge") ? kernel::SubKind::Edge : kernel::SubKind::Face;
+    const bool edges = geometry_.accepts(QStringLiteral("edge"));
+    const bool faces = geometry_.accepts(QStringLiteral("face")) || geometry_.accepts(QStringLiteral("hole"));
     const std::vector<SelectionEntry>& entries = selection_->entries();
     for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
-        if (it->pending || !it->sub || it->sub->kind != kind)
+        if (it->pending || !it->sub ||
+            !((edges && it->sub->kind == kernel::SubKind::Edge) || (faces && it->sub->kind == kernel::SubKind::Face)))
             continue;
         takePick(it->body, *it->sub);
         return;
@@ -1512,7 +1573,7 @@ void OperationToolModel::takePick(int bodyIndex, kernel::SubId sub)
         refuse(trs("%1 is not a part body of the setup: pick on the part").arg(qs(body->name)));
         return;
     }
-    if (geometry_.kind == QLatin1String("hole")) {
+    if (geometry_.accepts(QStringLiteral("hole"))) {
         if (!holesReady_) {
             // The holes are still being found: this click is taken when they are.
             queuedPick_ = std::make_pair(bodyIndex, sub);
@@ -1536,15 +1597,20 @@ void OperationToolModel::takePick(int bodyIndex, kernel::SubId sub)
         addPick(bodyId, hole->boreFace, holeText(*hole), kernel::SubKind::Face);
         return;
     }
-    const bool picked = std::any_of(picks_.begin(), picks_.end(),
-                                    [&](const Pick& p) { return p.body == bodyId && p.element == sub.index; });
-    if (picked) {
-        refuse(geometry_.kind == QLatin1String("edge") ? trs("That edge is picked already")
-                                                       : trs("That face is picked already"));
+    const bool edge = sub.kind == kernel::SubKind::Edge;
+    if (!geometry_.accepts(edge ? QStringLiteral("edge") : QStringLiteral("face"))) {
+        refuse(edge ? trs("This operation does not take edges: click a face")
+                    : trs("This operation does not take faces: click an edge"));
         return;
     }
-    const QString text = geometry_.kind == QLatin1String("edge") ? trs("Edge of %1").arg(qs(body->name))
-                                                                 : trs("Face of %1").arg(qs(body->name));
+    const bool picked = std::any_of(picks_.begin(), picks_.end(), [&](const Pick& p) {
+        return p.body == bodyId && p.kind == sub.kind && p.element == sub.index;
+    });
+    if (picked) {
+        refuse(edge ? trs("That edge is picked already") : trs("That face is picked already"));
+        return;
+    }
+    const QString text = edge ? trs("Edge of %1").arg(qs(body->name)) : trs("Face of %1").arg(qs(body->name));
     addPick(bodyId, sub.index, text, sub.kind);
 }
 
@@ -1562,7 +1628,7 @@ void OperationToolModel::addPick(const QString& body, std::uint32_t element, con
         {QStringLiteral("index"), static_cast<int>(element)}};
     JobHandle<api::ActionResult> ref = a->actions().invoke("model.reference", jsonText(args), api::Caller::User);
     QPointer<OperationToolModel> self(this);
-    ref.then([self, serial, body, element, text](Result<api::ActionResult> res) {
+    ref.then([self, serial, body, element, text, kind](Result<api::ActionResult> res) {
         if (!self || serial != self->pickSerial_ || !self->active())
             return;
         self->pickPending_ = false;
@@ -1576,6 +1642,7 @@ void OperationToolModel::addPick(const QString& body, std::uint32_t element, con
         p.ref = jsonObject(res->resultJson).value(QStringLiteral("ref")).toObject();
         p.body = body;
         p.element = element;
+        p.kind = kind;
         p.text = text;
         if (self->geometry_.atMostOne())
             self->picks_.clear();

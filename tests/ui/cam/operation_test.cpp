@@ -1053,8 +1053,12 @@ TEST_CASE("a 2D contour operation by the UI: edges picked in the view, a library
     newOperation(w, 0, QStringLiteral("contour2d"));
     CHECK(w.op()->typeTitle() == QStringLiteral("2D contour"));
     CHECK(w.op()->geometryKind() == QStringLiteral("edge"));
+    CHECK(w.op()->geometryKinds() == QStringList({QStringLiteral("edge"), QStringLiteral("face")}));
     CHECK(w.op()->picking());
-    CHECK(w.host->selection()->filterMask() == static_cast<std::uint8_t>(render::PickFilter::Edges));
+    // Edges and faces (x-geometry names both since M3's gaps were closed).
+    CHECK(w.host->selection()->filterMask() ==
+          static_cast<std::uint8_t>(static_cast<std::uint8_t>(render::PickFilter::Edges) |
+                                    static_cast<std::uint8_t>(render::PickFilter::Faces)));
     for (const char* key : {"clearance", "retract", "feedPlane", "top", "bottom"})
         CHECK(w.find(QStringLiteral("operationField.") + QLatin1String(key))->isVisible());
     // Relevance from the schema: the finish allowance only with a finish pass, the tab fields only with tabs.
@@ -2285,6 +2289,122 @@ TEST_CASE("a pocket2d operation by the panel: a floor face, a library end mill, 
     REQUIRE(row >= 0);
     w.waitStatus(row, "upToDate");
     save(QStringLiteral("t054_pocket2d_up_to_date"));
+    w.checkNoWarnings();
+}
+
+// ---------- After M3: the gaps left in the panel, closed ----------
+// Screenshots with RAY_T045_SHOTS set: gaps_<n>_<what>_dark, the window in the dark theme.
+namespace {
+
+// The up-facing planar face of body 0 at the top of its box.
+std::uint32_t topFace(const Window& w)
+{
+    const kernel::Shape& s = w.host->scene()->body(0)->shape;
+    const Box3 b = kernel::bounds(s);
+    std::optional<std::uint32_t> found;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face) && !found; ++i) {
+        const kernel::SubId f{kernel::SubKind::Face, i};
+        const auto info = kernel::surfaceInfo(s, f);
+        const auto sample = kernel::faceSample(s, f);
+        if (info && sample && info->type == kernel::SurfaceType::Plane && sample->normal.z > 0.999 &&
+            std::abs(info->bounds.max.z - b.max.z) < 1e-6)
+            found = i;
+    }
+    if (!found)
+        FAIL("no top face");
+    return found.value_or(0);
+}
+
+const QString kMill3175 = QStringLiteral("bd50ea0a-cb02-4e9c-8223-3a18c9d59197"); // 1/8 in 2FL carbide flat end mill
+
+} // namespace
+
+// Gap 1: a type that takes several kinds of geometry (contour2d: edges and faces). The selection filter takes both,
+// the list shows the picks by kind under a heading each, the count names both; the plate's top face (its outer loop)
+// and a hole's rim edge make one operation with two contours.
+TEST_CASE("a contour from a face and an edge: picks of two kinds, listed by kind", "[cam][e2e][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // metric; 6.6 mm through holes, the first at (30, 26.667), top at Z 10
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w, 0, QStringLiteral("contour2d"));
+    REQUIRE(w.op()->geometryKinds() == QStringList({QStringLiteral("edge"), QStringLiteral("face")}));
+    CHECK(w.op()->pickCountText() == QStringLiteral("No edges or faces picked"));
+    CHECK(w.shown(QStringLiteral("operationGeometryPrompt"))
+              ->property("text")
+              .toString()
+              .contains(QLatin1String("faces")));
+    CHECK(w.shown(QStringLiteral("operationFieldNote.bottom"))->property("text").toString() ==
+          QStringLiteral("from the picked edges and faces"));
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    chooseTool(w, kMill3175, QStringLiteral("1/8 in 2FL"));
+
+    // A face first, then an edge: both are taken; the list puts the edge under "Edges" and the face under "Faces".
+    pickElement(w, kernel::SubKind::Face, topFace(w));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    CHECK(w.op()->pickCountText() == QStringLiteral("1 face"));
+    pickElement(w, kernel::SubKind::Edge, circleEdge(w, 30, 26.666666667, 3.3, 10));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 2; }, kTimeoutMs));
+    CHECK(w.op()->pickCountText() == QStringLiteral("1 edge, 1 face"));
+    const QVariantList picks = w.op()->picks();
+    CHECK(picks[0].toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("edge"));
+    CHECK(picks[0].toMap().value(QStringLiteral("index")).toInt() == 1); // the second pick, listed first
+    CHECK(picks[0].toMap().value(QStringLiteral("heading")).toString() == QStringLiteral("Edges"));
+    CHECK(picks[1].toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("face"));
+    CHECK(picks[1].toMap().value(QStringLiteral("heading")).toString() == QStringLiteral("Faces"));
+    CHECK(w.shown(QStringLiteral("operationPickHeading.edge"))->property("text").toString() == QStringLiteral("Edges"));
+    CHECK(w.shown(QStringLiteral("operationPickHeading.face"))->property("text").toString() == QStringLiteral("Faces"));
+    // The same face again is refused with the reason.
+    pickElement(w, kernel::SubKind::Face, topFace(w));
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("That face is picked already"); }, 5000));
+    CHECK(w.op()->picks().size() == 2);
+
+    // 3 mm down from each pick; no leads.
+    w.op()->form()->setValue(QStringLiteral("leadType"), QStringLiteral("none"));
+    w.typeInto(QStringLiteral("operationInput.bottom"), QStringLiteral("-3"));
+    w.typeInto(QStringLiteral("operationInput.rpm"), QStringLiteral("12000"));
+    w.typeInto(QStringLiteral("operationInput.feedCut"), QStringLiteral("600"));
+    w.window()->contentItem()->forceActiveFocus();
+    QCoreApplication::processEvents();
+    w.previewed("ok");
+    const std::shared_ptr<const cam::Toolpath> tp = w.op()->previewToolpath();
+    REQUIRE(tp != nullptr);
+    // Around the plate (the face's outer loop, the tool centre 1.5875 mm outside X 0) and inside the hole (its rim).
+    bool outside = false, inHole = false;
+    for (const cam::Move& m : tp->moves) {
+        if (m.role != cam::MoveRole::Cut)
+            continue;
+        outside = outside || m.x == -1'587'500;
+        const double dx = m.x / 1e6 - 30, dy = m.y / 1e6 - 26.666666667;
+        inHole = inHole || std::hypot(dx, dy) < 3.3 - 1.5;
+    }
+    CHECK(outside);
+    CHECK(inHole);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    w.inView(w.shown(QStringLiteral("operationSection.geometry")));
+    w.view()->fitAll();
+    w.settle();
+    w.shot(QStringLiteral("gaps_1_picks_by_kind_dark"));
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+    const cam::Operation& op = w.document()->state()->cam->operations.begin()->second;
+    REQUIRE(op.geometry.size() == 2);
+    CHECK(op.geometry[0].kind == kernel::SubKind::Face); // stored in the order picked
+    CHECK(op.geometry[1].kind == kernel::SubKind::Edge);
+
+    // Edited again: the picks come back with their kinds.
+    w.op()->edit(QString::fromStdString(op.id.value.toString()));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->active() && w.op()->picks().size() == 2; }, kTimeoutMs));
+    CHECK(w.op()->pickCountText() == QStringLiteral("1 edge, 1 face"));
+    w.click(QStringLiteral("operationCancel"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
     w.checkNoWarnings();
 }
 

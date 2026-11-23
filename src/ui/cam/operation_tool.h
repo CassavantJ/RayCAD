@@ -13,8 +13,9 @@
 //                listeners, and a rescan of its folders on a worker when the panel opens); a library tool is embedded
 //                in the same undo step as the operation, ToolLibraryModel::libraryArgsFor; holder, stick-out, tool
 //                number); Geometry (x-geometry: hole picks a hole by
-//                any of its faces, face and edge pick those; a list with remove; a wrong pick is refused with the
-//                reason in the status line); Heights (x-heightsUsed); Parameters (the schema form); Feeds and speeds
+//                any of its faces, face and edge pick those, a type may take edges and faces together; a list with
+//                remove, by kind when there are several; a wrong pick is refused with the reason in the status line);
+//                Heights (x-heightsUsed); Parameters (the schema form); Feeds and speeds
 //                (x-cuttingUsed; computeFeeds for the tool, the setup's material and machine, with the limit that
 //                applied; "Use calculated" writes the values and records them, Operation::calculated; a typed value is
 //                never replaced without that click; when the tool or material changes and the values are still the
@@ -102,14 +103,20 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(bool showAllTools READ showAllTools WRITE setShowAllTools NOTIFY toolsChanged)
     Q_PROPERTY(QVariantList holders READ holders NOTIFY optionsChanged) // [{id, name}], "" first (none)
     Q_PROPERTY(QString holderId READ holderId NOTIFY toolChanged)
-    // Geometry: x-geometry's kind ("hole", "face", "edge", "none") and prompt, the picks [{index, text}], picking.
+    // Geometry: x-geometry's kinds ("hole" alone, or "edge" and/or "face"; empty: none), the first of them as
+    // geometryKind ("none" when the type picks nothing), the prompt, picking. The selection filter takes every kind the
+    // type accepts. picks [{index, text, kind ("hole", "edge", "face"), heading ("" or the kind's heading, "Edges",
+    // on the first row of each kind when the type takes several)}]: in pick order, grouped by kind in the order of
+    // geometryKinds when there are several; `index` is the pick's own (removePick, hoveredPick).
     Q_PROPERTY(QString geometryKind READ geometryKind NOTIFY typeChanged)
+    Q_PROPERTY(QStringList geometryKinds READ geometryKinds NOTIFY typeChanged)
     Q_PROPERTY(QString geometryPrompt READ geometryPrompt NOTIFY typeChanged)
     Q_PROPERTY(QVariantList picks READ picks NOTIFY picksChanged)
     Q_PROPERTY(bool picking READ picking NOTIFY picksChanged)
-    // How many are picked, in words for the panel's fixed header ("3 holes", "No faces picked"); "" when the type
-    // picks nothing. Every pick is highlighted in the view (SelectionModel::setToolHighlight: a hole by all its faces);
-    // hoveredPick (the list row under the pointer, -1 none) is drawn with the hover highlight on top.
+    // How many are picked, in words for the panel's fixed header ("3 holes", "No faces picked", "2 edges, 1 face");
+    // "" when the type picks nothing. Every pick is highlighted in the view (SelectionModel::setToolHighlight: a hole
+    // by all its faces); hoveredPick (the list row under the pointer, -1 none) is drawn with the hover highlight on
+    // top.
     Q_PROPERTY(QString pickCountText READ pickCountText NOTIFY picksChanged)
     Q_PROPERTY(int hoveredPick READ hoveredPick WRITE setHoveredPick NOTIFY picksChanged)
     // Feeds: the materials [{id, name}], the one used, where it comes from ("setup", "document", "chosen", "").
@@ -168,6 +175,7 @@ public:
     QVariantList holders() const;
     QString holderId() const { return holderId_; }
     QString geometryKind() const { return geometry_.kind; }
+    QStringList geometryKinds() const { return geometry_.kinds; }
     QString geometryPrompt() const;
     QVariantList picks() const;
     bool picking() const { return picking_; }
@@ -245,9 +253,12 @@ private:
         QJsonObject ref; // TopoRef JSON
         QString body;    // body id
         std::uint32_t element = 0;
+        kernel::SubKind kind = kernel::SubKind::Face; // of `element` (a hole: its bore face)
         QString text;
         bool resolved = true; // false: a stored reference that does not resolve (element means nothing)
     };
+    // "hole", "edge" or "face": what pick `p` is.
+    QString pickKind(const Pick& p) const;
     void updatePickHighlight();
     api::IApp* app() const;
     doc::Document* liveDoc() const;
@@ -337,7 +348,13 @@ private:
     std::vector<api::cam_operation::Hole> holes_;
     bool holesReady_ = false;
     std::optional<std::pair<int, kernel::SubId>> queuedPick_; // a click while the holes were being found
-    JobHandle<std::shared_ptr<const std::pair<std::vector<api::cam_operation::Hole>, std::vector<int>>>> holesJob_;
+    // What loadHoles works out on a worker: the setup's holes (a hole picker), and where each reference of an edited
+    // operation is (its element, -1 when it does not resolve, or for holes the hole it is in).
+    struct PickSupport {
+        std::vector<api::cam_operation::Hole> holes;
+        std::vector<std::pair<int, kernel::SubKind>> located;
+    };
+    JobHandle<std::shared_ptr<const PickSupport>> holesJob_;
     // Feeds.
     std::vector<lib::Material> materialItems_;
     QString materialId_, materialSource_;

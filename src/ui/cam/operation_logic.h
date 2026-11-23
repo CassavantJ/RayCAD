@@ -20,12 +20,18 @@
 namespace ray::ui::camui {
 
 // ---------- Schema annotations ----------
+// x-geometry. `kind` is one name or a list of names; "hole" stands alone (a click on a face of a hole could mean the
+// hole or the face), "edge" and "face" may come together (contour2d: edges or the loops of planar faces).
 struct GeometrySpec {
-    QString kind = QStringLiteral("none"); // "hole", "face", "edge", "none"
+    QStringList kinds;                     // in the schema's order: {"hole"}, or "edge" and/or "face"; empty: none
+    QString kind = QStringLiteral("none"); // the first of kinds, "none" when there are none
     QString count = QStringLiteral("any"); // "one", "oneOrMore", "any"
     QString description;
+    QString problem; // what the panel could not honour (an unknown name, "hole" with another kind), "" when nothing
     bool needsOne() const { return count == QLatin1String("one") || count == QLatin1String("oneOrMore"); }
     bool atMostOne() const { return count == QLatin1String("one"); }
+    bool accepts(const QString& k) const { return kinds.contains(k); }
+    bool several() const { return kinds.size() > 1; }
 };
 GeometrySpec geometrySpec(const QJsonObject& schema);
 // The five heights in their order.
@@ -37,7 +43,8 @@ QStringList heightsUsed(const QJsonObject& schema);
 // "highestPick"), "" when it does not say.
 QString heightFrom(const QJsonObject& schema, const QString& key);
 // The hint for a reference, worded for the geometry kind the type picks: "from stock top", "from each hole's top",
-// "from the picked edges", ...; "" for an unknown or empty reference.
+// "from the picked edges", ...; "" for an unknown or empty reference. `geometryKind` is one kind or several joined by
+// ',' (GeometrySpec::kinds): "edge,face" reads "from the picked edges and faces".
 QString heightFromText(const QString& from, const QString& geometryKind);
 // The registered type names in the panel's order: drill, face, contour2d, pocket2d, slot, chamfer2d, engrave,
 // threadmill, then any others by name.

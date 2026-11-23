@@ -14,16 +14,16 @@ Eight types are registered (`registerBuiltinOperationTypes`, `src/cam/ops/builti
 |-|-|-|-|
 | `drill` | T-035 | holes | Spot drilling, drilling, peck drilling, chip breaking, tapping, boring and reaming as canned cycles |
 | `face` | T-052 | none | Faces the whole top of the stock flat with parallel strokes, zigzag or one way, at one or more depths |
-| `contour2d` | T-053 | edges | Runs beside a chain of edges at one or more depths, with leads, roughing, finish and spring passes, tabs and cutter compensation |
+| `contour2d` | T-053 | edges and faces | Runs beside a chain of edges at one or more depths, with leads, roughing, finish and spring passes, tabs and cutter compensation |
 | `pocket2d` | T-054 | faces (floors) | Clears the area above each floor with offset rings, islands left standing, helix, ramp or pre-drilled entry |
 | `slot` | T-055 | faces (floors) | Cuts each slot along its centre line with an end mill as wide as the slot, ramping into each depth |
 | `chamfer2d` | T-055 | edges | Chamfers or deburrs the top edges of walls with the flank of a chamfer mill or a spot drill |
 | `engrave` | T-056 | edges (or none) | Engraves along edges projected onto a plane and a line of text in the RayCAD Single Line font |
 | `threadmill` | T-056 | faces | Mills internal and external threads with a helix, single-form or multi-form tool, in one or more radial passes |
 
-Known limits of the types as they are: `pocket2d` takes the walls as vertical (the footprint at the floor); the
-operation panel picks edges only for `contour2d` (its schema can also describe planar faces); `engrave` writes one
-line of text; geometry is picked on model faces and edges, never on a sketch; and no type knows the material earlier
+Known limits of the types as they are: `pocket2d` takes the walls as vertical (the footprint at the floor); `engrave`
+writes one line of text; `chamfer2d` and `engrave` take edges only (their generators refuse faces); geometry is picked
+on model faces and edges, never on a sketch; and no type knows the material earlier
 operations removed (linking is told nothing of it, `src/cam/link.h`), so a later operation may cut air.
 
 ## Files
@@ -117,7 +117,8 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
   - `partTop`: the highest point of the setup's part bodies ("from part top");
   - `workZero`: absolute WCS Z, the work offset's zero ("from work zero");
   - `eachPick`: each picked element's own height: a hole's top, a chain of edges' height, a face's height ("from each
-    hole's top", "from the picked edges", "from the picked faces", by `x-geometry`'s kind);
+    hole's top", "from the picked edges", "from the picked faces", "from the picked edges and faces", by
+    `x-geometry`'s kind);
   - `highestPick`: the highest of the picked elements ("from the highest hole top", "from the highest pick").
   The commands store all five; the panel gives an unused height the value of the nearest used one before it in the
   order clearance, retract, feedPlane, top, bottom, else of the nearest used one after it (drill: `feedPlane` =
@@ -135,7 +136,13 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
 - `x-geometry`: what the geometry picker selects, `{ "kind", "count", "description" }`:
   - `kind`: `hole` (a face of a hole recognised along the setup's Z, `recognizeHoles`; a click on any face of the hole
     picks it and the operation stores the hole's bore wall, one reference per hole), `face`, `edge`, or `none` (the
-    type takes no geometry);
+    type takes no geometry); or a list of kinds when the type takes several (added after M3): `["edge", "face"]`
+    (contour2d: chains of edges, or the loops of planar faces). The selection filter then takes every kind listed,
+    the picks are stored in the order they were made, and the panel lists them grouped by kind, each kind under a
+    heading, with the count by kind ("2 edges, 1 face"). `hole` stands alone (a click on a face of a hole would be
+    ambiguous): in a list with other kinds the panel drops it and says so in the geometry prompt, as it does for a
+    name it does not know. Declare a kind only when the generator handles it; the generator still names a pick it
+    cannot use;
   - `count`: `one`, `oneOrMore` or `any` (zero or more); OK needs at least one for `one` and `oneOrMore`;
   - `description`: the prompt shown above the list.
   Absent means `{ "kind": "none" }`.

@@ -16,6 +16,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <string>
 
@@ -145,6 +146,8 @@ TEST_CASE("the form of every registered operation type, from its schema alone", 
         const GeometrySpec g = geometrySpec(schema);
         CHECK((g.kind == QLatin1String("hole") || g.kind == QLatin1String("face") || g.kind == QLatin1String("edge") ||
                g.kind == QLatin1String("none")));
+        CHECK(g.problem.isEmpty()); // every kind it names is one the panel picks
+        CHECK((g.kinds.isEmpty() || g.kinds.front() == g.kind));
         for (const QString& h : heightsUsed(schema)) {
             CHECK(heightKeys().contains(h));
             // Every built-in type says what each height it reads is measured from (docs/operation_types.md).
@@ -216,6 +219,62 @@ TEST_CASE("drill's form: order, choices, relevance and tools by cycle", "[cam][t
     form.resetField(QStringLiteral("depth"));
     CHECK(form.valueOf(QStringLiteral("depth")).toDouble() == 10.0); // exactly the default, though shown in inches
     CHECK_FALSE(form.firstError().has_value());
+}
+
+// After M3: x-geometry may name several kinds; contour2d takes edges and faces, chamfer2d and engrave edges only (their
+// generators refuse faces).
+TEST_CASE("x-geometry: one kind or several, and what the panel cannot pick", "[cam][form][geometry]")
+{
+    const auto spec = [](const char* geometry) {
+        return geometrySpec(object((std::string(R"({"x-geometry":)") + geometry + "}").c_str()));
+    };
+    GeometrySpec g = spec(R"({"kind":"edge","count":"oneOrMore"})");
+    CHECK(g.kinds == QStringList{QStringLiteral("edge")});
+    CHECK(g.kind == QStringLiteral("edge"));
+    CHECK_FALSE(g.several());
+    CHECK(g.problem.isEmpty());
+    g = spec(R"({"kind":["edge","face"],"count":"oneOrMore"})");
+    CHECK(g.kinds == QStringList({QStringLiteral("edge"), QStringLiteral("face")}));
+    CHECK(g.kind == QStringLiteral("edge"));
+    CHECK(g.several());
+    CHECK(g.accepts(QStringLiteral("face")));
+    CHECK_FALSE(g.accepts(QStringLiteral("hole")));
+    CHECK(g.needsOne());
+    CHECK(g.problem.isEmpty());
+    g = spec(R"({"kind":["face","face","none"]})");
+    CHECK(g.kinds == QStringList{QStringLiteral("face")});
+    CHECK(g.problem.isEmpty());
+    // A hole with another kind: the hole goes, and the panel says so.
+    g = spec(R"({"kind":["hole","face"]})");
+    CHECK(g.kinds == QStringList{QStringLiteral("face")});
+    CHECK_THAT(g.problem.toStdString(), ContainsSubstring("Holes cannot be picked together"));
+    g = spec(R"({"kind":["edge","vertex"]})");
+    CHECK(g.kinds == QStringList{QStringLiteral("edge")});
+    CHECK_THAT(g.problem.toStdString(), ContainsSubstring("'vertex'"));
+    g = spec(R"({"kind":"none"})");
+    CHECK(g.kinds.isEmpty());
+    CHECK(g.kind == QStringLiteral("none"));
+    CHECK(geometrySpec(QJsonObject()).kind == QStringLiteral("none"));
+    // The reference of a height measured from each pick, for both kinds.
+    CHECK(heightFromText(QStringLiteral("eachPick"), QStringLiteral("edge,face")) ==
+          QStringLiteral("from the picked edges and faces"));
+    CHECK(heightFromText(QStringLiteral("eachPick"), QStringLiteral("edge")) ==
+          QStringLiteral("from the picked edges"));
+
+    // The built-in types.
+    api::AppOptions options;
+    options.userDataDir = "";
+    options.builtinLibraryDir = "";
+    auto app = api::makeHeadlessApp(options);
+    REQUIRE(app);
+    std::map<std::string, QStringList> kinds;
+    for (const auto& t : api::cam_operation::operationTypes(*app))
+        kinds[t.name] = geometrySpec(QJsonDocument::fromJson(QByteArray::fromStdString(t.schemaJson)).object()).kinds;
+    CHECK(kinds["contour2d"] == QStringList({QStringLiteral("edge"), QStringLiteral("face")}));
+    CHECK(kinds["chamfer2d"] == QStringList{QStringLiteral("edge")});
+    CHECK(kinds["engrave"] == QStringList{QStringLiteral("edge")});
+    CHECK(kinds["drill"] == QStringList{QStringLiteral("hole")});
+    CHECK(kinds["face"].isEmpty());
 }
 
 TEST_CASE("the form covers each construct of the subset and says what it cannot edit", "[cam][t045][form]")

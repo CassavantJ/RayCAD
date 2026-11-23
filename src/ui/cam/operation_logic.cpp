@@ -43,9 +43,35 @@ GeometrySpec geometrySpec(const QJsonObject& schema)
 {
     GeometrySpec g;
     const QJsonObject o = schema.value(QStringLiteral("x-geometry")).toObject();
-    const QString kind = o.value(QStringLiteral("kind")).toString();
-    if (kind == QLatin1String("hole") || kind == QLatin1String("face") || kind == QLatin1String("edge"))
-        g.kind = kind;
+    // One name, or a list of names.
+    const QJsonValue kind = o.value(QStringLiteral("kind"));
+    QStringList named;
+    if (kind.isArray()) {
+        for (const QJsonValue& k : kind.toArray())
+            named << k.toString();
+    } else if (!kind.isUndefined()) {
+        named << kind.toString();
+    }
+    QStringList unknown;
+    for (const QString& k : named) {
+        if (k == QLatin1String("hole") || k == QLatin1String("face") || k == QLatin1String("edge")) {
+            if (!g.kinds.contains(k))
+                g.kinds << k;
+        } else if (k != QLatin1String("none")) {
+            unknown << k;
+        }
+    }
+    if (!unknown.isEmpty())
+        g.problem =
+            tr("The geometry kind '%1' is not one the panel can pick").arg(unknown.join(QStringLiteral("', '")));
+    if (g.kinds.contains(QStringLiteral("hole")) && g.kinds.size() > 1) {
+        // A click on a face of a hole would pick the hole or the face: the hole goes, the others stay.
+        g.kinds.removeAll(QStringLiteral("hole"));
+        g.problem = tr("Holes cannot be picked together with other geometry: the panel picks %1 only")
+                        .arg(g.kinds.join(QStringLiteral(" and ")));
+    }
+    if (!g.kinds.isEmpty())
+        g.kind = g.kinds.front();
     const QString count = o.value(QStringLiteral("count")).toString();
     if (count == QLatin1String("one") || count == QLatin1String("oneOrMore") || count == QLatin1String("any"))
         g.count = count;
@@ -121,6 +147,8 @@ QString heightFromText(const QString& from, const QString& kind)
             return tr("from the picked edges");
         if (kind == QLatin1String("face"))
             return tr("from the picked faces");
+        if (kind == QLatin1String("edge,face") || kind == QLatin1String("face,edge"))
+            return tr("from the picked edges and faces");
         return tr("from each pick");
     }
     if (from == QLatin1String("highestPick"))
