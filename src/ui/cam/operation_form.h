@@ -36,8 +36,8 @@
 
 namespace ray::ui::camui {
 
-// x-unit.
-enum class Unit { None, Length, Angle, Time, Count };
+// x-unit. Percent: a number in percent (of what, the parameter's description says), shown "45 %".
+enum class Unit { None, Length, Angle, Time, Count, Percent };
 
 struct FormField {
     enum class Kind { Number, Integer, Boolean, Enum, String, Unsupported };
@@ -64,9 +64,10 @@ struct FormSchema {
 // Parses a schema. A text that is not a JSON object gives no fields and one problem saying so.
 FormSchema parseFormSchema(const QString& schemaJson);
 
-// The display text of a stored value: "10 mm" / "0.3937 in" (lengths in the display unit), "118 deg", "0.5 s", "2".
+// The display text of a stored value: "10 mm" / "0.3937 in" (lengths in the display unit), "118 deg", "0.5 s", "45 %",
+// "2".
 QString numberText(double value, Unit unit, const QString& lengthUnit);
-// The unit label of a field ("mm", "in", "deg", "s", "").
+// The unit label of a field ("mm", "in", "deg", "s", "%", "").
 QString unitLabel(Unit unit, const QString& lengthUnit);
 
 // An expression read in the document: kind 0 Length (mm), 1 Angle (degrees), 2 Unitless. nullopt with the reason.

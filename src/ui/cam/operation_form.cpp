@@ -93,6 +93,8 @@ FormField parseProperty(const QString& key, const QJsonValue& value)
             f.unit = Unit::Time;
         else if (u == QLatin1String("count"))
             f.unit = Unit::Count;
+        else if (u == QLatin1String("percent"))
+            f.unit = Unit::Percent;
         else {
             f.reason = tr("its unit '%1' is not one the form knows").arg(u);
             return f;
@@ -246,6 +248,8 @@ QString unitLabel(Unit unit, const QString& lengthUnit)
         return QStringLiteral("deg");
     case Unit::Time:
         return QStringLiteral("s");
+    case Unit::Percent:
+        return QStringLiteral("%");
     case Unit::Count:
     case Unit::None:
         break;
@@ -316,6 +320,19 @@ std::optional<double> readNumber(const QString& raw, Unit unit, const QString& l
             return v ? std::optional<double>(*v * scale) : std::nullopt;
         }
         return expr(text, 2, error);
+    }
+    case Unit::Percent: {
+        // A trailing '%' is the unit; the rest is a plain number or expression.
+        QString rest = text;
+        if (rest.endsWith(QLatin1Char('%'))) {
+            rest.chop(1);
+            rest = rest.trimmed();
+            if (rest.isEmpty()) {
+                *error = tr("Enter a value");
+                return std::nullopt;
+            }
+        }
+        return expr(rest, 2, error);
     }
     case Unit::Count:
     case Unit::None:

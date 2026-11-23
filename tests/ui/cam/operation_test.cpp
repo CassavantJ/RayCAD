@@ -2570,6 +2570,36 @@ TEST_CASE("a pocket entered at a point clicked in the view", "[cam][e2e][gaps]")
     w.checkNoWarnings();
 }
 
+// Gap 3: a percentage (x-unit "percent"): pocket2d's stepover shows "45 %" under the title "Stepover", takes "50%",
+// and says its limits in percent.
+TEST_CASE("a percentage in the form: shown, typed, out of range", "[cam][e2e][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.openInNewDocument(kPlate); // inches: a percentage does not follow the length unit
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w, 0, QStringLiteral("pocket2d"));
+    QQuickItem* input = w.shown(QStringLiteral("schemaInput.stepover"));
+    w.inView(input);
+    CHECK(input->property("text").toString() == QStringLiteral("45 %"));
+    CHECK(w.find(QStringLiteral("schemaLabel.stepover"))->property("text").toString() == QStringLiteral("Stepover"));
+    w.typeInto(QStringLiteral("schemaInput.stepover"), QStringLiteral("50%"));
+    CHECK(w.op()->form()->params().value(QStringLiteral("stepover")).toDouble() == 50.0);
+    w.typeInto(QStringLiteral("schemaInput.helixDiameter"), QStringLiteral("500"));
+    QQuickItem* error = w.shown(QStringLiteral("schemaError.helixDiameter"));
+    CHECK(error->property("text").toString() == QStringLiteral("Must be at most 400 %"));
+    CHECK_FALSE(w.op()->canCommit());
+    w.inView(w.shown(QStringLiteral("schemaInput.helixDiameter")));
+    w.shot(QStringLiteral("gaps_3_percent_dark"));
+    w.click(QStringLiteral("schemaReset.helixDiameter"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.find(QStringLiteral("schemaError.helixDiameter"))->isVisible(); }, 5000));
+    CHECK(w.find(QStringLiteral("schemaInput.helixDiameter"))->property("text").toString() == QStringLiteral("90 %"));
+    w.click(QStringLiteral("operationCancel"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+    w.checkNoWarnings();
+}
+
 int main(int argc, char** argv)
 {
     // The real user profile is never touched.

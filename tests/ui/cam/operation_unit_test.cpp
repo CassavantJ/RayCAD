@@ -390,6 +390,60 @@ TEST_CASE("points: pocket2d's pre-drilled holes in the form, typed, added, remov
     CHECK(plain.pointKeys().isEmpty());
 }
 
+// After M3: x-unit "percent" (pocket2d's stepover and helix diameter), stored as the number of percent.
+TEST_CASE("percent: shown with %, read with or without it, limits in percent", "[cam][form][percent]")
+{
+    CHECK(numberText(45, Unit::Percent, QStringLiteral("in")) == QStringLiteral("45 %"));
+    CHECK(unitLabel(Unit::Percent, QStringLiteral("mm")) == QStringLiteral("%"));
+    QString error;
+    const ExprFn expr = documentExpr();
+    CHECK(readNumber(QStringLiteral("50"), Unit::Percent, QStringLiteral("in"), expr, &error) == 50.0);
+    CHECK(readNumber(QStringLiteral("50%"), Unit::Percent, QStringLiteral("mm"), expr, &error) == 50.0);
+    CHECK(readNumber(QStringLiteral(" 12.5 % "), Unit::Percent, QStringLiteral("mm"), expr, &error) == 12.5);
+    CHECK(readNumber(QStringLiteral("10 * 4 %"), Unit::Percent, QStringLiteral("mm"), expr, &error) == 40.0);
+    CHECK_FALSE(readNumber(QStringLiteral("%"), Unit::Percent, QStringLiteral("mm"), expr, &error).has_value());
+    CHECK_FALSE(readNumber(QStringLiteral("5 mm"), Unit::Percent, QStringLiteral("mm"), expr, &error).has_value());
+
+    api::AppOptions options;
+    options.userDataDir = "";
+    options.builtinLibraryDir = "";
+    auto app = api::makeHeadlessApp(options);
+    REQUIRE(app);
+    std::string schemaJson;
+    for (const auto& t : api::cam_operation::operationTypes(*app)) {
+        if (t.name == "pocket2d")
+            schemaJson = t.schemaJson;
+    }
+    SchemaFormModel form;
+    form.setExprFn(expr);
+    form.setSchemaJson(QString::fromStdString(schemaJson));
+    form.setLengthUnit(QStringLiteral("in")); // percent does not follow the length unit
+    for (const char* key : {"stepover", "helixDiameter"}) {
+        const QVariantMap f = fieldOf(form, QLatin1String(key));
+        INFO(key);
+        CHECK(f.value(QStringLiteral("unit")).toString() == QStringLiteral("%"));
+        CHECK_FALSE(f.value(QStringLiteral("title")).toString().contains(QLatin1Char('%'))); // the unit says it
+    }
+    CHECK(fieldOf(form, QStringLiteral("stepover")).value(QStringLiteral("value")).toString() ==
+          QStringLiteral("45 %"));
+    CHECK(fieldOf(form, QStringLiteral("stepover")).value(QStringLiteral("title")).toString() ==
+          QStringLiteral("Stepover"));
+    CHECK(form.params().value(QStringLiteral("stepover")).toDouble() == 45.0); // stored as it was
+    form.setValue(QStringLiteral("stepover"), QStringLiteral("50%"));
+    CHECK(form.params().value(QStringLiteral("stepover")).toDouble() == 50.0);
+    form.setValue(QStringLiteral("stepover"), QStringLiteral("4"));
+    REQUIRE(form.firstError().has_value());
+    CHECK(form.firstError()->second == QStringLiteral("Must be at least 5 %"));
+    form.setValue(QStringLiteral("stepover"), QStringLiteral("96 %"));
+    CHECK(form.firstError()->second == QStringLiteral("Must be at most 95 %"));
+    form.resetField(QStringLiteral("stepover"));
+    CHECK_FALSE(form.firstError().has_value());
+    form.load(QJsonObject{{QStringLiteral("helixDiameter"), 120}});
+    CHECK(fieldOf(form, QStringLiteral("helixDiameter")).value(QStringLiteral("value")).toString() ==
+          QStringLiteral("120 %"));
+    CHECK(form.params().value(QStringLiteral("helixDiameter")).toDouble() == 120.0);
+}
+
 TEST_CASE("the form covers each construct of the subset and says what it cannot edit", "[cam][t045][form]")
 {
     SchemaFormModel form;

@@ -92,6 +92,10 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
   - `angle`: degrees. A bare number is degrees; `deg` and `rad` and expressions work (kind Angle).
   - `time`: seconds. A bare number is seconds; a trailing `s`, `ms` or `min` is read; the rest is a plain expression.
   - `count`: a plain number or expression without units (kind Unitless); also the meaning of no `x-unit`.
+  - `percent` (added after M3): a number in percent, stored as the number of percent (45 for 45 %). The field shows
+    "45 %" and takes a bare number, a number with `%`, or a plain expression; its limits (`minimum`, `maximum`, ...)
+    are checked and shown in percent ("Must be at least 5 %"). Say in the description what it is a percentage of
+    (pocket2d: "of the tool diameter"); the title needs no "(%)".
 - `x-enumTitles`: the labels of a choice's `enum` values, an array of strings of the same length and order. A list of
   another length is a schema problem: the form shows the values themselves. Keep them short (a word or two): the
   detail goes in `x-enumDescriptions`.
