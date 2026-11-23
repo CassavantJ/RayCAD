@@ -257,6 +257,21 @@ struct EngSampler {
         }
         return 360.0 * n / kSamples;
     }
+    // T-063: the same angle, and the part of it on the forward half of the tool (sample points ahead of the line
+    // through the centre perpendicular to the motion (dx, dy)): an edge point behind that line moves into the tool's
+    // own last positions and cannot cut, so material read there is the lag's (in a tight turn the lagged disc does not
+    // cover the outer side).
+    std::pair<double, double> angleDeg(const Grid& g, double px, double py, double dx, double dy) const
+    {
+        int n = 0, forward = 0;
+        for (int k = 0; k < kSamples; k++) {
+            if (g.material(px + rs * cs[k], py + rs * sn[k])) {
+                n++;
+                forward += cs[k] * dx + sn[k] * dy > 0;
+            }
+        }
+        return {360.0 * n / kSamples, 360.0 * forward / kSamples};
+    }
 };
 
 struct Sample {
@@ -449,7 +464,13 @@ Report check(const Input& in)
     };
     bool havePos = false;
     Pt pos{0, 0};
+    // T-063: the flag check and the recorded samples
+    double flaggedLen = 0, unflaggedAboveLen = 0, unflaggedAboveForwardLen = 0, measuredLen = 0;
+    std::vector<Sample> cutF; // the forward-half readings of the measured cuts
+    float maxUnflagged = -1;
+    int regionIndex = -1;
     for (const Region& rg : in.regions) {
+        regionIndex++;
         if (rg.paths.empty()) {
             continue;
         }
@@ -473,16 +494,37 @@ Report check(const Input& in)
             sw.stamp(rg.start.first, rg.start.second);
             gougeAt(rg.start.first, rg.start.second);
         }
+        pos = rg.start;
+        // T-063: a ramp entry, swept at once from the start
+        for (const Pt& q : rg.ramp) {
+            const double len = std::hypot(q.first - pos.first, q.second - pos.second);
+            const int n = std::max(1, static_cast<int>(std::ceil(len / cell)));
+            for (int k = 1; k <= n; k++) {
+                const double x = pos.first + (q.first - pos.first) * k / n;
+                const double y = pos.second + (q.second - pos.second) * k / n;
+                sw.stamp(x, y);
+                gougeAt(x, y);
+            }
+            rep.rampLength += len;
+            pos = q;
+        }
         lg.drop();
         sw.reset();
-        pos = rg.start;
         havePos = true;
+        int pathIndex = -1;
         for (const Path& p0 : rg.paths) {
+            pathIndex++;
             if (p0.points.empty()) {
                 continue;
             }
             Path p = p0;
             rep.points += p.points.size();
+            // segment k of p (ending at point k) is segment segOf[k] of the input path; flags likewise
+            std::vector<int> segOf(p.points.size());
+            for (std::size_t k = 0; k < segOf.size(); k++) {
+                segOf[k] = static_cast<int>(k);
+            }
+            p.flags.resize(p.points.size(), 0);
             double gap = std::hypot(p.points[0].first - pos.first, p.points[0].second - pos.second);
             if (gap > 1e-6) {
                 rep.implicitJoins++;
@@ -492,6 +534,10 @@ Report check(const Input& in)
                     rep.retractLength += gap;
                 } else {
                     p.points.insert(p.points.begin(), pos);
+                    segOf.insert(segOf.begin(), 0);
+                    segOf[1] = 0; // the implied move ends at the input's first point
+                    p.flags.insert(p.flags.begin(), 0);
+                    p.flags[1] = 0;
                 }
             }
             bool contiguous = !lg.q.empty();
@@ -525,13 +571,39 @@ Report check(const Input& in)
                 for (int s = 0; s < n; s++) {
                     double x = a.first + dx * h * s, y = a.second + dy * h * s;
                     lg.measureReady();
-                    float ang = static_cast<float>(es.angleDeg(g, x, y));
+                    const auto [all, forward] = es.angleDeg(g, x, y, dx, dy);
+                    float ang = static_cast<float>(all);
                     if (p.kind == Kind::Cut) {
                         if (p.measured) {
                             cutS.push_back({ang, static_cast<float>(h)});
+                            cutF.push_back({static_cast<float>(forward), static_cast<float>(h)});
                             if (ang > maxCut) {
                                 maxCut = ang;
                                 rep.maxAt = {x, y};
+                            }
+                            const bool flagged = p.flags[k + 1] != 0;
+                            measuredLen += h;
+                            if (flagged) {
+                                flaggedLen += h;
+                            } else {
+                                if (in.flagCheckDeg > 0 && ang > in.flagCheckDeg) {
+                                    unflaggedAboveLen += h;
+                                }
+                                if (in.flagCheckDeg > 0 && forward > in.flagCheckDeg) {
+                                    unflaggedAboveForwardLen += h;
+                                }
+                                if (ang > maxUnflagged) {
+                                    maxUnflagged = ang;
+                                    rep.unflaggedMaxAt = {x, y};
+                                }
+                                if (forward > rep.forward.unflaggedMax) {
+                                    rep.forward.unflaggedMax = forward;
+                                    rep.forward.unflaggedMaxAt = {x, y};
+                                }
+                            }
+                            if (ang > in.recordAboveDeg) {
+                                rep.hot.push_back(
+                                    Hot{{x, y}, ang, h, regionIndex, pathIndex, segOf[k + 1], flagged, forward});
                             }
                         }
                     } else {
@@ -581,6 +653,16 @@ Report check(const Input& in)
             b = tot > 0 ? 100 * b / tot : 0;
         }
     }
+    rep.pctAboveFlagCheckUnflagged = measuredLen > 0 ? 100.0 * unflaggedAboveLen / measuredLen : 0;
+    rep.forward.median = wpercentile(cutF, 0.5);
+    rep.forward.p99 = wpercentile(cutF, 0.99);
+    rep.forward.max = wpercentile(cutF, 1.0);
+    rep.forward.pctAbove1_25x = wfracAbove(cutF, 1.25 * target);
+    rep.forward.pctAbove1_5x = wfracAbove(cutF, 1.5 * target);
+    rep.forward.pctAboveTargetPlus10 = wfracAbove(cutF, target + 10);
+    rep.forward.pctAboveFlagCheckUnflagged = measuredLen > 0 ? 100.0 * unflaggedAboveForwardLen / measuredLen : 0;
+    rep.pctFlagged = measuredLen > 0 ? 100.0 * flaggedLen / measuredLen : 0;
+    rep.unflaggedMax = std::max(0.0f, maxUnflagged);
     rep.linkMaxDeg = wpercentile(linkS, 1.0);
     rep.linkPctEngaged = wfracAbove(linkS, 2);
     rep.linkRemovedMm2 = static_cast<double>(linkCutCells) * ca;
@@ -628,15 +710,17 @@ std::string summary(const Report& r)
 {
     char buf[1024];
     std::snprintf(buf, sizeof buf,
-                  "cut=%.1f link_down=%.1f retract=%.1f helix=%.1f points=%zu joins=%d join_max=%.3f | median=%.2f "
-                  "p95=%.2f p99=%.2f max=%.2f >target=%.2f%% >1.1x=%.2f%% >1.25x=%.2f%% >1.5x=%.2f%% >t+10=%.3f%% "
+                  "cut=%.1f link_down=%.1f retract=%.1f helix=%.1f ramp=%.1f points=%zu joins=%d join_max=%.3f | "
+                  "median=%.2f "
+                  "p95=%.2f p99=%.2f max=%.2f >target=%.2f%% >1.1x=%.2f%% >1.25x=%.2f%% >1.5x=%.3f%% >t+10=%.3f%% "
                   "air=%.2f%% | link: max=%.1f engaged=%.2f%% removed=%.3f mm2 | uncut_reach=%.3f mm2 (thick %.3f) "
                   "of %.1f | gouge=%.4f mm (area %.4f, raster %.3f) | max at (%.2f, %.2f), link max at (%.2f, %.2f)",
-                  r.cutLength, r.linkDownLength, r.retractLength, r.helixLength, r.points, r.implicitJoins, r.joinMax,
-                  r.median, r.p95, r.p99, r.max, r.pctAboveTarget, r.pctAbove1_1x, r.pctAbove1_25x, r.pctAbove1_5x,
-                  r.pctAboveTargetPlus10, r.pctAir, r.linkMaxDeg, r.linkPctEngaged, r.linkRemovedMm2, r.uncutReachable,
-                  r.uncutMaxThickness, r.reachableArea, r.gougeAnalytic, r.gougeArea, r.gougeDepthRaster, r.maxAt.first,
-                  r.maxAt.second, r.linkMaxAt.first, r.linkMaxAt.second);
+                  r.cutLength, r.linkDownLength, r.retractLength, r.helixLength, r.rampLength, r.points,
+                  r.implicitJoins, r.joinMax, r.median, r.p95, r.p99, r.max, r.pctAboveTarget, r.pctAbove1_1x,
+                  r.pctAbove1_25x, r.pctAbove1_5x, r.pctAboveTargetPlus10, r.pctAir, r.linkMaxDeg, r.linkPctEngaged,
+                  r.linkRemovedMm2, r.uncutReachable, r.uncutMaxThickness, r.reachableArea, r.gougeAnalytic,
+                  r.gougeArea, r.gougeDepthRaster, r.maxAt.first, r.maxAt.second, r.linkMaxAt.first,
+                  r.linkMaxAt.second);
     return buf;
 }
 

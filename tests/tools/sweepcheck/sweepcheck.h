@@ -51,6 +51,9 @@ struct Path {
     Kind kind = Kind::Cut;
     std::vector<Pt> points;
     bool measured = true; // a Cut whose engagement is left out of the statistics (it still removes material)
+    // Added by T-063: per point, a flag of the segment that ends there (flags[0] unused; empty: none flagged). The
+    // generator's reduced-feed flag, checked against this checker's own engagement (Input::flagCheckDeg).
+    std::vector<unsigned char> flags;
 };
 struct Region {
     // Entry: with helixRadius > 0 the tool centre circles helixCentre once at that radius (swept, not measured), and
@@ -59,6 +62,10 @@ struct Region {
     double helixRadius = 0;
     Pt start{0, 0};
     std::vector<Path> paths;
+    // Added by T-063: a ramp entry. When it has points, the tool centre sweeps this polyline (from `start`) before the
+    // paths, at once and not measured, as a helix is (a ramp leaves its whole line cut at depth before the first pass);
+    // its length is added to rampLength.
+    std::vector<Pt> ramp;
 };
 struct Input {
     Loops pocket;  // the area to clear (even-odd)
@@ -69,11 +76,24 @@ struct Input {
     std::vector<Region> regions;
     double cell = kDefaultCell; // engagement readings need the default: the sample inset is under half a 0.02 cell's
                                 // diagonal; a coarser cell suits area and gouge checks only
+    // Added by T-063. flagCheckDeg > 0: the report gives the measured cut length read above this angle on segments
+    // whose Path::flags is 0. recordAboveDeg: every measured sample above it goes into Report::hot (diagnosis).
+    double flagCheckDeg = 0;
+    double recordAboveDeg = 1e9;
+};
+// A measured sample (Input::recordAboveDeg): where, the angle read, and which region, path and segment (the index of
+// the point the segment ends at, in the input path; 0 for the implied move to a path's first point).
+struct Hot {
+    Pt at{0, 0};
+    double deg = 0, length = 0;
+    int region = 0, path = 0, segment = 0;
+    bool flagged = false;
+    double forwardDeg = 0; // the forward-half reading (Report::Forward)
 };
 
 struct Report {
     // Lengths, mm.
-    double cutLength = 0, linkDownLength = 0, retractLength = 0, helixLength = 0;
+    double cutLength = 0, linkDownLength = 0, retractLength = 0, helixLength = 0, rampLength = 0;
     int implicitJoins = 0;
     double joinLength = 0, joinMax = 0;
     std::size_t points = 0;
@@ -91,6 +111,22 @@ struct Report {
     // Gouge, mm.
     double gougeAnalytic = 0, gougeArea = 0, gougeDepthRaster = 0;
     long long centreInKeepoutSteps = 0;
+    // Added by T-063 (Input::flagCheckDeg, recordAboveDeg): percent of measured cut length read above flagCheckDeg on
+    // unflagged segments, the largest angle read on an unflagged segment and where; percent of measured cut length on
+    // flagged segments; the recorded samples.
+    double pctAboveFlagCheckUnflagged = 0, unflaggedMax = 0, pctFlagged = 0;
+    Pt unflaggedMaxAt{0, 0};
+    std::vector<Hot> hot;
+    // Added by T-063: the same engagement read on the forward half of the tool only (sample points ahead of the line
+    // through its centre perpendicular to the motion). An edge point behind that line moves into the tool's own last
+    // positions and cannot cut; the full reading counts material there in tight turns, where the disc lagging kLag
+    // behind on a curve does not cover the outer side (S5's "+1.2 degrees on arcs", much more in a turn of a few
+    // millimetres' radius). Straight cuts read the same both ways. The S5 statistics above are unchanged.
+    struct Forward {
+        double median = 0, p99 = 0, max = 0, pctAbove1_25x = 0, pctAbove1_5x = 0, pctAboveTargetPlus10 = 0;
+        double pctAboveFlagCheckUnflagged = 0, unflaggedMax = 0;
+        Pt unflaggedMaxAt{0, 0};
+    } forward;
 };
 
 Report check(const Input&);
