@@ -13,9 +13,16 @@
 //                    starts from it), Path::motion (LinkClear links are tool-down links through cleared area; T-063
 //                    checks they cut nothing or reclassifies them) and Path::engagementDeg (feed reduction above
 //                    1.25 x target).
-//   T-061 operation  everything: Path::points to geom2d::fitArcs (the engine emits polylines only) then link.h
+//   T-061 operation  everything, through entry.h's planAdaptive (T-063), which runs this engine and enters every
+//                    region: Path::points to geom2d::fitArcs (the engine emits polylines only) then link.h
 //                    (passFromPath, maxStayDown), Result::cleared for link::Stock::cleared, Path::engagementDeg for
-//                    Toolpath::Stats (99th percentile engagement, air-cut length), warnings to Toolpath::warnings.
+//                    Toolpath::Stats (99th percentile engagement, air-cut length), Path::reducedFeed, warnings to
+//                    Toolpath::warnings.
+// T-063 added: Input::seeds, helixEntry, regionsAt (planAdaptive's), EntryMode::Ramp and PreDrill, Role::Ramp,
+// Path::reducedFeed, Warning::Code::EntryFallback, Stats::engineRuns and linksMadeCuts, gridUnitsPerMm, onGrid,
+// finishingAllowance; the stretches of leads through cleared area as LinkClear paths (Motion), each path starting
+// where the one before it ended (Region::paths), a long segment's differing estimates kept apart (engine_adaptive.cpp
+// change 13), and the narrowest slot named when the tool fits nowhere.
 // The sweep checker in tests/tools/sweepcheck measures the output independently of this code.
 //
 // HOW. The input regions (nanometres, arcs flattened with sag kInputSag) are converted to the engine's own integer grid
@@ -100,6 +107,19 @@ struct Limits {
     std::int64_t leadSteps = 10'000; // soft: steps of one lead-in or lead-out (then it fails: a warning)
 };
 
+// How a region is entered (Region::entry).
+enum class EntryMode : std::uint8_t {
+    Helix,       // a helix of `radius` about `centre` down to the depth; the first pass starts at `start`, which is
+                 // (centre.x, centre.y - radius) (on the helix)
+    FromCleared, // from cleared area: the first path (a lead-in) starts at `start`; centre = start, radius 0
+    None,        // not entered (allowUnentered only): the region has no paths
+    // Added by T-063 (entry.h; the engine reports them for Input::seeds):
+    Ramp,    // a ramp along the straight line from `centre` to `start` (the region's first path, Role::Ramp), then the
+             // first pass starts at `start`; radius 0
+    PreDrill // into a pre-drilled hole of `radius` about `centre`; the first path starts at `start` (the centre, or a
+             // point in the hole that a tool-down link from the centre reaches)
+};
+
 struct Input {
     // The area to clear at this depth: where the tool may cut (a pocket's region, islands as holes). The tool stays
     // inside it (its edge within the tolerance), less stockToLeave.
@@ -121,15 +141,35 @@ struct Input {
     double keepToolDownRatio = 3.0; // a tool-down link may be this many times longer than the straight distance
     bool allowUnentered = false;    // see RESULTS (T-063)
     Limits limits;
+    // Added by T-063 for entry.h (planAdaptive); the defaults leave the engine as T-060 made it.
+    // seeds: entries the caller made. A region with a seed inside its tool-centre area starts its first pass at the
+    // first such seed (`at`, moving towards `toward`), as it does after a helix, instead of searching its cleared area
+    // for an engagement point; the caller has put the area the entry cleared (a ramp's sweep, a pre-drilled hole) into
+    // `cleared`. The region's Entry is then {kind, from, radius, at} as given. helixEntry false: no helix is tried (a
+    // region with nothing to start from is not entered). regionsAt: when not empty, only the regions (connected areas
+    // of the tool centre) containing one of these points are cleared, and only they are in the output.
+    struct Seed {
+        Pt at;
+        Pt toward; // the first pass's initial direction is from `at` towards this point (at itself: +x)
+        EntryMode kind = EntryMode::Ramp;
+        Pt from; // Entry::centre
+        Coord radius = 0;
+    };
+    std::vector<Seed> seeds;
+    bool helixEntry = true;
+    std::vector<Pt> regionsAt;
 };
 
 // ---------- Output ----------
 enum class Motion : std::uint8_t {
-    Cut,        // cutting (passes, leads, finishing, and a link the engine found may cut through)
-    LinkClear,  // a tool-down link through cleared area
+    Cut,       // cutting (passes, leads, finishing, and a link the engine found may cut through)
+    LinkClear, // a tool-down link through cleared area; also (T-063) the stretch of a lead-in or lead-out (role LeadIn,
+               // LeadOut) that runs through cleared area, at least a sixth of the tool radius long: the engine checked
+               // it stays 4 grid units clear of material (its estimate cuts nothing; a shorter stretch stays a cut)
     LinkRetract // a link that must leave the material (lift or retract); its points are only its two ends
 };
-enum class Role : std::uint8_t { Pass, LeadIn, LeadOut, Link, Finish };
+// Ramp (added by T-063, planAdaptive only): the line of a ramp entry at depth (EntryMode::Ramp), a full-width cut.
+enum class Role : std::uint8_t { Pass, LeadIn, LeadOut, Link, Finish, Ramp };
 struct Path {
     Role role = Role::Pass;
     Motion motion = Motion::Cut;
@@ -139,12 +179,10 @@ struct Path {
     // area is the engine's polygon model and a pass's own last steps count only as the disc behind the tool);
     // engagementDeg[0] = -1. -1 where there is no estimate. Same size as points.
     std::vector<double> engagementDeg;
-};
-enum class EntryMode : std::uint8_t {
-    Helix,       // a helix of `radius` about `centre` down to the depth; the first pass starts at `start`, which is
-                 // (centre.x, centre.y - radius) (on the helix)
-    FromCleared, // from cleared area: the first path (a lead-in) starts at `start`; centre = start, radius 0
-    None         // not entered (allowUnentered only): the region has no paths
+    // Added by T-063: reducedFeed[i] (i >= 1) is 1 when the segment points[i - 1] -> points[i] is to be cut at a
+    // reduced feed (entry.h, REDUCED FEED, says from what); reducedFeed[0] = 0. Filled by planAdaptive; runEngine
+    // leaves it empty.
+    std::vector<std::uint8_t> reducedFeed;
 };
 struct Entry {
     EntryMode kind = EntryMode::None;
@@ -154,13 +192,24 @@ struct Entry {
 };
 struct Region {
     Entry entry;
-    std::vector<Path> paths;   // in cutting order: (link, lead-in,) pass, lead-out, ..., then finishing passes
+    // In cutting order: (link, lead-in,) pass, lead-out, ..., then finishing passes. Each path starts where the one
+    // before it ended (T-063: upstream's smoothing of a link and its lead-in left a gap of up to a quarter millimetre,
+    // which is now the lead-in's first segment, with no engagement estimate).
+    std::vector<Path> paths;
     bool returnClear = false;  // the straight move from the last point back to entry.centre stays in cleared area
     double clearedAreaMm2 = 0; // the area this region cleared
     Regions toolBounds;        // where the tool centre may go in this region (nm)
 };
 struct Warning {
-    enum class Code : std::uint8_t { LeadFailed, FinishingLeadFailed, FinishingSetup, UnclearedArea, NotEntered };
+    // EntryFallback (added by T-063, planAdaptive only): a region entered by a kind other than the first asked for.
+    enum class Code : std::uint8_t {
+        LeadFailed,
+        FinishingLeadFailed,
+        FinishingSetup,
+        UnclearedArea,
+        NotEntered,
+        EntryFallback
+    };
     Code code = Code::LeadFailed;
     std::string message;
 };
@@ -168,6 +217,8 @@ struct Stats {
     std::int64_t gridUnitsPerMm = 0;
     std::int64_t steps = 0, cutAreaCalls = 0, passes = 0, linkSearches = 0, linkSearchSteps = 0,
                  linkSearchLimitHits = 0, linkSideProbes = 0, engageSearches = 0, failedPassesInARow = 0;
+    // Added by T-063 (planAdaptive): engine runs, and tool-down links made cuts (entry.h, LINKS).
+    std::int64_t engineRuns = 0, linksMadeCuts = 0;
 };
 struct Output {
     std::vector<Region> regions; // in the engine's order (upstream's: the order of the tool-centre area's loops)
@@ -177,6 +228,15 @@ struct Output {
 };
 
 Result<Output> runEngine(const Input&, JobContext&);
+
+// Added by T-063 (entry.h): the engine's grid for an input (its Stats::gridUnitsPerMm; the input is assumed valid),
+// the point the grid holds for p (rounded half to even both ways), and the finishing allowance on that grid (nm): the
+// skin the finishing pass cuts, about stepover x tool radius / 10, 0 without a finishing pass. The tool-centre area is
+// the area shrunk by tool radius + allowance + stock to leave, so a slot narrower than diameter + 2 x (allowance +
+// stock to leave) has none (runEngine's "does not fit anywhere" names that width).
+std::int64_t gridUnitsPerMm(const Input&);
+Pt onGrid(Pt p, std::int64_t gridUnitsPerMm);
+Coord finishingAllowance(const Input&);
 
 // Golden-file text of an output: integers only ('\n' line ends), engagement in millidegrees rounded half to even.
 std::string toText(const Output&);

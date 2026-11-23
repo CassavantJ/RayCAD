@@ -34,7 +34,9 @@ void accept(const std::string& id, double stepover)
     const sw::s5::Case& c = sw::s5::caseById(cases(), id);
     auto out = runCase(id, stepover);
     REQUIRE(out);
-    const sw::Report r = sw::check(checkInputFor(c, *out, stepover));
+    // T-063 made the stretches of leads through cleared area tool-down links (engine.h Motion::LinkClear); the
+    // engagement statistics here stay over the cuts T-060 measured, leads whole (the moves are the same).
+    const sw::Report r = sw::check(checkInputFor(c, *out, stepover, {}, true));
     const double target = angleForStepover(stepover);
     WARN(id << " at " << stepover * 100 << "% (target " << target << " deg): " << sw::summary(r));
     INFO(id << " at " << stepover * 100 << "%: " << sw::summary(r));

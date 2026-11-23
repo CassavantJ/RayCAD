@@ -10,6 +10,7 @@
 #include <limits>
 #include <list>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -218,6 +219,67 @@ std::string pointText(Pt p)
     return std::to_string(p.x) + " " + std::to_string(p.y);
 }
 
+double pathLength(const Path& p)
+{
+    double len = 0;
+    for (std::size_t i = 1; i < p.points.size(); i++) {
+        const double dx = double(p.points[i].x - p.points[i - 1].x), dy = double(p.points[i].y - p.points[i - 1].y);
+        len += std::sqrt(dx * dx + dy * dy);
+    }
+    return len;
+}
+
+// T-063: a region's paths tidied. A run of tool-down moves (consecutive LinkClear paths: a lead-out's stretch through
+// cleared area, the link, the next lead-in's) shorter than minRun is not worth being one: its leads' stretches stay
+// cuts. Then the pieces of one engine path with the same motion are joined again, and paths of no length (upstream's
+// links from a point to itself) are left out.
+void tidyPaths(std::vector<Path>& paths, std::vector<std::size_t>& origin, Coord minRun)
+{
+    for (std::size_t i = 0; i < paths.size();) {
+        if (paths[i].motion != Motion::LinkClear) {
+            i++;
+            continue;
+        }
+        std::size_t j = i;
+        double run = 0;
+        while (j < paths.size() && paths[j].motion == Motion::LinkClear) {
+            run += pathLength(paths[j]);
+            j++;
+        }
+        if (run < double(minRun)) {
+            for (std::size_t k = i; k < j; k++) {
+                if (paths[k].role == Role::LeadIn || paths[k].role == Role::LeadOut) {
+                    paths[k].motion = Motion::Cut;
+                }
+            }
+        }
+        i = j;
+    }
+    std::vector<Path> kept;
+    std::vector<std::size_t> keptOrigin;
+    for (std::size_t i = 0; i < paths.size(); i++) {
+        Path& p = paths[i];
+        bool still = true;
+        for (const Pt& q : p.points) {
+            still = still && q == p.points.front();
+        }
+        if (still) {
+            continue;
+        }
+        if (!kept.empty() && keptOrigin.back() == origin[i] && kept.back().motion == p.motion &&
+            kept.back().points.back() == p.points.front()) {
+            kept.back().points.insert(kept.back().points.end(), p.points.begin() + 1, p.points.end());
+            kept.back().engagementDeg.insert(kept.back().engagementDeg.end(), p.engagementDeg.begin() + 1,
+                                             p.engagementDeg.end());
+            continue;
+        }
+        kept.push_back(std::move(p));
+        keptOrigin.push_back(origin[i]);
+    }
+    paths = std::move(kept);
+    origin = std::move(keptOrigin);
+}
+
 } // namespace
 
 double angleForStepover(double stepover)
@@ -229,6 +291,29 @@ double angleForStepover(double stepover)
 double stepoverForAngle(double degrees)
 {
     return (1 - dmath::cos(degrees * std::numbers::pi / 180.0)) / 2;
+}
+
+std::int64_t gridUnitsPerMm(const Input& in)
+{
+    const double gridDouble =
+        fork::Adaptive2d::MIN_STEP_CLIPPER / mm(in.tolerance) / std::min(1.0, in.stepover * mm(in.toolDiameter));
+    return std::max<std::int64_t>(1, roundHalfEven(gridDouble));
+}
+
+Pt onGrid(Pt p, std::int64_t g)
+{
+    return {toNmFromGrid(toGrid(p.x, g), g), toNmFromGrid(toGrid(p.y, g), g)};
+}
+
+Coord finishingAllowance(const Input& in)
+{
+    if (!in.finishingPass) {
+        return 0;
+    }
+    // As Adaptive2d::Execute: toolRadiusScaled = Rnd(D g / 2), finishPassOffsetScaled = Rnd(radius x stepover / 10)
+    const std::int64_t g = gridUnitsPerMm(in);
+    const double radius = std::round(mm(in.toolDiameter) * double(g) / 2); // positive: Rnd is std::round
+    return toNmFromGrid(std::int64_t(std::round(radius * in.stepover * (1 / 10.))), g);
 }
 
 Result<Output> runEngine(const Input& in, JobContext& ctx)
@@ -262,6 +347,21 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
             return tl::unexpected(s.error());
         }
     }
+    // T-063: the seeds' and region points' coordinates (the regions' range bounds them, through the grid box below)
+    auto inRange = [](Pt p) {
+        return p.x >= -geom2d::kMaxCoord && p.x <= geom2d::kMaxCoord && p.y >= -geom2d::kMaxCoord &&
+               p.y <= geom2d::kMaxCoord;
+    };
+    for (const Input::Seed& s : in.seeds) {
+        if (!inRange(s.at) || !inRange(s.toward) || !inRange(s.from) || s.radius < 0 || s.radius > geom2d::kMaxCoord) {
+            return tl::unexpected(invalid("adaptive: an entry seed is beyond the coordinate range"));
+        }
+    }
+    for (const Pt& p : in.regionsAt) {
+        if (!inRange(p)) {
+            return tl::unexpected(invalid("adaptive: a region point is beyond the coordinate range"));
+        }
+    }
     if (auto s = ctx.cancel.check(); !s) {
         return tl::unexpected(s.error());
     }
@@ -269,8 +369,7 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
     // ---------- the grid ----------
     const double toolMm = mm(in.toolDiameter);
     const double tolMm = mm(in.tolerance);
-    const double gridDouble = fork::Adaptive2d::MIN_STEP_CLIPPER / tolMm / std::min(1.0, in.stepover * toolMm);
-    const std::int64_t g = std::max<std::int64_t>(1, roundHalfEven(gridDouble));
+    const std::int64_t g = gridUnitsPerMm(in);
     // The extent of everything on the grid, the overshoot outside the stock and the tool included.
     geom2d::Bounds all = boundsOf(in.stock, boundsOf(in.cleared, boundsOf(in.regions, {})));
     if (all.empty) {
@@ -325,6 +424,18 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
     engine.progress = [&ctx](double f) {
         ctx.progress.set(f, "adaptive clearing");
     };
+    // T-063: entries made by the caller, regions to clear, helix or not
+    engine.helixEntryAllowed = in.helixEntry;
+    for (const Input::Seed& s : in.seeds) {
+        Point64 at(toGrid(s.at.x, g), toGrid(s.at.y, g));
+        double dx = double(s.toward.x - s.at.x), dy = double(s.toward.y - s.at.y);
+        double len = std::sqrt(dx * dx + dy * dy);
+        Clipper2Lib::PointD dir = len > 0 ? Clipper2Lib::PointD(dx / len, dy / len) : Clipper2Lib::PointD(1.0, 0.0);
+        engine.entrySeeds.emplace_back(at, dir);
+    }
+    for (const Pt& p : in.regionsAt) {
+        engine.onlyRegionsAt.emplace_back(toGrid(p.x, g), toGrid(p.y, g));
+    }
 
     std::list<fork::AdaptiveOutput> results = engine.Execute(stock, regions, cleared);
     if (auto s = ctx.cancel.check(); !s) {
@@ -335,6 +446,7 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
     Output out;
     const fork::Stats& fs = engine.GetStats();
     out.stats.gridUnitsPerMm = g;
+    out.stats.engineRuns = 1;
     out.stats.steps = fs.steps;
     out.stats.cutAreaCalls = fs.cutAreaCalls;
     out.stats.passes = fs.passes;
@@ -344,10 +456,25 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
     out.stats.engageSearches = fs.engageSearches;
     out.stats.linkSideProbes = fs.linkSideProbes;
     out.stats.failedPassesInARow = fs.failedPassesInARow;
+    auto fitsNowhere = [&]() {
+        // T-063: with the narrowest slot the tool can clear (its tool-centre area is empty below that width)
+        const Coord allowance = finishingAllowance(in);
+        const Coord width = in.toolDiameter + 2 * allowance + 2 * in.stockToLeave;
+        std::string why = "the tool diameter";
+        if (allowance > 0) {
+            why += (in.stockToLeave > 0 ? ", " : " and ") + std::string("twice the finishing allowance of ") +
+                   mmText(allowance) + " mm";
+        }
+        if (in.stockToLeave > 0) {
+            why += " and twice the stock to leave";
+        }
+        return failed("adaptive: the tool (diameter " + mmText(in.toolDiameter) +
+                      " mm) does not fit anywhere in the area" +
+                      (in.stockToLeave > 0 ? " less the stock to leave" : "") + "; a slot must be wider than " +
+                      mmText(width) + " mm for it (" + why + ")");
+    };
     if (fs.regions == 0) {
-        return tl::unexpected(failed("adaptive: the tool (diameter " + mmText(in.toolDiameter) +
-                                     " mm) does not fit anywhere in the area" +
-                                     (in.stockToLeave > 0 ? " less the stock to leave" : "")));
+        return tl::unexpected(fitsNowhere());
     }
     const double radius = double(engine.GetToolRadiusScaled());
     // Every output point must lie in the grown box of the input; anything else is an internal fault.
@@ -420,25 +547,71 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
         if (!r.HelixEntry) {
             region.entry.centre = region.entry.start;
         }
+        if (r.SeedEntry >= 0 && std::size_t(r.SeedEntry) < in.seeds.size()) {
+            // T-063: an entry the caller made; its own nanometre values (the grid point is the same within rounding)
+            const Input::Seed& seed = in.seeds[std::size_t(r.SeedEntry)];
+            region.entry = Entry{seed.kind, seed.from, seed.radius, seed.at};
+        }
+        // T-063: each path starts where the previous one ended (a gap is closed by the next path's first segment, no
+        // estimate), and a lead's stretch through cleared area (TPath::airFrom..airTo) is a path of its own, LinkClear
+        std::optional<Pt> last;
+        std::vector<std::size_t> origin; // per output path: the engine path it came from
         for (const fork::TPath& tp : r.AdaptivePaths) {
             if (tp.points.empty()) {
                 continue;
             }
-            Path path;
-            path.role = roleOf(tp.role);
-            path.motion = motionOf(tp.motion);
-            path.points.reserve(tp.points.size());
-            path.engagementDeg.reserve(tp.points.size());
-            for (std::size_t i = 0; i < tp.points.size(); i++) {
-                if (!inBox(tp.points[i])) {
+            const std::size_t enginePath = std::size_t(&tp - r.AdaptivePaths.data());
+            for (const Point64& q : tp.points) {
+                if (!inBox(q)) {
                     return tl::unexpected(failed("adaptive: internal fault: a path point off the area"));
                 }
-                path.points.push_back(pt(tp.points[i]));
-                double d = i > 0 && i < tp.depth.size() ? tp.depth[i] : -1.0;
-                path.engagementDeg.push_back(i == 0 ? -1.0 : engagementDeg(d, radius));
             }
-            region.paths.push_back(std::move(path));
+            auto emit = [&](std::size_t from, std::size_t to, Motion motion) {
+                Path path;
+                path.role = roleOf(tp.role);
+                path.motion = motion;
+                path.points.reserve(to - from + 2);
+                path.engagementDeg.reserve(to - from + 2);
+                const bool gap = last && *last != pt(tp.points[from]);
+                if (gap && motion != Motion::LinkRetract) {
+                    path.points.push_back(*last);
+                    path.engagementDeg.push_back(-1.0);
+                }
+                for (std::size_t i = from; i <= to; i++) {
+                    double d = i > from && i < tp.depth.size() ? tp.depth[i] : -1.0;
+                    // a segment measured in pieces whose estimates differ keeps them apart (TPath::pieces)
+                    if (i > from && i < tp.pieces.size() && tp.pieces[i].size() > 1) {
+                        const auto& pieces = tp.pieces[i];
+                        for (std::size_t k = 0; k + 1 < pieces.size(); k++) {
+                            path.points.push_back(pt(pieces[k].first));
+                            path.engagementDeg.push_back(engagementDeg(pieces[k].second, radius));
+                        }
+                        d = pieces.back().second;
+                    }
+                    // a retract keeps its two points: it leaves from where the tool is
+                    path.points.push_back(gap && i == from && motion == Motion::LinkRetract ? *last : pt(tp.points[i]));
+                    path.engagementDeg.push_back(path.points.size() == 1 ? -1.0 : engagementDeg(d, radius));
+                }
+                last = path.points.back();
+                region.paths.push_back(std::move(path));
+                origin.push_back(enginePath);
+            };
+            const std::size_t n = tp.points.size();
+            const Motion motion = motionOf(tp.motion);
+            if (motion == Motion::Cut && tp.airFrom >= 0 && tp.airTo > tp.airFrom && std::size_t(tp.airTo) < n) {
+                const std::size_t a = std::size_t(tp.airFrom), b = std::size_t(tp.airTo);
+                if (a > 0) {
+                    emit(0, a, Motion::Cut);
+                }
+                emit(a, b, Motion::LinkClear);
+                if (b + 1 < n) {
+                    emit(b, n - 1, Motion::Cut);
+                }
+            } else {
+                emit(0, n - 1, motion);
+            }
         }
+        tidyPaths(region.paths, origin, in.toolDiameter / 12);
         region.returnClear = r.ReturnMotionType == fork::mtLinkClear;
         region.clearedAreaMm2 = r.ClearedArea;
         if (r.LeadPathFailed) {
@@ -463,6 +636,21 @@ Result<Output> runEngine(const Input& in, JobContext& ctx)
         }
         clearedAll.insert(clearedAll.end(), r.ClearedPaths.begin(), r.ClearedPaths.end());
         out.regions.push_back(std::move(region));
+    }
+    // T-063: no region at all to clear, though there is material in the area (the only tool-centre area was the one
+    // around the stock, which needs no clearing): the tool fits nowhere in the area
+    if (out.regions.empty() && in.regionsAt.empty()) {
+        auto material = in.stock.empty() ? Result<Regions>(in.regions) : geom2d::intersect(in.regions, in.stock, ctx);
+        if (!material) {
+            return tl::unexpected(material.error());
+        }
+        auto left = in.cleared.empty() ? std::move(material) : geom2d::subtract(*material, in.cleared, ctx);
+        if (!left) {
+            return tl::unexpected(left.error());
+        }
+        if (geom2d::area(*left) > 1e6) { // 1 um^2
+            return tl::unexpected(fitsNowhere());
+        }
     }
     auto clearedRegions = toRegions(Clipper2Lib::Union(clearedAll, Clipper2Lib::FillRule::NonZero), g, ctx);
     if (!clearedRegions) {
@@ -490,7 +678,12 @@ std::string toText(const Output& out)
             s += "path " + std::to_string(int(p.role)) + " " + std::to_string(int(p.motion)) + " " +
                  std::to_string(p.points.size()) + "\n";
             for (std::size_t k = 0; k < p.points.size(); k++) {
-                s += pointText(p.points[k]) + " " + mdeg(k < p.engagementDeg.size() ? p.engagementDeg[k] : -1) + "\n";
+                s += pointText(p.points[k]) + " " + mdeg(k < p.engagementDeg.size() ? p.engagementDeg[k] : -1);
+                // T-063: planAdaptive's reduced-feed flag, when there is one
+                if (!p.reducedFeed.empty()) {
+                    s += k < p.reducedFeed.size() && p.reducedFeed[k] != 0 ? " r" : " -";
+                }
+                s += "\n";
             }
         }
         s += "toolbounds\n" + geom2d::toText(r.toolBounds);

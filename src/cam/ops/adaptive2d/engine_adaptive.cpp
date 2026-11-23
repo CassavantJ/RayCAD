@@ -60,6 +60,23 @@
 //     trigonometry through ray::dmath (Clipper2 itself calls the platform's libm for round joins). The library's own
 //     Union, Intersect and Difference stay; ports/clipper2 patches its one unstable sort, which did make Linux and
 //     Windows differ on S5's thin-wall pocket.
+// Changed again by the RayCAD contributors in November 2026 (task T-063, entries, links and air cutting):
+// 11. Entries made by the caller (entrySeeds): a region whose tool-centre area holds a seed starts its first pass
+//     there, as after a helix, instead of searching its cleared area for an engagement point (the caller has put the
+//     area its ramp or pre-drilled hole cleared into the cleared paths); helixEntryAllowed false leaves a region with
+//     nothing to start from not entered instead of trying a helix; onlyRegionsAt processes only the regions holding
+//     one of the given points (the others are not in the output; Stats::regions still counts them all). The region
+//     loop's gathering of a region's holes is the same statements, moved into a lambda (regionOf) used twice.
+// 12. Air stretches of leads (MarkAir, MarkLeadInAir; TPath::airFrom, airTo): after a lead's depth estimates, the
+//     part of a lead-in before it starts to cut, or of a lead-out after it stops, that IsClearPath finds clear of
+//     material by airClearance (4 grid units) is marked so the output makes it a tool-down link. Only read: the cleared
+//     area, the algorithm's own paths and their order are untouched.
+// 13. EstimateDepth keeps the estimate of each piece of a segment where the pieces differ (TPath::pieces), so the
+//     output can keep them apart (a finishing pass's long wall segment that meets a corner); the estimates themselves
+//     are computed as before.
+// Nothing of the step search, the cut-area computation, engagement, linking, leads or finishing changed with T-063;
+// its outputs differ from T-060's only in what engine.cpp makes of these marks (and, with seeds, in where a region
+// starts).
 // The algorithm itself (the step search, the cut-area computation, engagement, linking, leads, finishing) is
 // upstream's, statement for statement, apart from these changes.
 // clang-format off
@@ -2054,12 +2071,40 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
     clipof.Execute(-double(toolRadiusScaled + finishPassOffsetScaled), toolBounds);
 
     // RayCAD: the number of regions, for progress
+    // RayCAD (T-063): a region is processed only when onlyRegionsAt is empty or one of its points lies in it
+    const auto regionOf = [&](const Path64& current, int nesting) {
+        Paths64 currentTBP;
+        currentTBP.push_back(current);
+        for (size_t iother = 0; iother < toolBounds.size(); iother++) {
+            const auto& other = toolBounds[iother];
+            if (PointInPolygon(other.front(), current) != PointInPolygonResult::IsOutside) {
+                if (getPathNestingLevel(other, toolBounds) == nesting + 1) {
+                    currentTBP.push_back(other);
+                }
+            }
+        }
+        return currentTBP;
+    };
+    const auto selected = [&](const Paths64& currentTBP) {
+        if (onlyRegionsAt.empty()) {
+            return true;
+        }
+        for (const Point64& p : onlyRegionsAt) {
+            if (IsPointWithinCutRegion(currentTBP, p)) {
+                return true;
+            }
+        }
+        return false;
+    };
     for (const auto& current : toolBounds) {
-        if (getPathNestingLevel(current, toolBounds) % 2 != 0) {
-            region_count++;
+        int nesting = getPathNestingLevel(current, toolBounds);
+        if (nesting % 2 != 0) {
+            stats.regions++;
+            if (selected(regionOf(current, nesting))) {
+                region_count++;
+            }
         }
     }
-    stats.regions = region_count;
 
     // 7) Loop over connected components of toolBounds
     //
@@ -2084,17 +2129,10 @@ std::list<AdaptiveOutput> Adaptive2d::Execute(
         int nesting = getPathNestingLevel(current, toolBounds);
         if (nesting % 2 != 0) {
             // current is an exterior boundary; now find all the holes directly inside it
-            Paths64 currentTBP;
-            currentTBP.push_back(current);
-
-            for (size_t iother = 0; iother < toolBounds.size(); iother++) {
-                const auto& other = toolBounds[iother];
-
-                if (PointInPolygon(other.front(), current) != PointInPolygonResult::IsOutside) {
-                    if (getPathNestingLevel(other, toolBounds) == nesting + 1) {
-                        currentTBP.push_back(other);
-                    }
-                }
+            // RayCAD (T-063): regionOf above, the same statements
+            Paths64 currentTBP = regionOf(current, nesting);
+            if (!selected(currentTBP)) {
+                continue;
             }
 
             // 8) finishingPass = offset(currentTBP, finishingThickness)
@@ -2907,7 +2945,8 @@ std::optional<std::pair<Point64, PointD>> Adaptive2d::AppendToolPath(
                 out.motion = MotionType::mtCutting;
                 out.role = prLeadOut;
                 out.points = leadOutPath;
-                out.depth = EstimateDepth(leadOutPath, cleared);
+                out.depth = EstimateDepth(leadOutPath, cleared, &out.pieces);  // RayCAD (T-063): pieces
+                MarkAir(out, cleared, false, nullptr);  // RayCAD (T-063)
                 output.AdaptivePaths.push_back(out);
                 cleared.ExpandCleared(leadOutPath);
 
@@ -2950,12 +2989,19 @@ void Adaptive2d::ReportProgress(double regionFraction)
     progress(max(0.0, min(1.0, f)));
 }
 
-std::vector<double> Adaptive2d::EstimateDepth(const Path64& path, ClearedArea& cleared)
+std::vector<double> Adaptive2d::EstimateDepth(
+    const Path64& path,
+    ClearedArea& cleared,
+    std::vector<std::vector<std::pair<Point64, double>>>* piecesOut
+)
 {
     // The cut area per unit of travel, as the step search measures it (CalcCutArea against the cleared area, the
     // disc at the previous position counting as cut), over pieces no longer than the longest step the search takes,
     // the largest over the pieces of each segment.
     std::vector<double> depth(path.size(), -1.0);
+    if (piecesOut != nullptr) {
+        piecesOut->assign(path.size(), {});
+    }
     const double maxPiece = 8 * MIN_STEP_CLIPPER;
     for (size_t i = 1; i < path.size(); i++) {
         if (StopRequested()) {
@@ -2971,18 +3017,120 @@ std::vector<double> Adaptive2d::EstimateDepth(const Path64& path, ClearedArea& c
         int64_t pieces = int64_t(ceil(len / maxPiece));
         double best = 0;
         Point64 from = a;
+        std::vector<std::pair<Point64, double>> each;  // RayCAD (T-063)
         for (int64_t k = 1; k <= pieces; k++) {
             double t = double(k) / double(pieces);
             Point64 to = k == pieces ? b : Point64(Rnd(a.x + double(b.x - a.x) * t), Rnd(a.y + double(b.y - a.y) * t));
             double pieceLen = sqrt(DistanceSqrd(from, to));
+            double d = 0;
             if (pieceLen >= NTOL) {
-                best = max(best, CalcCutArea(from, to, cleared, false).first / pieceLen);
+                d = CalcCutArea(from, to, cleared, false).first / pieceLen;
+                best = max(best, d);
             }
+            each.emplace_back(to, d);
             from = to;
         }
         depth[i] = best;
+        // RayCAD (T-063): the pieces, when their estimates differ
+        if (piecesOut != nullptr && each.size() > 1) {
+            bool differ = false;
+            for (const auto& [p, d] : each) {
+                differ = differ || d != each.front().second;
+            }
+            if (differ) {
+                (*piecesOut)[i] = std::move(each);
+            }
+        }
     }
     return depth;
+}
+
+// RayCAD (T-063): the stretch of a lead that cuts nothing (by its depth estimates) and stays airClearance clear of
+// material (IsClearPath against the cleared area, the point the tool comes from included for a lead-in), tried whole
+// and then shortened at its end next to the material, so that the output can make it a tool-down link instead of a
+// cut. The cleared area is only read.
+void Adaptive2d::MarkAir(TPath& lead, ClearedArea& cleared, bool leadIn, const Point64* before)
+{
+    lead.airFrom = lead.airTo = -1;
+    const Path64& pts = lead.points;
+    const int64_t n = int64_t(pts.size());
+    if (n < 2 || lead.depth.size() != pts.size()) {
+        return;
+    }
+    const double nothing = 0.01;  // grid units of radial depth
+    const auto air = [&](int64_t i) {
+        return lead.depth[size_t(i)] >= 0 && lead.depth[size_t(i)] < nothing;
+    };
+    // the candidate: points 0..k of a lead-in, k..n-1 of a lead-out, whose segments all cut nothing
+    int64_t k = 0;
+    if (leadIn) {
+        while (k + 1 < n && air(k + 1)) {
+            k++;
+        }
+    }
+    else {
+        k = n - 1;
+        while (k >= 1 && air(k)) {
+            k--;
+        }
+    }
+    // arc length to each point
+    std::vector<double> s(size_t(n), 0.0);
+    for (int64_t i = 1; i < n; i++) {
+        s[size_t(i)] = s[size_t(i - 1)] + sqrt(DistanceSqrd(pts[size_t(i - 1)], pts[size_t(i)]));
+    }
+    // The candidate without its first one and three MIN_STEP_CLIPPER and its first half next to the material (where
+    // the tool still touches it: the candidate whole next to the segment that cuts never stays clear); at least two
+    // MIN_STEP_CLIPPER long (engine.cpp joins it with the link next to it and keeps it a cut when they are short
+    // together).
+    const double length = leadIn ? s[size_t(k)] : s[size_t(n - 1)] - s[size_t(k)];
+    const double minLength = 2 * MIN_STEP_CLIPPER;
+    for (double trim : {MIN_STEP_CLIPPER, 3 * MIN_STEP_CLIPPER, 0.5 * length}) {
+        if (StopRequested()) {
+            return;
+        }
+        if (length - trim < minLength) {
+            return;
+        }
+        int64_t from = 0, to = n - 1;
+        if (leadIn) {
+            to = k;
+            while (to > 0 && s[size_t(to)] > s[size_t(k)] - trim) {
+                to--;
+            }
+        }
+        else {
+            from = k;
+            while (from < n - 1 && s[size_t(from)] < s[size_t(k)] + trim) {
+                from++;
+            }
+        }
+        if (to <= from || s[size_t(to)] - s[size_t(from)] < minLength) {
+            continue;
+        }
+        Path64 check;
+        if (leadIn && before != nullptr) {
+            check.push_back(*before);
+        }
+        check.insert(check.end(), pts.begin() + from, pts.begin() + to + 1);
+        if (IsClearPath(check, cleared, airClearance)) {
+            lead.airFrom = from;
+            lead.airTo = to;
+            return;
+        }
+    }
+}
+
+void Adaptive2d::MarkLeadInAir(TPaths& linkAndLeadIn, ClearedArea& cleared)
+{
+    if (linkAndLeadIn.empty() || linkAndLeadIn.back().role != prLeadIn) {
+        return;
+    }
+    const Point64* before = nullptr;
+    if (linkAndLeadIn.size() >= 2 && !linkAndLeadIn[linkAndLeadIn.size() - 2].points.empty()) {
+        before = &linkAndLeadIn[linkAndLeadIn.size() - 2].points.back();
+    }
+    MarkAir(linkAndLeadIn.back(), cleared, true, before);
 }
 // performs the intersection of the path (subject) and the area (obj), preserving
 // orientation and (closed-path) connectivity
@@ -3710,8 +3858,9 @@ void Adaptive2d::ProcessPolyNode(
         if (result) {
             // RayCAD: the depth estimates of the chosen link and lead-in, against the area cleared before them
             for (TPath& linkPath : std::get<TPaths>(*result)) {
-                linkPath.depth = EstimateDepth(linkPath.points, cleared);
+                linkPath.depth = EstimateDepth(linkPath.points, cleared, &linkPath.pieces);  // RayCAD (T-063): pieces
             }
+            MarkLeadInAir(std::get<TPaths>(*result), cleared);  // RayCAD (T-063)
             for (const TPath& linkPath : std::get<TPaths>(*result)) {
                 if (linkPath.motion == MotionType::mtCutting) {
                     cleared.ExpandCleared(linkPath.points);  // RayCAD: in grid units, no conversion
@@ -3722,7 +3871,17 @@ void Adaptive2d::ProcessPolyNode(
         return result;
     };
 
-    std::optional<std::tuple<Point64, PointD, TPaths>> engagePoint = getEngagePoint(std::nullopt);
+    // RayCAD (T-063): the first entry seed inside the region (a ramp's end or a pre-drilled hole the caller made, whose
+    // area is in the cleared paths) comes first; else an engagement point on the cleared area; else a helix
+    int seedIndex = -1;
+    for (size_t i = 0; i < entrySeeds.size(); i++) {
+        if (IsPointWithinCutRegion(toolBoundPaths, entrySeeds[i].first)) {
+            seedIndex = int(i);
+            break;
+        }
+    }
+    std::optional<std::tuple<Point64, PointD, TPaths>> engagePoint
+        = seedIndex >= 0 ? std::nullopt : getEngagePoint(std::nullopt);
     TPaths linkPath;
     if (engagePoint) {
         toolPos = std::get<Point64>(*engagePoint);
@@ -3732,6 +3891,22 @@ void Adaptive2d::ProcessPolyNode(
             ? linkPath[0].points[0]
             : toolPos;
         output.StartPoint = entryPoint;  // RayCAD: grid units
+    }
+    else if (seedIndex >= 0) {
+        // RayCAD (T-063): as after a helix, the first pass starts where the tool is, inside the area the entry cleared
+        toolPos = entrySeeds[size_t(seedIndex)].first;
+        toolDir = entrySeeds[size_t(seedIndex)].second;
+        entryPoint = toolPos;
+        output.StartPoint = toolPos;
+        output.SeedEntry = seedIndex;
+    }
+    else if (!helixEntryAllowed) {
+        // RayCAD (T-063): no helix asked for; the region is not entered
+        output.StartPointNotFound = !StopRequested();
+        output.Stopped = StopRequested();
+        output.ClearedPaths = cleared.GetCleared();
+        results.push_back(output);
+        return;
     }
     else {
         // Engagement failed; instead helix down
@@ -4116,13 +4291,14 @@ void Adaptive2d::ProcessPolyNode(
                 // RayCAD: the finishing pass with its role, and the depth estimates of it and of its link and
                 // lead-in, against the area cleared before them
                 for (TPath& lp : *linkPath) {
-                    lp.depth = EstimateDepth(lp.points, cleared);
+                    lp.depth = EstimateDepth(lp.points, cleared, &lp.pieces);  // RayCAD (T-063): pieces
                 }
+                MarkLeadInAir(*linkPath, cleared);  // RayCAD (T-063)
                 TPath finTagged;
                 finTagged.motion = MotionType::mtCutting;
                 finTagged.role = prFinish;
                 finTagged.points = finCleaned;
-                finTagged.depth = EstimateDepth(finCleaned, cleared);
+                finTagged.depth = EstimateDepth(finCleaned, cleared, &finTagged.pieces);  // RayCAD (T-063): pieces
                 auto newPos = AppendToolPath(output, finTagged, *linkPath, cleared, toolBoundPaths);
                 if (newPos) {
                     toolPos = newPos->first;

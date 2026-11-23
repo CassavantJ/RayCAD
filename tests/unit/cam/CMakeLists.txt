@@ -277,6 +277,7 @@ add_executable(ray_cam_adaptive_tests
     adaptive_acceptance_test.cpp
     adaptive_determinism_test.cpp
     adaptive_engine_test.cpp
+    adaptive_entry_test.cpp # T-063: every region entered (entry.h): the slot, links, reduced feed, air cutting
     adaptive_test_util.h
 )
 target_link_libraries(ray_cam_adaptive_tests PRIVATE ray_sweepcheck ray_cam ray_core Catch2::Catch2WithMain)

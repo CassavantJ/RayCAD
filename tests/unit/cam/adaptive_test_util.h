@@ -5,6 +5,7 @@
 
 #include "cam/geom2d.h"
 #include "cam/ops/adaptive2d/engine.h"
+#include "cam/ops/adaptive2d/entry.h"
 #include "s5_cases.h"
 #include "sweepcheck.h"
 
@@ -65,14 +66,25 @@ inline sw::Pt mmPt(Pt p)
 }
 
 // The engine's output as the checker's input: helix entries as helices, LinkClear links as tool-down links,
-// LinkRetract links as retracts, everything else as cuts.
-inline sw::Input checkInputFor(const sw::s5::Case& c, const Output& out, double stepover)
+// LinkRetract links as retracts, everything else as cuts. T-063 (planAdaptive's output): a ramp's path (Role::Ramp) is
+// the checker's ramp entry (swept at once, not measured, as a helix) and the tool starts at the ramp's start; a
+// pre-drilled hole is cleared area and the tool starts at its centre; the reduced-feed flags go with the paths (the
+// checker's flag check).
+// leadsAsCuts: a lead's stretch through cleared area (LinkClear with role LeadIn or LeadOut, T-063) counts as a cut,
+// as every lead did for T-060's acceptance; the geometry is the same either way, only the cut length the statistics
+// are taken over differs.
+inline sw::Input checkInputFor(const sw::s5::Case& c, const Output& out, double stepover,
+                               const std::vector<PreDrillHole>& holes = {}, bool leadsAsCuts = false)
 {
     sw::Input in;
     in.pocket = c.pocket;
     in.stock = c.stock;
     in.toolDiameter = kToolMm;
     in.targetDeg = angleForStepover(stepover);
+    in.flagCheckDeg = kReducedFeedFactor * in.targetDeg;
+    for (const PreDrillHole& h : holes) {
+        in.cleared.push_back(sw::s5::circle(toMm(h.centre.x), toMm(h.centre.y), toMm(h.diameter) / 2));
+    }
     for (const Region& r : out.regions) {
         if (r.entry.kind == EntryMode::None) {
             continue;
@@ -80,15 +92,24 @@ inline sw::Input checkInputFor(const sw::s5::Case& c, const Output& out, double 
         sw::Region rg;
         rg.helixCentre = mmPt(r.entry.centre);
         rg.helixRadius = r.entry.kind == EntryMode::Helix ? toMm(r.entry.radius) : 0.0;
-        rg.start = mmPt(r.entry.start);
+        rg.start = r.entry.kind == EntryMode::Ramp || r.entry.kind == EntryMode::PreDrill ? mmPt(r.entry.centre)
+                                                                                          : mmPt(r.entry.start);
         for (const Path& p : r.paths) {
+            if (p.role == Role::Ramp) {
+                for (std::size_t i = 1; i < p.points.size(); i++) {
+                    rg.ramp.push_back(mmPt(p.points[i]));
+                }
+                continue;
+            }
             sw::Path sp;
-            sp.kind = p.motion == Motion::Cut         ? sw::Kind::Cut
+            const bool lead = p.role == Role::LeadIn || p.role == Role::LeadOut;
+            sp.kind = p.motion == Motion::Cut || (leadsAsCuts && lead && p.motion == Motion::LinkClear) ? sw::Kind::Cut
                       : p.motion == Motion::LinkClear ? sw::Kind::LinkDown
                                                       : sw::Kind::Retract;
             for (const Pt& q : p.points) {
                 sp.points.push_back(mmPt(q));
             }
+            sp.flags.assign(p.reducedFeed.begin(), p.reducedFeed.end());
             rg.paths.push_back(std::move(sp));
         }
         in.regions.push_back(std::move(rg));
@@ -101,6 +122,14 @@ inline Result<Output> runCase(const std::string& id, double stepover)
     static const std::vector<sw::s5::Case> cases = sw::s5::makeCases();
     JobContext ctx;
     return runEngine(inputFor(sw::s5::caseById(cases, id), stepover), ctx);
+}
+
+// T-063: the same through the entry planner (entry.h), with its options.
+inline Result<Output> planCase(const std::string& id, double stepover, const EntryOptions& options = {})
+{
+    static const std::vector<sw::s5::Case> cases = sw::s5::makeCases();
+    JobContext ctx;
+    return planAdaptive(inputFor(sw::s5::caseById(cases, id), stepover), options, ctx);
 }
 
 inline std::string hashText(const std::string& text)

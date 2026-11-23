@@ -169,16 +169,22 @@ TEST_CASE("The output of a circular pocket: a helix entry, passes, leads, links 
     bool finish = false;
     std::vector<double> passEngagement;
     const Pt centre = ray::cam::geom2d::toPt({41.275, 41.275});
+    Pt last = r.entry.start;
     for (const Path& p : r.paths) {
         REQUIRE_FALSE(p.points.empty());
         REQUIRE(p.engagementDeg.size() == p.points.size());
         CHECK(p.engagementDeg[0] == -1);
+        CHECK(p.reducedFeed.empty()); // planAdaptive's (entry.h)
+        // T-063: each path starts where the one before it ended
+        CHECK(p.points.front() == last);
+        last = p.points.back();
         if (p.motion == Motion::LinkRetract) {
             CHECK(p.points.size() == 2);
             CHECK(p.role == Role::Link);
         }
-        if (p.motion != Motion::Cut) {
-            CHECK(p.role == Role::Link);
+        if (p.motion == Motion::LinkClear) {
+            // a link, or (T-063) a lead's stretch through cleared area
+            CHECK((p.role == Role::Link || p.role == Role::LeadIn || p.role == Role::LeadOut));
         }
         finish = finish || p.role == Role::Finish;
         for (std::size_t i = 0; i < p.points.size(); i++) {
@@ -187,7 +193,8 @@ TEST_CASE("The output of a circular pocket: a helix entry, passes, leads, links 
             double d = std::hypot(double(p.points[i].x - centre.x), double(p.points[i].y - centre.y));
             CHECK(d <= toNm(19.05 - kToolMm / 2) + 10'000);
             if (i > 0) {
-                CHECK(p.engagementDeg[i] >= 0);
+                // a lead-in's first segment may be the gap upstream's smoothing left before it: no estimate
+                CHECK((p.engagementDeg[i] >= 0 || (i == 1 && p.role == Role::LeadIn)));
                 CHECK(p.engagementDeg[i] <= 180);
                 if (p.role == Role::Pass) {
                     passEngagement.push_back(p.engagementDeg[i]);

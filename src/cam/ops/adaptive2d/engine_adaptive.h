@@ -90,6 +90,14 @@ struct TPath
     // points[i - 1] to points[i] (the cut area per unit of travel against the engine's cleared area); depth[0] = -1.
     // -1 where the engine has no estimate.
     std::vector<double> depth;
+    // RayCAD (T-063): a lead's stretch through cleared area, points airFrom..airTo (a prefix of a lead-in or a suffix
+    // of a lead-out), checked clear of material with a margin (MarkAir); -1: none. The algorithm still uses the whole
+    // lead as upstream did; only the output's motion of that stretch changes (engine.cpp).
+    int64_t airFrom = -1, airTo = -1;
+    // RayCAD (T-063): where EstimateDepth measured a segment in pieces whose estimates differ, pieces[i] holds each
+    // piece's end point and estimate (the last ends at points[i]), so the output can keep them apart (a finishing
+    // pass's long wall segment that meets a corner); empty otherwise.
+    std::vector<std::vector<std::pair<Clipper2Lib::Point64, double>>> pieces;
 };
 
 class ClearedArea;
@@ -103,6 +111,7 @@ struct AdaptiveOutput
     Clipper2Lib::Point64 StartPoint {};
     int64_t HelixRadius = 0;   // RayCAD: grid units; 0 when the region is entered from cleared area
     bool HelixEntry = false;   // RayCAD: entered by a helix about HelixCenterPoint
+    int SeedEntry = -1;        // RayCAD (T-063): entered at Adaptive2d::entrySeeds[SeedEntry] (StartPoint); -1: not
     TPaths AdaptivePaths;
     int ReturnMotionType = mtLinkNotClear;  // MotionType, problem with serialization if enum is used
     double ClearedArea = 0;    // Total area cleared in this operation (mm^2)
@@ -175,6 +184,18 @@ public:
     Limits limits;
     const ray::CancelToken* cancel = nullptr;
     std::function<void(double)> progress;
+    // RayCAD (T-063, entry.h): entries the caller made. entrySeeds: tool positions (grid units) and directions where
+    // a region starts its first pass, as after a helix, instead of searching its cleared area for an engagement point
+    // (the caller put the area the entry cleared, a ramp's or a pre-drilled hole's, into the cleared paths); the first
+    // seed inside the region is used. helixEntryAllowed false: no helix (the region is not entered: StartPointNotFound).
+    // onlyRegionsAt: when not empty, only the regions (connected areas of the tool centre) containing one of these
+    // points are processed, the others left out of the output.
+    std::vector<std::pair<Clipper2Lib::Point64, Clipper2Lib::PointD>> entrySeeds;
+    bool helixEntryAllowed = true;
+    std::vector<Clipper2Lib::Point64> onlyRegionsAt;
+    // RayCAD (T-063): the stretches of leads through cleared area are marked (TPath::airFrom, airTo) when they stay
+    // this many grid units clear of material.
+    double airClearance = 4;
 
     // RayCAD: the inputs are in grid units (scaleFactor per mm), converted by the caller.
     std::list<AdaptiveOutput> Execute(
@@ -210,7 +231,19 @@ private:
     void HitLimit(AdaptiveOutput& output, const char* name);
     void ReportProgress(double regionFraction);
     // RayCAD: the engine's estimate of the radial depth of cut along a path, against the cleared area as it is.
-    std::vector<double> EstimateDepth(const Clipper2Lib::Path64& path, ClearedArea& cleared);
+    // RayCAD (T-063): with `pieces`, the estimate of each piece where they differ (TPath::pieces).
+    std::vector<double> EstimateDepth(
+        const Clipper2Lib::Path64& path,
+        ClearedArea& cleared,
+        std::vector<std::vector<std::pair<Clipper2Lib::Point64, double>>>* pieces = nullptr
+    );
+    // RayCAD (T-063): marks the stretch of a lead (with its depth estimates) that runs through cleared area with
+    // airClearance to spare: a lead-in's prefix (from `before`, the point the tool comes from, when given) or a
+    // lead-out's suffix. Reads the cleared area only.
+    void MarkAir(TPath& lead, ClearedArea& cleared, bool leadIn, const Clipper2Lib::Point64* before);
+    // The lead-in of a link and lead-in pair (FindLinkPath's result: the lead-in last, after the tool's previous point
+    // or the link that ends where the tool comes from).
+    void MarkLeadInAir(TPaths& linkAndLeadIn, ClearedArea& cleared);
 
     void ProcessPolyNode(
         Clipper2Lib::Paths64 boundPaths,

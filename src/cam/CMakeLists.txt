@@ -68,6 +68,8 @@ add_library(ray_cam STATIC
     ops/adaptive2d/engine_adaptive.h
     ops/adaptive2d/engine_offset.cpp # Clipper2's offsetting (BSL-1.0) with ray::dmath trigonometry
     ops/adaptive2d/engine_offset.h
+    ops/adaptive2d/entry.cpp # T-063: every region entered (ramp, pre-drilled hole), links checked, reduced feed
+    ops/adaptive2d/entry.h
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)
