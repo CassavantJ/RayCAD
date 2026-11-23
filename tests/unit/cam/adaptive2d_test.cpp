@@ -432,9 +432,10 @@ TEST_CASE("adaptive2d on S5's pockets: at most one move per millimetre, p99 enga
             REQUIRE(p);
             const MoveDensity d = cutDensity(*p);
             const double target = ad::angleForStepover(load / 100);
-            WARN(id << " at " << load << " %: " << d.moves << " moves over " << d.lengthMm << " mm at depth = "
-                    << d.perMm() << " per mm; p99 " << p->stats.p99EngagementDeg << " (target " << target << "), max "
-                    << p->stats.maxEngagementDeg << ", air " << p->stats.airCutLengthMm << " mm of " << p->stats.cutLengthMm << " mm fed");
+            WARN(id << " at " << load << " %: " << d.moves << " moves over " << d.lengthMm
+                    << " mm at depth = " << d.perMm() << " per mm; p99 " << p->stats.p99EngagementDeg << " (target "
+                    << target << "), max " << p->stats.maxEngagementDeg << ", air " << p->stats.airCutLengthMm
+                    << " mm of " << p->stats.cutLengthMm << " mm fed");
             CHECK(d.perMm() <= 1.0);
             CHECK(p->stats.p99EngagementDeg >= target - 2);
             CHECK(p->stats.p99EngagementDeg <= target + 6);
