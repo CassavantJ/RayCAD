@@ -1,0 +1,84 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X40 Y85 Z35
+moves 80
+0 Rapid Approach X40 Y85 Z35
+1 Rapid Approach X40 Y85 Z27
+2 Linear Approach X40 Y85 Z20 F200
+3 Linear LeadIn X50 Y85 Z20 F800 comp 1
+4 Linear Cut X90 Y85 Z20 F800 comp 1
+5 ArcCW Cut X105 Y70 Z20 F800 I90 J70 K20 plane XY comp 1
+6 Linear Cut X105 Y10 Z20 F800 comp 1
+7 ArcCW Cut X90 Y-5 Z20 F800 I90 J10 K20 plane XY comp 1
+8 Linear Cut X10 Y-5 Z20 F800 comp 1
+9 ArcCW Cut X-5 Y10 Z20 F800 I10 J10 K20 plane XY comp 1
+10 Linear Cut X-5 Y70 Z20 F800 comp 1
+11 ArcCW Cut X10 Y85 Z20 F800 I10 J70 K20 plane XY comp 1
+12 Linear Cut X50 Y85 Z20 F800 comp 1
+13 Linear LeadOut X60 Y85 Z20 F800
+14 Linear Retract X60 Y85 Z27 F800
+15 Rapid Retract X60 Y85 Z30
+16 Rapid Link X40 Y85 Z30
+17 Rapid Approach X40 Y85 Z27
+18 Linear Approach X40 Y85 Z15 F200
+19 Linear LeadIn X50 Y85 Z15 F800 comp 1
+20 Linear Cut X90 Y85 Z15 F800 comp 1
+21 ArcCW Cut X105 Y70 Z15 F800 I90 J70 K15 plane XY comp 1
+22 Linear Cut X105 Y10 Z15 F800 comp 1
+23 ArcCW Cut X90 Y-5 Z15 F800 I90 J10 K15 plane XY comp 1
+24 Linear Cut X10 Y-5 Z15 F800 comp 1
+25 ArcCW Cut X-5 Y10 Z15 F800 I10 J10 K15 plane XY comp 1
+26 Linear Cut X-5 Y70 Z15 F800 comp 1
+27 ArcCW Cut X10 Y85 Z15 F800 I10 J70 K15 plane XY comp 1
+28 Linear Cut X50 Y85 Z15 F800 comp 1
+29 Linear LeadOut X60 Y85 Z15 F800
+30 Linear Retract X60 Y85 Z27 F800
+31 Rapid Retract X60 Y85 Z30
+32 Rapid Link X40 Y85 Z30
+33 Rapid Approach X40 Y85 Z27
+34 Linear Approach X40 Y85 Z10 F200
+35 Linear LeadIn X50 Y85 Z10 F800 comp 1
+36 Linear Cut X90 Y85 Z10 F800 comp 1
+37 ArcCW Cut X105 Y70 Z10 F800 I90 J70 K10 plane XY comp 1
+38 Linear Cut X105 Y10 Z10 F800 comp 1
+39 ArcCW Cut X90 Y-5 Z10 F800 I90 J10 K10 plane XY comp 1
+40 Linear Cut X10 Y-5 Z10 F800 comp 1
+41 ArcCW Cut X-5 Y10 Z10 F800 I10 J10 K10 plane XY comp 1
+42 Linear Cut X-5 Y70 Z10 F800 comp 1
+43 ArcCW Cut X10 Y85 Z10 F800 I10 J70 K10 plane XY comp 1
+44 Linear Cut X50 Y85 Z10 F800 comp 1
+45 Linear LeadOut X60 Y85 Z10 F800
+46 Linear Retract X60 Y85 Z27 F800
+47 Rapid Retract X60 Y85 Z30
+48 Rapid Link X40 Y85 Z30
+49 Rapid Approach X40 Y85 Z27
+50 Linear Approach X40 Y85 Z5 F200
+51 Linear LeadIn X50 Y85 Z5 F800 comp 1
+52 Linear Cut X90 Y85 Z5 F800 comp 1
+53 ArcCW Cut X105 Y70 Z5 F800 I90 J70 K5 plane XY comp 1
+54 Linear Cut X105 Y10 Z5 F800 comp 1
+55 ArcCW Cut X90 Y-5 Z5 F800 I90 J10 K5 plane XY comp 1
+56 Linear Cut X10 Y-5 Z5 F800 comp 1
+57 ArcCW Cut X-5 Y10 Z5 F800 I10 J10 K5 plane XY comp 1
+58 Linear Cut X-5 Y70 Z5 F800 comp 1
+59 ArcCW Cut X10 Y85 Z5 F800 I10 J70 K5 plane XY comp 1
+60 Linear Cut X50 Y85 Z5 F800 comp 1
+61 Linear LeadOut X60 Y85 Z5 F800
+62 Linear Retract X60 Y85 Z27 F800
+63 Rapid Retract X60 Y85 Z30
+64 Rapid Link X40 Y85 Z30
+65 Rapid Approach X40 Y85 Z27
+66 Linear Approach X40 Y85 Z0 F200
+67 Linear LeadIn X50 Y85 Z0 F800 comp 1
+68 Linear Cut X90 Y85 Z0 F800 comp 1
+69 ArcCW Cut X105 Y70 Z0 F800 I90 J70 K0 plane XY comp 1
+70 Linear Cut X105 Y10 Z0 F800 comp 1
+71 ArcCW Cut X90 Y-5 Z0 F800 I90 J10 K0 plane XY comp 1
+72 Linear Cut X10 Y-5 Z0 F800 comp 1
+73 ArcCW Cut X-5 Y10 Z0 F800 I10 J10 K0 plane XY comp 1
+74 Linear Cut X-5 Y70 Z0 F800 comp 1
+75 ArcCW Cut X10 Y85 Z0 F800 I10 J70 K0 plane XY comp 1
+76 Linear Cut X50 Y85 Z0 F800 comp 1
+77 Linear LeadOut X60 Y85 Z0 F800
+78 Linear Retract X60 Y85 Z27 F800
+79 Rapid Retract X60 Y85 Z35

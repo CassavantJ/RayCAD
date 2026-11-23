@@ -1,0 +1,160 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X-0.5 Y61 Z36.5
+moves 156
+0 Rapid Approach X-0.5 Y61 Z36.5
+1 Rapid Approach X-0.5 Y61 Z23.5
+2 Linear Approach X-0.5 Y61 Z20.75 F400
+3 Linear Cut X-0.5 Y-11 Z20.75 F1200
+4 Linear Retract X-0.5 Y-11 Z23.5 F1200
+5 Rapid Retract X-0.5 Y-11 Z26.5
+6 Rapid Link X6.25 Y61 Z26.5
+7 Rapid Approach X6.25 Y61 Z23.5
+8 Linear Approach X6.25 Y61 Z20.75 F400
+9 Linear Cut X6.25 Y-11 Z20.75 F1200
+10 Linear Retract X6.25 Y-11 Z23.5 F1200
+11 Rapid Retract X6.25 Y-11 Z26.5
+12 Rapid Link X13 Y61 Z26.5
+13 Rapid Approach X13 Y61 Z23.5
+14 Linear Approach X13 Y61 Z20.75 F400
+15 Linear Cut X13 Y-11 Z20.75 F1200
+16 Linear Retract X13 Y-11 Z23.5 F1200
+17 Rapid Retract X13 Y-11 Z26.5
+18 Rapid Link X19.75 Y61 Z26.5
+19 Rapid Approach X19.75 Y61 Z23.5
+20 Linear Approach X19.75 Y61 Z20.75 F400
+21 Linear Cut X19.75 Y-11 Z20.75 F1200
+22 Linear Retract X19.75 Y-11 Z23.5 F1200
+23 Rapid Retract X19.75 Y-11 Z26.5
+24 Rapid Link X26.5 Y61 Z26.5
+25 Rapid Approach X26.5 Y61 Z23.5
+26 Linear Approach X26.5 Y61 Z20.75 F400
+27 Linear Cut X26.5 Y-11 Z20.75 F1200
+28 Linear Retract X26.5 Y-11 Z23.5 F1200
+29 Rapid Retract X26.5 Y-11 Z26.5
+30 Rapid Link X33.25 Y61 Z26.5
+31 Rapid Approach X33.25 Y61 Z23.5
+32 Linear Approach X33.25 Y61 Z20.75 F400
+33 Linear Cut X33.25 Y-11 Z20.75 F1200
+34 Linear Retract X33.25 Y-11 Z23.5 F1200
+35 Rapid Retract X33.25 Y-11 Z26.5
+36 Rapid Link X40 Y61 Z26.5
+37 Rapid Approach X40 Y61 Z23.5
+38 Linear Approach X40 Y61 Z20.75 F400
+39 Linear Cut X40 Y-11 Z20.75 F1200
+40 Linear Retract X40 Y-11 Z23.5 F1200
+41 Rapid Retract X40 Y-11 Z26.5
+42 Rapid Link X46.75 Y61 Z26.5
+43 Rapid Approach X46.75 Y61 Z23.5
+44 Linear Approach X46.75 Y61 Z20.75 F400
+45 Linear Cut X46.75 Y-11 Z20.75 F1200
+46 Linear Retract X46.75 Y-11 Z23.5 F1200
+47 Rapid Retract X46.75 Y-11 Z26.5
+48 Rapid Link X53.5 Y61 Z26.5
+49 Rapid Approach X53.5 Y61 Z23.5
+50 Linear Approach X53.5 Y61 Z20.75 F400
+51 Linear Cut X53.5 Y-11 Z20.75 F1200
+52 Linear Retract X53.5 Y-11 Z23.5 F1200
+53 Rapid Retract X53.5 Y-11 Z26.5
+54 Rapid Link X60.25 Y61 Z26.5
+55 Rapid Approach X60.25 Y61 Z23.5
+56 Linear Approach X60.25 Y61 Z20.75 F400
+57 Linear Cut X60.25 Y-11 Z20.75 F1200
+58 Linear Retract X60.25 Y-11 Z23.5 F1200
+59 Rapid Retract X60.25 Y-11 Z26.5
+60 Rapid Link X67 Y61 Z26.5
+61 Rapid Approach X67 Y61 Z23.5
+62 Linear Approach X67 Y61 Z20.75 F400
+63 Linear Cut X67 Y-11 Z20.75 F1200
+64 Linear Retract X67 Y-11 Z23.5 F1200
+65 Rapid Retract X67 Y-11 Z26.5
+66 Rapid Link X73.75 Y61 Z26.5
+67 Rapid Approach X73.75 Y61 Z23.5
+68 Linear Approach X73.75 Y61 Z20.75 F400
+69 Linear Cut X73.75 Y-11 Z20.75 F1200
+70 Linear Retract X73.75 Y-11 Z23.5 F1200
+71 Rapid Retract X73.75 Y-11 Z26.5
+72 Rapid Link X80.5 Y61 Z26.5
+73 Rapid Approach X80.5 Y61 Z23.5
+74 Linear Approach X80.5 Y61 Z20.75 F400
+75 Linear Cut X80.5 Y-11 Z20.75 F1200
+76 Linear Retract X80.5 Y-11 Z23.5 F1200
+77 Rapid Retract X80.5 Y-11 Z26.5
+78 Rapid Link X-0.5 Y61 Z26.5
+79 Rapid Approach X-0.5 Y61 Z23.5
+80 Linear Approach X-0.5 Y61 Z20 F400
+81 Linear Cut X-0.5 Y-11 Z20 F1200
+82 Linear Retract X-0.5 Y-11 Z23.5 F1200
+83 Rapid Retract X-0.5 Y-11 Z26.5
+84 Rapid Link X6.25 Y61 Z26.5
+85 Rapid Approach X6.25 Y61 Z23.5
+86 Linear Approach X6.25 Y61 Z20 F400
+87 Linear Cut X6.25 Y-11 Z20 F1200
+88 Linear Retract X6.25 Y-11 Z23.5 F1200
+89 Rapid Retract X6.25 Y-11 Z26.5
+90 Rapid Link X13 Y61 Z26.5
+91 Rapid Approach X13 Y61 Z23.5
+92 Linear Approach X13 Y61 Z20 F400
+93 Linear Cut X13 Y-11 Z20 F1200
+94 Linear Retract X13 Y-11 Z23.5 F1200
+95 Rapid Retract X13 Y-11 Z26.5
+96 Rapid Link X19.75 Y61 Z26.5
+97 Rapid Approach X19.75 Y61 Z23.5
+98 Linear Approach X19.75 Y61 Z20 F400
+99 Linear Cut X19.75 Y-11 Z20 F1200
+100 Linear Retract X19.75 Y-11 Z23.5 F1200
+101 Rapid Retract X19.75 Y-11 Z26.5
+102 Rapid Link X26.5 Y61 Z26.5
+103 Rapid Approach X26.5 Y61 Z23.5
+104 Linear Approach X26.5 Y61 Z20 F400
+105 Linear Cut X26.5 Y-11 Z20 F1200
+106 Linear Retract X26.5 Y-11 Z23.5 F1200
+107 Rapid Retract X26.5 Y-11 Z26.5
+108 Rapid Link X33.25 Y61 Z26.5
+109 Rapid Approach X33.25 Y61 Z23.5
+110 Linear Approach X33.25 Y61 Z20 F400
+111 Linear Cut X33.25 Y-11 Z20 F1200
+112 Linear Retract X33.25 Y-11 Z23.5 F1200
+113 Rapid Retract X33.25 Y-11 Z26.5
+114 Rapid Link X40 Y61 Z26.5
+115 Rapid Approach X40 Y61 Z23.5
+116 Linear Approach X40 Y61 Z20 F400
+117 Linear Cut X40 Y-11 Z20 F1200
+118 Linear Retract X40 Y-11 Z23.5 F1200
+119 Rapid Retract X40 Y-11 Z26.5
+120 Rapid Link X46.75 Y61 Z26.5
+121 Rapid Approach X46.75 Y61 Z23.5
+122 Linear Approach X46.75 Y61 Z20 F400
+123 Linear Cut X46.75 Y-11 Z20 F1200
+124 Linear Retract X46.75 Y-11 Z23.5 F1200
+125 Rapid Retract X46.75 Y-11 Z26.5
+126 Rapid Link X53.5 Y61 Z26.5
+127 Rapid Approach X53.5 Y61 Z23.5
+128 Linear Approach X53.5 Y61 Z20 F400
+129 Linear Cut X53.5 Y-11 Z20 F1200
+130 Linear Retract X53.5 Y-11 Z23.5 F1200
+131 Rapid Retract X53.5 Y-11 Z26.5
+132 Rapid Link X60.25 Y61 Z26.5
+133 Rapid Approach X60.25 Y61 Z23.5
+134 Linear Approach X60.25 Y61 Z20 F400
+135 Linear Cut X60.25 Y-11 Z20 F1200
+136 Linear Retract X60.25 Y-11 Z23.5 F1200
+137 Rapid Retract X60.25 Y-11 Z26.5
+138 Rapid Link X67 Y61 Z26.5
+139 Rapid Approach X67 Y61 Z23.5
+140 Linear Approach X67 Y61 Z20 F400
+141 Linear Cut X67 Y-11 Z20 F1200
+142 Linear Retract X67 Y-11 Z23.5 F1200
+143 Rapid Retract X67 Y-11 Z26.5
+144 Rapid Link X73.75 Y61 Z26.5
+145 Rapid Approach X73.75 Y61 Z23.5
+146 Linear Approach X73.75 Y61 Z20 F400
+147 Linear Cut X73.75 Y-11 Z20 F1200
+148 Linear Retract X73.75 Y-11 Z23.5 F1200
+149 Rapid Retract X73.75 Y-11 Z26.5
+150 Rapid Link X80.5 Y61 Z26.5
+151 Rapid Approach X80.5 Y61 Z23.5
+152 Linear Approach X80.5 Y61 Z20 F400
+153 Linear Cut X80.5 Y-11 Z20 F1200
+154 Linear Retract X80.5 Y-11 Z23.5 F1200
+155 Rapid Retract X80.5 Y-11 Z36.5

@@ -1,0 +1,70 @@
+RCTP 2
+operation 00000000-0000-0000-0000-000000000000 input 0000000000000000000000000000000000000000000000000000000000000000
+start X88 Y0 Z36.5
+moves 66
+0 Rapid Approach X88 Y0 Z36.5
+1 Rapid Approach X88 Y0 Z23.5
+2 Linear Approach X88 Y0 Z20 F400
+3 Linear Cut X-8 Y0 Z20 F1200
+4 Linear Retract X-8 Y0 Z23.5 F1200
+5 Rapid Retract X-8 Y0 Z26.5
+6 Rapid Link X88 Y5 Z26.5
+7 Rapid Approach X88 Y5 Z23.5
+8 Linear Approach X88 Y5 Z20 F400
+9 Linear Cut X-8 Y5 Z20 F1200
+10 Linear Retract X-8 Y5 Z23.5 F1200
+11 Rapid Retract X-8 Y5 Z26.5
+12 Rapid Link X88 Y10 Z26.5
+13 Rapid Approach X88 Y10 Z23.5
+14 Linear Approach X88 Y10 Z20 F400
+15 Linear Cut X-8 Y10 Z20 F1200
+16 Linear Retract X-8 Y10 Z23.5 F1200
+17 Rapid Retract X-8 Y10 Z26.5
+18 Rapid Link X88 Y15 Z26.5
+19 Rapid Approach X88 Y15 Z23.5
+20 Linear Approach X88 Y15 Z20 F400
+21 Linear Cut X-8 Y15 Z20 F1200
+22 Linear Retract X-8 Y15 Z23.5 F1200
+23 Rapid Retract X-8 Y15 Z26.5
+24 Rapid Link X88 Y20 Z26.5
+25 Rapid Approach X88 Y20 Z23.5
+26 Linear Approach X88 Y20 Z20 F400
+27 Linear Cut X-8 Y20 Z20 F1200
+28 Linear Retract X-8 Y20 Z23.5 F1200
+29 Rapid Retract X-8 Y20 Z26.5
+30 Rapid Link X88 Y25 Z26.5
+31 Rapid Approach X88 Y25 Z23.5
+32 Linear Approach X88 Y25 Z20 F400
+33 Linear Cut X-8 Y25 Z20 F1200
+34 Linear Retract X-8 Y25 Z23.5 F1200
+35 Rapid Retract X-8 Y25 Z26.5
+36 Rapid Link X88 Y30 Z26.5
+37 Rapid Approach X88 Y30 Z23.5
+38 Linear Approach X88 Y30 Z20 F400
+39 Linear Cut X-8 Y30 Z20 F1200
+40 Linear Retract X-8 Y30 Z23.5 F1200
+41 Rapid Retract X-8 Y30 Z26.5
+42 Rapid Link X88 Y35 Z26.5
+43 Rapid Approach X88 Y35 Z23.5
+44 Linear Approach X88 Y35 Z20 F400
+45 Linear Cut X-8 Y35 Z20 F1200
+46 Linear Retract X-8 Y35 Z23.5 F1200
+47 Rapid Retract X-8 Y35 Z26.5
+48 Rapid Link X88 Y40 Z26.5
+49 Rapid Approach X88 Y40 Z23.5
+50 Linear Approach X88 Y40 Z20 F400
+51 Linear Cut X-8 Y40 Z20 F1200
+52 Linear Retract X-8 Y40 Z23.5 F1200
+53 Rapid Retract X-8 Y40 Z26.5
+54 Rapid Link X88 Y45 Z26.5
+55 Rapid Approach X88 Y45 Z23.5
+56 Linear Approach X88 Y45 Z20 F400
+57 Linear Cut X-8 Y45 Z20 F1200
+58 Linear Retract X-8 Y45 Z23.5 F1200
+59 Rapid Retract X-8 Y45 Z26.5
+60 Rapid Link X88 Y50 Z26.5
+61 Rapid Approach X88 Y50 Z23.5
+62 Linear Approach X88 Y50 Z20 F400
+63 Linear Cut X-8 Y50 Z20 F1200
+64 Linear Retract X-8 Y50 Z23.5 F1200
+65 Rapid Retract X-8 Y50 Z36.5

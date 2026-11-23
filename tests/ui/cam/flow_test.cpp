@@ -582,9 +582,11 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     const render::Camera beforeOperationPanel = w.view()->camera();
     w.click(QStringLiteral("camRowNewOperation.0"));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, 5000));
-    // T-055: drill is no longer the only built-in type (the panel starts with the first registered, by name).
-    if (w.op()->type() != QStringLiteral("drill"))
+    // The panel starts with the first registered type; drilling is chosen (other built-in types sort before it).
+    if (w.op()->type() != QStringLiteral("drill")) {
         w.op()->setType(QStringLiteral("drill"));
+        QCoreApplication::processEvents();
+    }
     CHECK(w.op()->type() == QStringLiteral("drill"));
     CHECK(w.op()->materialSource() == QStringLiteral("setup"));
     // Opening the panel moves no camera; Fit then frames the part beside it, in the part of the view nothing covers.
@@ -1181,9 +1183,9 @@ TEST_CASE("no list or check box text is cut where it has room, in the CAM panels
     w.clickRow(QStringLiteral("setupRow.0"));
     w.click(QStringLiteral("camRowNewOperation.0"));
     REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, kTimeoutMs));
-    // T-055: drill is no longer the only built-in type (the panel starts with the first registered, by name).
-    if (w.op()->type() != QStringLiteral("drill"))
-        w.op()->setType(QStringLiteral("drill"));
+    if (w.op()->type() != QStringLiteral("drill")) {
+        w.op()->setType(QStringLiteral("drill")); // other built-in types sort before it
+    }
     REQUIRE(QTest::qWaitFor([&] { return !w.op()->previewBusy(); }, kTimeoutMs));
     QTest::qWait(100);
     CHECK(checkNoCutText(w, w.shown(QStringLiteral("operationPanel")), QStringLiteral("operation panel")) >= 6);
