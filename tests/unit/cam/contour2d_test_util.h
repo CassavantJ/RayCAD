@@ -96,7 +96,7 @@ inline kernel::SubId lineEdgeAt(const kernel::Shape& shape, Vec3 mid)
             return e;
         }
     }
-    FAIL("no straight edge with its middle at " << mid.x << ", " << mid.y << ", " << mid.z);
+    FAIL_CHECK("no straight edge with its middle at " << mid.x << ", " << mid.y << ", " << mid.z);
     return {};
 }
 // A planar face perpendicular to Z at height z whose box contains (x, y).
@@ -113,7 +113,7 @@ inline kernel::SubId flatFaceAt(const kernel::Shape& shape, double z, double x, 
             return f;
         }
     }
-    FAIL("no flat face at Z " << z << " over " << x << ", " << y);
+    FAIL_CHECK("no flat face at Z " << z << " over " << x << ", " << y);
     return {};
 }
 
