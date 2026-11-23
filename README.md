@@ -40,7 +40,7 @@ RayCAD comes with no warranty of any kind, to the extent the law allows; see sec
   feeds and speeds calculated from the tool's presets for the material; shop templates; a cycle-time estimate;
   backplot; posting through the six shipped posts or your own, and a G-code viewer linked to the toolpath.
 
-The eight operation types (`docs/operation_types.md` says how a type is written):
+The nine operation types (`docs/operation_types.md` says how a type is written):
 
 | Type | What it does |
 |-|-|
@@ -48,6 +48,7 @@ The eight operation types (`docs/operation_types.md` says how a type is written)
 | `face` | Faces the whole top of the stock flat with parallel strokes, zigzag or one way, at one or more depths |
 | `contour2d` | Runs the tool beside a chain of picked edges at one or more depths, with leads, roughing and finish passes, tabs and cutter compensation |
 | `pocket2d` | Clears the area above picked pocket floors with offset rings, islands left standing, entering by a helix, a ramp or a pre-drilled hole |
+| `adaptive2d` | Roughs the area above picked floors with passes that hold the tool's radial load near a set value (adaptive clearing), entering by a helix, a ramp, a pre-drilled hole or from outside the stock, at one or more depths |
 | `slot` | Cuts a slot along its centre line with an end mill as wide as the slot, ramping into each depth |
 | `chamfer2d` | Chamfers or deburrs the top edges of walls with the flank of a chamfer mill or a spot drill |
 | `engrave` | Engraves along picked edges and a line of text in a single-line font, at a depth below a plane |
@@ -58,6 +59,8 @@ The eight operation types (`docs/operation_types.md` says how a type is written)
 - The shipped posts have not been proven on a real machine (above), and the cycle-time estimate assumes
   accelerations, as no measured data is behind it yet.
 - `pocket2d` takes the pocket's walls as vertical: drafted or undercut walls are not followed.
+- `adaptive2d` takes the walls as vertical too; its passes are not all climb and it has no control of the smallest
+  radius its passes turn at (its engine has none).
 - `chamfer2d` and `engrave` take edges only; `contour2d` takes edges and planar faces.
 - CAM geometry is picked on the model's faces and edges; it cannot reference a sketch.
 - Each operation starts from the setup's stock: material removed by earlier operations is not carried to the next

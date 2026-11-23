@@ -6,7 +6,7 @@ first one and is the example throughout; the milling types (T-052 to T-056) foll
 
 ## The types
 
-Eight types are registered (`registerBuiltinOperationTypes`, `src/cam/ops/builtin_ops.cpp`), each with its schema in
+Nine types are registered (`registerBuiltinOperationTypes`, `src/cam/ops/builtin_ops.cpp`), each with its schema in
 `schemas/ops/<type>.schema.json` (whose top `description` says what the type reads) and its rules in the header
 `src/cam/ops/<type>.h`:
 
@@ -16,6 +16,7 @@ Eight types are registered (`registerBuiltinOperationTypes`, `src/cam/ops/builti
 | `face` | T-052 | none | Faces the whole top of the stock flat with parallel strokes, zigzag or one way, at one or more depths |
 | `contour2d` | T-053 | edges and faces | Runs beside a chain of edges at one or more depths, with leads, roughing, finish and spring passes, tabs and cutter compensation |
 | `pocket2d` | T-054 | faces (floors) | Clears the area above each floor with offset rings, islands left standing, helix, ramp or pre-drilled entry |
+| `adaptive2d` | T-061 | faces (floors) | Roughs the area above each floor with constant-engagement passes (the engine of `src/cam/ops/adaptive2d`), helix, ramp, pre-drilled or open-edge entry, reduced feed where the load rises |
 | `slot` | T-055 | faces (floors) | Cuts each slot along its centre line with an end mill as wide as the slot, ramping into each depth |
 | `chamfer2d` | T-055 | edges | Chamfers or deburrs the top edges of walls with the flank of a chamfer mill or a spot drill |
 | `engrave` | T-056 | edges (or none) | Engraves along edges projected onto a plane and text of one or more lines in the RayCAD Single Line font |

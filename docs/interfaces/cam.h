@@ -384,7 +384,7 @@ private:
 };
 // Added by T-035: adds the operation types src/cam ships (src/cam/ops): "drill" (spot, drill, peck, chipBreak, tap,
 // bore and ream by its "cycle" parameter), "face", "contour2d", "pocket2d", "slot", "chamfer2d", "engrave" and
-// "threadmill" (M3, T-052 to T-056). The app calls it once at start-up (src/api).
+// "threadmill" (M3, T-052 to T-056), and "adaptive2d" (M4, T-061). The app calls it once at start-up (src/api).
 void registerBuiltinOperationTypes(OperationRegistry&);
 
 // ---------- Staleness / associativity ----------

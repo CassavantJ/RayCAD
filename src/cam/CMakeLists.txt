@@ -70,6 +70,10 @@ add_library(ray_cam STATIC
     ops/adaptive2d/engine_offset.h
     ops/adaptive2d/entry.cpp # T-063: every region entered (ramp, pre-drilled hole), links checked, reduced feed
     ops/adaptive2d/entry.h
+    # T-061: "adaptive2d", the operation type on the engine and the entry planner
+    ops/adaptive2d/op.cpp
+    ops/adaptive2d/op.h
+    ops/adaptive2d/op_plan.cpp
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)
@@ -86,6 +90,7 @@ list(APPEND RAY_CAM_OP_SCHEMAS face) # T-052
 list(APPEND RAY_CAM_OP_SCHEMAS contour2d) # T-053
 list(APPEND RAY_CAM_OP_SCHEMAS slot chamfer2d) # T-055
 list(APPEND RAY_CAM_OP_SCHEMAS pocket2d) # T-054
+list(APPEND RAY_CAM_OP_SCHEMAS adaptive2d) # T-061
 set(_entries "")
 set(_arrays "")
 foreach(_name IN LISTS RAY_CAM_OP_SCHEMAS)

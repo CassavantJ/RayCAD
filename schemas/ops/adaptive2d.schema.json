@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/adaptive2d.schema.json",
+  "title": "2D adaptive roughing",
+  "description": "Parameters of an 'adaptive2d' operation (cam.h Operation::paramsJson, task T-061): roughing of the empty area above each picked floor face with passes that hold the tool's radial load near a set value (constant engagement), islands left standing, open edges run out past, entered by a helix, a ramp or a pre-drilled hole, at one or more depths, with stock to leave on walls and floors. Every depth ends with one light pass along the walls and islands that takes the last tenth of the load. The operation's geometry is the floor face of each area. Its heights are measured from the top of the stock: 'clearance', 'retract' and 'feedPlane' as for every milling operation, 'top' where the material starts; 'bottom' is not used (each area goes down to its floor, plus the stock to leave on the floor). Feeds: the cutting feed for the passes, the reduced feed (a percentage of it, below) where the load rises above its set value, the ramp feed for helices and ramps, the plunge feed for descents and pre-drilled entries; links between passes that stay down run at the cutting feed, a quarter of a millimetre above the floor. Lengths are millimetres, angles degrees. Annotations for editors: 'x-unit' (length, angle, percent), 'x-format' (what a text holds: here a list of points), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' (the members of the operation's heights this type reads, each with what it is measured from), 'x-cuttingUsed' (the members of its cutting data this type reads), 'x-geometry' (what the geometry picker selects: here faces) and 'x-toolTypes' (the tools the picker offers); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": { "clearance": "stockTop", "retract": "stockTop", "feedPlane": "stockTop", "top": "stockTop" },
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "feedRamp", "coolant"],
+  "x-geometry": { "kind": "face", "count": "oneOrMore", "description": "Click the floor of each area to rough out." },
+  "x-toolTypes": ["flatEndMill", "bullEndMill"],
+  "x-propertyOrder": ["stepover", "stepdown", "reducedFeed", "stockToLeaveWall", "stockToLeaveFloor", "entry",
+                      "helixDiameter", "helixMinDiameter", "rampAngle", "preDrillPoints", "preDrillDiameter"],
+  "properties": {
+    "stepover": {
+      "title": "Load (stepover)",
+      "description": "The radial depth of cut the passes hold, in percent of the tool diameter (10 % is an engagement of about 37 degrees). The default of 10 % is the light radial cut that published high-efficiency milling guidance starts from for a deep axial cut; raise it with care, and lower the stepdown when you do.",
+      "type": "number",
+      "minimum": 2,
+      "maximum": 50,
+      "default": 10,
+      "x-unit": "percent"
+    },
+    "stepdown": {
+      "title": "Stepdown",
+      "description": "Largest depth of cut: each area is cut in equal steps no deeper than this (never deeper than the tool's flutes). The default of 4 mm is under half the diameter of a 10 mm end mill; adaptive roughing is meant for deeper steps (one to two diameters is common at a 10 % load) once the machine and the set-up are known to take them.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100,
+      "default": 4,
+      "x-unit": "length"
+    },
+    "reducedFeed": {
+      "title": "Feed where the load rises",
+      "description": "The feed, in percent of the cutting feed, on the stretches where the tool's engagement rises above 1.25 times the set load (into corners, where a pass meets a wall, along a ramp's full-width cut). The default of 50 % follows the usual advice to halve the feed where the cutter's engagement rises sharply, which keeps the chip and the cutting force near what the set load gives.",
+      "type": "number",
+      "minimum": 10,
+      "maximum": 100,
+      "default": 50,
+      "x-unit": "percent"
+    },
+    "stockToLeaveWall": {
+      "title": "Stock to leave on walls",
+      "description": "Material left on the walls and islands for a later operation.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "stockToLeaveFloor": {
+      "title": "Stock to leave on the floor",
+      "description": "Material left on the floor for a later operation.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "entry": {
+      "title": "Entry",
+      "description": "How the tool gets down into the material of each area at each depth. End mills do not cut at their centre, so there is never a straight plunge. An area that opens to the outside of the stock, or that an earlier operation already cleared in part, is entered from there.",
+      "enum": ["helix", "ramp", "preDrill"],
+      "x-enumTitles": ["Helix", "Ramp", "Pre-drilled holes"],
+      "x-enumDescriptions": ["A helix first, a ramp along the area's longest straight run where no helix fits, then a pre-drilled hole",
+                             "A ramp along the area's longest straight run first, then a helix, then a pre-drilled hole",
+                             "Only at the pre-drilled holes given below"],
+      "default": "helix"
+    },
+    "helixDiameter": {
+      "title": "Helix diameter",
+      "description": "Diameter of the helix the tool centre follows, in percent of the tool diameter; made smaller, down to the smallest helix, where it does not fit. The default of 75 % bores a hole 1.75 times the tool's diameter, room for the chips to leave and for the first pass to start without a full-width cut.",
+      "type": "number",
+      "minimum": 30,
+      "maximum": 200,
+      "default": 75,
+      "x-unit": "percent",
+      "x-relevantWhen": { "entry": ["helix", "ramp"] }
+    },
+    "helixMinDiameter": {
+      "title": "Smallest helix",
+      "description": "The smallest helix tried before a ramp or a pre-drilled hole, in percent of the tool diameter; at most the helix diameter. The default of 30 % keeps the centre of the bore inside the reach of an end mill's end teeth (most end mills do not cut within about a quarter of their radius of the axis).",
+      "type": "number",
+      "minimum": 25,
+      "maximum": 200,
+      "default": 30,
+      "x-unit": "percent",
+      "x-relevantWhen": { "entry": ["helix", "ramp"] }
+    },
+    "rampAngle": {
+      "title": "Ramp angle",
+      "description": "How steeply helices and ramps go down. The default of 2 degrees is at the low end of the usual 1 to 5 degrees for solid end mills, safe in steel as in aluminium.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 30,
+      "default": 2,
+      "x-unit": "angle",
+      "x-relevantWhen": { "entry": ["helix", "ramp"] }
+    },
+    "preDrillPoints": {
+      "title": "Pre-drilled holes",
+      "description": "Centres of holes drilled before this operation, on the setup's XY plane (work coordinates): click a hole, a vertex or a face in the view, or type X and Y. Each must be drilled at least to the floor of its area. Empty: none. Stored in millimetres whatever the display unit, as 'x y' pairs separated by ';' (for example '20 15; 60 15').",
+      "type": "string",
+      "maxLength": 2000,
+      "default": "",
+      "x-format": "pointsXY"
+    },
+    "preDrillDiameter": {
+      "title": "Pre-drilled hole diameter",
+      "description": "Diameter of the pre-drilled holes; at least the tool's.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 200,
+      "default": 0,
+      "x-unit": "length"
+    }
+  }
+}
