@@ -19,7 +19,10 @@
 //                   the pocket shrunk by the tool radius plus stock to leave; Options::preDrills for pre-drilled
 //                   points.
 //   T-055 slot      the centre line as an open pass per depth, Ramp (zigzag along it; the run must be at least
-//                   minRampRun), helixDiameter 0 so no helix is tried; appendSloped for a ramp the op makes itself.
+//                   minRampRun), helixDiameter 0 so no helix is tried; appendSloped for a ramp the op makes itself;
+//                   maxStayDown with stayDownEntry (added by T-055) so each depth ramps in from the one above.
+//   T-055 chamfer   one pass per centre path at the tip's depth, closed ones rotatable, entryOrder {Plunge} beside
+//                   the edge (centreCutting), maxStayDown 0.
 //   T-056 engrave   entryOrder {Plunge} with a centre-cutting engraver; threadmill: the helical pass as moves, a
 //                   Lead::Arc of radius (thread radius / 2) and sweep 180 from the hole centre (a radial lead-in), the
 //                   drilled hole given as Stock::cleared (the linker does not know an earlier drilling operation).
@@ -185,6 +188,14 @@ struct Options {
     // lies in what the pass (with its leads) cuts anyway. So the tool centre never enters material, only its flank
     // does (a radial depth under the tool radius), and nothing outside the pass's own swept area is cut. Entered::Step.
     bool stepIn = false;
+    // Added by T-055 (multi-depth slots and other passes cut depth after depth in place): a link that cannot stay down
+    // only because the next pass lies deeper in material not cut yet still need not leave the cut. With
+    // stayDownEntry, when the next pass's entry (ramp, helix, pre-drill or plunge) starts within maxStayDown of the
+    // tool and the straight move there, at the higher of the tool's height and the entry's top, lies in free area
+    // (the same test as a stay-down link) and not above the feed plane, the tool feeds up to that height if it must,
+    // across, and down to the entry's top (Link moves, the link feed) and enters from there instead of retracting.
+    // Off (the default): such a link retracts.
+    bool stayDownEntry = false;
     bool rapidRetract = false; // retract from the cut by a rapid straight up; false: feed up to the feed plane first
     // Entry, in this order, the first that fits (a pass's own entryOrder replaces it).
     std::vector<EntryKind> entryOrder{EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill};

@@ -143,6 +143,7 @@ void randomPasses(std::uint64_t seeds, std::uint64_t checked)
         o.maxStayDown = sd < 0.3 ? 0 : (sd < 0.6 ? 20 * kMm : 1000 * kMm);
         o.stayDownLift = rng.chance(0.3) ? 300'000 : 0;
         o.stepIn = rng.chance(0.5);
+        o.stayDownEntry = seed % 3 == 0; // T-055; from the seed, so the cases drawn before it stay the same
         if (rng.chance(0.8)) {
             o.helixDiameter = rng.between(r, 3 * r);
             o.helixMinDiameter = rng.chance(0.5) ? rng.between(r / 2, o.helixDiameter) : 0;

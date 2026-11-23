@@ -488,6 +488,75 @@ TEST_CASE("link: a second depth enters from the depth above (multi-depth)", "[li
     CHECK(l.moves[k - 1].y == 20 * kMm);
 }
 
+TEST_CASE("link: stayDownEntry keeps a slot's next depth in the cut (T-055)", "[link][staydown]")
+{
+    // A slot: one open reversible pass per depth along (0, 0) -> (30, 0), at Z -1 and -2, ramped in (5 degrees, 0.5 mm
+    // entry clearance). Without the option the second depth retracts to the retract plane and comes back; with it the
+    // tool stays at the end of the first depth, feeds up to the ramp's top (Z -0.5) and ramps from there.
+    Pass a = linePass({0, 0}, {30 * kMm, 0}, -kMm);
+    Pass b = linePass({0, 0}, {30 * kMm, 0}, -2 * kMm);
+    a.reversible = b.reversible = true;
+    a.cluster = b.cluster = 0;
+    a.level = 0;
+    b.level = 1;
+    Options o = baseOptions();
+    o.entryOrder = {EntryKind::Ramp};
+    o.rampAngleDeg = 5;
+    o.entryClearance = kMm / 2;
+    o.maxStayDown = 6 * kMm;
+    const Linked off = run({a, b}, o, kBig);
+    int retracts = 0;
+    for (const Move& m : off.moves) {
+        retracts += m.role == MoveRole::Retract ? 1 : 0;
+    }
+    CHECK(retracts == 4); // feed up and rapid up after each pass
+    o.stayDownEntry = true;
+    const Linked on = run({a, b}, o, kBig);
+    REQUIRE(on.entered.size() == 2);
+    CHECK(on.entered[1] == Entered::Ramp);
+    CHECK(on.order[1].reversed != on.order[0].reversed); // the second depth runs back
+    // After the first pass (ending at its far end, Z -1): one Link feed straight up to Z -0.5, then the ramp.
+    std::size_t k = on.passMove[0];
+    while (k < on.moves.size() && on.moves[k].role == MoveRole::Cut)
+        ++k;
+    REQUIRE(k < on.moves.size());
+    const Move& up = on.moves[k];
+    CHECK(up.role == MoveRole::Link);
+    CHECK(up.kind == MoveKind::Linear);
+    CHECK(up.z == -kMm / 2);
+    CHECK(up.x == on.moves[k - 1].x);
+    CHECK(up.feedMicronPerMin == 1'200'000);
+    CHECK(on.moves[k + 1].role == MoveRole::Ramp);
+    retracts = 0;
+    for (const Move& m : on.moves) {
+        retracts += m.role == MoveRole::Retract ? 1 : 0;
+    }
+    CHECK(retracts == 2); // only the final one
+    CHECK(on.rapidLength < off.rapidLength);
+    // The entry's start farther than maxStayDown: a retract as before.
+    o.maxStayDown = 0;
+    CHECK(run({a, b}, o, kBig).moves.size() == off.moves.size());
+    // A pass beside the first, across uncut stock: its ramp starts in uncut material at the stock top (Z 0) plus the
+    // entry clearance, so the move there runs at Z 0.5, over the stock, never through it.
+    Pass far = linePass({0, 10 * kMm}, {30 * kMm, 10 * kMm}, -2 * kMm);
+    far.reversible = true;
+    far.cluster = 0;
+    far.level = 1;
+    o.maxStayDown = 20 * kMm;
+    const Linked across = run({a, far}, o, kBig);
+    int sideways = 0;
+    for (std::size_t m = 1; m < across.moves.size(); ++m) {
+        const Move& mv = across.moves[m];
+        const Move& prev = across.moves[m - 1];
+        if (mv.role == MoveRole::Link && (mv.x != prev.x || mv.y != prev.y)) {
+            ++sideways;
+            CHECK(mv.z == kMm / 2);
+            CHECK(prev.z == kMm / 2);
+        }
+    }
+    CHECK(sideways == 1);
+}
+
 TEST_CASE("link: stay down only through cut area or air, else retract", "[link][staydown]")
 {
     const Stock stock = boxStock(0, 0, 50 * kMm, 30 * kMm, 0);
