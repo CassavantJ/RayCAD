@@ -76,6 +76,7 @@ A property is one of:
 | boolean | `"type": "boolean"` | a check box |
 | choice | `"enum"` of strings (optionally with `"type": "string"`) | a list |
 | text | `"type": "string"`, optional `minLength`, `maxLength`, `pattern` | a text field |
+| points | `"type": "string"` with `"x-format": "pointsXY"` | a list of points (below) |
 
 with `title`, `description` (the field's hint), `default`, `$comment` and the property annotations. Anything else
 (`object`, `array`, `$ref`, `oneOf`, a type list, `const`, an enum of numbers, an `x-unit` the form does not know) gives
@@ -98,6 +99,19 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
   written as), an array of strings of the same length and order; `""` for a value without one. The form shows it
   under the title in the open list and in the field's tooltip, never in the field itself. A list of another length is
   ignored.
+- `x-format` (added after M3): what a text holds. `pointsXY`: a list of points on the setup's XY plane (work
+  coordinates), stored in mm whatever the document's unit as `x y` pairs separated by `;` (`"20 15; 60 15"`; a comma
+  between x and y and a leading `+` also read; numbers are fixed-point, no exponent). The form shows it as a list: one
+  line per point with X and Y fields that show and take lengths as length fields do (the display unit, units,
+  expressions), a remove button per point, an add button (a point at 0, 0 to type over), and a button that makes
+  clicks in the view add points (the panel's selection filter takes faces and vertices: a face of a hole recognised
+  along the setup's Z gives the hole's centre, a vertex itself, any other face the point clicked; picking geometry
+  stops meanwhile). The points of every relevant points parameter are drawn in the view while the panel is open (a
+  cross at the stock's top, a dashed line down through it). Points not edited keep their stored text exactly; a
+  point typed or added is written with at most six decimals (a nanometre). A stored text that does not read as points
+  (a document typed by hand) is shown as a text field with the reason until it does. The type parses the text itself
+  (pocket2d: `parsePointList`); the form reads the same grammar. A format the form does not know is edited as plain
+  text.
 - `x-relevantWhen`: `{ "<property>": [values...], ... }`. The property matters only when every named property is
   relevant itself (so relevance is transitive) and has one of the listed values. Each named property must be a choice
   (values are its enum strings) or a boolean (values are `true` / `false`) of the same schema; a name that is not, or a

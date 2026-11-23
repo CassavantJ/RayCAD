@@ -487,8 +487,10 @@ Item {
                     labelWidth: root.labelWidth
                     fieldWidth: root.fieldWidth
                     fieldWidthLimit: root.maxFieldWidth
+                    pointPickKey: CamOperation.pointPickKey
                     onAccepted: CamOperation.commit()
                     onCancelled: CamOperation.cancel()
+                    onPointPickToggled: (key, on) => CamOperation.setPointPicking(on ? key : "")
                 }
 
                 // ---- Feeds and speeds ----

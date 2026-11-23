@@ -609,6 +609,14 @@ TEST_CASE("pocket2d point lists", "[cam][pocket2d]")
     CHECK(empty->empty());
     CHECK_FALSE(ops::parsePointList("1"));
     CHECK_FALSE(ops::parsePointList("a b"));
+    // As the operation panel's point list writes it (camui::pointsText of mmToken: fixed, at most six decimals, "; "
+    // between points), and as it reads what this reads (a leading '+' or '.').
+    auto panel = ops::parsePointList("25.4 15; 63.5 -3.000001; 0 1000000; +1.5 .5");
+    REQUIRE(panel);
+    REQUIRE(panel->size() == 4);
+    CHECK(((*panel)[1].x == 63.5 && (*panel)[1].y == -3.000001));
+    CHECK((*panel)[2].y == 1e6);
+    CHECK(((*panel)[3].x == 1.5 && (*panel)[3].y == 0.5));
 }
 
 TEST_CASE("pocket2d generation is deterministic and can be cancelled", "[cam][pocket2d]")

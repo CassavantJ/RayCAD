@@ -2408,6 +2408,168 @@ TEST_CASE("a contour from a face and an edge: picks of two kinds, listed by kind
     w.checkNoWarnings();
 }
 
+// Gap 2: a list of points on the setup's XY plane (pocket2d's pre-drilled holes), in an inch document: clicks in the
+// view add points (a hole's face snaps to its centre, a vertex to itself), the list shows them in inches, a point is
+// added and typed, a bad coordinate is named, one is removed, the points are drawn in the view; stored in mm.
+TEST_CASE("a list of points: picked in the view, typed in inches, drawn", "[cam][e2e][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.openInNewDocument(kPlate); // an inch document; the plate's holes at (30, 26.667) ... mm
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w, 0, QStringLiteral("pocket2d"));
+    const QString key = QStringLiteral("preDrillPoints");
+    w.inView(w.shown(QStringLiteral("schemaPointPick.") + key));
+    CHECK(w.shown(QStringLiteral("schemaPointCount.") + key)->property("text").toString() == QStringLiteral("None"));
+    CHECK_FALSE(w.find(QStringLiteral("schemaInput.") + key)->isVisible()); // no text field: the list
+    // Picking points: faces and vertices, and the geometry picker stops.
+    w.click(QStringLiteral("schemaPointPick.") + key);
+    REQUIRE(w.op()->pointPickKey() == key);
+    CHECK_FALSE(w.op()->picking());
+    CHECK(w.host->selection()->filterMask() ==
+          static_cast<std::uint8_t>(static_cast<std::uint8_t>(render::PickFilter::Faces) |
+                                    static_cast<std::uint8_t>(render::PickFilter::Vertices)));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->pointFrameReady() && w.op()->holeCount() == 6; }, kTimeoutMs));
+
+    // A face of a hole: its centre.
+    const api::cam_operation::Hole hole = w.op()->holes()[0];
+    w.host->selection()->applyClick(
+        render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, hole.boreFace, hole.top, 0},
+        Qt::NoModifier);
+    QCoreApplication::processEvents();
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->form()->pointsOf(key).size() == 1; }, kTimeoutMs));
+    CHECK(w.op()->form()->pointsOf(key)[0].first == Approx(hole.x).margin(1e-6));
+    CHECK(w.op()->form()->pointsOf(key)[0].second == Approx(hole.y).margin(1e-6));
+    // Shown in the document's unit.
+    QQuickItem* x0 = w.shown(QStringLiteral("schemaPointInput.%1.0.x").arg(key));
+    CHECK(x0->property("text").toString().endsWith(QLatin1String(" in")));
+    // A vertex, clicked in the view as a user clicks it: a top corner of the plate not under the panel. The frame is
+    // the setup's (from the hole: WCS = model + its offset, the setup being axis-aligned).
+    const double dx = hole.x - hole.top.x, dy = hole.y - hole.top.y;
+    const kernel::Shape& shape = w.host->scene()->body(0)->shape;
+    const Box3 b = kernel::bounds(shape);
+    std::optional<Vec3> corner;
+    for (const Vec3 c : {Vec3{b.max.x, b.max.y, b.max.z}, Vec3{b.max.x, b.min.y, b.max.z},
+                         Vec3{b.min.x, b.max.y, b.max.z}, Vec3{b.min.x, b.min.y, b.max.z}}) {
+        if (!corner && w.freeOfPanel(w.sceneOf(c)))
+            corner = c;
+    }
+    REQUIRE(corner.has_value());
+    w.grab();
+    w.clickScene(w.sceneOf(*corner));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->form()->pointsOf(key).size() == 2; }, kTimeoutMs));
+    CHECK(w.op()->form()->pointsOf(key)[1].first == Approx(corner->x + dx).margin(1e-6));
+    CHECK(w.op()->form()->pointsOf(key)[1].second == Approx(corner->y + dy).margin(1e-6));
+    // Drawn: a cross per point.
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->pointMarks().size() == 8; }, 5000));
+    w.click(QStringLiteral("schemaPointPick.") + key); // stop
+    CHECK(w.op()->pointPickKey().isEmpty());
+
+    // Added with the button and typed in inches; a coordinate that does not read is named; one removed.
+    w.click(QStringLiteral("schemaPointAdd.") + key);
+    REQUIRE(QTest::qWaitFor([&] { return w.find(QStringLiteral("schemaPoint.%1.2").arg(key)) != nullptr; }, 5000));
+    w.typeInto(QStringLiteral("schemaPointInput.%1.2.x").arg(key), QStringLiteral("1"));
+    w.typeInto(QStringLiteral("schemaPointInput.%1.2.y").arg(key), QStringLiteral("0.5"));
+    CHECK(w.op()->form()->pointsOf(key)[2] == std::pair<double, double>(25.4, 12.7));
+    w.typeInto(QStringLiteral("schemaPointInput.%1.1.y").arg(key), QStringLiteral("a"));
+    REQUIRE(QTest::qWaitFor([&] { return w.shown(QStringLiteral("schemaError.") + key)->isVisible(); }, 5000));
+    CHECK_THAT(w.find(QStringLiteral("schemaError.") + key)->property("text").toString().toStdString(),
+               ContainsSubstring("Point 2, Y"));
+    CHECK_FALSE(w.op()->canCommit());
+    w.inView(w.shown(QStringLiteral("schemaPointInput.%1.1.y").arg(key)));
+    w.shot(QStringLiteral("gaps_2_point_list_dark"));
+    w.click(QStringLiteral("schemaPointRemove.%1.1").arg(key));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->form()->pointsOf(key).size() == 2; }, 5000));
+    CHECK_FALSE(w.find(QStringLiteral("schemaError.") + key)->isVisible());
+    const QString stored = w.op()->form()->params().value(key).toString();
+    CHECK(stored.endsWith(QLatin1String("; 25.4 12.7"))); // mm, whatever the display unit
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->pointMarks().size() == 8; }, 5000));
+    w.view()->fitAll();
+    w.settle();
+    w.shot(QStringLiteral("gaps_2_points_drawn_dark"));
+    w.click(QStringLiteral("operationCancel"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+    CHECK(w.op()->pointMarks().empty()); // the marks go with the panel
+    w.checkNoWarnings();
+}
+
+// Gap 2, through to the toolpath: a pocket entered at a pre-drilled point clicked on its floor; the operation stores
+// the point in mm as pocket2d reads it, and shows it again when edited.
+TEST_CASE("a pocket entered at a point clicked in the view", "[cam][e2e][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    const QString part = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/closed_pocket_1.stp");
+    const QString endMill6 = QStringLiteral("08bc976f-3640-4b04-a389-eda6ba3e659b");
+    Window w;
+    w.open(part);
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+    newOperation(w, 0, QStringLiteral("pocket2d"));
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    chooseTool(w, endMill6, QStringLiteral("6 mm 3FL"));
+    const kernel::Shape& shape = w.host->scene()->body(0)->shape;
+    const Box3 b = kernel::bounds(shape);
+    std::optional<std::uint32_t> floor;
+    Vec3 at{};
+    for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face); ++i) {
+        const kernel::SubId f{kernel::SubKind::Face, i};
+        const auto info = kernel::surfaceInfo(shape, f);
+        const auto s = kernel::faceSample(shape, f);
+        if (info && s && info->type == kernel::SurfaceType::Plane && s->normal.z > 0.999 &&
+            info->bounds.max.z < b.max.z - 1e-6) {
+            floor = i;
+            at = info->centroid;
+        }
+    }
+    REQUIRE(floor.has_value());
+    const auto clickFloor = [&] {
+        w.host->selection()->applyClick(
+            render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, *floor, at, 0}, Qt::NoModifier);
+        QCoreApplication::processEvents();
+    };
+    clickFloor(); // the floor, as geometry
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    const QString key = QStringLiteral("preDrillPoints");
+    w.op()->setPointPicking(key);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->pointFrameReady(); }, kTimeoutMs));
+    clickFloor(); // the same face, as a point: where it was clicked
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->form()->pointsOf(key).size() == 1; }, kTimeoutMs));
+    CHECK(w.op()->picks().size() == 1); // not a second floor
+    const auto [px, py] = w.op()->form()->pointsOf(key)[0];
+    w.op()->setPointPicking(QString());
+    w.op()->form()->setValue(QStringLiteral("entry"), QStringLiteral("preDrill"));
+    w.op()->form()->setValue(QStringLiteral("preDrillDiameter"), QStringLiteral("8 mm"));
+    w.click(QStringLiteral("operationUseCalculated"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+    w.previewed("ok");
+    REQUIRE(w.op()->previewToolpath() != nullptr);
+    // The pocket starts at the pre-drilled point (pocket2d.h ENTRY): a move there.
+    const Nm nx = toNm(px), ny = toNm(py);
+    const auto& moves = w.op()->previewToolpath()->moves;
+    CHECK(std::any_of(moves.begin(), moves.end(),
+                      [&](const cam::Move& m) { return std::llabs(m.x - nx) <= 1 && std::llabs(m.y - ny) <= 1; }));
+    w.inView(w.shown(QStringLiteral("schemaPoint.%1.0").arg(key)));
+    w.shot(QStringLiteral("gaps_2_pocket_predrill_dark"));
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+    const cam::Operation& op = w.document()->state()->cam->operations.begin()->second;
+    const QJsonObject params = QJsonDocument::fromJson(QByteArray::fromStdString(op.paramsJson)).object();
+    QString unused;
+    const auto stored = ui::camui::parsePoints(params.value(key).toString(), &unused);
+    REQUIRE(stored.has_value());
+    REQUIRE(stored->size() == 1);
+    CHECK(stored->front().x.toDouble() == Approx(px).margin(1e-6));
+    // Edited again: the point is listed.
+    w.op()->edit(QString::fromStdString(op.id.value.toString()));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, kTimeoutMs));
+    CHECK(w.op()->form()->pointsOf(key).size() == 1);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->pointMarks().size() == 4; }, kTimeoutMs));
+    w.click(QStringLiteral("operationCancel"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+    w.checkNoWarnings();
+}
+
 int main(int argc, char** argv)
 {
     // The real user profile is never touched.

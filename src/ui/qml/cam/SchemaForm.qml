@@ -3,7 +3,8 @@
 // what the feature panels take (numbers in the display unit, numbers with units, expressions, parameter names); a
 // choice is a list with the schema's titles; a switch is a check box. A field's description is its hint (hover the
 // label), its message shows under it, and the reset button beside it brings its default back. Fields that do not
-// matter for the other values (x-relevantWhen) are hidden. What the form cannot edit is a row saying so.
+// matter for the other values (x-relevantWhen) are hidden. What the form cannot edit is a row saying so. A list of
+// points (x-format "pointsXY") is a line per point with its X and Y, add, remove and pick-in-the-view buttons.
 import QtQuick
 import RayCad.Ui
 
@@ -28,8 +29,12 @@ Column {
         return w
     }
     readonly property real resetWidth: Theme.controlHeightSmall
+    // A list of points (x-format "pointsXY") taking clicks in the view: its key, "" none. The host does the picking
+    // (pointPickToggled) and adds the points to the form; the form only shows which list takes them.
+    property string pointPickKey: ""
     signal accepted()
     signal cancelled()
+    signal pointPickToggled(string key, bool on)
 
     spacing: Theme.spacingS
 
@@ -104,7 +109,9 @@ Column {
 
             Row {
                 spacing: Theme.spacingS
+                // A list of points whose stored text does not read as points is edited as text, to fix it.
                 visible: row.kind === "number" || row.kind === "integer" || row.kind === "string"
+                         || (row.kind === "points" && row.modelData.pointsRead === false)
                 RowLabel {
                     objectName: "schemaLabel." + row.key
                     text: row.modelData.title
@@ -200,6 +207,120 @@ Column {
                     key: row.key
                     isDefault: row.modelData.isDefault
                     defaultText: row.modelData.defaultText
+                }
+            }
+
+            // A list of points on the setup's XY plane (x-format "pointsXY"): the label with "pick in the view" and
+            // "add" beside it, then one line per point, X and Y in the display unit as length fields take them, and a
+            // remove button. Stored in mm whatever the unit.
+            Column {
+                id: pointsBlock
+                readonly property bool shown: row.kind === "points" && row.modelData.pointsRead !== false
+                readonly property var points: shown && row.modelData.points !== undefined ? row.modelData.points : []
+                readonly property real coordWidth: (root.labelWidth + root.fieldWidth - indexWidth
+                                                    - Theme.controlHeightSmall - 3 * Theme.spacingS) / 2
+                readonly property real indexWidth: Theme.controlHeight * 0.8
+                visible: shown
+                spacing: Theme.spacingXs
+                Row {
+                    spacing: Theme.spacingS
+                    RowLabel {
+                        objectName: "schemaLabel." + row.key
+                        text: row.modelData.title
+                        hint: row.modelData.description
+                    }
+                    Row {
+                        width: root.fieldWidth
+                        spacing: Theme.spacingXs
+                        anchors.verticalCenter: parent.verticalCenter
+                        ToolButton {
+                            id: pointPick
+                            objectName: "schemaPointPick." + row.key
+                            anchors.verticalCenter: parent.verticalCenter
+                            compact: true
+                            iconName: "point"
+                            checked: root.pointPickKey === row.key
+                            toolTipText: checked ? qsTr("Stop adding points in the view")
+                                                 : qsTr("Add points by clicking in the view: a hole's centre, a vertex, or a point on a face")
+                            Accessible.checkable: true
+                            Accessible.checked: checked
+                            onClicked: root.pointPickToggled(row.key, !checked)
+                        }
+                        ToolButton {
+                            objectName: "schemaPointAdd." + row.key
+                            anchors.verticalCenter: parent.verticalCenter
+                            compact: true
+                            iconName: "plus"
+                            toolTipText: qsTr("Add a point to type in")
+                            onClicked: root.form.addPoint(row.key, 0, 0)
+                        }
+                        Label {
+                            objectName: "schemaPointCount." + row.key
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: root.fieldWidth - pointPick.width * 2 - 2 * parent.spacing
+                            secondary: true
+                            font: Theme.smallFont
+                            elide: Text.ElideRight
+                            text: pointPick.checked ? qsTr("Click in the view")
+                                  : pointsBlock.points.length === 0 ? qsTr("None")
+                                  : pointsBlock.points.length === 1 ? qsTr("1 point")
+                                  : qsTr("%1 points").arg(pointsBlock.points.length)
+                        }
+                    }
+                    ResetButton {
+                        key: row.key
+                        isDefault: row.modelData.isDefault
+                        defaultText: row.modelData.defaultText !== "" ? row.modelData.defaultText : qsTr("none")
+                    }
+                }
+                // By count, so a line stays (and keeps the focus) while its coordinates are typed.
+                Repeater {
+                    model: pointsBlock.points.length
+                    delegate: Row {
+                        id: pointRow
+                        required property int index
+                        readonly property var modelData: index < pointsBlock.points.length ? pointsBlock.points[index]
+                                                                                           : ({})
+                        objectName: "schemaPoint." + row.key + "." + index
+                        spacing: Theme.spacingS
+                        Label {
+                            width: pointsBlock.indexWidth
+                            anchors.verticalCenter: parent.verticalCenter
+                            horizontalAlignment: Text.AlignRight
+                            secondary: true
+                            font: Theme.smallFont
+                            text: String(pointRow.index + 1)
+                        }
+                        Repeater {
+                            model: ["x", "y"]
+                            delegate: TextField {
+                                required property string modelData
+                                required property int index
+                                objectName: "schemaPointInput." + row.key + "." + pointRow.index + "." + modelData
+                                width: pointsBlock.coordWidth
+                                // At rest in the display format; being edited, in full (as a length field).
+                                readonly property var shownText: activeFocus ? pointRow.modelData[modelData + "Full"]
+                                                                             : pointRow.modelData[modelData]
+                                text: shownText !== undefined ? String(shownText) : ""
+                                placeholderText: modelData.toUpperCase()
+                                invalid: pointRow.modelData[modelData + "Bad"] === true
+                                Accessible.name: qsTr("%1, point %2, %3").arg(row.modelData.title)
+                                                 .arg(pointRow.index + 1).arg(modelData.toUpperCase())
+                                onTextEdited: root.form.setPointCoordinate(row.key, pointRow.index, index, text)
+                                Keys.onReturnPressed: root.accepted()
+                                Keys.onEnterPressed: root.accepted()
+                                Keys.onEscapePressed: root.cancelled()
+                            }
+                        }
+                        ToolButton {
+                            objectName: "schemaPointRemove." + row.key + "." + pointRow.index
+                            anchors.verticalCenter: parent.verticalCenter
+                            compact: true
+                            iconName: "close"
+                            toolTipText: qsTr("Remove point %1").arg(pointRow.index + 1)
+                            onClicked: root.form.removePoint(row.key, pointRow.index)
+                        }
+                    }
                 }
             }
 

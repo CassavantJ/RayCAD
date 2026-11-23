@@ -60,6 +60,7 @@ namespace ray::ui {
 
 class AppContext;
 class CommandCatalog;
+class LineOverlay;
 class SceneController;
 class SelectionModel;
 class Session;
@@ -119,6 +120,12 @@ class OperationToolModel : public QObject {
     // top.
     Q_PROPERTY(QString pickCountText READ pickCountText NOTIFY picksChanged)
     Q_PROPERTY(int hoveredPick READ hoveredPick WRITE setHoveredPick NOTIFY picksChanged)
+    // A points parameter (x-format "pointsXY", SchemaForm's point list) taking clicks in the view: its key, "" none.
+    // While it does, the selection filter takes faces and vertices, and a click adds a point on the setup's XY plane:
+    // the centre of the hole whose face was clicked, the vertex, else where the face was clicked (WCS X and Y). The
+    // points of every relevant points parameter are drawn in the view while the panel is open: a cross at the stock's
+    // top and a dashed line down to its bottom.
+    Q_PROPERTY(QString pointPickKey READ pointPickKey NOTIFY picksChanged)
     // Feeds: the materials [{id, name}], the one used, where it comes from ("setup", "document", "chosen", "").
     Q_PROPERTY(QVariantList materials READ materials NOTIFY optionsChanged)
     Q_PROPERTY(QString materialId READ materialId NOTIFY feedsChanged)
@@ -182,6 +189,7 @@ public:
     QString pickCountText() const;
     int hoveredPick() const { return hoveredPick_; }
     void setHoveredPick(int index);
+    QString pointPickKey() const { return pointPickKey_; }
     QVariantList materials() const;
     QString materialId() const { return materialId_; }
     QString materialSource() const { return materialSource_; }
@@ -210,6 +218,8 @@ public:
     Q_INVOKABLE void setPicking(bool on);
     Q_INVOKABLE void removePick(int index);
     Q_INVOKABLE void clearPicks();
+    // Clicks in the view add points to points parameter `key` ("" stops; picking geometry stops while it does).
+    Q_INVOKABLE void setPointPicking(const QString& key);
     Q_INVOKABLE void useCalculated();
     Q_INVOKABLE bool commit();
     Q_INVOKABLE void cancel();
@@ -233,6 +243,10 @@ public:
     // The view's highlight of pick `index`: its faces (a hole's every face) or its edge; empty when it does not
     // resolve or its body is not shown.
     std::vector<render::PickHit> pickHits(int index) const;
+    // The marks of the points parameters drawn in the view (model frame): the crosses' segments, two per point; and
+    // whether the setup's frame is known (points can be placed and drawn).
+    const std::vector<Vec3>& pointMarks() const { return pointMarks_; }
+    bool pointFrameReady() const { return frame_.has_value(); }
     // The arguments OK would run now, or why it cannot (the field it is about in *field).
     std::optional<QJsonObject> arguments(QString* error, QString* field) const;
 
@@ -277,6 +291,8 @@ private:
     void updateFeeds();
     void applyPickMode();
     void onSelectionChanged();
+    void takePoint(int bodyIndex, kernel::SubId sub, Vec3 at);
+    void updatePointMarks();
     void takePick(int bodyIndex, kernel::SubId sub);
     void addPick(const QString& body, std::uint32_t element, const QString& text, kernel::SubKind kind);
     QString holeText(const api::cam_operation::Hole& hole) const;
@@ -350,11 +366,20 @@ private:
     std::optional<std::pair<int, kernel::SubId>> queuedPick_; // a click while the holes were being found
     // What loadHoles works out on a worker: the setup's holes (a hole picker), and where each reference of an edited
     // operation is (its element, -1 when it does not resolve, or for holes the hole it is in).
+    // With points parameters, also the setup's frame and stock (points are placed in its XY and drawn on its stock).
     struct PickSupport {
         std::vector<api::cam_operation::Hole> holes;
         std::vector<std::pair<int, kernel::SubKind>> located;
+        std::optional<cam::ResolvedSetup> frame;
+        QString frameError;
     };
     JobHandle<std::shared_ptr<const PickSupport>> holesJob_;
+    // Points parameters (x-format "pointsXY").
+    QString pointPickKey_;
+    std::optional<cam::ResolvedSetup> frame_;
+    QString frameError_;
+    std::unique_ptr<LineOverlay> pointLines_;
+    std::vector<Vec3> pointMarks_;
     // Feeds.
     std::vector<lib::Material> materialItems_;
     QString materialId_, materialSource_;

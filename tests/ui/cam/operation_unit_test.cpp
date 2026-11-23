@@ -277,6 +277,119 @@ TEST_CASE("x-geometry: one kind or several, and what the panel cannot pick", "[c
     CHECK(kinds["face"].isEmpty());
 }
 
+// After M3: a list of points on the setup's XY plane (x-format "pointsXY"), shown and typed in the display unit,
+// stored in mm as the text pocket2d always read ("x y; x y"), so documents written before still load.
+TEST_CASE("points: the text read and written, mm whatever the display unit", "[cam][form][points]")
+{
+    QString error;
+    // The grammar pocket2d's parsePointList reads.
+    auto p = parsePoints(QStringLiteral(" 20 15; 60,15 ;+1.5\t-2;.5 3."), &error);
+    REQUIRE(p.has_value());
+    REQUIRE(p->size() == 4);
+    CHECK((*p)[1].x == QStringLiteral("60"));
+    CHECK((*p)[1].y == QStringLiteral("15"));
+    CHECK((*p)[2].x == QStringLiteral("1.5")); // the '+' dropped
+    CHECK((*p)[2].y == QStringLiteral("-2"));
+    CHECK((*p)[3].x == QStringLiteral(".5"));
+    CHECK(pointsText(*p) == QStringLiteral("20 15; 60 15; 1.5 -2; .5 3."));
+    CHECK(parsePoints(QString(), &error)->empty());
+    CHECK(parsePoints(QStringLiteral("  "), &error)->empty());
+    CHECK_FALSE(parsePoints(QStringLiteral("20"), &error).has_value());
+    CHECK(error == QStringLiteral("Point 1 has no second number"));
+    CHECK_FALSE(parsePoints(QStringLiteral("20 15 3"), &error).has_value());
+    CHECK(error == QStringLiteral("After point 1 comes something other than ';'"));
+    CHECK_FALSE(parsePoints(QStringLiteral("1 2; x 3"), &error).has_value());
+    CHECK(error == QStringLiteral("Point 2 does not start with a number"));
+    CHECK_FALSE(parsePoints(QStringLiteral("1e3 2"), &error).has_value()); // fixed-point numbers only
+    // Tokens: fixed, a nanometre at most, no exponent, no trailing zeros.
+    CHECK(mmToken(20) == QStringLiteral("20"));
+    CHECK(mmToken(2.54) == QStringLiteral("2.54"));
+    CHECK(mmToken(25.4 / 3) == QStringLiteral("8.466667"));
+    CHECK(mmToken(-0.0000001) == QStringLiteral("0"));
+    CHECK(mmToken(123456.0000004) == QStringLiteral("123456"));
+}
+
+TEST_CASE("points: pocket2d's pre-drilled holes in the form, typed, added, removed, in inches", "[cam][form][points]")
+{
+    api::AppOptions options;
+    options.userDataDir = "";
+    options.builtinLibraryDir = "";
+    auto app = api::makeHeadlessApp(options);
+    REQUIRE(app);
+    std::string schemaJson;
+    for (const auto& t : api::cam_operation::operationTypes(*app)) {
+        if (t.name == "pocket2d")
+            schemaJson = t.schemaJson;
+    }
+    REQUIRE_FALSE(schemaJson.empty());
+    SchemaFormModel form;
+    form.setExprFn(documentExpr());
+    form.setSchemaJson(QString::fromStdString(schemaJson));
+    const QString key = QStringLiteral("preDrillPoints");
+    CHECK(form.pointKeys() == QStringList{key});
+    CHECK(fieldOf(form, key).value(QStringLiteral("kind")).toString() == QStringLiteral("points"));
+    CHECK(fieldOf(form, key).value(QStringLiteral("points")).toList().isEmpty());
+    // A document written before: its text loads, and goes back exactly as it was while it is not edited.
+    const QString old = QStringLiteral("20,15;60 15.25");
+    form.load(QJsonObject{{key, old}});
+    CHECK(form.params().value(key).toString() == old);
+    CHECK(form.valid());
+    QVariantList points = fieldOf(form, key).value(QStringLiteral("points")).toList();
+    REQUIRE(points.size() == 2);
+    CHECK(points[1].toMap().value(QStringLiteral("y")).toString() == QStringLiteral("15.25 mm"));
+    CHECK(form.pointsOf(key) == std::vector<std::pair<double, double>>{{20, 15}, {60, 15.25}});
+    // In inches: shown in inches, stored in mm; the point not edited keeps its text.
+    form.setLengthUnit(QStringLiteral("in"));
+    points = fieldOf(form, key).value(QStringLiteral("points")).toList();
+    CHECK(points[0].toMap().value(QStringLiteral("x")).toString() == QStringLiteral("0.7874015748 in"));
+    form.setPointCoordinate(key, 0, 0, QStringLiteral("1"));
+    CHECK(form.params().value(key).toString() == QStringLiteral("25.4 15; 60 15.25"));
+    // The coordinate keeps the text as typed while it is edited.
+    CHECK(fieldOf(form, key).value(QStringLiteral("points")).toList()[0].toMap().value(QStringLiteral("x")) ==
+          QStringLiteral("1"));
+    // Expressions and units as length fields take them.
+    form.setPointCoordinate(key, 1, 1, QStringLiteral("gap * 2"));
+    CHECK(form.pointsOf(key)[1].second == Approx(5.0));
+    form.setPointCoordinate(key, 1, 1, QStringLiteral("3 mm"));
+    CHECK(form.params().value(key).toString() == QStringLiteral("25.4 15; 60 3"));
+    // A coordinate that does not read: the form says where, the stored point stays.
+    form.setPointCoordinate(key, 1, 0, QStringLiteral("nonsense +"));
+    REQUIRE(form.firstError().has_value());
+    CHECK(form.firstError()->first == key);
+    CHECK_THAT(form.firstError()->second.toStdString(), ContainsSubstring("Point 2, X"));
+    CHECK(fieldOf(form, key).value(QStringLiteral("points")).toList()[1].toMap().value(QStringLiteral("xBad")) == true);
+    CHECK(form.pointsOf(key)[1].first == 60);
+    form.setPointCoordinate(key, 1, 0, QStringLiteral("2.5"));
+    CHECK_FALSE(form.firstError().has_value());
+    CHECK(form.params().value(key).toString() == QStringLiteral("25.4 15; 63.5 3"));
+    // Added (from a click in the view: WCS mm) and removed.
+    form.addPoint(key, 10.25, -4);
+    CHECK(form.params().value(key).toString() == QStringLiteral("25.4 15; 63.5 3; 10.25 -4"));
+    form.setPointCoordinate(key, 2, 1, QStringLiteral("x"));
+    form.removePoint(key, 0);
+    CHECK(form.pointsOf(key) == std::vector<std::pair<double, double>>{{63.5, 3}, {10.25, -4}});
+    // The coordinate being typed moved with its point.
+    CHECK_THAT(form.firstError()->second.toStdString(), ContainsSubstring("Point 2, Y"));
+    form.removePoint(key, 1);
+    CHECK_FALSE(form.firstError().has_value());
+    CHECK(form.params().value(key).toString() == QStringLiteral("63.5 3"));
+    form.resetField(key);
+    CHECK(form.params().value(key).toString().isEmpty());
+    // A stored text that is not points: edited as text until it reads, and not valid meanwhile.
+    form.load(QJsonObject{{key, QStringLiteral("20")}});
+    CHECK(fieldOf(form, key).value(QStringLiteral("pointsRead")) == false);
+    CHECK_FALSE(form.valid());
+    form.setValue(key, QStringLiteral("20 1"));
+    CHECK(form.valid());
+    CHECK(form.pointsOf(key) == std::vector<std::pair<double, double>>{{20, 1}});
+    // x-format on another text, or a format the form does not know: plain text.
+    SchemaFormModel plain;
+    plain.setSchemaJson(QStringLiteral(R"({"type":"object","properties":{"t":{"title":"T","description":"d",)"
+                                       R"("type":"string","default":"","x-format":"colour"}}})"));
+    CHECK(fieldOf(plain, QStringLiteral("t")).value(QStringLiteral("kind")).toString() == QStringLiteral("string"));
+    CHECK(plain.pointKeys().isEmpty());
+}
+
 TEST_CASE("the form covers each construct of the subset and says what it cannot edit", "[cam][t045][form]")
 {
     SchemaFormModel form;

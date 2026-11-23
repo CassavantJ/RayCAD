@@ -160,6 +160,9 @@ FormField parseProperty(const QString& key, const QJsonValue& value)
         if (const auto n = numberOf(p, "maxLength"))
             f.maxLength = static_cast<int>(*n);
         f.pattern = p.value(QStringLiteral("pattern")).toString();
+        // x-format: what the text holds; a format the form does not know is edited as plain text.
+        if (p.value(QStringLiteral("x-format")).toString() == QLatin1String("pointsXY"))
+            f.format = QStringLiteral("pointsXY");
     } else {
         f.reason = tr("it is of type '%1'").arg(t);
         return f;
@@ -321,6 +324,91 @@ std::optional<double> readNumber(const QString& raw, Unit unit, const QString& l
     return expr(text, 2, error);
 }
 
+std::optional<std::vector<PointTokens>> parsePoints(const QString& text, QString* error)
+{
+    // The grammar pocket2d's parsePointList reads (src/cam/ops/pocket2d.h): fixed-point numbers, an optional '+',
+    // spaces or tabs, a comma between x and y, ';' between points.
+    std::vector<PointTokens> out;
+    qsizetype i = 0;
+    const auto space = [&] {
+        while (i < text.size() && (text[i] == QLatin1Char(' ') || text[i] == QLatin1Char('\t')))
+            ++i;
+    };
+    const auto number = [&](QString& token) {
+        space();
+        const qsizetype start = i;
+        if (i < text.size() && (text[i] == QLatin1Char('+') || text[i] == QLatin1Char('-')))
+            ++i;
+        bool digits = false;
+        while (i < text.size() && text[i].isDigit() && text[i].unicode() < 128) {
+            ++i;
+            digits = true;
+        }
+        if (i < text.size() && text[i] == QLatin1Char('.')) {
+            ++i;
+            while (i < text.size() && text[i].isDigit() && text[i].unicode() < 128) {
+                ++i;
+                digits = true;
+            }
+        }
+        if (!digits)
+            return false;
+        token = text.mid(start, i - start);
+        if (token.startsWith(QLatin1Char('+')))
+            token.remove(0, 1);
+        bool ok = false;
+        const double v = QLocale::c().toDouble(token, &ok);
+        return ok && std::isfinite(v) && std::abs(v) <= 1e6;
+    };
+    for (int count = 1;; ++count) {
+        space();
+        if (i >= text.size())
+            break;
+        PointTokens p;
+        if (!number(p.x)) {
+            *error = tr("Point %1 does not start with a number").arg(count);
+            return std::nullopt;
+        }
+        space();
+        if (i < text.size() && text[i] == QLatin1Char(','))
+            ++i;
+        if (!number(p.y)) {
+            *error = tr("Point %1 has no second number").arg(count);
+            return std::nullopt;
+        }
+        out.push_back(p);
+        space();
+        if (i < text.size()) {
+            if (text[i] != QLatin1Char(';')) {
+                *error = tr("After point %1 comes something other than ';'").arg(count);
+                return std::nullopt;
+            }
+            ++i;
+        }
+    }
+    return out;
+}
+
+QString pointsText(const std::vector<PointTokens>& points)
+{
+    QStringList parts;
+    for (const PointTokens& p : points)
+        parts << p.x + QLatin1Char(' ') + p.y;
+    return parts.join(QStringLiteral("; "));
+}
+
+QString mmToken(double mm)
+{
+    QString s = QLocale::c().toString(mm, 'f', 6);
+    while (s.contains(QLatin1Char('.')) && s.endsWith(QLatin1Char('0')))
+        s.chop(1);
+    if (s.endsWith(QLatin1Char('.')))
+        s.chop(1);
+    if (s == QLatin1String("-0"))
+        s = QStringLiteral("0");
+    return s;
+}
+
 } // namespace ray::ui::camui
 
 namespace ray::ui {
@@ -426,6 +514,7 @@ void SchemaFormModel::load(const QJsonObject& params)
     }
     // Keys the schema does not have are not the form's: the API refuses them, so they are not kept.
     external_.clear();
+    pointEdits_.clear();
     bump();
 }
 
@@ -437,6 +526,15 @@ std::optional<QJsonValue> SchemaFormModel::read(const FormField& f, QString* err
         return std::nullopt;
     }
     const Entry& e = it->second;
+    if (f.kind == FormField::Kind::String && f.format == QLatin1String("pointsXY")) {
+        // A coordinate typed that does not read, or a stored text that is not points (an older document's typing).
+        if (const QString pending = pointEditError(f); !pending.isEmpty()) {
+            *error = pending;
+            return std::nullopt;
+        }
+        if (!camui::parsePoints(e.text.toString(), error))
+            return std::nullopt;
+    }
     if (e.loaded && (e.text == e.loadedText || (e.fullText.isValid() && e.text == e.fullText)))
         return *e.loaded; // as stored: no round trip through the display text
     switch (f.kind) {
@@ -612,13 +710,50 @@ QVariantList SchemaFormModel::fields() const
             kind = QStringLiteral("enum");
             break;
         case FormField::Kind::String:
-            kind = QStringLiteral("string");
+            kind = f.format == QLatin1String("pointsXY") ? QStringLiteral("points") : QStringLiteral("string");
             break;
         case FormField::Kind::Unsupported:
             kind = QStringLiteral("unsupported");
             break;
         }
         m.insert(QStringLiteral("kind"), kind);
+        if (kind == QLatin1String("points")) {
+            // Each coordinate as a length field shows it; what is being typed where it does not read.
+            const auto e = entries_.find(f.key);
+            QString unused;
+            const auto points =
+                camui::parsePoints(e == entries_.end() ? QString() : e->second.text.toString(), &unused);
+            const auto edits = pointEdits_.find(f.key);
+            QVariantList list;
+            for (std::size_t i = 0; points && i < points->size(); ++i) {
+                QVariantMap point;
+                const QString tokens[2] = {(*points)[i].x, (*points)[i].y};
+                for (int axis = 0; axis < 2; ++axis) {
+                    const QString name = axis == 0 ? QStringLiteral("x") : QStringLiteral("y");
+                    const double mm = QLocale::c().toDouble(tokens[axis]);
+                    QString shown =
+                        lengthFormat_ ? lengthFormat_(mm) : camui::numberText(mm, camui::Unit::Length, lengthUnit_);
+                    QString full = camui::numberText(mm, camui::Unit::Length, lengthUnit_);
+                    bool bad = false;
+                    if (edits != pointEdits_.end()) {
+                        if (const auto t = edits->second.find(static_cast<int>(i) * 2 + axis);
+                            t != edits->second.end()) {
+                            shown = full = t->second; // as typed
+                            QString error;
+                            const auto v =
+                                camui::readNumber(t->second, camui::Unit::Length, lengthUnit_, expr_, &error);
+                            bad = !v || !std::isfinite(*v) || std::abs(*v) > 1e6;
+                        }
+                    }
+                    point.insert(name, shown);
+                    point.insert(name + QStringLiteral("Full"), full);
+                    point.insert(name + QStringLiteral("Bad"), bad);
+                }
+                list.push_back(point);
+            }
+            m.insert(QStringLiteral("points"), list);
+            m.insert(QStringLiteral("pointsRead"), points.has_value());
+        }
         m.insert(QStringLiteral("unit"), camui::unitLabel(f.unit, lengthUnit_));
         const auto e = entries_.find(f.key);
         m.insert(QStringLiteral("value"), e == entries_.end() ? QVariant(QString()) : e->second.text);
@@ -669,8 +804,133 @@ void SchemaFormModel::setValue(const QString& key, const QVariant& value)
         return;
     e.text = v;
     external_.erase(key);
+    pointEdits_.erase(key); // a points field typed as text
     bump();
     emit edited(key);
+}
+
+void SchemaFormModel::setPoints(const QString& key, const std::vector<camui::PointTokens>& points)
+{
+    Entry& e = entries_[key];
+    e.text = QVariant(camui::pointsText(points));
+    external_.erase(key);
+    bump();
+    emit edited(key);
+}
+
+void SchemaFormModel::setPointCoordinate(const QString& key, int index, int axis, const QString& text)
+{
+    const FormField* f = field(key);
+    if (f == nullptr || f->format != QLatin1String("pointsXY") || index < 0 || axis < 0 || axis > 1)
+        return;
+    QString unused;
+    auto points = camui::parsePoints(entries_[key].text.toString(), &unused);
+    if (!points || index >= static_cast<int>(points->size()))
+        return;
+    // The field keeps the text as typed (as a length field does); the stored point follows it when it reads, else
+    // keeps its value and the field says why.
+    pointEdits_[key][index * 2 + axis] = text;
+    QString error;
+    const auto mm = camui::readNumber(text, camui::Unit::Length, lengthUnit_, expr_, &error);
+    if (!mm || !std::isfinite(*mm) || std::abs(*mm) > 1e6) {
+        external_.erase(key);
+        bump();
+        emit edited(key);
+        return;
+    }
+    // The text as it shows the stored value (at rest or in full) is that value: no round trip through the display.
+    const QString& token =
+        axis == 0 ? (*points)[static_cast<std::size_t>(index)].x : (*points)[static_cast<std::size_t>(index)].y;
+    const double stored = QLocale::c().toDouble(token);
+    const bool asShown = text == camui::numberText(stored, camui::Unit::Length, lengthUnit_) ||
+                         (lengthFormat_ && text == lengthFormat_(stored));
+    if (!asShown)
+        (axis == 0 ? (*points)[static_cast<std::size_t>(index)].x : (*points)[static_cast<std::size_t>(index)].y) =
+            camui::mmToken(*mm);
+    setPoints(key, *points);
+}
+
+void SchemaFormModel::addPoint(const QString& key, double xMm, double yMm)
+{
+    const FormField* f = field(key);
+    if (f == nullptr || f->format != QLatin1String("pointsXY") || !std::isfinite(xMm) || !std::isfinite(yMm))
+        return;
+    QString unused;
+    auto points = camui::parsePoints(entries_[key].text.toString(), &unused);
+    if (!points)
+        return; // the stored text does not read: it is fixed as text first
+    points->push_back(camui::PointTokens{camui::mmToken(xMm), camui::mmToken(yMm)});
+    setPoints(key, *points);
+}
+
+void SchemaFormModel::removePoint(const QString& key, int index)
+{
+    const FormField* f = field(key);
+    if (f == nullptr || f->format != QLatin1String("pointsXY") || index < 0)
+        return;
+    QString unused;
+    auto points = camui::parsePoints(entries_[key].text.toString(), &unused);
+    if (!points || index >= static_cast<int>(points->size()))
+        return;
+    points->erase(points->begin() + index);
+    // The coordinates being typed follow their points.
+    if (const auto it = pointEdits_.find(key); it != pointEdits_.end()) {
+        std::map<int, QString> moved;
+        for (const auto& [slot, text] : it->second) {
+            if (slot / 2 < index)
+                moved[slot] = text;
+            else if (slot / 2 > index)
+                moved[slot - 2] = text;
+        }
+        if (moved.empty())
+            pointEdits_.erase(it);
+        else
+            it->second = std::move(moved);
+    }
+    setPoints(key, *points);
+}
+
+QString SchemaFormModel::pointEditError(const FormField& f) const
+{
+    const auto it = pointEdits_.find(f.key);
+    if (it == pointEdits_.end())
+        return {};
+    for (const auto& [slot, text] : it->second) {
+        QString error;
+        const auto mm = camui::readNumber(text, camui::Unit::Length, lengthUnit_, expr_, &error);
+        if (mm && std::isfinite(*mm) && std::abs(*mm) <= 1e6)
+            continue;
+        if (mm)
+            error = tr("Out of range");
+        return tr("Point %1, %2: %3")
+            .arg(slot / 2 + 1)
+            .arg(slot % 2 == 0 ? QStringLiteral("X") : QStringLiteral("Y"), error);
+    }
+    return {};
+}
+
+QStringList SchemaFormModel::pointKeys() const
+{
+    QStringList out;
+    for (const FormField& f : schema_.fields) {
+        if (f.kind == FormField::Kind::String && f.format == QLatin1String("pointsXY"))
+            out << f.key;
+    }
+    return out;
+}
+
+std::vector<std::pair<double, double>> SchemaFormModel::pointsOf(const QString& key) const
+{
+    std::vector<std::pair<double, double>> out;
+    const auto e = entries_.find(key);
+    if (e == entries_.end())
+        return out;
+    QString unused;
+    if (const auto points = camui::parsePoints(e->second.text.toString(), &unused)) {
+        for (const camui::PointTokens& p : *points)
+            out.emplace_back(QLocale::c().toDouble(p.x), QLocale::c().toDouble(p.y));
+    }
+    return out;
 }
 
 void SchemaFormModel::resetField(const QString& key)
@@ -684,6 +944,7 @@ void SchemaFormModel::resetField(const QString& key)
     e.loadedText = e.text;
     e.fullText = fullTextOf(*f, f->defaultValue);
     external_.erase(key);
+    pointEdits_.erase(key);
     bump();
     emit edited(key);
 }

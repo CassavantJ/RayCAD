@@ -2,6 +2,7 @@
 
 #include "../app_context.h"
 #include "../model/model_util.h"
+#include "../model/preview.h"
 #include "../palette_commands.h"
 #include "../scene_controller.h"
 #include "../selection_model.h"
@@ -165,6 +166,10 @@ OperationToolModel::OperationToolModel(SceneController* scene, SelectionModel* s
     connect(this, &OperationToolModel::picksChanged, this, &OperationToolModel::updatePickHighlight);
     if (scene_)
         connect(scene_, &SceneController::bodiesChanged, this, &OperationToolModel::updatePickHighlight);
+    // The points of points parameters are drawn as they change.
+    if (scene_)
+        pointLines_ = std::make_unique<LineOverlay>(scene_);
+    connect(form_, &SchemaFormModel::changed, this, &OperationToolModel::updatePointMarks);
 }
 
 OperationToolModel::~OperationToolModel()
@@ -569,6 +574,7 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
         defaults(*state);
     }
     picking_ = geometry_.kind != QLatin1String("none") && refs.empty();
+    pointPickKey_.clear();
     if (selection_) {
         savedFilter_ = selection_->filterMask();
         filterSaved_ = true;
@@ -612,6 +618,10 @@ void OperationToolModel::close()
     hoveredPick_ = -1;
     holes_.clear();
     picking_ = false;
+    pointPickKey_.clear();
+    frame_.reset();
+    frameError_.clear();
+    updatePointMarks();
     if (selection_)
         selection_->setToolHighlight({});
     values_.clear();
@@ -684,6 +694,7 @@ void OperationToolModel::setType(const QString& type)
     // Geometry of another kind does not carry over; heights and feeds do.
     picks_.clear();
     picking_ = geometry_.kind != QLatin1String("none");
+    pointPickKey_.clear();
     applyPickMode();
     loadHoles({});
     doc::Document* d = liveDoc();
@@ -866,6 +877,9 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
     holesJob_ = {};
     holes_.clear();
     holesReady_ = false;
+    frame_.reset();
+    frameError_.clear();
+    updatePointMarks();
     doc::Document* d = liveDoc();
     IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
     if (d == nullptr || jobs == nullptr || !setup_)
@@ -876,6 +890,8 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
         return;
     const SetupId setup = *setup_;
     const bool holes = geometry_.accepts(QStringLiteral("hole"));
+    // Points parameters snap to hole centres and are placed in the setup's frame.
+    const bool points = !form_->pointKeys().isEmpty();
     std::vector<std::string> refTexts;
     for (const QJsonObject& r : refs)
         refTexts.push_back(jsonText(r));
@@ -883,13 +899,24 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
     // The located element of each reference (its body, element and kind), and for holes the hole it is in.
     holesJob_ = jobs->submit<std::shared_ptr<const Out>>(
         JobInfo{"Holes of the setup", JobPriority::Interactive, false},
-        [state, build, setup, holes, refTexts](JobContext& ctx) -> Result<std::shared_ptr<const Out>> {
+        [state, build, setup, holes, points, refTexts](JobContext& ctx) -> Result<std::shared_ptr<const Out>> {
             auto out = std::make_shared<Out>();
-            if (holes) {
+            if (points) {
+                auto frame = api::cam_setup::previewSetup(state, build, setup, ctx);
+                if (frame)
+                    out->frame = frame->resolved;
+                else if (frame.error().code == ErrorCode::Cancelled)
+                    return tl::unexpected(frame.error());
+                else
+                    out->frameError = qs(frame.error().message);
+            }
+            if (holes || (points && out->frame)) {
                 auto found = api::cam_operation::holesOf(state, build, setup, ctx);
-                if (!found)
+                if (found)
+                    out->holes = std::move(*found);
+                else if (holes || found.error().code == ErrorCode::Cancelled)
                     return tl::unexpected(found.error());
-                out->holes = std::move(*found);
+                // (for points only, no holes: no snapping to their centres)
             }
             for (const std::string& r : refTexts) {
                 const auto at = api::feature_edit::locate(*build, r);
@@ -925,6 +952,9 @@ void OperationToolModel::loadHoles(std::vector<QJsonObject> refs)
             return;
         }
         self->holes_ = (*r)->holes;
+        self->frame_ = (*r)->frame;
+        self->frameError_ = (*r)->frameError;
+        self->updatePointMarks();
         // The edited operation's picks, named.
         for (std::size_t i = 0; i < refs.size() && i < (*r)->located.size(); ++i) {
             Pick p;
@@ -1495,6 +1525,8 @@ void OperationToolModel::setPicking(bool on)
     if (!active() || geometry_.kinds.isEmpty() || on == picking_)
         return;
     picking_ = on;
+    if (on)
+        pointPickKey_.clear(); // one kind of click at a time
     ++pickSerial_;
     pickPending_ = false;
     if (selection_)
@@ -1510,7 +1542,11 @@ void OperationToolModel::applyPickMode()
         return;
     using render::PickFilter;
     std::uint8_t mask = filterSaved_ ? savedFilter_ : selection_->filterMask();
-    if (picking_) {
+    if (!pointPickKey_.isEmpty()) {
+        // A point: on a face (a hole's centre, or where it is clicked) or at a vertex.
+        mask = static_cast<std::uint8_t>(static_cast<std::uint8_t>(PickFilter::Faces) |
+                                         static_cast<std::uint8_t>(PickFilter::Vertices));
+    } else if (picking_) {
         // Every kind the type takes (a hole is picked by a face of it).
         mask = 0;
         if (geometry_.accepts(QStringLiteral("edge")))
@@ -1539,9 +1575,110 @@ void OperationToolModel::clearPicks()
     schedulePreview();
 }
 
+void OperationToolModel::setPointPicking(const QString& key)
+{
+    if (!active() || key == pointPickKey_ || (!key.isEmpty() && !form_->pointKeys().contains(key)))
+        return;
+    pointPickKey_ = key;
+    if (!key.isEmpty())
+        picking_ = false; // one kind of click at a time
+    ++pickSerial_;
+    pickPending_ = false;
+    if (selection_)
+        selection_->clear();
+    applyPickMode();
+    emit picksChanged();
+    emit statusChanged();
+}
+
+void OperationToolModel::takePoint(int bodyIndex, kernel::SubId sub, Vec3 at)
+{
+    const api::viewer::Body* body = scene_ ? scene_->body(bodyIndex) : nullptr;
+    if (body == nullptr)
+        return;
+    const auto refuse = [&](const QString& reason) {
+        setStatus(previewStatus_, reason, QStringLiteral("pick"));
+        if (selection_)
+            selection_->clear();
+    };
+    if (!holesReady_) {
+        refuse(trs("The setup is still being worked out: click again in a moment"));
+        return;
+    }
+    if (!frame_) {
+        refuse(frameError_.isEmpty() ? trs("The setup does not resolve, so no point can be placed in it")
+                                     : trs("The setup does not resolve: %1").arg(frameError_));
+        return;
+    }
+    // On the setup's XY plane: a hole's centre (any face of the hole snaps to it), else the vertex or the point
+    // clicked on the face.
+    double x = 0, y = 0;
+    const auto hole = std::find_if(holes_.begin(), holes_.end(), [&](const api::cam_operation::Hole& h) {
+        return sub.kind == kernel::SubKind::Face && h.body == body->id &&
+               std::binary_search(h.faces.begin(), h.faces.end(), sub.index);
+    });
+    if (hole != holes_.end()) {
+        x = hole->x;
+        y = hole->y;
+    } else {
+        const double* m = frame_->wcsFromModel.m;
+        x = m[0] * at.x + m[1] * at.y + m[2] * at.z + m[3];
+        y = m[4] * at.x + m[5] * at.y + m[6] * at.z + m[7];
+    }
+    if (selection_)
+        selection_->clear();
+    setStatus(previewStatus_, QString()); // a message about an earlier refused click goes
+    form_->addPoint(pointPickKey_, x, y);
+}
+
+void OperationToolModel::updatePointMarks()
+{
+    pointMarks_.clear();
+    std::vector<Vec3> stems;
+    if (active() && frame_) {
+        const Box3& stock = frame_->stockBounds;
+        const double s = std::clamp(0.02 * std::hypot(stock.max.x - stock.min.x, stock.max.y - stock.min.y), 1.0, 10.0);
+        const double* m = frame_->modelFromWcs.m;
+        const auto model = [m](double x, double y, double z) {
+            return Vec3{m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7],
+                        m[8] * x + m[9] * y + m[10] * z + m[11]};
+        };
+        for (const QString& key : form_->pointKeys()) {
+            if (!form_->isRelevant(key))
+                continue;
+            for (const auto& [x, y] : form_->pointsOf(key)) {
+                // A cross on the stock's top, and a line down through the stock (the point is on every level).
+                const double top = stock.max.z, bottom = stock.min.z;
+                for (const Vec3& v :
+                     {model(x - s, y, top), model(x + s, y, top), model(x, y - s, top), model(x, y + s, top)})
+                    pointMarks_.push_back(v);
+                stems.push_back(model(x, y, top));
+                stems.push_back(model(x, y, bottom));
+            }
+        }
+    }
+    if (!pointLines_)
+        return;
+    pointLines_->set(QStringLiteral("points.cross"), pointMarks_, render::Token::Accent, 2.5f);
+    pointLines_->set(QStringLiteral("points.stem"), std::move(stems), render::Token::AccentThinLine, 1.5f, true);
+}
+
 void OperationToolModel::onSelectionChanged()
 {
-    if (!active() || !picking_ || !selection_ || !scene_)
+    if (!active() || !selection_ || !scene_)
+        return;
+    if (!pointPickKey_.isEmpty()) {
+        const std::vector<SelectionEntry>& entries = selection_->entries();
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+            if (it->pending || !it->sub ||
+                (it->sub->kind != kernel::SubKind::Face && it->sub->kind != kernel::SubKind::Vertex))
+                continue;
+            takePoint(it->body, *it->sub, it->hit.point);
+            return;
+        }
+        return;
+    }
+    if (!picking_)
         return;
     const bool edges = geometry_.accepts(QStringLiteral("edge"));
     const bool faces = geometry_.accepts(QStringLiteral("face")) || geometry_.accepts(QStringLiteral("hole"));
