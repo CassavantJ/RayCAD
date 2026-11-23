@@ -65,5 +65,6 @@ ray_test_runtime_path(ray_cam_invariants_property)
 set_tests_properties(ray_cam_invariants_property PROPERTIES TIMEOUT 1200)
 add_test(NAME ray_cam_invariants_slow COMMAND ray_cam_invariants_tests "[slow]")
 ray_test_runtime_path(ray_cam_invariants_slow)
-# 200 seeds per type: several minutes in Release (the slow tier only).
-set_tests_properties(ray_cam_invariants_slow PROPERTIES TIMEOUT 3600)
+# 200 seeds per type: several minutes in Release (the slow tier only). T-061: adaptive2d's 200 took 30 minutes in
+# Release on a loaded machine (its engine runs at every depth), so the whole run gets two hours.
+set_tests_properties(ray_cam_invariants_slow PROPERTIES TIMEOUT 7200)
