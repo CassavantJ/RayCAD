@@ -54,7 +54,8 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout6)
 
 # Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
-# against about a minute in Release): the S4 scenarios, at the naming level and as document features. They also get
+# against about a minute in Release): the S4 scenarios, at the naming level and as document features (and, below, the
+# Release-scale benchmarks and the geometry core's 10,000-case sweeps, minutes in Debug). They also get
 # the label debug-heavy, which the Windows Debug CI job leaves out (test preset windows-msvc-debug-ci) to fit its time
 # limit; Release on Windows, GCC and Clang Debug, and AddressSanitizer run them. The tests run there as anywhere else
 # when asked for.
@@ -69,7 +70,10 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_cam_holes_tests_wallclock
     ray_post_tests_wallclock
     # T-060: the adaptive engine's PLAN.md section 9 run times (islands pocket in 3 s; about 2.8 s in Release).
-    ray_cam_adaptive_tests_wallclock)
+    ray_cam_adaptive_tests_wallclock
+    # The geometry core's three 10,000-case arc-fitting sweeps (split from ray_cam_geom2d_tests by the tag [sweeps]):
+    # most of that suite's 5 to 9 minutes in MSVC Debug, seconds in Release. The rest of the suite stays in Debug.
+    ray_cam_geom2d_sweeps)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers

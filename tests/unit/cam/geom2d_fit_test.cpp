@@ -63,7 +63,7 @@ Path randomShape(Rng& rng)
 
 } // namespace
 
-TEST_CASE("known arcs come back exactly through Clipper2 and the curve tags (10,000 seeded shapes)", "[geom2d][fit]")
+TEST_CASE("known arcs come back exactly through Clipper2 and the curve tags (10,000 seeded shapes)", "[geom2d][fit][sweeps]")
 {
     JobContext ctx;
     const std::size_t literalBefore = literalEdgeCount();
@@ -93,7 +93,7 @@ TEST_CASE("known arcs come back exactly through Clipper2 and the curve tags (10,
     CHECK(literalEdgeCount() == literalBefore);
 }
 
-TEST_CASE("fitArcs: polylines sampled from known arcs come back as one arc (10,000 seeded arcs)", "[geom2d][fit]")
+TEST_CASE("fitArcs: polylines sampled from known arcs come back as one arc (10,000 seeded arcs)", "[geom2d][fit][sweeps]")
 {
     double worstCentre = 0, worstRadius = 0;
     int exactCentre = 0, cases = 0;
@@ -151,7 +151,7 @@ TEST_CASE("fitArcs: polylines sampled from known arcs come back as one arc (10,0
                        << worstCentre << " nm, worst radius " << worstRadius << " nm");
 }
 
-TEST_CASE("fitArcs: never deviates more than the tolerance (10,000 seeded random polylines)", "[geom2d][fit]")
+TEST_CASE("fitArcs: never deviates more than the tolerance (10,000 seeded random polylines)", "[geom2d][fit][sweeps]")
 {
     for (std::uint64_t n = 0; n < 10'000; ++n) {
         const std::uint64_t seed = 3'000'000 + n;

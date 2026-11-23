@@ -174,8 +174,12 @@ target_link_libraries(ray_cam_geom2d_tests PRIVATE ray_cam ray_kernel ray_lib ra
 target_include_directories(ray_cam_geom2d_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/tests/unit/kernel")
 target_compile_definitions(ray_cam_geom2d_tests PRIVATE RAY_GEOM2D_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/geom2d")
 set_property(TARGET ray_cam_geom2d_tests PROPERTY FOLDER "tests")
-add_test(NAME ray_cam_geom2d_tests COMMAND ray_cam_geom2d_tests "~[wallclock]")
+add_test(NAME ray_cam_geom2d_tests COMMAND ray_cam_geom2d_tests "~[wallclock]~[sweeps]")
 ray_test_runtime_path(ray_cam_geom2d_tests)
+# The three 10,000-case arc-fitting sweeps on their own (tagged [sweeps]): quick in Release, debug-heavy in MSVC Debug
+# (tests/tiers.cmake), where they took most of the suite's 5 to 9 minutes.
+add_test(NAME ray_cam_geom2d_sweeps COMMAND ray_cam_geom2d_tests "[sweeps]~[wallclock]")
+ray_test_runtime_path(ray_cam_geom2d_sweeps)
 # Linking (task T-051): each lead, ramp and helix with its exact geometry and the entry fall-back order, the two
 # acceptance properties on seeded random cases (an independent height field, and the invariant checker of
 # tests/unit/cam/invariants on part of them), the order against a brute-force best order on small cases and on passes
