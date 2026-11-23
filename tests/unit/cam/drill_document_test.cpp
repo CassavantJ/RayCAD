@@ -235,7 +235,8 @@ TEST_CASE("the operation types of the app include drill with its schema", "[cam]
 {
     cam::OperationRegistry registry;
     cam::registerBuiltinOperationTypes(registry);
-    CHECK(registry.types() == std::vector<std::string_view>{"drill"});
+    const auto types = registry.types(); // T-055: drill is no longer the only one
+    CHECK(std::find(types.begin(), types.end(), std::string_view("drill")) != types.end());
     const cam::IOperationType* drill = registry.find("drill");
     REQUIRE(drill != nullptr);
     CHECK(drill->paramsSchemaJson() == ct::readText(std::string(RAY_SCHEMA_DIR) + "/ops/drill.schema.json"));

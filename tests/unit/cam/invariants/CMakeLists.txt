@@ -33,6 +33,9 @@ add_executable(ray_cam_invariants_tests
     checker_test_util.h
     property_drill_test.cpp
     property_harness_test.cpp
+    # T-055: slot and chamfer2d
+    property_chamfer2d_test.cpp
+    property_slot_test.cpp
 )
 target_link_libraries(ray_cam_invariants_tests PRIVATE ray_cam_invariants Catch2::Catch2WithMain)
 set_property(TARGET ray_cam_invariants_tests PROPERTY FOLDER "tests")
@@ -40,7 +43,13 @@ set_property(TARGET ray_cam_invariants_tests PROPERTY FOLDER "tests")
 # the quick tier), and the property tests on their larger seed sets (the [.slow] cases; the slow tier).
 add_test(NAME ray_cam_invariants_tests COMMAND ray_cam_invariants_tests "~[property]")
 ray_test_runtime_path(ray_cam_invariants_tests)
-add_test(NAME ray_cam_invariants_property COMMAND ray_cam_invariants_tests "[property]~[slow]")
+add_test(NAME ray_cam_invariants_property COMMAND ray_cam_invariants_tests
+    "[property]~[slow]~[property_slot]~[property_chamfer2d]")
 ray_test_runtime_path(ray_cam_invariants_property)
+# T-055: the slot and chamfer2d property cases (about 40 s and 25 s), each a quick test of its own.
+add_test(NAME ray_cam_invariants_slot COMMAND ray_cam_invariants_tests "[property_slot]~[slow]")
+ray_test_runtime_path(ray_cam_invariants_slot)
+add_test(NAME ray_cam_invariants_chamfer2d COMMAND ray_cam_invariants_tests "[property_chamfer2d]~[slow]")
+ray_test_runtime_path(ray_cam_invariants_chamfer2d)
 add_test(NAME ray_cam_invariants_slow COMMAND ray_cam_invariants_tests "[slow]")
 ray_test_runtime_path(ray_cam_invariants_slow)

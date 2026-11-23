@@ -157,3 +157,24 @@ target_compile_definitions(ray_cam_link_tests PRIVATE RAY_LINK_GOLDEN_DIR="${CMA
 set_property(TARGET ray_cam_link_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_cam_link_tests COMMAND ray_cam_link_tests "~[wallclock]")
 ray_test_runtime_path(ray_cam_link_tests)
+# Slotting and chamfering (task T-055): recognition, depths and offsets against hand-computed values, each refusal,
+# the goldens (tests/golden/toolpaths, kernel-built and corpus parts), the toolpaths through the invariant checker and
+# end to end through the document and the engine. Same links and include folders as the drilling tests, plus the
+# checker.
+add_executable(ray_cam_slot_chamfer_tests
+    chamfer2d_test.cpp
+    slot_chamfer_document_test.cpp
+    slot_chamfer_golden_test.cpp
+    slot_chamfer_test_util.h
+    slot_test.cpp
+    toolpath_dump.h
+)
+target_link_libraries(ray_cam_slot_chamfer_tests PRIVATE ray_cam_invariants ray_api ray_store ray_doc ray_cam ray_sim
+    ray_post ray_naming ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_slot_chamfer_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_slot_chamfer_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths"
+    RAY_POST_TEST_DIR="${CMAKE_SOURCE_DIR}/tests/unit/post" RAY_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/schemas"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_slot_chamfer_tests)

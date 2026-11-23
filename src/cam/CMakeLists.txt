@@ -33,6 +33,15 @@ add_library(ray_cam STATIC
     ops/drill.cpp       # "drill" (task T-035)
     ops/drill.h
     ops/drill_plan.cpp
+    # T-055: "slot" and "chamfer2d", with the helpers they share
+    ops/slot.cpp
+    ops/slot.h
+    ops/slot_plan.cpp
+    ops/slot_common.cpp
+    ops/slot_common.h
+    ops/chamfer2d.cpp
+    ops/chamfer2d.h
+    ops/chamfer2d_plan.cpp
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)
@@ -44,6 +53,7 @@ target_link_libraries(ray_cam PRIVATE Clipper2::Clipper2Z)
 # schema (IOperationType::paramsSchemaJson) and reads its defaults from the same text (ops/op_params.h), as src/lib
 # compiles in its schemas. Changing a schema re-runs CMake, which rewrites the source. A new type adds its name here.
 set(RAY_CAM_OP_SCHEMAS drill)
+list(APPEND RAY_CAM_OP_SCHEMAS slot chamfer2d) # T-055
 set(_entries "")
 set(_arrays "")
 foreach(_name IN LISTS RAY_CAM_OP_SCHEMAS)
