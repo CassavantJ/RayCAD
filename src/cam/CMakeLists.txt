@@ -42,6 +42,12 @@ add_library(ray_cam STATIC
     ops/threadmill.cpp
     ops/threadmill.h
     ops/threadmill_plan.cpp
+    ops/face.cpp        # "face" (task T-052)
+    ops/face.h
+    ops/face_plan.cpp
+    ops/contour2d.cpp   # "contour2d" (task T-053)
+    ops/contour2d.h
+    ops/contour2d_plan.cpp
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)
@@ -54,6 +60,8 @@ target_link_libraries(ray_cam PRIVATE Clipper2::Clipper2Z)
 # compiles in its schemas. Changing a schema re-runs CMake, which rewrites the source. A new type adds its name here.
 set(RAY_CAM_OP_SCHEMAS drill)
 list(APPEND RAY_CAM_OP_SCHEMAS engrave threadmill) # T-056
+list(APPEND RAY_CAM_OP_SCHEMAS face) # T-052
+list(APPEND RAY_CAM_OP_SCHEMAS contour2d) # T-053
 set(_entries "")
 set(_arrays "")
 foreach(_name IN LISTS RAY_CAM_OP_SCHEMAS)

@@ -1054,12 +1054,12 @@ TEST_CASE("round trip: a peck clearance the native cycle cannot carry must be wa
 
 TEST_CASE("round trip: thread milling keeps the pitch per turn in every post's program", "[post][roundtrip]")
 {
-    // T-056: the thread milling goldens (17-thread-milling) as each post wrote them, read back by the interpreter. Over
+    // T-056: the thread milling goldens (18-thread-milling) as each post wrote them, read back by the interpreter. Over
     // every run of helical arcs about one centre whose sweeps add up to a whole turn, Z changes by the thread's pitch
     // (1.25 mm for the hole at X15 Y20, 1.75 mm for the pin at X30 Y20) within one least count of the written numbers.
     std::size_t programs = 0, turns = 0;
     for (const Run& r : goldenRuns()) {
-        if (r.file.rfind("17-thread-milling", 0) != 0) {
+        if (r.file.rfind("18-thread-milling", 0) != 0) {
             continue;
         }
         ++programs;

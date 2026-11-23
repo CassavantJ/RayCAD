@@ -1,7 +1,7 @@
 %
-O01117 (Matrix: thread milling, helical arcs, one pitch per turn)
+O01118 (Matrix: thread milling, helical arcs, one pitch per turn)
 (Document post matrix setup Op 1 top)
-(Machine Test VMC Haas classic)
+(Machine Test VMC Haas NGC)
 (T17 D5. threadMill 5 mm thread mill)
 (T18 D6. threadMill 6 mm thread mill)
 G21

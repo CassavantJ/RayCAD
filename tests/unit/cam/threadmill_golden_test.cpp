@@ -4,7 +4,7 @@
 // tests/golden/toolpaths/threadmill_<name>.rctp with its .txt, passes the full toolpath invariant checker (the part
 // left by drilling as the stock, cutting allowed only inside the thread's cylinder, climb or conventional claimed), and
 // keeps the pitch exact per revolution. threadmill_internal and threadmill_external are also the inputs of the shipped
-// posts' feature matrix (tests/unit/post/shipped_matrix.h "17-thread-milling").
+// posts' feature matrix (tests/unit/post/shipped_matrix.h "18-thread-milling").
 #include "engrave_test_util.h"
 
 #include <catch2/catch_test_macros.hpp>
