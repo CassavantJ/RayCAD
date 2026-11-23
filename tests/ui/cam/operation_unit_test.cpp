@@ -15,7 +15,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <set>
+#include <string>
 
 using namespace ray;
 using namespace ray::ui;
@@ -475,4 +477,44 @@ TEST_CASE("the panel's logic: heights, feeds in display units, records, tools an
     CHECK_FALSE(edit.contains(QStringLiteral("type")));
     CHECK_FALSE(edit.contains(QStringLiteral("setup")));
     CHECK_FALSE(edit.contains(QStringLiteral("calculatedFeeds")));
+}
+
+// M3 closeout: five library tools added through the panel with the number left empty were all T1 (their own number is
+// 0), so the program never changed tools. A new operation's empty number is the document's for that tool, else a free
+// one.
+TEST_CASE("a new operation's tool number: the document's for the tool, else the tool's own if free, else the next",
+          "[cam][operation][ui]")
+{
+    const auto uuid = [](char c) {
+        std::string s = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+        std::replace(s.begin(), s.end(), 'x', c);
+        return Uuid::fromString(s);
+    };
+    const auto tool = [&](char c) {
+        return ToolId{uuid(c)};
+    };
+    cam::CamState cam;
+    CHECK(newToolNumber(nullptr, tool('1'), 0) == 1);
+    CHECK(newToolNumber(&cam, tool('1'), 0) == 1);
+    CHECK(newToolNumber(&cam, tool('1'), 7) == 7);
+    cam::Setup setup;
+    const auto add = [&](char opChar, char toolChar, int number) {
+        cam::Operation op;
+        op.id = OperationId{uuid(opChar)};
+        op.tool.tool = tool(toolChar);
+        op.tool.toolNumber = number;
+        cam.operations[op.id] = op;
+        setup.operations.push_back(op.id);
+        cam.setups = {setup};
+    };
+    add('a', '1', 1);
+    CHECK(newToolNumber(&cam, tool('1'), 0) == 1); // the document's number for the tool
+    CHECK(newToolNumber(&cam, tool('2'), 0) == 2); // another tool: the next number
+    CHECK(newToolNumber(&cam, tool('2'), 1) == 2); // its own number is taken by another tool
+    CHECK(newToolNumber(&cam, tool('2'), 12) == 12);
+    add('b', '2', 5);
+    add('c', '1', 9); // the first operation in program order decides the tool's number
+    CHECK(newToolNumber(&cam, tool('1'), 0) == 1);
+    CHECK(newToolNumber(&cam, tool('2'), 0) == 5);
+    CHECK(newToolNumber(&cam, tool('3'), 0) == 10);
 }

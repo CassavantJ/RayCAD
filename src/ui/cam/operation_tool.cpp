@@ -1645,6 +1645,12 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
         if (!ok || n < 0 || n > 99999)
             return fail(trs("The tool number must be a whole number from 0 to 99999"), QStringLiteral("toolNumber"));
         in.toolNumber = n;
+    } else if (!editing_) {
+        // Left empty on a new operation: the document's number for this tool, else a number no other tool has (else
+        // every library tool, whose own number is 0, would be T1, and the program would never change tools).
+        const std::optional<lib::Tool> tool = chosenTool();
+        in.toolNumber = camui::newToolNumber(state->cam.get(), ToolId{Uuid::fromString(toolId_.toStdString())},
+                                             tool ? tool->defaultToolNumber : 0);
     }
     // Geometry.
     if (geometry_.needsOne() && picks_.empty())

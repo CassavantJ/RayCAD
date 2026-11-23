@@ -425,4 +425,29 @@ QJsonObject operationArgs(const OperationInput& in, bool adding)
     return args;
 }
 
+int newToolNumber(const cam::CamState* cam, const ToolId& tool, int toolDefault)
+{
+    std::map<ToolId, int> numbers; // each tool's number: its first operation in program order
+    int highest = 0;               // and every number any operation uses
+    bool defaultTaken = false;
+    if (cam != nullptr) {
+        for (const cam::Setup& s : cam->setups) {
+            for (const OperationId& id : s.operations) {
+                const auto it = cam->operations.find(id);
+                if (it == cam->operations.end())
+                    continue;
+                const int n = it->second.tool.toolNumber;
+                numbers.emplace(it->second.tool.tool, n);
+                highest = std::max(highest, n);
+                defaultTaken = defaultTaken || n == toolDefault;
+            }
+        }
+    }
+    if (const auto it = numbers.find(tool); it != numbers.end())
+        return it->second;
+    if (toolDefault > 0 && !defaultTaken)
+        return toolDefault;
+    return highest + 1;
+}
+
 } // namespace ray::ui::camui

@@ -98,5 +98,11 @@ struct OperationInput {
     QJsonArray libraryTools, libraryHolders;                   // items to embed in the same step
 };
 QJsonObject operationArgs(const OperationInput& input, bool adding);
+// The tool number of a new operation whose number the user left empty: the number the document already gives `tool`
+// (its first operation in program order that uses it), else `toolDefault` (lib::Tool::defaultToolNumber) when it is
+// above 0 and no operation uses it, else one more than the highest number any operation uses (1 when there is none).
+// A new tool therefore never takes a number another tool has, which the posts rely on: they change tools only where
+// the number changes. Applying a template follows the same rule (cam_template_actions.cpp).
+int newToolNumber(const cam::CamState* cam, const ToolId& tool, int toolDefault);
 
 } // namespace ray::ui::camui
