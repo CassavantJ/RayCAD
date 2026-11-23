@@ -150,9 +150,9 @@ PropertyPlugin pocketPlugin()
         // that wall in the other direction (found on 8 of the 200 slow seeds; T-054 report). The rings' direction is
         // checked by the unit and golden tests (pocket2d_test.cpp, Case::claims).
         k.direction = Direction::Any;
-        // Linking (link.h appendSloped) rounds the ends of ramp pieces to the nanometre and was measured up to 1.3e-5
-        // relative steeper than the ramp angle on a whole piece (T-054 report): allow 0.05 degrees for it.
-        k.maxRampAngleDeg = number(json, "rampAngle", 2) + 0.05;
+        // Linking rounds ramp and helix ends so that no piece is steeper than the ramp angle (link.h appendSloped with
+        // a slope; it was up to 1.3e-5 relative steeper before, T-054 report): the angle itself is the limit.
+        k.maxRampAngleDeg = number(json, "rampAngle", 2);
         k.helixMinDiameter = 0.3 * c.tool.diameter - 1e-6;
         const double corner = c.tool.type == lib::ToolType::BullEndMill ? c.tool.cornerRadius : 0;
         k.clears = coverFeatures(

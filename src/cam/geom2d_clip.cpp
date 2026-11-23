@@ -148,6 +148,7 @@ void offsetChain(Raw& raw, const Path& path, double s, bool closed, int group)
         }
     }
     std::vector<Prim> offs(n);
+    std::vector<bool> through(n, false); // an arc offset past its centre: two connectors through the centre
     for (std::size_t i = 0; i < n; ++i) {
         const Span& sp = path.spans[i];
         const D2 a = d2(starts[i]), b = d2(sp.end);
@@ -163,10 +164,27 @@ void offsetChain(Raw& raw, const Path& path, double s, bool closed, int group)
             offs[i] = linePrim(c, c, group);
             continue;
         }
+        if (r1 < 0.0) {
+            // Offset past its centre (a convex arc shrunk, or a concave one grown, by more than its radius): like a
+            // polygon vertex at the centre, its offset is the two connectors from the neighbours' offset ends through
+            // the centre (Clipper2's own rule at such a vertex). The arc inverted through the centre is the parametric
+            // offset, but traversed in the arc's own direction it closes loops of positive winding where several such
+            // arcs meet (a small rounded region shrunk past its inradius came back as their lens, growing with the
+            // shrink).
+            offs[i] = linePrim(c + ua * r1, c + ub * r1, group);
+            through[i] = true;
+            continue;
+        }
         offs[i] = arcPrim(sp.centre, static_cast<Coord>(std::abs(r1)), isCcw(sp), c + ua * r1, c + ub * r1, group);
     }
     for (std::size_t i = 0; i < n; ++i) {
-        raw.add(offs[i]);
+        if (through[i]) {
+            const D2 c = d2(path.spans[i].centre);
+            raw.add(linePrim(offs[i].a, c, group));
+            raw.add(linePrim(c, offs[i].b, group));
+        } else {
+            raw.add(offs[i]);
+        }
         if (i + 1 == n && !closed)
             break;
         const std::size_t j = (i + 1) % n;

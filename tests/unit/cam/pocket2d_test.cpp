@@ -635,7 +635,8 @@ TEST_CASE("pocket2d generation is deterministic and can be cancelled", "[cam][po
 TEST_CASE("pocket2d rings end where the room does: a small rounded room shrunk past its middle", "[cam][pocket2d]")
 {
     // Seed 255839108 of the invariant property test: geom2d::offset returned a region (growing with every ring) for
-    // this room shrunk past its inradius, so the rings never ended. pocket2d takes such a result as empty.
+    // this room shrunk past its inradius, so the rings never ended. Fixed in geom2d (an arc offset past its centre);
+    // geom2d_degenerate_test.cpp has seeded shrinks around it.
     kernel::Shape s = box(Vec3{0, 0, -14}, Vec3{88, 50, 0});
     s = cut(s, prism({roundedRect(37, 4.9, 51.4, 17.5, 2.8)}, -6.9, 1));
     s = cut(s, prism({roundedRect(66.3, 4.1, 82.3, 20.9, 3.4)}, -6.1, 1));

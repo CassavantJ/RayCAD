@@ -289,6 +289,13 @@ Path leadPath(Pt at, Vec2 tangent, const Lead& lead, Coord radius, bool in);
 // Moves along `path` with Z going linearly with arc length from z0 to z1 (ramps, helices): lines, and XY arcs split as
 // geom2d::appendMoves splits them, each end's Z rounded half to even, the last exactly z1.
 void appendSloped(const Path& path, Nm z0, Nm z1, MoveRole role, std::int32_t feedMicronPerMin, std::vector<Move>& out);
+// The same with no piece steeper than maxSlope (|dz| over its XY length; an arc's length taken at the smaller of its
+// end radii): each end's Z is the proportional one rounded half to even unless that would make its piece steeper or
+// leave the pieces after it unable to reach z1, then the nearest Z that does neither. Rounding never steepens a piece.
+// False, and nothing appended, when the path is too short for it (fewer whole nanometres allowed than |z1 - z0|).
+// Linking's ramps and helices use it with the ramp angle (added after T-054 found them up to 1.3e-5 steeper).
+bool appendSloped(const Path& path, Nm z0, Nm z1, double maxSlope, MoveRole role, std::int32_t feedMicronPerMin,
+                  std::vector<Move>& out);
 // The rapid and feed lengths of moves from `from` (nm), for stats.
 struct Lengths {
     double rapid = 0, feed = 0;

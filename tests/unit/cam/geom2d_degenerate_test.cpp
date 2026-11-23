@@ -241,4 +241,115 @@ TEST_CASE("fitArcs: both ends of every arc on its circle as the toolpath IR want
     CHECK(arcs > 2'000);
 }
 
+namespace {
+
+// A random region made of lines and arcs: a rounded rectangle (maybe with a round hole), an obround, or a pie slice
+// (two radii and an arc of up to 315 degrees). `inradius`: the largest shrink that leaves anything (0: not known).
+Region randomRegion(Rng& rng, double& inradius)
+{
+    const Coord x0 = rng.between(-50'000'000, 50'000'000), y0 = rng.between(-50'000'000, 50'000'000);
+    switch (rng.next() % 4) {
+    case 0:
+    case 1: {
+        const Coord w = rng.between(1'000'000, 30'000'000), h = rng.between(1'000'000, 30'000'000);
+        const Coord r = rng.between(10'000, std::min(w, h) / 2);
+        Region reg = region(roundedRect(x0, y0, x0 + w, y0 + h, r));
+        inradius = double(std::min(w, h)) / 2;
+        if (rng.uniform() < 0.4 && std::min(w, h) > 4'000'000) {
+            const Coord hr = rng.between(100'000, std::min(w, h) / 6);
+            reg.holes.push_back(reverse(Path::circle({x0 + w / 2, y0 + h / 2}, hr, true)));
+            inradius = 0;
+        }
+        return reg;
+    }
+    case 2: {
+        const Coord r = rng.between(50'000, 10'000'000), len = rng.between(0, 30'000'000);
+        inradius = double(r);
+        return region(slot(x0, x0 + len, y0, r));
+    }
+    default: {
+        const Coord r = rng.between(500'000, 20'000'000);
+        const double a0 = rng.between(-kPiD, kPiD), sweep = rng.between(0.3, 5.5);
+        const Pt c{x0, y0};
+        inradius = 0;
+        return region(closedPath(
+            c, {line(onCircleAt(c, double(r), a0)), arc(onCircleAt(c, double(r), a0 + sweep), c, r, true), line(c)}));
+    }
+    }
+}
+
+double boundaryDistance(P2 p, const Region& r)
+{
+    double d = pathDistance(p, r.outer);
+    for (const Path& h : r.holes)
+        d = std::min(d, pathDistance(p, h));
+    return d;
+}
+
+} // namespace
+
+TEST_CASE("offset: a shrink lies inside its input, shrinks monotonically and ends at the inradius (1,000 seeded "
+          "regions)",
+          "[geom2d][offset][degenerate]")
+{
+    // Found by T-054 (pocketing): a small rounded region shrunk past its inradius came back non-empty, the lens of its
+    // corner arcs inverted through their centres, growing with every further shrink. Each region here is shrunk in
+    // random steps to beyond its size: every result lies inside the input, every point of it at least the shrink from
+    // the input's boundary (independent distance), the area never grows, and past the inradius nothing is left. Grown
+    // the same way, the input lies inside every result and the area never shrinks.
+    JobContext ctx;
+    int emptied = 0;
+    for (std::uint64_t n = 0; n < 1'000; ++n) {
+        const std::uint64_t seed = 8'500'000 + n;
+        Rng rng{seed};
+        INFO("seed " << seed);
+        double inradius = 0;
+        const Region in = canonicalize(randomRegion(rng, inradius));
+        const Regions input{in};
+        const Bounds box = bounds(in);
+        const double size = double(std::max(box.max.x - box.min.x, box.max.y - box.min.y));
+        double lastArea = area(input);
+        bool ended = false;
+        for (double d = rng.between(0.0, 0.2) * size; d < 0.8 * size; d += rng.between(0.02, 0.2) * size) {
+            const Coord delta = static_cast<Coord>(d);
+            INFO("shrink " << delta << "\ninput:\n" << toText(input));
+            const Regions out = take(offset(input, -delta, ctx));
+            INFO("result:\n" << toText(out));
+            const double a = area(out);
+            CHECK(a <= lastArea + 1e6); // 1 um^2
+            lastArea = a;
+            const Regions outside = take(subtract(out, input, ctx));
+            CHECK(area(outside) <= 1e6);
+            if (inradius > 0 && d > inradius + 1'000)
+                CHECK(out.empty());
+            if (out.empty()) {
+                ended = true;
+                continue;
+            }
+            CHECK_FALSE(ended); // once empty, empty for every larger shrink
+            for (const Region& r : out) {
+                std::vector<P2> pts;
+                if (const auto ip = interiorPoint(r))
+                    pts.push_back(p2(*ip));
+                for (const P2& q : samples(r.outer, 4))
+                    pts.push_back(q);
+                for (const P2& q : pts)
+                    CHECK(boundaryDistance(q, in) >= d - 1'000);
+            }
+        }
+        emptied += ended ? 1 : 0;
+        // Grown: the input inside, the area growing.
+        lastArea = area(input);
+        for (double d = rng.between(0.0, 0.2) * size; d < 0.8 * size; d += rng.between(0.05, 0.3) * size) {
+            const Regions out = take(offset(input, static_cast<Coord>(d), ctx));
+            INFO("grow " << d << "\nresult:\n" << toText(out));
+            const double a = area(out);
+            CHECK(a >= lastArea - 1e6);
+            lastArea = a;
+            CHECK(area(take(subtract(input, out, ctx))) <= 1e6);
+        }
+    }
+    CHECK(emptied > 400);
+}
+
 } // namespace ray::cam::geom2d::test

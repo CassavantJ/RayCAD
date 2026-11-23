@@ -836,33 +836,9 @@ private:
         return {};
     }
 
-    // geom2d::offset shrinking by d >= 0, guarded: a part of the result reaching outside the input's box is taken as
-    // an empty result. geom2d::offset was seen to return such regions (non-empty, even larger than the input) for a
-    // small rounded region shrunk past its inradius, where the true result is empty (T-054 report, for T-050).
-    Result<Regions> shrink(const Regions& in, geom2d::Coord d)
-    {
-        Regions out;
-        RAY_P2D_ASSIGN(out, geom2d::offset(in, -d, ctx_));
-        geom2d::Bounds box;
-        for (const Region& r : in) {
-            const geom2d::Bounds b = geom2d::bounds(r);
-            if (b.empty) {
-                continue;
-            }
-            box = box.empty ? b
-                            : geom2d::Bounds{Pt{std::min(box.min.x, b.min.x), std::min(box.min.y, b.min.y)},
-                                             Pt{std::max(box.max.x, b.max.x), std::max(box.max.y, b.max.y)}, false};
-        }
-        constexpr geom2d::Coord kSlack = 1'000;
-        for (const Region& r : out) {
-            const geom2d::Bounds b = geom2d::bounds(r);
-            if (box.empty || b.min.x < box.min.x - kSlack || b.min.y < box.min.y - kSlack ||
-                b.max.x > box.max.x + kSlack || b.max.y > box.max.y + kSlack) {
-                return Regions{};
-            }
-        }
-        return out;
-    }
+    // geom2d::offset shrinking by d >= 0 (past the inradius it is empty: geom2d_clip.cpp, an arc offset past its
+    // centre).
+    Result<Regions> shrink(const Regions& in, geom2d::Coord d) { return geom2d::offset(in, -d, ctx_); }
 
     // `rs` without its slivers: parts narrower than 2 kSliverNm (an offset landing within micrometres of a part's
     // half width), whose rings are a line of micrometre spans; what they would cut is the coverage check's to find.

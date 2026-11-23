@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 
 namespace ray::cam::link::test {
@@ -329,6 +330,132 @@ TEST_CASE("link: a pointed tool never meets material outside its cuts, with the 
     }
     // The fault the rule removes: as a cylinder, linking goes into the grooves' narrow part in many of these cases.
     CHECK(cylinderHits > 15);
+}
+
+namespace {
+
+// The slope of a move from `from` (|dz| over its XY length; an arc's length at the smaller of its two radii).
+double slopeOf(const Move& from, const Move& m)
+{
+    const double dz = std::abs(double(m.z - from.z));
+    double len = 0;
+    if (m.kind == MoveKind::ArcCW || m.kind == MoveKind::ArcCCW) {
+        const double r0 = std::hypot(double(from.x - m.i), double(from.y - m.j));
+        const double r1 = std::hypot(double(m.x - m.i), double(m.y - m.j));
+        const double a0 = std::atan2(double(from.y - m.j), double(from.x - m.i));
+        const double a1 = std::atan2(double(m.y - m.j), double(m.x - m.i));
+        double sweep = m.kind == MoveKind::ArcCCW ? a1 - a0 : a0 - a1;
+        while (sweep <= 0)
+            sweep += 2 * kPiD;
+        if (m.x == from.x && m.y == from.y)
+            sweep = 2 * kPiD;
+        len = std::min(r0, r1) * sweep;
+    } else {
+        len = std::hypot(double(m.x - from.x), double(m.y - from.y));
+    }
+    return len > 0 ? dz / len : (dz > 0 ? std::numeric_limits<double>::infinity() : 0.0);
+}
+
+} // namespace
+
+TEST_CASE("link: appendSloped with a slope never makes a piece steeper (2,000 seeded paths)", "[link][limits]")
+{
+    int refusedCases = 0, clamped = 0;
+    for (std::uint64_t n = 0; n < 2'000; ++n) {
+        const std::uint64_t seed = 9'400'000 + n;
+        Rng rng{seed};
+        INFO("seed " << seed);
+        // A path of short and long pieces: lines of 0.1 um to 2 mm and arcs.
+        Path p = openPath({rng.between(-10'000'000, 10'000'000), rng.between(-10'000'000, 10'000'000)}, {});
+        Pt at = p.start;
+        const int pieces = static_cast<int>(rng.between(1, 120));
+        for (int k = 0; k < pieces; ++k) {
+            const double a = rng.between(-kPiD, kPiD);
+            const double len = rng.chance(0.5) ? rng.between(100.0, 20'000.0) : rng.between(20'000.0, 2'000'000.0);
+            const Pt next{at.x + static_cast<Coord>(std::llround(len * std::cos(a))),
+                          at.y + static_cast<Coord>(std::llround(len * std::sin(a)))};
+            if (next == at)
+                continue;
+            if (rng.chance(0.3) && len > 50'000) {
+                // A half circle on the segment as diameter.
+                const Pt c{(at.x + next.x) / 2, (at.y + next.y) / 2};
+                const Pt q = onCircleAt(c, std::hypot(double(at.x - c.x), double(at.y - c.y)),
+                                        std::atan2(double(at.y - c.y), double(at.x - c.x)) + kPiD / 2);
+                p.spans.push_back(arc(q, c, Coord(std::llround(distXY2(at, c))), true));
+                at = q;
+            } else {
+                p.spans.push_back(line(next));
+                at = next;
+            }
+        }
+        if (p.spans.empty())
+            continue;
+        const double slope = std::tan(rng.between(0.3, 30.0) * kPiD / 180.0);
+        const double length = geom2d::length(p);
+        // Mostly just long enough (as linking makes ramps: 1e-4 longer than the angle needs), sometimes too short.
+        const double need = rng.chance(0.85) ? length * slope / (1 + 1e-4) : length * slope * rng.between(1.0, 1.2);
+        const Nm z0 = rng.between(-2'000'000, 2'000'000);
+        const Nm z1 = z0 + (rng.chance(0.5) ? -1 : 1) * static_cast<Nm>(need);
+        std::vector<Move> out;
+        if (!appendSloped(p, z0, z1, slope, MoveRole::Ramp, kCutFeed, out)) {
+            CHECK(out.empty());
+            ++refusedCases;
+            continue;
+        }
+        std::vector<Move> plain;
+        appendSloped(p, z0, z1, MoveRole::Ramp, kCutFeed, plain);
+        REQUIRE(out.size() == plain.size());
+        Move from{};
+        from.x = p.start.x;
+        from.y = p.start.y;
+        from.z = z0;
+        for (std::size_t k = 0; k < out.size(); ++k) {
+            INFO("piece " << k);
+            CHECK(slopeOf(from, out[k]) <= slope);
+            CHECK(out[k].x == plain[k].x);
+            CHECK(out[k].y == plain[k].y);
+            clamped += out[k].z != plain[k].z ? 1 : 0;
+            from = out[k];
+        }
+        CHECK(out.back().z == z1);
+    }
+    CHECK(refusedCases > 50); // the too-short paths are refused, not made steeper
+    CHECK(clamped > 50);      // and the rounding rule is exercised
+}
+
+TEST_CASE("link: ramps and helices never descend steeper than the ramp angle (300 seeded passes)", "[link][limits]")
+{
+    for (std::uint64_t n = 0; n < 300; ++n) {
+        const std::uint64_t seed = 9'500'000 + n;
+        Rng rng{seed};
+        INFO("seed " << seed);
+        // A ring of many short lines (a pocket ring after fitting gaps), entered by a helix or a ramp along it.
+        const Pt c{20 * kMm, 20 * kMm};
+        const double radius = rng.between(3e6, 12e6);
+        const int count = static_cast<int>(rng.between(40, 400));
+        Path ring = closedPath(onCircleAt(c, radius, 0), {});
+        for (int k = 1; k <= count; ++k)
+            ring.spans.push_back(line(k == count ? ring.start : onCircleAt(c, radius, 2 * kPiD * k / count)));
+        Pass pass = passFromPath(ring, -rng.between(500'000, 4'000'000), kCutFeed);
+        pass.room = unbounded();
+        Options o = baseOptions(2 * rng.between(500'000, 2'000'000));
+        o.rampAngleDeg = rng.between(0.5, 12.0);
+        o.helixDiameter = static_cast<Coord>(radius);
+        o.helixMinDiameter = o.helixDiameter / 2;
+        o.minRampRun = 1'000'000;
+        o.entryOrder =
+            rng.chance(0.5) ? std::vector<EntryKind>{EntryKind::Helix} : std::vector<EntryKind>{EntryKind::Ramp};
+        const Linked l = run({pass}, o, boxStock(0, 0, 40 * kMm, 40 * kMm, 0));
+        const double tanA = std::tan(o.rampAngleDeg * kPiD / 180.0);
+        int ramps = 0;
+        for (std::size_t k = 1; k < l.moves.size(); ++k)
+            if (l.moves[k].role == MoveRole::Ramp && l.moves[k].z != l.moves[k - 1].z) {
+                INFO("move " << k);
+                CHECK(std::atan(slopeOf(l.moves[k - 1], l.moves[k])) <= std::atan(tanA));
+                ++ramps;
+            }
+        CHECK(ramps > 0);
+    }
 }
 
 TEST_CASE("link: the tool's tip height must not be negative", "[link][limits]")

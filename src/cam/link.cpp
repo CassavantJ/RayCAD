@@ -12,9 +12,10 @@
 //                         the room grown by 1 um. A lead that runs exactly along the room's edge (a pocket wall offset)
 //                         passes (the 0.5 um margin is five times the flattening); one that leaves it by more than
 //                         1.5 um fails.
-//   kRampSlack 1e-4       ramps and helices are made 0.01 % longer than their angle needs, so the rounding of their end
-//                         points to the nanometre never makes a move steeper than the angle asked for (the rounding is
-//                         at most 1 nm in about 0.1 mm of descent per move, 1e-5).
+//   kRampSlack 1e-4       ramps and helices are made 0.01 % longer than their angle needs, room for appendSloped (with
+//                         the angle) to round each piece's end Z so that no piece is steeper than the angle (plain
+//                         rounding was up to 1 nm steeper per piece: 1.3e-5 relative on a whole piece, more on short
+//                         ones). Where many short pieces need more than that, the ramp is made longer and planned again.
 //   kAreaEps 1 um^2       a boolean remainder smaller than this is a rounding sliver, not material or a way out of a
 //                         room: a real overlap of 1 um over 1 mm is 1000 um^2.
 //   kMinLinkMove 1 um     a post writes metric coordinates to 1 um, so a shorter link move comes out as no move or as a
@@ -539,20 +540,30 @@ Planned planHelix(EntryContext& e)
             p.level = *level;
             p.top = e.topFor(*level);
             const double dz = static_cast<double>(p.top - e.a.z);
-            const double length = dz / tanA * (1.0 + kRampSlack);
-            const double theta = length / static_cast<double>(rr);
-            const int parts = std::max(1, static_cast<int>(std::ceil(theta / kPi - 1e-12)));
-            const double dir = ccw ? 1.0 : -1.0;
-            const double aEnd = dmath::atan2(static_cast<double>(a.y - c.y), static_cast<double>(a.x - c.x));
-            const double a0 = aEnd - dir * theta;
+            double length = dz / tanA * (1.0 + kRampSlack);
             Path helix;
-            helix.start = roundPt(onCircle(c, rr, a0));
-            for (int k = 1; k <= parts; ++k) {
-                const Pt end = k == parts ? a : roundPt(onCircle(c, rr, a0 + dir * theta * k / parts));
-                helix.spans.push_back(geom2d::Span{kind, end, c, rr});
+            for (int attempt = 0;; ++attempt) {
+                const double theta = length / static_cast<double>(rr);
+                const int parts = std::max(1, static_cast<int>(std::ceil(theta / kPi - 1e-12)));
+                const double dir = ccw ? 1.0 : -1.0;
+                const double aEnd = dmath::atan2(static_cast<double>(a.y - c.y), static_cast<double>(a.x - c.x));
+                const double a0 = aEnd - dir * theta;
+                helix = Path{};
+                helix.start = roundPt(onCircle(c, rr, a0));
+                for (int k = 1; k <= parts; ++k) {
+                    const Pt end = k == parts ? a : roundPt(onCircle(c, rr, a0 + dir * theta * k / parts));
+                    helix.spans.push_back(geom2d::Span{kind, end, c, rr});
+                }
+                // Never steeper than the angle (link.h appendSloped): each piece may lose under 1 nm to rounding.
+                if (appendSloped(helix, p.top, e.a.z, tanA, MoveRole::Ramp, e.rampFeed, p.moves))
+                    break;
+                if (attempt == 7) {
+                    appendSloped(helix, p.top, e.a.z, MoveRole::Ramp, e.rampFeed, p.moves);
+                    break;
+                }
+                length += static_cast<double>(2 * parts + 2) / tanA;
             }
             p.start = helix.start;
-            appendSloped(helix, p.top, e.a.z, MoveRole::Ramp, e.rampFeed, p.moves);
             geom2d::appendMoves(circle, e.a.z, MoveRole::Ramp, e.rampFeed, p.moves);
             p.helixDiameter = d;
             p.flat = circle;
@@ -583,67 +594,80 @@ Planned planRamp(EntryContext& e)
         return "the cut offers " + mm(len) + " mm for the ramp, which needs a run of at least " + mm(minRun) + " mm";
     }
     const double tanA = dmath::tan(o.rampAngleDeg * kPi / 180.0);
-    Nm level = e.freeLevel;
-    double rampLength = 0, leg = 0;
-    Path footprint;
-    Nm top = 0;
-    for (int iteration = 0; iteration < 64; ++iteration) {
-        top = e.topFor(level);
-        rampLength = static_cast<double>(top - e.a.z) / tanA * (1.0 + kRampSlack);
+    // Extra length when the rounding of many short pieces needs it (appendSloped with the angle, below).
+    double extra = 0;
+    for (int attempt = 0;; ++attempt) {
+        Nm level = e.freeLevel;
+        double rampLength = 0, leg = 0;
+        Path footprint;
+        Nm top = 0;
+        for (int iteration = 0; iteration < 64; ++iteration) {
+            top = e.topFor(level);
+            rampLength = static_cast<double>(top - e.a.z) / tanA * (1.0 + kRampSlack) + extra;
+            if (e.ring) {
+                footprint = rampLength >= len ? ep : geom2d::subPath(ep, len - rampLength, len);
+            } else {
+                leg = std::min(len, std::max(rampLength / 2, minRun));
+                footprint = geom2d::subPath(ep, 0, leg);
+            }
+            // A ramp along an arc is a helix of that arc's diameter: never tighter than the helix minimum.
+            const Coord dMin = o.helixMinDiameter > 0 ? o.helixMinDiameter : o.helixDiameter;
+            if (dMin > 0) {
+                for (const geom2d::Span& s : footprint.spans)
+                    if (s.kind != geom2d::SpanKind::Line && 2 * s.radius < dMin + 4)
+                        return "the ramp would follow an arc of " + mm(2 * s.radius) +
+                               " mm diameter, below the helix minimum of " + mm(dMin) + " mm";
+            }
+            auto probe = e.material.sweep(footprint, e.ctx);
+            if (!probe)
+                return probe.error();
+            auto next = e.material.lowestFree(*probe, level, e.ctx);
+            if (!next)
+                return next.error();
+            if (*next == level)
+                break;
+            level = *next;
+        }
+        Path ramp;
         if (e.ring) {
-            footprint = rampLength >= len ? ep : geom2d::subPath(ep, len - rampLength, len);
+            const double laps = std::floor(rampLength / len);
+            const double rest = rampLength - laps * len;
+            ramp.start = ep.start;
+            if (rest > 0) {
+                const Path piece = geom2d::subPath(ep, len - rest, len);
+                ramp.start = piece.start;
+                ramp.spans = piece.spans;
+            }
+            for (int k = 0; k < static_cast<int>(laps); ++k)
+                ramp.spans.insert(ramp.spans.end(), ep.spans.begin(), ep.spans.end());
         } else {
-            leg = std::min(len, std::max(rampLength / 2, minRun));
-            footprint = geom2d::subPath(ep, 0, leg);
+            int legs = std::max(1, static_cast<int>(std::ceil(rampLength / leg - 1e-12)));
+            if (legs % 2 != 0)
+                ++legs;
+            const Path back = geom2d::reverse(footprint);
+            ramp.start = footprint.start;
+            for (int k = 0; k < legs; ++k) {
+                const Path& part = k % 2 == 0 ? footprint : back;
+                ramp.spans.insert(ramp.spans.end(), part.spans.begin(), part.spans.end());
+            }
         }
-        // A ramp along an arc is a helix of that arc's diameter: never tighter than the helix minimum.
-        const Coord dMin = o.helixMinDiameter > 0 ? o.helixMinDiameter : o.helixDiameter;
-        if (dMin > 0) {
-            for (const geom2d::Span& s : footprint.spans)
-                if (s.kind != geom2d::SpanKind::Line && 2 * s.radius < dMin + 4)
-                    return "the ramp would follow an arc of " + mm(2 * s.radius) +
-                           " mm diameter, below the helix minimum of " + mm(dMin) + " mm";
+        Plan p;
+        p.kind = Entered::Ramp;
+        p.level = level;
+        p.top = top;
+        p.start = ramp.start;
+        // Never steeper than the angle (link.h appendSloped): each piece may lose under 1 nm to rounding, so a ramp of
+        // many short pieces is made longer by that and planned again (its footprint checked again).
+        if (appendSloped(ramp, top, e.a.z, tanA, MoveRole::Ramp, e.rampFeed, p.moves))
+            return p;
+        if (attempt == 7) {
+            appendSloped(ramp, top, e.a.z, MoveRole::Ramp, e.rampFeed, p.moves);
+            return p;
         }
-        auto probe = e.material.sweep(footprint, e.ctx);
-        if (!probe)
-            return probe.error();
-        auto next = e.material.lowestFree(*probe, level, e.ctx);
-        if (!next)
-            return next.error();
-        if (*next == level)
-            break;
-        level = *next;
+        std::vector<Move> pieces;
+        geom2d::appendMoves(ramp, e.a.z, MoveRole::Ramp, e.rampFeed, pieces);
+        extra += static_cast<double>(pieces.size() + 2) / tanA;
     }
-    Path ramp;
-    if (e.ring) {
-        const double laps = std::floor(rampLength / len);
-        const double rest = rampLength - laps * len;
-        ramp.start = ep.start;
-        if (rest > 0) {
-            const Path piece = geom2d::subPath(ep, len - rest, len);
-            ramp.start = piece.start;
-            ramp.spans = piece.spans;
-        }
-        for (int k = 0; k < static_cast<int>(laps); ++k)
-            ramp.spans.insert(ramp.spans.end(), ep.spans.begin(), ep.spans.end());
-    } else {
-        int legs = std::max(1, static_cast<int>(std::ceil(rampLength / leg - 1e-12)));
-        if (legs % 2 != 0)
-            ++legs;
-        const Path back = geom2d::reverse(footprint);
-        ramp.start = footprint.start;
-        for (int k = 0; k < legs; ++k) {
-            const Path& part = k % 2 == 0 ? footprint : back;
-            ramp.spans.insert(ramp.spans.end(), part.spans.begin(), part.spans.end());
-        }
-    }
-    Plan p;
-    p.kind = Entered::Ramp;
-    p.level = level;
-    p.top = top;
-    p.start = ramp.start;
-    appendSloped(ramp, top, e.a.z, MoveRole::Ramp, e.rampFeed, p.moves);
-    return p;
 }
 
 Plan straightPlunge(EntryContext& e, Entered kind)
@@ -1076,6 +1100,68 @@ void appendSloped(const Path& path, Nm z0, Nm z1, MoveRole role, std::int32_t fe
             m.k = z;
         out.push_back(m);
     }
+}
+
+bool appendSloped(const Path& path, Nm z0, Nm z1, double maxSlope, MoveRole role, std::int32_t feedMicronPerMin,
+                  std::vector<Move>& out)
+{
+    std::vector<Move> flat;
+    geom2d::appendMoves(path, z1, role, feedMicronPerMin, flat);
+    if (flat.empty())
+        return z0 == z1;
+    // Each piece's XY length (an arc's at the smaller of its two radii, so no reading of it is shorter), and the
+    // largest whole number of nanometres it may climb or descend.
+    std::vector<double> lengths;
+    std::vector<std::int64_t> caps;
+    lengths.reserve(flat.size());
+    caps.reserve(flat.size());
+    double total = 0;
+    std::int64_t capacity = 0;
+    Pt prev = path.start;
+    for (const Move& m : flat) {
+        double len = 0;
+        if (isArcMove(m)) {
+            const Pt c{m.i, m.j};
+            const double r = std::min(distXY(prev, c), distXY(xyOf(m), c));
+            const double a0 = dmath::atan2(static_cast<double>(prev.y - c.y), static_cast<double>(prev.x - c.x));
+            const double a1 = dmath::atan2(static_cast<double>(m.y - c.y), static_cast<double>(m.x - c.x));
+            double sweep = m.kind == MoveKind::ArcCCW ? a1 - a0 : a0 - a1;
+            while (sweep <= 0)
+                sweep += 2 * kPi;
+            if (xyOf(m) == prev)
+                sweep = 2 * kPi;
+            len = r * sweep;
+        } else {
+            len = distXY(prev, xyOf(m));
+        }
+        lengths.push_back(len);
+        total += len;
+        caps.push_back(std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(maxSlope * len * (1.0 - 1e-9)))));
+        capacity += caps.back();
+        prev = xyOf(m);
+    }
+    const std::int64_t span = z1 >= z0 ? z1 - z0 : z0 - z1;
+    const std::int64_t sign = z1 >= z0 ? 1 : -1;
+    if (capacity < span || total <= 0)
+        return false;
+    // The climb or descent done by the end of each piece: the proportional one rounded half to even, clamped so that
+    // this piece stays within its cap and the pieces after it can still do the rest.
+    std::int64_t done = 0, after = capacity;
+    double at = 0;
+    for (std::size_t k = 0; k < flat.size(); ++k) {
+        at += lengths[k];
+        after -= caps[k];
+        const std::int64_t ideal = geom2d::roundNm(static_cast<double>(span) * (at / total));
+        const std::int64_t lo = std::max(done, span - after);
+        const std::int64_t hi = std::min(done + caps[k], span);
+        done = k + 1 == flat.size() ? span : std::clamp(ideal, lo, hi);
+        Move m = flat[k];
+        m.z = z0 + sign * done;
+        if (isArcMove(m))
+            m.k = m.z;
+        out.push_back(m);
+    }
+    return true;
 }
 
 Lengths lengthsOf(std::span<const Move> moves, Pt3 from)
