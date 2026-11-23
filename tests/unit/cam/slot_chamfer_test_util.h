@@ -22,6 +22,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -149,7 +150,8 @@ inline kernel::Shape chamferBlock()
 // The up-facing planar face at height z whose box contains (x, y).
 inline kernel::SubId floorAt(const kernel::Shape& s, double x, double y, double z)
 {
-    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face); ++i) {
+    std::optional<kernel::SubId> found;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face) && !found; ++i) {
         const kernel::SubId f{kernel::SubKind::Face, i};
         const auto info = kernel::surfaceInfo(s, f);
         const auto sample = kernel::faceSample(s, f);
@@ -159,11 +161,12 @@ inline kernel::SubId floorAt(const kernel::Shape& s, double x, double y, double 
         const Box3& b = info->bounds;
         if (std::abs(b.min.z - z) < 1e-6 && x >= b.min.x - 1e-6 && x <= b.max.x + 1e-6 && y >= b.min.y - 1e-6 &&
             y <= b.max.y + 1e-6) {
-            return f;
+            found = f;
         }
     }
-    FAIL("no floor at (" << x << ", " << y << ", " << z << ")");
-    return {};
+    INFO("a floor at (" << x << ", " << y << ", " << z << ")");
+    REQUIRE(found.has_value());
+    return *found;
 }
 
 // The edges lying at height z (both ends, and a circle's centre) inside the box [x0, x1] x [y0, y1].
