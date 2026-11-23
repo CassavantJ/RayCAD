@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raycad.org/schemas/ops/face.schema.json",
+  "title": "Facing",
+  "description": "Parameters of a 'face' operation (cam.h Operation::paramsJson, task T-052): the whole top of the stock faced flat by parallel strokes, zigzag or one way, at one or more depths. The operation takes no geometry: it faces the setup's stock box. Every stroke starts and ends beyond the stock, so the tool feeds down in the air beside it. Its heights: 'clearance', 'retract', 'feedPlane' and 'top' are measured from the top of the stock ('top' is where the material starts, normally 0); 'bottom' is the faced height, measured from the top of the part (0: the stock is faced down to the part's top; a setup without part bodies measures it from the stock top). The cut feed runs the strokes and the links between them; the plunge feed (Operation cutting feedPlunge, 0: the cut feed) the descents beside the stock. Lengths are millimetres. Annotations for editors: 'x-unit' (length, count), 'x-enumTitles' (labels of an enum, in order), 'x-enumDescriptions' (a detail line for each enum value), 'x-relevantWhen' (the property matters only when every named property has one of the listed values), 'x-propertyOrder' (the order of the form), 'x-heightsUsed' and 'x-cuttingUsed' (the members of the operation's heights and cutting data this type reads), 'x-geometry' (none: the stock is faced) and 'x-toolTypes' (the tools the picker offers); docs/operation_types.md defines each.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-heightsUsed": ["clearance", "retract", "feedPlane", "top", "bottom"],
+  "x-cuttingUsed": ["rpm", "clockwise", "feedCut", "feedPlunge", "coolant"],
+  "x-geometry": { "kind": "none", "description": "Faces the whole top of the setup's stock." },
+  "x-toolTypes": ["faceMill", "flatEndMill", "bullEndMill"],
+  "x-propertyOrder": ["pattern", "direction", "cutMode", "stepover", "overhang", "stepdown"],
+  "properties": {
+    "pattern": {
+      "title": "Pattern",
+      "description": "'zigzag': each stroke runs back the way the last one came, the tool staying down beside the stock between them. 'oneWay': every stroke runs the same way, the tool lifting and going back between them.",
+      "enum": ["zigzag", "oneWay"],
+      "x-enumTitles": ["Zigzag", "One way"],
+      "x-enumDescriptions": ["Back and forth; stays down at the ends", "All strokes in one direction; climb or conventional"],
+      "default": "zigzag"
+    },
+    "direction": {
+      "title": "Stroke direction",
+      "description": "The setup axis the strokes run along; they step across the stock along the other axis, from its low side.",
+      "enum": ["alongX", "alongY"],
+      "x-enumTitles": ["Along X", "Along Y"],
+      "default": "alongX"
+    },
+    "cutMode": {
+      "title": "Cut mode",
+      "description": "One-way strokes: 'climb' runs each stroke so the uncut stock is on the side where the cutting edges move with the feed; 'conventional' the other way. Zigzag starts with a climb stroke.",
+      "enum": ["climb", "conventional"],
+      "x-enumTitles": ["Climb", "Conventional"],
+      "default": "climb",
+      "x-relevantWhen": { "pattern": ["oneWay"] }
+    },
+    "stepover": {
+      "title": "Stepover",
+      "description": "The largest distance between two strokes; the strokes are spaced evenly across the stock at this or less. It must not be more than the flat part of the tool (its diameter less its two corner radii). 0: three quarters of that flat part.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 0,
+      "x-unit": "length"
+    },
+    "overhang": {
+      "title": "Overhang",
+      "description": "How far past the stock the facing reaches: at both ends of every stroke the tool is this far clear of the stock (where it feeds down and links), and across the strokes the flat part of the tool goes this far past the stock's sides.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 2,
+      "x-unit": "length"
+    },
+    "stepdown": {
+      "title": "Maximum stepdown",
+      "description": "The largest depth of one pass. From the top height to the bottom height the material is taken off in equal passes of at most this depth, the last one at the bottom height.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1000,
+      "default": 2,
+      "x-unit": "length"
+    }
+  }
+}

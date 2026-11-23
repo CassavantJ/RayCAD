@@ -1622,6 +1622,83 @@ Rectangle {
     root->setParentItem(nullptr);
 }
 
+// T-052: the facing type in the same generic panel (no geometry to pick, a flat end mill, its own parameters from its
+// schema), previewed and added. Screenshot with RAY_T045_SHOTS: t052_face_dark / _light.
+TEST_CASE("a face operation by the UI: no geometry, a flat end mill, two passes, the preview, OK", "[cam][e2e][t052]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // metric
+    w.toWorkspace(ui::kCamWorkspace);
+    // A setup whose stock is 3 mm wider on every side and 1 mm above the plate.
+    const std::string args = R"({"id":")" + ct::id('a', 1) + R"(","name":"Setup 1","partBodies":[")" +
+                             w.bodyId().toStdString() + R"("],"machine":")" + ct::id('9', 1) + R"(","material":")" +
+                             kAl6061 +
+                             R"(","stock":{"type":"box","xNeg":3,"xPos":3,"yNeg":3,"yPos":3,"zNeg":0,"zPos":1},)"
+                             R"("library":{"machines":[)" +
+                             ct::machineJson(1) + "],\"materials\":[" + libraryMaterial(w, kAl6061) + "]}}";
+    REQUIRE(w.invoke("cam.setup.add", args));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() >= 1; }, kTimeoutMs));
+    const std::size_t undoBefore = w.undoCount();
+
+    newOperation(w);
+    w.op()->setType(QStringLiteral("face"));
+    REQUIRE(w.op()->type() == QStringLiteral("face"));
+    CHECK(w.op()->typeTitle() == QStringLiteral("Facing"));
+    CHECK(w.op()->geometryKind() == QStringLiteral("none"));
+    CHECK_FALSE(w.find(QStringLiteral("operationSection.geometry"))->isVisible());
+    CHECK(w.op()->heights().size() == 5);
+    for (const char* key : {"pattern", "direction", "stepover", "overhang", "stepdown"})
+        CHECK(w.shown(QStringLiteral("schemaRow.%1").arg(QLatin1String(key)))->isVisible());
+    CHECK_FALSE(w.find(QStringLiteral("schemaRow.cutMode"))->isVisible()); // one way only (x-relevantWhen)
+    // The picker offers the facing tools (x-toolTypes); a 10 mm flat end mill from the library.
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    CHECK(pickerTypes(w) ==
+          std::set<QString>{QStringLiteral("faceMill"), QStringLiteral("flatEndMill"), QStringLiteral("bullEndMill")});
+    chooseTool(w, QStringLiteral("3f550375-46eb-47d0-9b8c-4fedbcb8466d"), QStringLiteral("10 mm 4FL"));
+    w.click(QStringLiteral("operationUseCalculated"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+    // Two passes of 0.5 mm: the stock top (Z 0 at the origin, its top front left corner) down to the plate's top.
+    w.typeInto(QStringLiteral("schemaInput.stepdown"), QStringLiteral("0.5 mm"));
+    w.window()->contentItem()->forceActiveFocus();
+    QCoreApplication::processEvents();
+    w.previewed("ok");
+    const auto tp = w.op()->previewToolpath();
+    REQUIRE(tp != nullptr);
+    std::set<Nm> levels;
+    for (const cam::Move& m : tp->moves) {
+        if (m.role == cam::MoveRole::Cut)
+            levels.insert(m.z);
+    }
+    CHECK(levels == std::set<Nm>{-1'000'000, -500'000});
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const auto shown = w.display()->shown();
+            return std::any_of(shown.begin(), shown.end(), [](const ToolpathDisplay::Shown& s) { return s.preview; });
+        },
+        10000));
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the operation"); }, 10000));
+    w.view()->fitAll();
+    w.settle();
+    w.shotsBothThemes(QStringLiteral("t052_face"));
+
+    // OK: the operation with the facing parameters, up to date in the tree.
+    const QString id = w.op()->operationId();
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active() && w.undoCount() == undoBefore + 1; }, kTimeoutMs));
+    const doc::DocStatePtr state = w.document()->state();
+    REQUIRE(state->cam);
+    REQUIRE(state->cam->operations.size() == 1);
+    const cam::Operation& op = state->cam->operations.begin()->second;
+    CHECK(op.type == "face");
+    CHECK(op.geometry.empty());
+    CHECK(op.paramsJson.find("\"stepdown\":0.5") != std::string::npos);
+    const int row = w.tree()->rowOf(id);
+    REQUIRE(row >= 0);
+    w.waitStatus(row, "upToDate");
+    w.checkNoWarnings();
+}
+
 int main(int argc, char** argv)
 {
     // The real user profile is never touched.
