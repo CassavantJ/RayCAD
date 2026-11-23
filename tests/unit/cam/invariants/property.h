@@ -18,6 +18,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,13 @@ std::vector<kernel::SubId> pocketFloors(PropertyCase&); // the floor of every po
 std::vector<kernel::SubId> topFaces(PropertyCase&);     // the up-facing faces at Z 0
 std::vector<kernel::SubId> outerWalls(PropertyCase&);   // the plate's four sides
 } // namespace pick
+
+// Added by T-055 (chamfers): the cut a chamfer of a level edge removes, as an AllowedCut (part_model.h): a cone along
+// the edge's polyline (lines exact, arcs and circles sampled within 1 um) from `depth` below the edge, opening at
+// `slope` (tan of the chamfer mill's half angle), grown by `grow` in XY. The shape's frame is taken as the WCS (the
+// harness's identity frame). nullopt for an edge that is not a level line, arc or circle.
+std::optional<AllowedCut> chamferCut(const kernel::Shape& shape, kernel::SubId edge, double depth, double slope,
+                                     double grow);
 
 // Region claims of the case's features (coverage of each floor of the given kinds, to the scallop limit).
 std::vector<ClearClaim> coverFeatures(const PropertyCase& c, std::vector<Feature::Kind> kinds, double scallop,
