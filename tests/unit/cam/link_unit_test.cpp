@@ -219,6 +219,14 @@ TEST_CASE("link: line leads switch compensation in the control on and off", "[li
     o.helixDiameter = 4 * kMm;
     const Error e2 = refused({p}, o, boxStock(-20 * kMm, -20 * kMm, 80 * kMm, 20 * kMm, 0));
     CHECK(contains(e2.message, "cutter compensation in the control is on"));
+    // With compensation for wear the refusals name that mode, not the control's.
+    o.compensation = Options::Compensation::Wear;
+    const Error e3 = refused({p}, o, boxStock(-20 * kMm, -20 * kMm, 80 * kMm, 20 * kMm, 0));
+    CHECK(contains(e3.message, "cutter compensation for wear is on"));
+    CHECK_FALSE(contains(e3.message, "in the control"));
+    p.leadIn = Lead{LeadKind::Arc, 5 * kMm, 90, 0, Side::Left, 0};
+    const Error e4 = refused({p}, o, kNoStock);
+    CHECK(contains(e4.message, "uses cutter compensation for wear, which needs a straight lead-in"));
 }
 
 TEST_CASE("link: a lead that does not fit its room is made smaller, then refused", "[link][lead]")

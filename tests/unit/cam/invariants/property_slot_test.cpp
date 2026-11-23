@@ -147,8 +147,8 @@ PropertyPlugin slotPlugin()
 
 } // namespace
 
-// As RAY_INVARIANT_PROPERTY_TESTS("slot", slotPlugin()) defines them, with the tag [property_slot] too: these cases
-// take about 40 s, so CTest runs them as a test of their own (ray_cam_invariants_slot, CMakeLists.txt).
+// As RAY_INVARIANT_PROPERTY_TESTS("slot", "[property_slot]", slotPlugin()) defines them: CTest runs the cases with the
+// tag [property_slot] as a test of their own (ray_cam_invariants_slot, CMakeLists.txt).
 TEST_CASE("invariant property: slot, quick seeds", "[cam][invariants][property][property_slot]")
 {
     requireProperty(slotPlugin(), kQuickCases);

@@ -544,7 +544,7 @@ QString statusLine(const Window& w)
 }
 
 // Opens the panel for a new operation from the setup's row in the tree, as the user does, and makes it of `type` (the
-// panel starts with the last type used, else the first registered, which is not drill once other types exist).
+// panel starts with the type last added in the session, else drill; "" keeps that).
 void newOperation(const Window& w, int setupRow = 0, const QString& type = QStringLiteral("drill"))
 {
     w.clickRow(QStringLiteral("setupRow.%1").arg(setupRow));
@@ -1849,27 +1849,31 @@ namespace {
 std::uint32_t cylinderFace(const Window& w, double x, double y, double r)
 {
     const kernel::Shape& s = w.host->scene()->body(0)->shape;
-    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face); ++i) {
+    std::optional<std::uint32_t> found; // (no code after FAIL: MSVC Debug reports it unreachable, C4702)
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face) && !found; ++i) {
         const auto info = kernel::surfaceInfo(s, kernel::SubId{kernel::SubKind::Face, i});
         if (info && info->type == kernel::SurfaceType::Cylinder && std::abs(info->origin.x - x) < 1e-6 &&
             std::abs(info->origin.y - y) < 1e-6 && std::abs(info->radius - r) < 1e-6)
-            return i;
+            found = i;
     }
-    FAIL("no cylinder of radius " << r << " at (" << x << ", " << y << ")");
-    return 0;
+    if (!found)
+        FAIL("no cylinder of radius " << r << " at (" << x << ", " << y << ")");
+    return found.value_or(0);
 }
 std::uint32_t circleEdge(const Window& w, double x, double y, double r, double z)
 {
     const kernel::Shape& s = w.host->scene()->body(0)->shape;
-    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Edge); ++i) {
+    std::optional<std::uint32_t> found;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Edge) && !found; ++i) {
         const auto info = kernel::curveInfo(s, kernel::SubId{kernel::SubKind::Edge, i});
         if (info && info->type == kernel::CurveType::Circle && std::abs(info->center.x - x) < 1e-6 &&
             std::abs(info->center.y - y) < 1e-6 && std::abs(info->radius - r) < 1e-6 &&
             std::abs(info->center.z - z) < 1e-6)
-            return i;
+            found = i;
     }
-    FAIL("no circle of radius " << r << " at (" << x << ", " << y << ", " << z << ")");
-    return 0;
+    if (!found)
+        FAIL("no circle of radius " << r << " at (" << x << ", " << y << ", " << z << ")");
+    return found.value_or(0);
 }
 
 void pickElement(const Window& w, kernel::SubKind kind, std::uint32_t index)
@@ -2072,6 +2076,115 @@ TEST_CASE("a face operation by the UI: no geometry, a flat end mill, two passes,
     const int row = w.tree()->rowOf(id);
     REQUIRE(row >= 0);
     w.waitStatus(row, "upToDate");
+    w.checkNoWarnings();
+}
+
+// After M3: the panel opens on drill, then on the type last added; the type list in its fixed order; each height says
+// what it is measured from (x-heightsUsed); a facing bottom above the top (it is measured from the part top) is the
+// type's to judge, so 0.2 mm above the part with the top at 0 previews and is added, and a bottom that leaves nothing
+// to face shows face's own message. Screenshot with RAY_T045_SHOTS: m3_height_hints_dark / _light.
+TEST_CASE("the panel: drill first, then the last type; heights from their references; a facing bottom above the top",
+          "[cam][e2e][heights]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate); // metric
+    w.toWorkspace(ui::kCamWorkspace);
+    // A setup whose stock is 3 mm wider on every side and 1 mm above the plate (the stock top is Z 0).
+    const std::string args = R"({"id":")" + ct::id('a', 1) + R"(","name":"Setup 1","partBodies":[")" +
+                             w.bodyId().toStdString() + R"("],"machine":")" + ct::id('9', 1) + R"(","material":")" +
+                             kAl6061 +
+                             R"(","stock":{"type":"box","xNeg":3,"xPos":3,"yNeg":3,"yPos":3,"zNeg":0,"zPos":1},)"
+                             R"("library":{"machines":[)" +
+                             ct::machineJson(1) + "],\"materials\":[" + libraryMaterial(w, kAl6061) + "]}}";
+    REQUIRE(w.invoke("cam.setup.add", args));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() >= 1; }, kTimeoutMs));
+
+    // Nothing added yet in this session: the panel opens on drill. The types in the panel's order.
+    newOperation(w, 0, QString());
+    CHECK(w.op()->type() == QStringLiteral("drill"));
+    QStringList names;
+    for (const QVariant& t : w.op()->types())
+        names << t.toMap().value(QStringLiteral("name")).toString();
+    REQUIRE(names.size() >= 8);
+    CHECK(names.mid(0, 8) ==
+          QStringList({QStringLiteral("drill"), QStringLiteral("face"), QStringLiteral("contour2d"),
+                       QStringLiteral("pocket2d"), QStringLiteral("slot"), QStringLiteral("chamfer2d"),
+                       QStringLiteral("engrave"), QStringLiteral("threadmill")}));
+    QStringList rest = names.mid(8);
+    QStringList sorted = rest;
+    std::sort(sorted.begin(), sorted.end());
+    CHECK(rest == sorted);
+    // Drill's heights: from each hole's top, the clearance from the highest.
+    CHECK(w.shown(QStringLiteral("operationFieldNote.retract"))->property("text").toString() ==
+          QStringLiteral("from each hole's top"));
+    CHECK(w.shown(QStringLiteral("operationFieldNote.clearance"))->property("text").toString() ==
+          QStringLiteral("from the highest hole top"));
+
+    w.op()->setType(QStringLiteral("face"));
+    REQUIRE(w.op()->type() == QStringLiteral("face"));
+    QCoreApplication::processEvents();
+    for (const char* key : {"clearance", "retract", "feedPlane", "top"})
+        CHECK(w.shown(QStringLiteral("operationFieldNote.%1").arg(QLatin1String(key)))->property("text").toString() ==
+              QStringLiteral("from stock top"));
+    CHECK(w.shown(QStringLiteral("operationFieldNote.bottom"))->property("text").toString() ==
+          QStringLiteral("from part top"));
+    REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+    chooseTool(w, QStringLiteral("3f550375-46eb-47d0-9b8c-4fedbcb8466d"), QStringLiteral("10 mm 4FL"));
+    w.click(QStringLiteral("operationUseCalculated"));
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+    w.typeInto(QStringLiteral("schemaInput.stepdown"), QStringLiteral("0.5 mm"));
+    // Leave 0.2 mm on the part, the top at 0: faced from Z 0 to the plate's top + 0.2 (Z -0.8) in two passes.
+    w.typeInto(QStringLiteral("operationInput.bottom"), QStringLiteral("0.2 mm"));
+    w.window()->contentItem()->forceActiveFocus();
+    QCoreApplication::processEvents();
+    w.previewed("ok");
+    CHECK(w.op()->errors().isEmpty());
+    const auto tp = w.op()->previewToolpath();
+    REQUIRE(tp != nullptr);
+    std::set<Nm> levels;
+    for (const cam::Move& m : tp->moves) {
+        if (m.role == cam::MoveRole::Cut)
+            levels.insert(m.z);
+    }
+    CHECK(levels == std::set<Nm>{-800'000, -400'000});
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the operation"); }, 10000));
+    w.view()->fitAll();
+    w.settle();
+    w.shotsBothThemes(QStringLiteral("m3_height_hints"));
+
+    // A bottom 1.5 above the part top is above the stock top: nothing to face. The panel does not judge that order
+    // itself; face's validation does, and its message is what the panel shows.
+    w.typeInto(QStringLiteral("operationInput.bottom"), QStringLiteral("1.5 mm"));
+    w.window()->contentItem()->forceActiveFocus();
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !w.op()->previewBusy() && !w.op()->errors().isEmpty() &&
+                   w.op()->errors().front().contains(QLatin1String("Nothing to face"));
+        },
+        kTimeoutMs));
+    CHECK_FALSE(w.op()->canCommit());
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Fix the error above first"); }, 10000));
+    // Two heights from the stock top out of order are the panel's to name, before any preview.
+    w.typeInto(QStringLiteral("operationInput.bottom"), QStringLiteral("0.2 mm"));
+    w.typeInto(QStringLiteral("operationInput.top"), QStringLiteral("3 mm"));
+    REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Feed plane must not be below Top"); }, 5000));
+    w.typeInto(QStringLiteral("operationInput.top"), QStringLiteral("0 mm"));
+    w.window()->contentItem()->forceActiveFocus();
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->canCommit(); }, kTimeoutMs));
+
+    // OK; the next new operation opens on face, the type last added.
+    const std::size_t undoBefore = w.undoCount();
+    w.click(QStringLiteral("operationOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active() && w.undoCount() == undoBefore + 1; }, kTimeoutMs));
+    const cam::Operation& op = w.document()->state()->cam->operations.begin()->second;
+    CHECK(op.type == "face");
+    CHECK(op.heights.bottom == 0.2);
+    CHECK(op.heights.top == 0);
+    newOperation(w, 0, QString());
+    CHECK(w.op()->type() == QStringLiteral("face"));
+    w.click(QStringLiteral("operationCancel"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
     w.checkNoWarnings();
 }
 

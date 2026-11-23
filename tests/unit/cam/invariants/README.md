@@ -118,19 +118,22 @@ Said plainly:
 
 ## Plugging in an operation type (T-052 to T-056, T-061)
 
-Add `property_<type>_test.cpp` to this folder and to the `ray_cam_invariants_tests` list in `CMakeLists.txt`:
+Add `property_<type>_test.cpp` to this folder and to the `ray_cam_invariants_tests` list in `CMakeLists.txt`, and the
+type's name to the list of the `foreach` there that makes one CTest test per type:
 
 ```cpp
 #include "property.h"
 using namespace ray::cam::invariants;
 static PropertyPlugin plugin() { PropertyPlugin p; p.type = "pocket2d"; p.tools = {ray::lib::ToolType::FlatEndMill, ray::lib::ToolType::BullEndMill}; p.needs = {Feature::Kind::Pocket}; p.geometry = pick::pocketFloors;
     p.claims = [](const PropertyCase& c) { Claims k = defaultClaims(c); k.clears = coverFeatures(c, {Feature::Kind::Pocket}, 0.01); return k; }; return p; }
-RAY_INVARIANT_PROPERTY_TESTS("pocket2d", plugin())
+RAY_INVARIANT_PROPERTY_TESTS("pocket2d", "[property_pocket2d]", plugin())
 ```
 
-That defines the quick test (12 fixed seeds; ctest `ray_cam_invariants_property`, quick tier) and the slow one (200
-seeds, `[.slow]`; ctest `ray_cam_invariants_slow`, slow tier). The checker's own cases are ctest
-`ray_cam_invariants_tests`. What to set:
+That defines the quick test (8 fixed seeds, `property.h` kQuickCases) and the slow one (200 seeds, `[.slow]`; ctest
+`ray_cam_invariants_slow`, slow tier). Every case tagged `[property_<type>]` (give the type's other property cases that
+tag too) runs in the quick tier as ctest `ray_cam_invariants_<type>`, with a timeout of its own (1200 s) that holds in
+an MSVC Debug build; property cases without a type tag (the harness's own, `[property_harness]`) run as
+`ray_cam_invariants_property`. The checker's own cases are ctest `ray_cam_invariants_tests`. What to set:
 
 - `type`: the registered name. `tools`: the tool types the case may draw. `needs`: feature kinds every random part
   must have (`Pocket`, `Slot`, `Holes`, `Step` (an open edge), `Boss`). `geometry`: the faces the operation is given
@@ -142,7 +145,10 @@ seeds, `[.slow]`; ctest `ray_cam_invariants_slow`, slow tier). The checker's own
 - `p.claims` says what your operation promises, starting from `defaultClaims(c)`: `clears` (coverage, with
   `coverFeatures`), `walls` (finished walls), `stockToLeaveWall/Floor`, `direction`, `maxRampAngleDeg`,
   `helixMinDiameter`, `maxEngagementDeg`, `heights` (absolute), `containment`, `allowedCuts` (where cutting the model
-  is intended: threads, chamfers the model lacks), `initialStock`. An empty claim is not checked.
+  is intended: threads, chamfers the model lacks), `initialStock`. An empty claim is not checked. `rapidFloorZ`
+  (default the stock top) is one height over the whole stock box and credits no area already cut: a lower claim
+  hands every rapid above it, over uncut stock too, to `rapidStock`, which sees the stock only at its samples and can
+  miss a pointed tool's tip there (`checker_geometry_test.cpp`; why engraving claims none, `src/cam/ops/engrave.h`).
   An allowed cut (part_model.h `AllowedCut`) is a vertical cylinder about a point, or (T-055) a cone opening upwards
   (`slope`) and/or measured from a polyline (`path`): `chamferCut` (property.h) makes the wedge a chamfer of an edge
   removes. Only where the whole grid square lies inside the cut is its material left out; a square the cut reaches in
@@ -154,9 +160,7 @@ seeds, `[.slow]`; ctest `ray_cam_invariants_slow`, slow tier). The checker's own
 
 `property_drill_test.cpp` is the drilling plug-in; `property_harness_test.cpp` plugs in a reference facing type and
 shows broken types being reported. `property_slot_test.cpp` and `property_chamfer2d_test.cpp` (T-055) define the same
-two cases by hand with a tag of their own each, so CTest runs them as tests of their own (`ray_cam_invariants_slot`,
-about 40 s, and `ray_cam_invariants_chamfer2d`, about 25 s, in Release) and `ray_cam_invariants_property` stays short;
-their header comments say what the checker can and cannot judge for them.
+two cases by hand with their type's tag; their header comments say what the checker can and cannot judge for them.
 
 ## Resolution and time
 
@@ -164,8 +168,11 @@ Part grid 0.25 mm, refined to 0.001 mm only where a contact is undecided (along 
 0.1 mm; mesh chord 0.001 mm. `RAY_INVARIANTS_TIMING=1` prints where the time goes (part mesh, part grid, stock grid,
 the moves, the region claims).
 
-Measured on the development PC in Release (Windows, MSVC), each test alone: `ray_cam_invariants_property` (drill and
-the reference facing type on 12 seeds each, plus the harness's own cases) about 10 s, of which a random case costs
-0.25 to 0.4 s (building the part with the kernel about 0.05 s, meshing 0.05 s, the part grid 0.1 s, the stock grid
-0.07 s, the moves and claims the rest); `ray_cam_invariants_tests` about 9 s; `ray_cam_invariants_slow` (200 seeds per
-type) about 140 s. MSVC Debug: about 95 s and 85 s for the two quick ones.
+A random case costs 0.25 to 0.4 s in Release for the simpler types (building the part with the kernel about 0.05 s,
+meshing 0.05 s, the part grid 0.1 s, the stock grid 0.07 s, the moves and claims the rest) and up to about 3 s for slot.
+Measured alone on the development PC (Windows, MSVC Release), 8 seeds per type: `ray_cam_invariants_slot` about 25 s,
+`_pocket2d` 19 s, `_face` 12 s, `_chamfer2d` 12 s, `_threadmill` 8 s, `_contour2d` 4.5 s, `_drill` 4 s, `_engrave`
+3.5 s, `_property` (the harness's own) 4 s, `ray_cam_invariants_tests` 13 s. With 12 seeds the same cases took about
+140 s, 80 s of it in the one `ray_cam_invariants_property` test. MSVC Debug, six CAM tests at a time: `_slot` about
+290 s, `_pocket2d` 190 s, `_face` 160 s, `_chamfer2d` 135 s, `_threadmill` 120 s, the others under 65 s, well inside
+the 1200 s timeout, so none is in tiers.cmake's RAY_DEBUG_HEAVY_TESTS.

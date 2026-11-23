@@ -28,8 +28,16 @@
 //   box. The tool's tip height (link::Options::tipHeight: a pointed tool's point length, drill.h pointLengthNm; a ball
 //   end mill's radius) tells linking that a groove is narrower than the tool below that height above it, so no rapid
 //   or feed descent enters an earlier groove lower than where the tool's full width cleared it. Rapids over the stock
-//   stay at or above its top (the invariant checker's rapid floor): a feed plane below the stock's top is raised to it
-//   for linking (with a warning), and the tool feeds from there.
+//   stay at or above its top: a feed plane below the stock's top is raised to it for linking (with a warning), and the
+//   tool feeds from there. Linking alone would rapid lower, down to the feed plane over what an earlier pass cut, and
+//   be right; the raise is kept because nothing independent can check that. The invariant checker's rapid floor
+//   (tests/unit/cam/invariants/README.md, rapidLow, exact) is the stock top unless a plug-in claims a lower one, and it
+//   cannot credit area already cut; a lower claim would hand every rapid between that floor and the stock top, over
+//   uncut stock too, to rapidStock, which sees the stock only at its samples (0.1 mm apart). An engraver's point a
+//   few hundredths of a millimetre into uncut stock is narrower than that and can pass between them
+//   (checker_geometry_test.cpp, "a pointed tool's rapid just into uncut stock"), which is exactly the mistake a
+//   lowered floor would have to catch. Decided after M3: no lower claim, the raise stays. It costs only feed time
+//   from the stock top down to the plane, and only when the stock's top is above the plane.
 // TOOL (refused otherwise, with the reason): an engraving cutter, a spot drill, a ball end mill, or a chamfer mill
 //   with a pointed tip (tipDiameter 0): tools that cut at their centre. A pointed tool (tip angle in (0, 180)) must
 //   reach the depth within its point: D <= drill.h pointLengthNm(diameter, tip angle, tip diameter). D must fit the

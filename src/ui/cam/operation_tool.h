@@ -3,9 +3,10 @@
 // the type's schema (IOperationType::paramsSchemaJson) gives the parameter form (SchemaFormModel, operation_form.h)
 // and, through its annotations, what the other sections show (docs/operation_types.md).
 //
-//   Open         start() / startFor(setup) a new operation (the type chosen from the registry's list; the CAM
-//                tree's "New operation" on a setup row, the cam.opTool.new command); edit(op) an existing one (the
-//                tree's double-click, operationEditRequested).
+//   Open         start() / startFor(setup) a new operation (the CAM tree's "New operation" on a setup row, the
+//                cam.opTool.new command), of the type last added or changed with OK in this session, else drill (the
+//                type list in a fixed order, camui::orderedTypeNames); edit(op) an existing one (the tree's
+//                double-click, operationEditRequested).
 //   Sections     Tool (the tool library's picker, qml/cam/ToolPicker.qml over CamTools' catalog: the document's tools
 //                first, the types x-toolTypes offers for the current params, every tool behind "Show every tool", and
 //                the tool library manager one click away; the list follows the library as it changes (the stack's
@@ -76,7 +77,7 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(bool editing READ editing NOTIFY activeChanged)
     Q_PROPERTY(QString title READ title NOTIFY activeChanged)
     Q_PROPERTY(QString operationId READ operationId NOTIFY activeChanged)
-    // The registered types [{name, title}] and the one chosen.
+    // The registered types [{name, title}] in the panel's order (camui::orderedTypeNames) and the one chosen.
     Q_PROPERTY(QVariantList types READ types NOTIFY activeChanged)
     Q_PROPERTY(QString type READ type NOTIFY typeChanged)
     Q_PROPERTY(QString typeTitle READ typeTitle NOTIFY typeChanged)
@@ -89,7 +90,8 @@ class OperationToolModel : public QObject {
     Q_PROPERTY(QVariantMap fullValues READ fullValues NOTIFY valuesChanged)
     // Messages beside those fields, by key.
     Q_PROPERTY(QVariantMap fieldMessages READ fieldMessages NOTIFY statusChanged)
-    // The heights the type uses [{key, label, hint}] and the cutting members it uses.
+    // The heights the type uses [{key, label, hint, from}] ("from": what x-heightsUsed says it is measured from, as
+    // the hint under the field, "from stock top"; "" when it does not say) and the cutting members it uses.
     Q_PROPERTY(QVariantList heights READ heights NOTIFY typeChanged)
     Q_PROPERTY(QStringList cutting READ cutting NOTIFY typeChanged)
     // Tool: the chosen one ("" none) and its text; the tool types x-toolTypes offers for the current params (empty:
@@ -312,7 +314,8 @@ private:
     std::optional<SetupId> setup_;
     bool editing_ = false;
     QString type_;
-    QJsonObject schema_; // the type's schema (annotations)
+    QString lastUsedType_; // of the last operation added or changed with OK in this session ("" none yet)
+    QJsonObject schema_;   // the type's schema (annotations)
     camui::GeometrySpec geometry_;
     QStringList heights_, cutting_;
     QVariantMap values_;

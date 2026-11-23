@@ -165,9 +165,10 @@ PropertyPlugin engravePlugin()
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("engrave", engravePlugin())
+RAY_INVARIANT_PROPERTY_TESTS("engrave", "[property_engrave]", engravePlugin())
 
-TEST_CASE("invariant property: engrave, the checker sees what engraving cuts", "[cam][invariants][property]")
+TEST_CASE("invariant property: engrave, the checker sees what engraving cuts",
+          "[cam][invariants][property][property_engrave]")
 {
     // Without the allowed cuts every engraving is a gouge of the plate's top: the cases are checked against the part.
     PropertyPlugin p = engravePlugin();
@@ -186,7 +187,7 @@ TEST_CASE("invariant property: engrave, the checker sees what engraving cuts", "
     }
 }
 
-TEST_CASE("invariant property: engrave, a flat end mill is refused", "[cam][invariants][property]")
+TEST_CASE("invariant property: engrave, a flat end mill is refused", "[cam][invariants][property][property_engrave]")
 {
     PropertyPlugin p = engravePlugin();
     const auto adjust = p.adjust;

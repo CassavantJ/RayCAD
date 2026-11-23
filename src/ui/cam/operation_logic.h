@@ -30,8 +30,21 @@ struct GeometrySpec {
 GeometrySpec geometrySpec(const QJsonObject& schema);
 // The five heights in their order.
 const QStringList& heightKeys();
-// x-heightsUsed, in heightKeys() order (all five when absent).
+// x-heightsUsed, in heightKeys() order (all five when absent): its keys (the object form) or its names (the array
+// form).
 QStringList heightsUsed(const QJsonObject& schema);
+// What x-heightsUsed says height `key` is measured from ("stockTop", "partTop", "workZero", "eachPick",
+// "highestPick"), "" when it does not say.
+QString heightFrom(const QJsonObject& schema, const QString& key);
+// The hint for a reference, worded for the geometry kind the type picks: "from stock top", "from each hole's top",
+// "from the picked edges", ...; "" for an unknown or empty reference.
+QString heightFromText(const QString& from, const QString& geometryKind);
+// The registered type names in the panel's order: drill, face, contour2d, pocket2d, slot, chamfer2d, engrave,
+// threadmill, then any others by name.
+QStringList orderedTypeNames(const QStringList& names);
+// The type a new operation starts with: `lastUsed` when it is one of `names`, else drill, else the first of
+// orderedTypeNames; "" when there are none.
+QString defaultTypeName(const QStringList& names, const QString& lastUsed);
 // The cutting members (rpm, clockwise, feedCut, feedPlunge, feedRamp, feedLeadIn, feedLeadOut, coolant).
 const QStringList& cuttingKeys();
 // x-cuttingUsed, in cuttingKeys() order (all when absent); rpm and feedCut are always in it.
@@ -40,9 +53,12 @@ QStringList cuttingUsed(const QJsonObject& schema);
 QStringList toolTypesFor(const QJsonObject& schema, const QJsonObject& params);
 // All five heights from the used ones: an unused height takes the nearest used one before it, else after it.
 std::map<QString, double> completeHeights(const std::map<QString, double>& used);
-// The first pair of the five out of order (clearance >= retract >= feedPlane >= top >= bottom), as the keys of the
-// lower and the higher; nullopt when ordered.
-std::optional<std::pair<QString, QString>> heightsOutOfOrder(const std::map<QString, double>& heights);
+// The first pair of heights out of the order every operation of the type needs (api::cam_operation::heightsOutOfOrder:
+// two heights the type reads, measured from one reference, the earlier of clearance, retract, feedPlane, top, bottom
+// below the later), as the keys of the lower and the higher; nullopt otherwise (any other order is the type's own
+// validation's to judge, and the panel shows its message). Heights missing from the map count as 0.
+std::optional<std::pair<QString, QString>> heightsOutOfOrder(const QJsonObject& schema,
+                                                             const std::map<QString, double>& heights);
 
 // ---------- Feeds ----------
 // "Use calculated" has no rule for these (cam.h computeFeeds): fractions of the cut feed, offered as editable defaults.

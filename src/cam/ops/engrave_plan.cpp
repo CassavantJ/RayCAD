@@ -416,10 +416,10 @@ private:
         o.clearance = toNm(h.clearance);
         o.retract = toNm(h.retract);
         o.feedPlane = toNm(h.feedPlane);
-        // Rapids over the stock stay at or above its top (the toolpath invariant checker's rapid floor, which no
-        // engraving claims lower): a feed plane below the stock's top is raised to it for linking, and the tool feeds
-        // from there. Linking itself would be safe lower (the tool's end below), but only over what an earlier pass
-        // cut, which the checker does not credit.
+        // Rapids over the stock stay at or above its top: a feed plane below the stock's top is raised to it for
+        // linking, and the tool feeds from there. Linking itself would be safe lower (the tool's end below), but only
+        // over what an earlier pass cut, which nothing independent checks (engrave.h, PASSES AND LINKING, says why the
+        // invariant checker's rapid floor is not claimed lower).
         const Nm stockTop = toNm(in_.geom.stockBounds.max.z);
         if (o.feedPlane < stockTop && stockTop <= o.retract) {
             plan_.warnings.push_back("The feed plane (Z" + mmText(o.feedPlane) + ") is below the top of the stock (Z" +

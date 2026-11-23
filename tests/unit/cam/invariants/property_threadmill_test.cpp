@@ -238,10 +238,11 @@ PropertyPlugin externalPlugin()
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("threadmill", internalPlugin())
-RAY_INVARIANT_PROPERTY_TESTS("threadmill outside", externalPlugin())
+RAY_INVARIANT_PROPERTY_TESTS("threadmill", "[property_threadmill]", internalPlugin())
+RAY_INVARIANT_PROPERTY_TESTS("threadmill outside", "[property_threadmill]", externalPlugin())
 
-TEST_CASE("invariant property: threadmill, the checker sees what thread milling cuts", "[cam][invariants][property]")
+TEST_CASE("invariant property: threadmill, the checker sees what thread milling cuts",
+          "[cam][invariants][property][property_threadmill]")
 {
     // Without the claim that cutting the thread is intended, every case is a gouge of the bore: the thread cases are
     // checked against the part, not passed vacuously.
@@ -260,7 +261,8 @@ TEST_CASE("invariant property: threadmill, the checker sees what thread milling 
     }
 }
 
-TEST_CASE("invariant property: threadmill, the other direction is caught", "[cam][invariants][property]")
+TEST_CASE("invariant property: threadmill, the other direction is caught",
+          "[cam][invariants][property][property_threadmill]")
 {
     // Claiming the opposite of what the operation was asked for is reported along the wall: the direction is judged.
     PropertyPlugin p = internalPlugin();

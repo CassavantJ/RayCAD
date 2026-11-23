@@ -505,6 +505,59 @@ TEST_CASE("operation params are checked against the type's schema, with its defa
     CHECK(paramsOf(4) == R"({"anything":[1,2]})");
     CHECK(statusOf(*app, 4).status == cam::OpStatus::Failed);
 }
+TEST_CASE("operation heights: the API refuses only an order every operation of the type would refuse",
+          "[api][cam][heights]")
+{
+    TempDir dir;
+    const std::string builtin = dir.file("builtin");
+    writeLibrary(builtin, "Built-in");
+    auto app = makeCamApp("", builtin);
+    invoke(*app, "file.new", "{}");
+    makeBlock(*app);
+    addSetupAndOperation(*app, 1, "{}"); // embeds the tool
+    const auto opArgs = [](int op, const std::string& type, const std::string& heights) {
+        return R"({"id":")" + uuid('c', op) + R"(","setup":")" + uuid('a', 1) + R"(","type":")" + type +
+               R"(","name":"Op )" + std::to_string(op) + R"(","tool":{"tool":")" + uuid('d', 1) + R"("},"cutting":)" +
+               kCutting + R"(,"heights":)" + heights + "}";
+    };
+    const std::string before = app->active()->document->state()->stateHash().hex();
+
+    // face: clearance, retract, feedPlane and top from the stock top, bottom from the part top. A bottom above the
+    // top (leave 0.2 mm on the part, top 0) is face's own validation's to judge: stored as given.
+    invoke(*app, "cam.operation.add",
+           opArgs(2, "face", R"({"clearance":15,"retract":5,"feedPlane":2,"top":0,"bottom":0.2})"));
+    CHECK(app->active()
+              ->document->state()
+              ->cam->operations.at(OperationId{Uuid::fromString(uuid('c', 2))})
+              .heights.bottom == 0.2);
+    // Two heights from the stock top out of order: refused, naming both and what they are measured from.
+    Error e = invokeFails(*app, "cam.operation.add",
+                          opArgs(3, "face", R"({"clearance":15,"retract":1,"feedPlane":2,"top":0,"bottom":0})"));
+    CHECK(e.code == ErrorCode::InvalidArgument);
+    CHECK_THAT(e.message, ContainsSubstring("'heights.retract' (1 mm from the stock top) must not be below feedPlane "
+                                            "(2 mm from the stock top)"));
+    // An edit is checked with the operation's other heights.
+    e = invokeFails(*app, "cam.operation.edit", R"({"id":")" + uuid('c', 2) + R"(","heights":{"top":3}})");
+    CHECK_THAT(e.message, ContainsSubstring("'heights.feedPlane' (2 mm from the stock top) must not be below top"));
+
+    // drill: retract and top from each hole's top, clearance from the highest: those three keep their order, as before.
+    e = invokeFails(*app, "cam.operation.add",
+                    opArgs(3, "drill", R"({"clearance":15,"retract":1,"feedPlane":1,"top":2,"bottom":0})"));
+    CHECK_THAT(e.message, ContainsSubstring("'heights.retract' (1 mm from each pick) must not be below top"));
+    e = invokeFails(*app, "cam.operation.add",
+                    opArgs(3, "drill", R"({"clearance":3,"retract":5,"feedPlane":5,"top":0,"bottom":0})"));
+    CHECK_THAT(e.message, ContainsSubstring("'heights.clearance' (3 mm from the highest pick) must not be below "
+                                            "retract (5 mm from each pick)"));
+    // ... and the two it does not read are not checked.
+    invoke(*app, "cam.operation.add",
+           opArgs(3, "drill", R"({"clearance":15,"retract":5,"feedPlane":9,"top":0,"bottom":4})"));
+
+    // A type whose schema does not say (no x-heightsUsed): nothing is checked here, the type judges.
+    invoke(*app, "cam.operation.add",
+           opArgs(4, "test.gen", R"({"clearance":1,"retract":5,"feedPlane":2,"top":3,"bottom":4})"));
+    CHECK(app->active()->document->state()->stateHash().hex() != before);
+}
+
 TEST_CASE("closing a document makes the engine forget its operations, unless another open copy has them",
           "[api][cam][forget]")
 {

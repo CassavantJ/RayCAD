@@ -130,8 +130,8 @@ PropertyPlugin chamferPlugin()
 
 } // namespace
 
-// As RAY_INVARIANT_PROPERTY_TESTS("chamfer2d", chamferPlugin()) defines them, with the tag [property_chamfer2d] too:
-// CTest runs these cases as a test of their own (ray_cam_invariants_chamfer2d, CMakeLists.txt).
+// As RAY_INVARIANT_PROPERTY_TESTS("chamfer2d", "[property_chamfer2d]", chamferPlugin()) defines them: CTest runs the
+// cases with the tag [property_chamfer2d] as a test of their own (ray_cam_invariants_chamfer2d, CMakeLists.txt).
 TEST_CASE("invariant property: chamfer2d, quick seeds", "[cam][invariants][property][property_chamfer2d]")
 {
     requireProperty(chamferPlugin(), kQuickCases);

@@ -10,6 +10,7 @@
 
 #include "../doc/features/hole_standards.h"
 
+#include <ray_api/cam_operation.h>
 #include <ray_api/feature_edit.h>
 
 #include <optional>
@@ -262,13 +263,77 @@ using ArgsCheck = std::function<Result<doc::Command>(const doc::DocState&, const
 
 } // namespace
 
+namespace {
+
+// The heights an add or edit gives, over the operation's for an edit; nullopt when a member is missing or not a
+// number (the command reports that itself).
+std::optional<cam::Heights> givenHeights(const Value& args, const cam::Operation* current)
+{
+    cam::Heights h = current != nullptr ? current->heights : cam::Heights{};
+    const Value* given = args.find("heights");
+    if (given == nullptr) {
+        return current != nullptr ? std::optional<cam::Heights>(h) : std::nullopt;
+    }
+    if (!given->isObject()) {
+        return std::nullopt;
+    }
+    for (const auto& [key, slot] :
+         {std::pair<const char*, double*>{"clearance", &h.clearance},
+          std::pair<const char*, double*>{"retract", &h.retract},
+          std::pair<const char*, double*>{"feedPlane", &h.feedPlane}, std::pair<const char*, double*>{"top", &h.top},
+          std::pair<const char*, double*>{"bottom", &h.bottom}}) {
+        const Value* v = given->find(key);
+        if (v == nullptr && current == nullptr) {
+            return std::nullopt;
+        }
+        if (v != nullptr) {
+            if (!v->isNumber()) {
+                return std::nullopt;
+            }
+            *slot = v->asNumber();
+        }
+    }
+    return h;
+}
+
+// "from the stock top" for a reference of x-heightsUsed (docs/operation_types.md).
+std::string fromWords(const std::string& from)
+{
+    if (from == "stockTop") {
+        return "from the stock top";
+    }
+    if (from == "partTop") {
+        return "from the part top";
+    }
+    if (from == "workZero") {
+        return "from the work zero";
+    }
+    if (from == "eachPick") {
+        return "from each pick";
+    }
+    if (from == "highestPick") {
+        return "from the highest pick";
+    }
+    return "from " + from;
+}
+
+std::string mmWords(double v)
+{
+    std::string s = json::write(Value::number(v));
+    return s + " mm";
+}
+
+} // namespace
+
 // cam.operation.add and cam.operation.edit: "params" checked against the operation type's schema
 // (IOperationType::paramsSchemaJson; the document has no operation registry, so its commands cannot), with the
-// schema's top-level defaults filled in for params left out, so the document stores them. The type is "type", else (an
-// edit) the operation's type in `state`. An edit is checked when it gives params or changes the type (the operation's
-// params are then checked, and completed, for the new type). A type the app has not registered is not checked: the
-// engine reports such an operation Failed ("Unknown operation type"). Errors name the JSON Pointer of the bad value,
-// "/params/...".
+// schema's top-level defaults filled in for params left out, so the document stores them; and "heights" against the
+// order the schema's x-heightsUsed makes certain (cam_operation::heightsOutOfOrder: two heights the type reads from
+// one reference; any other order is the type's own validation's). The type is "type", else (an edit) the operation's
+// type in `state`. An edit is checked when it gives params or heights or changes the type (the operation's params are
+// then checked, and completed, for the new type; its heights, with those given, for that type). A type the app has not
+// registered is not checked: the engine reports such an operation Failed ("Unknown operation type"). Errors name the
+// JSON Pointer of the bad value, "/params/...", or the height, "'heights.retract'".
 Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, const doc::DocState& state,
                                           const doc::Command& command)
 {
@@ -278,6 +343,7 @@ Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, c
     }
     const Value* typeArg = args->find("type");
     const cam::Operation* current = nullptr;
+    bool checkParams = true, checkHeights = true;
     if (command.name == "cam.operation.edit") {
         const Value* id = args->find("id");
         if (id != nullptr && id->isString() && state.cam) {
@@ -290,7 +356,9 @@ Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, c
             return command; // the command reports the missing operation
         }
         const bool typeChanges = typeArg != nullptr && typeArg->isString() && typeArg->asString() != current->type;
-        if (args->find("params") == nullptr && !typeChanges) {
+        checkParams = args->find("params") != nullptr || typeChanges;
+        checkHeights = args->find("heights") != nullptr || typeChanges;
+        if (!checkParams && !checkHeights) {
             return command;
         }
     }
@@ -305,6 +373,27 @@ Result<doc::Command> checkOperationParams(const cam::OperationRegistry* types, c
     if (!schemaValue) {
         return fail(ErrorCode::Internal, "The params schema of operation type '" + type +
                                              "' is not valid JSON: " + schemaValue.error().message);
+    }
+    if (checkHeights) {
+        if (const auto heights = givenHeights(*args, current)) {
+            if (const auto bad = cam_operation::heightsOutOfOrder(opType->paramsSchemaJson(), *heights)) {
+                const auto value = [&](const std::string& key) {
+                    return key == "clearance"   ? heights->clearance
+                           : key == "retract"   ? heights->retract
+                           : key == "feedPlane" ? heights->feedPlane
+                           : key == "top"       ? heights->top
+                                                : heights->bottom;
+                };
+                return fail(ErrorCode::InvalidArgument,
+                            command.name + ": 'heights." + bad->higher + "' (" + mmWords(value(bad->higher)) + " " +
+                                fromWords(bad->higherFrom) + ") must not be below " + bad->lower + " (" +
+                                mmWords(value(bad->lower)) + " " + fromWords(bad->lowerFrom) +
+                                ") for an operation of type '" + type + "'");
+            }
+        }
+    }
+    if (!checkParams) {
+        return command;
     }
     Value params = Value::object();
     if (const Value* given = args->find("params")) {

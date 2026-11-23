@@ -87,11 +87,26 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
 
 - `x-propertyOrder`: the order of the form, an array of property names; properties it does not list follow in key
   order (canonical JSON sorts keys), names that are not properties are ignored.
-- `x-heightsUsed`: the members of `Operation::heights` the type reads, a subset of `clearance`, `retract`,
-  `feedPlane`, `top`, `bottom`; absent means all five. Only these are shown. The commands still store all five,
-  ordered clearance >= retract >= feedPlane >= top >= bottom, so the panel gives an unused height the value of the
-  nearest used one before it in that order, else of the nearest used one after it (drill: `feedPlane` = `retract`,
-  `bottom` = `top`), and the type must not read them.
+- `x-heightsUsed`: the members of `Operation::heights` the type reads, each with the reference it is measured from:
+  an object `{ "<height>": "<reference>", ... }` whose keys are a subset of `clearance`, `retract`, `feedPlane`, `top`,
+  `bottom` (the older form, an array of those names, still reads, with no reference known). Absent means all five,
+  references unknown. Only these are shown, each with its reference as a hint under the field. The references:
+  - `stockTop`: the top of the setup's stock box ("from stock top");
+  - `partTop`: the highest point of the setup's part bodies ("from part top");
+  - `workZero`: absolute WCS Z, the work offset's zero ("from work zero");
+  - `eachPick`: each picked element's own height: a hole's top, a chain of edges' height, a face's height ("from each
+    hole's top", "from the picked edges", "from the picked faces", by `x-geometry`'s kind);
+  - `highestPick`: the highest of the picked elements ("from the highest hole top", "from the highest pick").
+  The commands store all five; the panel gives an unused height the value of the nearest used one before it in the
+  order clearance, retract, feedPlane, top, bottom, else of the nearest used one after it (drill: `feedPlane` =
+  `retract`, `bottom` = `top`), and the type must not read them.
+  Order: the document's commands check no order (the document has no operation registry). The API (and the panel
+  before it) refuses, for a registered type, only an order every operation of the type would refuse whatever its
+  geometry: of two heights the type uses, the one earlier in that order below the later one when both are measured
+  from the same reference, or the earlier from `highestPick` and the later from `eachPick` (the highest pick has both).
+  Every other order (heights from different references, such as face's `bottom` from the part top against its `top`
+  from the stock top, and the absolute levels against the stock or the part) is the type's own validation's to judge,
+  with a message naming the references; every type must make that check (docs above: "heights out of order").
 - `x-cuttingUsed`: the members of `Operation::cutting` the type reads, a subset of `rpm`, `clockwise`, `feedCut`,
   `feedPlunge`, `feedRamp`, `feedLeadIn`, `feedLeadOut`, `coolant`; absent means all. Only these are shown; `rpm` and
   `feedCut` are always required by the commands, and an unused feed is stored as the cut feed.
@@ -109,7 +124,7 @@ without a `default` cannot be reset (OpSchema refuses such a schema anyway).
 
 Lengths are stored in mm, times in seconds; the operation's own `Heights` and `CuttingData` are not params. Say in
 the schema's top `description` what the type reads from them and what it ignores (drill ignores `feedPlane` and
-`bottom`).
+`bottom`), and give `x-heightsUsed` the reference of each height it reads.
 
 ### Feeds the panel offers
 

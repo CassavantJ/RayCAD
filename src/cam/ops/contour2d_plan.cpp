@@ -1197,6 +1197,9 @@ private:
         o.entryClearance = kEntryClearance;
         o.spindleClockwise = true;
         o.keepOrder = true;
+        // So linking's refusals name the compensation the passes have on (wear or in the control).
+        o.compensation =
+            p_.comp == Comp::Wear ? link::Options::Compensation::Wear : link::Options::Compensation::Control;
         plan_.stock = link::stockOf(in_.geom);
         std::vector<link::Pass> passes;
         passes.reserve(plan_.passes.size());
@@ -1501,15 +1504,40 @@ Result<std::vector<Move>> tabbedMoves(const Path& path, Nm z, const std::vector<
     const double L = geom2d::length(path);
     const double half = t.width / 2;
     const double R = t.radius;
-    const double lr =
-        t.shape == TabShape::Rectangular && !t.centreCutting
-            ? static_cast<double>(t.zt - z) / dmath::tan(t.rampAngleDeg * kPi / 180.0) * (1.0 + kRampSlack)
-            : 0.0;
+    // A tool that does not cut at its centre goes down into material only at the ramp angle: its ramps (and a
+    // triangular tab's flanks, which checkTabs keeps at most that steep) are made by the slope-capped appendSloped, so
+    // rounding never makes a piece steeper than the angle. A flank exactly at the angle (checkTabs allows 1e-9 degrees)
+    // can be too short for it by a nanometre; it is then made proportionally, as are the flanks of a tool that cuts
+    // at its centre, which have no angle to keep.
+    const double maxSlope = !t.centreCutting && t.rampAngleDeg > 0 ? dmath::tan(t.rampAngleDeg * kPi / 180.0) : 0.0;
+    // The ramp back down behind each rectangular tab (a tool that does not cut at its centre): Lr = (zt - z) /
+    // tan(rampAngle), kRampSlack longer, and longer still where it runs over many short pieces of the path (each may
+    // lose under a nanometre of descent to the capped rounding): as linking does for its ramps, the run grows by a
+    // nanometre of descent per piece until the capped ramp fits, at most kMaxRampTries times.
+    constexpr int kMaxRampTries = 8;
+    const bool ramps = t.shape == TabShape::Rectangular && !t.centreCutting;
+    std::vector<double> lrs(tabs.size(), 0.0);
+    for (std::size_t i = 0; ramps && i < tabs.size(); ++i) {
+        const double b = tabs[i].centre + half + R;
+        double lr = maxSlope > 0 ? static_cast<double>(t.zt - z) / maxSlope * (1.0 + kRampSlack)
+                                 : std::numeric_limits<double>::infinity();        // no ramp angle: it never fits
+        for (int attempt = 0; attempt < kMaxRampTries && b + lr <= L; ++attempt) { // past the end: refused below
+            const Path back = geom2d::reverse(geom2d::subPath(path, b, b + lr));
+            std::vector<Move> probe;
+            if (link::appendSloped(back, t.zt, z, maxSlope, MoveRole::Ramp, rampFeed, probe)) {
+                break;
+            }
+            probe.clear();
+            geom2d::appendMoves(back, z, MoveRole::Ramp, rampFeed, probe);
+            lr += static_cast<double>(probe.size() + 1) / maxSlope;
+        }
+        lrs[i] = lr;
+    }
     // Each tab's extent along the path, checked.
     double prevEnd = 0;
     for (std::size_t i = 0; i < tabs.size(); ++i) {
         const double a = tabs[i].centre - half - R;
-        const double e = tabs[i].centre + half + R + lr;
+        const double e = tabs[i].centre + half + R + lrs[i];
         if (a < prevEnd || e > L) {
             return tl::unexpected(Error{ErrorCode::ToolpathFailed,
                                         "the " + std::to_string(tabs.size()) + " tabs do not fit along the " +
@@ -1534,6 +1562,7 @@ Result<std::vector<Move>> tabbedMoves(const Path& path, Nm z, const std::vector<
             cur = Pt{out.back().x, out.back().y};
         }
     };
+    bool rampTooShort = false;
     const auto sloped = [&](double s0, double s1, Nm z0, Nm z1, MoveRole role, std::int32_t f, bool backwards) {
         Path sp = geom2d::subPath(path, s0, s1);
         if (backwards) {
@@ -1541,7 +1570,10 @@ Result<std::vector<Move>> tabbedMoves(const Path& path, Nm z, const std::vector<
         }
         sp.start = cur;
         const std::size_t first = out.size();
-        link::appendSloped(sp, z0, z1, role, f, out);
+        if (!(maxSlope > 0) || !link::appendSloped(sp, z0, z1, maxSlope, role, f, out)) {
+            rampTooShort = rampTooShort || (maxSlope > 0 && role == MoveRole::Ramp);
+            link::appendSloped(sp, z0, z1, role, f, out);
+        }
         if (out.size() > first) {
             cur = Pt{out.back().x, out.back().y};
         }
@@ -1558,7 +1590,9 @@ Result<std::vector<Move>> tabbedMoves(const Path& path, Nm z, const std::vector<
         out.push_back(m);
     };
     double s = 0;
-    for (const Tab& tab : tabs) {
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+        const Tab& tab = tabs[i];
+        const double lr = lrs[i];
         const double a = tab.centre - half - R;
         const double b = tab.centre + half + R;
         flat(s, a, z, MoveRole::Cut, feed);
@@ -1580,6 +1614,12 @@ Result<std::vector<Move>> tabbedMoves(const Path& path, Nm z, const std::vector<
             sloped(tab.centre + R, b, t.zt, z, MoveRole::Cut, feed, false);
             s = b;
         }
+    }
+    if (rampTooShort) {
+        return tl::unexpected(Error{ErrorCode::Internal,
+                                    "a tab's ramp back down at " + mmText(t.rampAngleDeg) +
+                                        " degrees came out too short to keep that angle",
+                                    {}});
     }
     // The rest of the pass; a closed path ends exactly at its start.
     flat(s, L, z, MoveRole::Cut, feed);

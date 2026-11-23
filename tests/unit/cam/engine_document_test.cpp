@@ -183,8 +183,18 @@ TEST_CASE("cam commands check their arguments and change nothing when they fail"
                                            R"("},"cutting":{"rpm":0,"feedCut":1,"feedPlunge":1},"heights":)" +
                                            kHeights + "}"),
           "'cutting.rpm' must be greater than 0");
-    fails(command("cam.operation.edit", R"({"id":")" + id('c', 1) + R"(","heights":{"retract":50}})"),
-          "clearance >= retract");
+    // Heights: numbers, but no order: the document has no registry to know which heights a type reads and what each
+    // is measured from (the API and the type's validation judge the order).
+    fails(command("cam.operation.edit", R"({"id":")" + id('c', 1) + R"(","heights":{"retract":"high"}})"),
+          "'heights.retract'");
+    {
+        const auto edited =
+            exec(state, command("cam.operation.edit", R"({"id":")" + id('c', 1) + R"(","heights":{"retract":50}})"));
+        CHECK(edited->cam->operations.at(opId(1)).heights.retract == 50);
+        const auto above =
+            exec(state, command("cam.operation.edit", R"({"id":")" + id('c', 1) + R"(","heights":{"bottom":0.2}})"));
+        CHECK(above->cam->operations.at(opId(1)).heights.bottom == 0.2);
+    }
     fails(command("cam.operation.edit", R"({"id":")" + id('c', 1) + R"(","cutting":{"speed":1}})"),
           "'cutting.speed' is not a known member");
     fails(command("cam.operation.edit", R"({"id":")" + id('c', 1) + R"("})"), "nothing to change");

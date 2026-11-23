@@ -96,6 +96,64 @@ Result<doc::Command> completeCommand(IApp& app, const doc::DocState& state, cons
     }
 }
 
+std::vector<HeightUse> heightsUsed(std::string_view schemaJson)
+{
+    static constexpr const char* kKeys[] = {"clearance", "retract", "feedPlane", "top", "bottom"};
+    std::vector<HeightUse> all;
+    for (const char* k : kKeys) {
+        all.push_back(HeightUse{k, {}});
+    }
+    auto schema = json::parse(schemaJson);
+    if (!schema || !schema->isObject()) {
+        return all;
+    }
+    const json::Value* used = schema->find("x-heightsUsed");
+    if (used == nullptr) {
+        return all;
+    }
+    std::vector<HeightUse> out;
+    for (const char* k : kKeys) {
+        if (used->isArray()) {
+            for (const json::Value& v : used->asArray()) {
+                if (v.isString() && v.asString() == k) {
+                    out.push_back(HeightUse{k, {}});
+                    break;
+                }
+            }
+        } else if (used->isObject()) {
+            if (const json::Value* from = used->find(k)) {
+                out.push_back(HeightUse{k, from->isString() ? from->asString() : std::string()});
+            }
+        }
+    }
+    return used->isArray() || used->isObject() ? out : all;
+}
+
+std::optional<HeightsOrder> heightsOutOfOrder(std::string_view schemaJson, const cam::Heights& h)
+{
+    const auto value = [&h](const std::string& key) {
+        return key == "clearance"   ? h.clearance
+               : key == "retract"   ? h.retract
+               : key == "feedPlane" ? h.feedPlane
+               : key == "top"       ? h.top
+                                    : h.bottom;
+    };
+    // Measured so that `higher` >= `lower` must hold for every operation: the same known reference, or the highest
+    // pick against each pick (the highest pick is one of them).
+    const auto comparable = [](const std::string& higher, const std::string& lower) {
+        return !higher.empty() && (higher == lower || (higher == "highestPick" && lower == "eachPick"));
+    };
+    const std::vector<HeightUse> used = heightsUsed(schemaJson);
+    for (std::size_t i = 0; i < used.size(); ++i) {
+        for (std::size_t j = i + 1; j < used.size(); ++j) {
+            if (comparable(used[i].from, used[j].from) && value(used[i].key) < value(used[j].key)) {
+                return HeightsOrder{used[i].key, used[j].key, used[i].from, used[j].from};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 Result<double> evaluate(const doc::DocState& state, std::string_view expression, doc::Parameter::Kind kind)
 {
     try {

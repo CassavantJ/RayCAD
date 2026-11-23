@@ -163,4 +163,4 @@ PropertyPlugin contourPlugin()
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("contour2d", contourPlugin())
+RAY_INVARIANT_PROPERTY_TESTS("contour2d", "[property_contour2d]", contourPlugin())

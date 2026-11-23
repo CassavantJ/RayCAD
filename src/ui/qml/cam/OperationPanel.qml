@@ -53,6 +53,7 @@ Item {
         property string label
         property string hint: ""
         property string placeholder: ""
+        property string note: "" // a short line under the field (a height's reference: "from stock top")
         readonly property string error: root.messages[key] !== undefined ? String(root.messages[key]) : ""
         objectName: "operationField." + key
         spacing: Theme.spacingXs / 2
@@ -91,6 +92,17 @@ Item {
                 Keys.onEnterPressed: CamOperation.commit()
                 Keys.onEscapePressed: CamOperation.cancel()
             }
+        }
+        Label {
+            objectName: "operationFieldNote." + fieldRow.key
+            visible: fieldRow.note !== ""
+            x: root.labelWidth + Theme.spacingS
+            width: root.fieldWidth
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+            font: Theme.smallFont
+            secondary: true
+            text: fieldRow.note
         }
         Label {
             objectName: "operationFieldError." + fieldRow.key
@@ -447,6 +459,7 @@ Item {
                         key: modelData.key
                         label: modelData.label
                         hint: modelData.hint
+                        note: modelData.from
                     }
                 }
 

@@ -34,8 +34,8 @@
 // embedded in the same step (PLAN.md 3.1: a document carries a copy of every library item it uses, taken on first use).
 // Checks: bodies are bodies of the document (part and fixture bodies distinct, at least one part); a "fromSetup" stock
 // names an earlier setup; the machine, tool and holder named are embedded (or come in "library"); an operation's
-// geometry lies on its setup's part bodies; heights are ordered (cam_json.h). Params are not checked against the
-// operation type's schema here (the document has no operation registry: the engine and the API do that).
+// geometry lies on its setup's part bodies. Params and the order of the heights are not checked against the operation
+// type's schema here (the document has no operation registry: the engine and the API do that).
 // Every command here changes toolpaths or G-code (changesToolpathsOrGcode() is true), so automation asks the user.
 // A state whose CAM state becomes empty stores none (DocState::cam null), so it hashes like one that never had any.
 #include "args.h"

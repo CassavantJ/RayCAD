@@ -30,10 +30,33 @@ struct TypeInfo {
 std::vector<TypeInfo> operationTypes(IApp& app);
 
 // cam.operation.add / cam.operation.edit as the action runs them on `state`: "params" checked against the type's
-// schema and completed with its defaults (the API's check), so Document::beginPreview previews exactly what OK
-// commits. The other members are checked by the command itself when it is applied. Errors name the JSON Pointer of the
-// bad value ("/params/peck: must be at least 0").
+// schema and completed with its defaults (the API's check), and "heights" against the order the type's x-heightsUsed
+// makes certain (heightsOutOfOrder below), so Document::beginPreview previews exactly what OK commits. The other
+// members are checked by the command itself when it is applied. Errors name the JSON Pointer of the bad params value
+// ("/params/peck: must be at least 0"), or the height ("'heights.retract' (...) must not be below ...").
 Result<doc::Command> completeCommand(IApp& app, const doc::DocState& state, const doc::Command& command);
+
+// ---------- Heights (x-heightsUsed, docs/operation_types.md) ----------
+// Added after M3: what a type's schema says about Operation::heights. The heights it reads, in the order clearance,
+// retract, feedPlane, top, bottom, each with the reference it is measured from ("stockTop", "partTop", "workZero",
+// "eachPick", "highestPick"; "" when the schema does not say, as the array form). All five with "" when the schema has
+// no x-heightsUsed or does not parse.
+struct HeightUse {
+    std::string key;
+    std::string from;
+};
+std::vector<HeightUse> heightsUsed(std::string_view schemaJson);
+// The first pair of heights the type reads that is out of an order every operation of the type would refuse whatever
+// its geometry: `higher` comes before `lower` in clearance, retract, feedPlane, top, bottom but is below it, and both
+// are measured from the same known reference, or `higher` from "highestPick" and `lower` from "eachPick" (the highest
+// pick has both). nullopt otherwise: an order between heights of different references is the type's own validation's
+// to judge (face: bottom from the part top may be above top from the stock top). The API refuses cam.operation.add and
+// edit with such heights; the operation panel says so before it previews.
+struct HeightsOrder {
+    std::string higher, lower;         // the keys
+    std::string higherFrom, lowerFrom; // their references
+};
+std::optional<HeightsOrder> heightsOutOfOrder(std::string_view schemaJson, const cam::Heights& heights);
 
 // ---------- Numeric fields ----------
 // The value of a field as the document's expressions read it (doc::evaluate over the document's parameters): Length

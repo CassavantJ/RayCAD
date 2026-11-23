@@ -29,16 +29,15 @@ std::string stock(double above)
     return R"("stock":{"type":"box","xNeg":2,"xPos":2,"yNeg":2,"yPos":2,"zNeg":0,"zPos":)" + dt::num(above) + "}";
 }
 
-doc::Command faceOpAdd(std::uint64_t n, const std::string& params)
+doc::Command faceOpAdd(std::uint64_t n, const std::string& params, const std::string& bottom = "0")
 {
     return ct::command("cam.operation.add",
                        R"({"id":")" + ct::id('c', n) + R"(","setup":")" + ct::id('a', 1) +
                            R"(","type":"face","name":"Face )" + std::to_string(n) + R"(","tool":{"tool":")" +
                            ct::id('d', 1) +
                            R"(","stickOut":30},"cutting":{"rpm":6000,"feedCut":1000,"feedPlunge":300},)"
-                           R"("heights":{"clearance":15,"retract":5,"feedPlane":2,"top":0,"bottom":0},"geometry":[],)"
-                           R"("params":)" +
-                           params + "}");
+                           R"("heights":{"clearance":15,"retract":5,"feedPlane":2,"top":0,"bottom":)" +
+                           bottom + R"(},"geometry":[],"params":)" + params + "}");
 }
 
 struct Env {
@@ -152,6 +151,42 @@ TEST_CASE("facing end to end: commands, the engine, a stock edit, stock without 
                                                                               R"(","params":{"pattern":"oneWay"}})"));
     CHECK(e.statusOf(oneWay, build, 1).status == OpStatus::Stale);
     REQUIRE(e.generate(oneWay, build, 1));
+}
+
+TEST_CASE("facing to 0.2 mm above the part with the top at 0: a bottom above the top is the type's to judge",
+          "[cam][face][document][heights]")
+{
+    // The bottom is measured from the part top and the top from the stock top (face.schema.json x-heightsUsed), so
+    // bottom 0.2 above top 0 is an ordinary request: leave 0.2 mm on the part. The commands store it; face's own
+    // validation decides, and faces from the stock top (Z 0) down to the part top + 0.2 (Z -1.3).
+    Env e;
+    auto state = std::make_shared<const doc::DocState>();
+    state = ct::exec(
+        state,
+        dt::addFeature("sketch", 2, dt::sketchProps(R"({"principal":"xy"})", dt::SketchJson().rect(1, 0, 0, 60, 40))));
+    state = ct::exec(state, dt::addFeature("extrude", 3, dt::extrudeProps(2, "15", "new", 'b')));
+    auto build = e.env.rebuild(state);
+    state =
+        ct::exec(state, ct::command("cam.library.embed", ct::library(ct::toolJson(1, 6.0), {}, ct::machineJson(1))));
+    state = ct::exec(state, ct::setupAdd(1, "\"" + dt::uuid('b', 1) + "\"", "," + stock(1.5)));
+    state = ct::exec(state, faceOpAdd(1, R"({"stepdown":1})", "0.2"));
+    CHECK(state->cam->operations.at(ct::opId(1)).heights.bottom == 0.2);
+    auto faced = e.generate(state, build, 1);
+    if (!faced) {
+        FAIL(faced.error().message);
+    }
+    CHECK(cutLevels(**faced) == std::vector<Nm>{-650'000, -1'300'000});
+    CHECK(e.statusOf(state, build, 1).status == OpStatus::UpToDate);
+
+    // A bottom that leaves nothing to face (1.5 above the part top is the stock top itself): refused by face, with
+    // the references named.
+    const auto flush = ct::exec(
+        state, ct::command("cam.operation.edit", R"({"id":")" + ct::id('c', 1) + R"(","heights":{"bottom":1.5}})"));
+    auto refused = e.generate(flush, build, 1);
+    REQUIRE_FALSE(refused);
+    CHECK_THAT(refused.error().message, ContainsSubstring("Nothing to face"));
+    CHECK_THAT(refused.error().message, ContainsSubstring("the part top"));
+    CHECK_THAT(refused.error().message, ContainsSubstring("the stock top"));
 }
 
 TEST_CASE("the operation types of the app include face with its schema", "[cam][face][document]")

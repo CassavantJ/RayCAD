@@ -40,7 +40,8 @@
 //    HoleOptions of recognizeHoles, and RecognizedHole carries the thread's nominal diameter and depth;
 //  - operationInputHash covers the threads of the hole features named on the setup's part bodies, so a thread edit
 //    (which changes no geometry: the thread is not modelled) makes the operations on that body stale;
-//  - registerBuiltinOperationTypes: the operation types src/cam ships ("drill"), which the app registers.
+//  - registerBuiltinOperationTypes: the operation types src/cam ships ("drill" then; the eight of M3 now, listed at the
+//    function), which the app registers.
 // Amended by T-045 (the operation panel; each also in docs/interfaces/cam.h):
 //  - Setup::material: the stock material the feeds are calculated for (none was stored anywhere a command can set);
 //    Operation::calculated: what "Use calculated" last wrote. Neither is read by a generator or in the input hash;
@@ -381,8 +382,9 @@ public:
 private:
     std::map<std::string, std::unique_ptr<IOperationType>, std::less<>> types_;
 };
-// Added by T-035: adds the operation types src/cam ships (src/cam/ops: "drill", which covers spot, drill, peck,
-// chipBreak, tap, bore and ream by its "cycle" parameter). The app calls it once at start-up (src/api).
+// Added by T-035: adds the operation types src/cam ships (src/cam/ops): "drill" (spot, drill, peck, chipBreak, tap,
+// bore and ream by its "cycle" parameter), "face", "contour2d", "pocket2d", "slot", "chamfer2d", "engrave" and
+// "threadmill" (M3, T-052 to T-056). The app calls it once at start-up (src/api).
 void registerBuiltinOperationTypes(OperationRegistry&);
 
 // ---------- Staleness / associativity ----------

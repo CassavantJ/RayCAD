@@ -168,7 +168,7 @@ PropertyPlugin pocketPlugin()
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("pocket2d", pocketPlugin())
+RAY_INVARIANT_PROPERTY_TESTS("pocket2d", "[property_pocket2d]", pocketPlugin())
 
 // One case by its seed, for a failure to be looked at alone: RAY_POCKET2D_SEED=<seed>, run "[.pocket2d-seed]".
 TEST_CASE("invariant property: pocket2d, one seed", "[.pocket2d-seed]")
@@ -187,7 +187,8 @@ TEST_CASE("invariant property: pocket2d, one seed", "[.pocket2d-seed]")
     CHECK(o.failures.empty());
 }
 
-TEST_CASE("invariant property: pocket2d, the checker sees what pocketing leaves", "[cam][invariants][property]")
+TEST_CASE("invariant property: pocket2d, the checker sees what pocketing leaves",
+          "[cam][invariants][property][property_pocket2d]")
 {
     // The coverage claims are not passed vacuously: the operation leaves 0.3 mm on the floors, the claims say it
     // leaves none, and every toolpath is then found keeping stock above the floor.

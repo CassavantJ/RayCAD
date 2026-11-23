@@ -686,14 +686,10 @@ Result<cam::Heights> readHeights(const Value& value, const Source& source, std::
             return o->error(key, "is required");
         }
     }
-    if (source.kind == Source::Kind::Args) {
-        if (!(z.clearance >= z.retract && z.retract >= z.feedPlane && z.feedPlane >= z.top)) {
-            return o->error("must be ordered clearance >= retract >= feedPlane >= top");
-        }
-        if (!(z.top >= z.bottom)) {
-            return o->error("bottom", "must not be above top");
-        }
-    }
+    // No order is checked here: which heights an operation type reads, and what each is measured from (the stock top,
+    // the part top, each picked hole, ...), is its schema's x-heightsUsed (docs/operation_types.md), and the document
+    // has no operation registry. The API checks the order every operation of a registered type needs, and each type's
+    // own validation the rest (face's bottom, from the part top, may be above its top, from the stock top).
     return z;
 }
 

@@ -136,8 +136,10 @@ struct PropertyOutcome {
 };
 PropertyOutcome runProperty(const PropertyPlugin& plugin, const std::vector<std::uint64_t>& seeds);
 
-// Fixed seeds: the quick tier runs kQuickCases of them, the slow tier kSlowCases (a superset).
-inline constexpr int kQuickCases = 12;
+// Fixed seeds: the quick tier runs kQuickCases of them, the slow tier kSlowCases (a superset). Quick: 8 per type (12
+// before each type got a CTest test of its own; the slowest, slot, then took about 37 s in Release and over five
+// minutes in an MSVC Debug build).
+inline constexpr int kQuickCases = 8;
 inline constexpr int kSlowCases = 200;
 std::vector<std::uint64_t> seedsFor(const std::string& type, int count);
 
@@ -161,13 +163,15 @@ inline void requireProperty(const PropertyPlugin& plugin, int count)
 } // namespace ray::cam::invariants
 
 // Defines the quick and the slow property test of an operation type: RAY_INVARIANT_PROPERTY_TESTS("pocket2d",
-// plugin) where `plugin` is an expression of type PropertyPlugin. The slow one is hidden ([.slow]) from a plain run.
-#define RAY_INVARIANT_PROPERTY_TESTS(TYPE, PLUGIN)                                                                     \
-    TEST_CASE("invariant property: " TYPE ", quick seeds", "[cam][invariants][property]")                              \
+// "[property_pocket2d]", plugin) where `plugin` is an expression of type PropertyPlugin and the tag is the type's own
+// (CMakeLists.txt makes a CTest test ray_cam_invariants_<type> of the cases with tag [property_<type>]; give the
+// type's other cases that tag too). The slow one is hidden ([.slow]) from a plain run.
+#define RAY_INVARIANT_PROPERTY_TESTS(TYPE, TAG, PLUGIN)                                                                \
+    TEST_CASE("invariant property: " TYPE ", quick seeds", "[cam][invariants][property]" TAG)                          \
     {                                                                                                                  \
         ::ray::cam::invariants::requireProperty(PLUGIN, ::ray::cam::invariants::kQuickCases);                          \
     }                                                                                                                  \
-    TEST_CASE("invariant property: " TYPE ", slow seeds", "[cam][invariants][property][.slow]")                        \
+    TEST_CASE("invariant property: " TYPE ", slow seeds", "[cam][invariants][property][.slow]" TAG)                    \
     {                                                                                                                  \
         ::ray::cam::invariants::requireProperty(PLUGIN, ::ray::cam::invariants::kSlowCases);                           \
     }

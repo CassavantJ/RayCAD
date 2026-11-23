@@ -15,7 +15,8 @@
 //   kRampSlack 1e-4       ramps and helices are made 0.01 % longer than their angle needs, room for appendSloped (with
 //                         the angle) to round each piece's end Z so that no piece is steeper than the angle (plain
 //                         rounding was up to 1 nm steeper per piece: 1.3e-5 relative on a whole piece, more on short
-//                         ones). Where many short pieces need more than that, the ramp is made longer and planned again.
+//                         ones). Where many short pieces need more than that, the ramp is made longer and planned
+//                         again.
 //   kAreaEps 1 um^2       a boolean remainder smaller than this is a rounding sliver, not material or a way out of a
 //                         room: a real overlap of 1 um over 1 mm is 1000 um^2.
 //   kMinLinkMove 1 um     a post writes metric coordinates to 1 um, so a shorter link move comes out as no move or as a
@@ -484,11 +485,17 @@ struct EntryContext {
 
 using Planned = std::variant<Plan, std::string, Error>;
 
+// "in the control" or "for wear" (Options::compensation), as the refusals name the compensation a pass has on.
+const char* compensationWords(const Options& o)
+{
+    return o.compensation == Options::Compensation::Wear ? "for wear" : "in the control";
+}
+
 Planned planHelix(EntryContext& e)
 {
     const Options& o = e.opts;
     if (e.shape.comp != 0)
-        return std::string("cutter compensation in the control is on for this pass");
+        return std::string("cutter compensation ") + compensationWords(o) + " is on for this pass";
     if (o.helixDiameter <= 0)
         return std::string("no helix diameter is set");
     if (!(o.rampAngleDeg > 0))
@@ -579,7 +586,7 @@ Planned planRamp(EntryContext& e)
 {
     const Options& o = e.opts;
     if (e.shape.comp != 0)
-        return std::string("cutter compensation in the control is on for this pass");
+        return std::string("cutter compensation ") + compensationWords(o) + " is on for this pass";
     if (!(o.rampAngleDeg > 0))
         return std::string("no ramp angle is set");
     if (!e.entryPath)
@@ -1251,9 +1258,9 @@ Result<Linked> linkPasses(std::span<const Pass> passes, const Options& opts, con
             };
             if (!straightStart(pass.leadIn) || !straightStart(pass.leadOut))
                 return tl::unexpected(failure(
-                    "Pass " + std::to_string(no) +
-                    " uses cutter compensation in the control, which needs a straight lead-in to switch it on and a "
-                    "straight lead-out to switch it off (a line lead, or an arc lead with a straight part)."));
+                    "Pass " + std::to_string(no) + " uses cutter compensation " + compensationWords(opts) +
+                    ", which needs a straight lead-in to switch it on and a straight lead-out to switch it off (a "
+                    "line lead, or an arc lead with a straight part)."));
         }
         auto lin = fitLead(pass.leadIn, sh, true, room, no, ctx, result.warnings);
         if (!lin)

@@ -68,9 +68,10 @@ PropertyPlugin facePlugin(double sink = 0, bool drift = false)
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("ref_face", facePlugin())
+RAY_INVARIANT_PROPERTY_TESTS("ref_face", "[property_harness]", facePlugin())
 
-TEST_CASE("invariant property: a broken type is reported with its seed and case", "[cam][invariants][property]")
+TEST_CASE("invariant property: a broken type is reported with its seed and case",
+          "[cam][invariants][property][property_harness]")
 {
     const std::vector<std::uint64_t> seeds = seedsFor("ref_face", 3);
     const PropertyOutcome deep = runProperty(facePlugin(0.05), seeds);
@@ -90,7 +91,7 @@ TEST_CASE("invariant property: a broken type is reported with its seed and case"
     }
 }
 
-TEST_CASE("invariant property: random parts are what their seeds say", "[cam][invariants][property]")
+TEST_CASE("invariant property: random parts are what their seeds say", "[cam][invariants][property][property_harness]")
 {
     for (const std::uint64_t seed : seedsFor("parts", 4)) {
         Rng a(seed), b(seed);

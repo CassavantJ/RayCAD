@@ -422,8 +422,15 @@ QVariantList OperationToolModel::types() const
     api::IApp* a = app();
     if (a == nullptr)
         return out;
-    for (const api::cam_operation::TypeInfo& t : api::cam_operation::operationTypes(*a))
-        out.push_back(QVariantMap{{QStringLiteral("name"), qs(t.name)}, {QStringLiteral("title"), qs(t.title)}});
+    // In the panel's fixed order (camui::orderedTypeNames), not the registry's (by name).
+    std::map<QString, QString> titles;
+    QStringList names;
+    for (const api::cam_operation::TypeInfo& t : api::cam_operation::operationTypes(*a)) {
+        titles[qs(t.name)] = qs(t.title);
+        names << qs(t.name);
+    }
+    for (const QString& name : camui::orderedTypeNames(names))
+        out.push_back(QVariantMap{{QStringLiteral("name"), name}, {QStringLiteral("title"), titles[name]}});
     return out;
 }
 
@@ -470,15 +477,12 @@ bool OperationToolModel::startFor(const QString& setupId)
         return false;
     if (context_ && context_->workspace() != kCamWorkspace)
         context_->setWorkspace(kCamWorkspace);
-    // The last type used, else the first registered.
-    QString type = type_;
-    const QVariantList all = types();
-    const bool known = std::any_of(all.begin(), all.end(), [&](const QVariant& v) {
-        return v.toMap().value(QStringLiteral("name")).toString() == type;
-    });
-    if (!known)
-        type = all.isEmpty() ? QString() : all.front().toMap().value(QStringLiteral("name")).toString();
-    open(setup, std::nullopt, type);
+    // The type of the last operation added or changed with this panel in this session, else drill, else the first in
+    // the panel's order (camui::defaultTypeName).
+    QStringList names;
+    for (const QVariant& v : types())
+        names << v.toMap().value(QStringLiteral("name")).toString();
+    open(setup, std::nullopt, camui::defaultTypeName(names, lastUsedType_));
     return active();
 }
 
@@ -1011,10 +1015,15 @@ QVariantMap OperationToolModel::fieldMessages() const
 QVariantList OperationToolModel::heights() const
 {
     QVariantList out;
-    for (const QString& key : heights_)
-        out.push_back(QVariantMap{{QStringLiteral("key"), key},
-                                  {QStringLiteral("label"), heightLabel(key)},
-                                  {QStringLiteral("hint"), heightHint(key)}});
+    for (const QString& key : heights_) {
+        // What the type measures it from (x-heightsUsed), shown under the field and in its tooltip.
+        const QString from = camui::heightFromText(camui::heightFrom(schema_, key), geometry_.kind);
+        out.push_back(QVariantMap{
+            {QStringLiteral("key"), key},
+            {QStringLiteral("label"), heightLabel(key)},
+            {QStringLiteral("hint"), from.isEmpty() ? heightHint(key) : trs("%1, %2").arg(heightHint(key), from)},
+            {QStringLiteral("from"), from}});
+    }
     return out;
 }
 
@@ -1653,7 +1662,9 @@ std::optional<QJsonObject> OperationToolModel::arguments(QString* error, QString
         used[key] = *v;
     }
     in.heights = camui::completeHeights(used);
-    if (const auto bad = camui::heightsOutOfOrder(in.heights))
+    // Only the order every operation of the type needs (heights measured from one reference); the rest is the type's
+    // validation's, whose message the panel shows (face: a bottom from the part top above a top from the stock top).
+    if (const auto bad = camui::heightsOutOfOrder(schema_, used))
         return fail(trs("%1 must not be below %2").arg(heightLabel(bad->first), heightLabel(bad->second)), bad->first);
     // Cutting data.
     const camui::ExprFn expr = exprFn();
@@ -1990,8 +2001,9 @@ bool OperationToolModel::commit()
     }
     const OperationId id = *id_;
     const QString idString = idText(id.value);
+    const QString type = type_;
     QPointer<OperationToolModel> self(this);
-    job.then([self, id, idString](Result<api::ActionResult> r) {
+    job.then([self, id, idString, type](Result<api::ActionResult> r) {
         if (!self)
             return;
         self->committing_ = false;
@@ -2000,6 +2012,7 @@ bool OperationToolModel::commit()
             self->schedulePreview();
             return;
         }
+        self->lastUsedType_ = type; // the next new operation starts with it
         // The committed operation's toolpath: found in the cache when the preview made it, else generated now.
         if (doc::Document* d = self->liveDoc(); d != nullptr && self->app() != nullptr && self->app()->cam() != nullptr)
             (void)self->app()->cam()->generate(d->state(), d->build(), id);

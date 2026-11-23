@@ -1,6 +1,9 @@
 #include "operation_logic.h"
 
+#include <ray_api/cam_operation.h>
+
 #include <QtCore/QCoreApplication>
+#include <QtCore/QJsonDocument>
 #include <QtCore/QLocale>
 #include <QtCore/QRegularExpression>
 
@@ -86,7 +89,71 @@ QStringList usedOf(const QJsonObject& schema, const char* key, const QStringList
 
 QStringList heightsUsed(const QJsonObject& schema)
 {
-    return usedOf(schema, "x-heightsUsed", heightKeys());
+    const QJsonValue v = schema.value(QStringLiteral("x-heightsUsed"));
+    if (!v.isObject())
+        return usedOf(schema, "x-heightsUsed", heightKeys());
+    const QJsonObject o = v.toObject();
+    QStringList out;
+    for (const QString& k : heightKeys()) {
+        if (o.contains(k))
+            out << k;
+    }
+    return out;
+}
+
+QString heightFrom(const QJsonObject& schema, const QString& key)
+{
+    return schema.value(QStringLiteral("x-heightsUsed")).toObject().value(key).toString();
+}
+
+QString heightFromText(const QString& from, const QString& kind)
+{
+    if (from == QLatin1String("stockTop"))
+        return tr("from stock top");
+    if (from == QLatin1String("partTop"))
+        return tr("from part top");
+    if (from == QLatin1String("workZero"))
+        return tr("from work zero");
+    if (from == QLatin1String("eachPick")) {
+        if (kind == QLatin1String("hole"))
+            return tr("from each hole's top");
+        if (kind == QLatin1String("edge"))
+            return tr("from the picked edges");
+        if (kind == QLatin1String("face"))
+            return tr("from the picked faces");
+        return tr("from each pick");
+    }
+    if (from == QLatin1String("highestPick"))
+        return kind == QLatin1String("hole") ? tr("from the highest hole top") : tr("from the highest pick");
+    return {};
+}
+
+QStringList orderedTypeNames(const QStringList& names)
+{
+    static const QStringList fixed = {QStringLiteral("drill"),     QStringLiteral("face"),
+                                      QStringLiteral("contour2d"), QStringLiteral("pocket2d"),
+                                      QStringLiteral("slot"),      QStringLiteral("chamfer2d"),
+                                      QStringLiteral("engrave"),   QStringLiteral("threadmill")};
+    QStringList out;
+    for (const QString& n : fixed) {
+        if (names.contains(n))
+            out << n;
+    }
+    QStringList rest;
+    for (const QString& n : names) {
+        if (!fixed.contains(n))
+            rest << n;
+    }
+    std::sort(rest.begin(), rest.end());
+    return out + rest;
+}
+
+QString defaultTypeName(const QStringList& names, const QString& lastUsed)
+{
+    if (!lastUsed.isEmpty() && names.contains(lastUsed))
+        return lastUsed;
+    const QStringList ordered = orderedTypeNames(names);
+    return ordered.isEmpty() ? QString() : ordered.front();
 }
 
 QStringList cuttingUsed(const QJsonObject& schema)
@@ -157,17 +224,25 @@ std::map<QString, double> completeHeights(const std::map<QString, double>& used)
     return out;
 }
 
-std::optional<std::pair<QString, QString>> heightsOutOfOrder(const std::map<QString, double>& h)
+std::optional<std::pair<QString, QString>> heightsOutOfOrder(const QJsonObject& schema,
+                                                             const std::map<QString, double>& h)
 {
-    const QStringList& keys = heightKeys();
-    for (qsizetype i = 0; i + 1 < keys.size(); ++i) {
-        for (qsizetype j = i + 1; j < keys.size(); ++j) {
-            const auto a = h.find(keys[i]), b = h.find(keys[j]);
-            if (a != h.end() && b != h.end() && a->second < b->second)
-                return std::make_pair(keys[i], keys[j]);
-        }
-    }
-    return std::nullopt;
+    const auto value = [&h](const char* key) {
+        const auto it = h.find(QLatin1String(key));
+        return it == h.end() ? 0.0 : it->second;
+    };
+    cam::Heights z;
+    z.clearance = value("clearance");
+    z.retract = value("retract");
+    z.feedPlane = value("feedPlane");
+    z.top = value("top");
+    z.bottom = value("bottom");
+    const QByteArray text = QJsonDocument(schema).toJson(QJsonDocument::Compact);
+    const auto bad = api::cam_operation::heightsOutOfOrder(
+        std::string_view(text.constData(), static_cast<std::size_t>(text.size())), z);
+    if (!bad)
+        return std::nullopt;
+    return std::make_pair(QString::fromStdString(bad->higher), QString::fromStdString(bad->lower));
 }
 
 // ---------- Feeds ----------

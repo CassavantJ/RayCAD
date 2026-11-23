@@ -70,7 +70,10 @@
 //   rectangular: straight up to zt at c - w/2 - R, along at zt to b = c + w/2 + R; down: a tool that cuts at its centre
 //     straight down at b; any other ramps back along the path at rampAngle from b + Lr (Lr = (zt - z) / tan(rampAngle))
 //     down to b and cuts forward to b + Lr again, so the tab keeps its square side and nothing plunges. Refused for
-//     such a tool with compensation (G41/G42 cannot run backwards) or no ramp angle.
+//     such a tool with compensation (G41/G42 cannot run backwards) or no ramp angle. The ramp is the slope-capped
+//     link::appendSloped, so no piece of it is steeper than rampAngle after rounding: Lr is kRampSlack longer, and
+//     where the path there is in many short pieces longer by a nanometre of descent per piece until it fits (added
+//     after M3; a triangular tab's flanks with such a tool are capped the same way where they can be).
 //   triangular: up along the path from c - w/2 - R to zt at c - R, along to c + R, down to z at c + w/2 + R: a flat
 //     tool leaves a triangle w wide at its foot. Refused for a tool that does not cut at its centre when the flank at
 //     the bottom (atan(2 tabHeight / w)) is steeper than rampAngle.

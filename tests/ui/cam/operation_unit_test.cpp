@@ -143,8 +143,12 @@ TEST_CASE("the form of every registered operation type, from its schema alone", 
         const GeometrySpec g = geometrySpec(schema);
         CHECK((g.kind == QLatin1String("hole") || g.kind == QLatin1String("face") || g.kind == QLatin1String("edge") ||
                g.kind == QLatin1String("none")));
-        for (const QString& h : heightsUsed(schema))
+        for (const QString& h : heightsUsed(schema)) {
             CHECK(heightKeys().contains(h));
+            // Every built-in type says what each height it reads is measured from (docs/operation_types.md).
+            INFO("height " << h.toStdString());
+            CHECK_FALSE(heightFromText(heightFrom(schema, h), g.kind).isEmpty());
+        }
         for (const QString& c : cuttingUsed(schema))
             CHECK(cuttingKeys().contains(c));
         for (const QString& tool : toolTypesFor(schema, params))
@@ -356,11 +360,65 @@ TEST_CASE("the panel's logic: heights, feeds in display units, records, tools an
     CHECK(h.at(QStringLiteral("bottom")) == 0);
     const auto only = completeHeights({{QStringLiteral("top"), 1}, {QStringLiteral("bottom"), -3}});
     CHECK(only.at(QStringLiteral("clearance")) == 1);
-    CHECK_FALSE(heightsOutOfOrder(h).has_value());
-    const auto bad = heightsOutOfOrder({{QStringLiteral("clearance"), 1}, {QStringLiteral("retract"), 5}});
+    // Out of order only between heights the type reads from one reference (x-heightsUsed): face's bottom, from the
+    // part top, may be above its top, from the stock top; two heights from the stock top may not.
+    const QJsonObject face = object(
+        R"({"x-heightsUsed":{"clearance":"stockTop","retract":"stockTop","feedPlane":"stockTop","top":"stockTop",)"
+        R"("bottom":"partTop"},"x-geometry":{"kind":"none"}})");
+    CHECK_FALSE(heightsOutOfOrder(face, h).has_value());
+    CHECK_FALSE(heightsOutOfOrder(face, {{QStringLiteral("clearance"), 15},
+                                         {QStringLiteral("retract"), 5},
+                                         {QStringLiteral("feedPlane"), 2},
+                                         {QStringLiteral("top"), 0},
+                                         {QStringLiteral("bottom"), 0.2}})
+                    .has_value());
+    const auto bad = heightsOutOfOrder(face, {{QStringLiteral("clearance"), 1}, {QStringLiteral("retract"), 5}});
     REQUIRE(bad.has_value());
     CHECK(bad->first == QStringLiteral("clearance"));
+    CHECK(bad->second == QStringLiteral("retract"));
+    // Drill: clearance from the highest hole top over retract from each hole's top is checked; a schema that does not
+    // say what its heights are measured from has nothing checked here.
+    const QJsonObject drill =
+        object(R"({"x-heightsUsed":{"clearance":"highestPick","retract":"eachPick","top":"eachPick"}})");
+    CHECK(heightsOutOfOrder(drill, {{QStringLiteral("clearance"), 1}, {QStringLiteral("retract"), 5}}).has_value());
+    CHECK_FALSE(heightsOutOfOrder(drill, {{QStringLiteral("clearance"), 15},
+                                          {QStringLiteral("retract"), 5},
+                                          {QStringLiteral("top"), 0},
+                                          {QStringLiteral("bottom"), 9}})
+                    .has_value());
+    CHECK_FALSE(heightsOutOfOrder(object(R"({"x-heightsUsed":["clearance","retract"]})"),
+                                  {{QStringLiteral("clearance"), 1}, {QStringLiteral("retract"), 5}})
+                    .has_value());
     CHECK(heightsUsed(QJsonObject()) == heightKeys());
+    CHECK(heightsUsed(drill) ==
+          QStringList({QStringLiteral("clearance"), QStringLiteral("retract"), QStringLiteral("top")}));
+    CHECK(heightFrom(face, QStringLiteral("bottom")) == QStringLiteral("partTop"));
+    CHECK(heightFrom(object(R"({"x-heightsUsed":["top"]})"), QStringLiteral("top")).isEmpty());
+    CHECK(heightFromText(QStringLiteral("stockTop"), QStringLiteral("none")) == QStringLiteral("from stock top"));
+    CHECK(heightFromText(QStringLiteral("partTop"), QStringLiteral("none")) == QStringLiteral("from part top"));
+    CHECK(heightFromText(QStringLiteral("eachPick"), QStringLiteral("edge")) ==
+          QStringLiteral("from the picked edges"));
+    CHECK(heightFromText(QStringLiteral("eachPick"), QStringLiteral("hole")) == QStringLiteral("from each hole's top"));
+    CHECK(heightFromText(QStringLiteral("highestPick"), QStringLiteral("hole")) ==
+          QStringLiteral("from the highest hole top"));
+    CHECK(heightFromText(QString(), QStringLiteral("hole")).isEmpty());
+
+    // The type list's order, and the type a new operation starts with.
+    const QStringList registered = {
+        QStringLiteral("chamfer2d"), QStringLiteral("contour2d"), QStringLiteral("drill"), QStringLiteral("engrave"),
+        QStringLiteral("face"),      QStringLiteral("pocket2d"),  QStringLiteral("slot"),  QStringLiteral("threadmill"),
+        QStringLiteral("x.zeta"),    QStringLiteral("x.alpha")};
+    CHECK(orderedTypeNames(registered) ==
+          QStringList({QStringLiteral("drill"), QStringLiteral("face"), QStringLiteral("contour2d"),
+                       QStringLiteral("pocket2d"), QStringLiteral("slot"), QStringLiteral("chamfer2d"),
+                       QStringLiteral("engrave"), QStringLiteral("threadmill"), QStringLiteral("x.alpha"),
+                       QStringLiteral("x.zeta")}));
+    CHECK(defaultTypeName(registered, QString()) == QStringLiteral("drill"));
+    CHECK(defaultTypeName(registered, QStringLiteral("pocket2d")) == QStringLiteral("pocket2d"));
+    CHECK(defaultTypeName(registered, QStringLiteral("gone")) == QStringLiteral("drill"));
+    CHECK(defaultTypeName({QStringLiteral("x.zeta"), QStringLiteral("x.alpha")}, QString()) ==
+          QStringLiteral("x.alpha"));
+    CHECK(defaultTypeName({}, QString()).isEmpty());
     CHECK(cuttingUsed(object(R"({"x-cuttingUsed":["coolant"]})")) ==
           QStringList({QStringLiteral("rpm"), QStringLiteral("feedCut"), QStringLiteral("coolant")}));
 

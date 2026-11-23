@@ -118,9 +118,10 @@ PropertyPlugin drillPlugin()
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("drill", drillPlugin())
+RAY_INVARIANT_PROPERTY_TESTS("drill", "[property_drill]", drillPlugin())
 
-TEST_CASE("invariant property: drill, the checker sees what drilling cuts", "[cam][invariants][property]")
+TEST_CASE("invariant property: drill, the checker sees what drilling cuts",
+          "[cam][invariants][property][property_drill]")
 {
     // A tap cuts its thread past the modelled bore: without the claim that this is intended, every tapping case is a
     // gouge. This shows the drill cases are checked against the part, not passed vacuously.
@@ -140,7 +141,8 @@ TEST_CASE("invariant property: drill, the checker sees what drilling cuts", "[ca
     }
 }
 
-TEST_CASE("invariant property: drill, a short stick-out is refused or kept clear", "[cam][invariants][property]")
+TEST_CASE("invariant property: drill, a short stick-out is refused or kept clear",
+          "[cam][invariants][property][property_drill]")
 {
     // The holder 2 to 8 mm past the flutes, holes up to 25 deep: the operation must refuse (its holder clearance) or
     // keep the holder 0.5 mm clear of part and stock.
@@ -168,7 +170,7 @@ TEST_CASE("invariant property: drill, a short stick-out is refused or kept clear
 // Found by T-058 as a product gap and since fixed: the drill type used to ignore the spindle direction, so a spindle
 // set to turn counter-clockwise with a right-hand drill gave a toolpath. It now refuses, and this case holds it to
 // that.
-TEST_CASE("drilling with the spindle turning backwards is refused", "[cam][invariants][property]")
+TEST_CASE("drilling with the spindle turning backwards is refused", "[cam][invariants][property][property_drill]")
 {
     PropertyPlugin p = drillPlugin();
     p.fixed["cycle"] = "\"drill\"";

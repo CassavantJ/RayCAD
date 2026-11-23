@@ -49,9 +49,9 @@ PropertyPlugin facePlugin()
 
 } // namespace
 
-RAY_INVARIANT_PROPERTY_TESTS("face", facePlugin())
+RAY_INVARIANT_PROPERTY_TESTS("face", "[property_face]", facePlugin())
 
-TEST_CASE("invariant property: face, the checker sees what facing leaves", "[cam][invariants][property]")
+TEST_CASE("invariant property: face, the checker sees what facing leaves", "[cam][invariants][property][property_face]")
 {
     // Claimed down to 0.2 mm below what the operation faces: every case must fail its coverage claim. This shows the
     // face cases are checked against the stock, not passed vacuously.
@@ -76,7 +76,8 @@ TEST_CASE("invariant property: face, the checker sees what facing leaves", "[cam
     }
 }
 
-TEST_CASE("invariant property: face, a short stick-out is refused or kept clear", "[cam][invariants][property]")
+TEST_CASE("invariant property: face, a short stick-out is refused or kept clear",
+          "[cam][invariants][property][property_face]")
 {
     // A stick-out of 1 to 3 mm and passes up to 1.5 mm deep: the operation must refuse (its holder clearance, 1 mm) or
     // keep the holder 0.5 mm clear of part and stock.

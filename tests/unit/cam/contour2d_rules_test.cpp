@@ -402,6 +402,73 @@ TEST_CASE("contour2d: rectangular tabs with a flat end mill ramp back down behin
     CHECK(std::abs(std::atan2(drop, run) * 180 / kPiC - 10.0) < 0.01);
 }
 
+TEST_CASE("contour2d: a tab's ramp back down is never steeper than the ramp angle, piece by piece", "[cam][contour2d]")
+{
+    // A circle of radius 2 mm as 251 short lines (about 50 um each), a tab 1 mm wide and 0.1 mm high, a 3 mm tool that
+    // does not cut at its centre: the ramp back down runs over several of the lines (38 at 3 degrees), each end's Z
+    // rounded to a nanometre. The plain appendSloped can round a piece up to half a nanometre steeper than the angle;
+    // the moves of tabbedMoves (the slope-capped appendSloped) never are.
+    g2::Path circle;
+    const int n = 251;
+    const double r = 2'000'000;
+    circle.start = g2::Pt{static_cast<Nm>(r), 0};
+    for (int i = 1; i <= n; ++i) {
+        const double a = 2 * kPiC * i / n;
+        circle.spans.push_back(
+            g2::Span{g2::SpanKind::Line,
+                     i == n ? circle.start : g2::Pt{g2::roundNm(r * dmath::cos(a)), g2::roundNm(r * dmath::sin(a))},
+                     {},
+                     0});
+    }
+    circle.closed = true;
+    const Nm z = -1'000'000;
+    bool steeper = false;
+    for (const double angle : {3.0, 7.0, 10.0, 25.0}) {
+        INFO("ramp angle " << angle);
+        const double tanA = dmath::tan(angle * kPiC / 180.0);
+        c2::TabMoves tm;
+        tm.shape = c2::TabShape::Rectangular;
+        tm.zt = z + 100'000;
+        tm.width = 1'000'000;
+        tm.radius = 1'500'000;
+        tm.centreCutting = false;
+        tm.rampAngleDeg = angle;
+        auto moves = c2::tabbedMoves(circle, z, {c2::Tab{5'000'000}}, tm, 600'000, 300'000, 450'000, 0);
+        REQUIRE(moves);
+        // Each ramp piece: its drop over its XY length at most tan(angle), exactly (integer ends, double compare).
+        g2::Pt prev = circle.start;
+        Nm prevZ = z;
+        int pieces = 0;
+        for (const Move& m : *moves) {
+            if (m.role == MoveRole::Ramp) {
+                ++pieces;
+                const double run = dmath::hypot(static_cast<double>(m.x - prev.x), static_cast<double>(m.y - prev.y));
+                INFO("ramp piece to " << m.x << ", " << m.y << ", " << m.z);
+                CHECK(static_cast<double>(std::abs(prevZ - m.z)) <= run * tanA);
+            }
+            prev = g2::Pt{m.x, m.y};
+            prevZ = m.z;
+        }
+        CHECK(pieces >= 3); // 0.1 / tan(angle) mm over lines about 50 um long
+        // The same ramp by the plain appendSloped (proportional Z, rounded).
+        const double lr = 100'000.0 / tanA * (1.0 + c2::kRampSlack);
+        const double b = 5'000'000.0 + 500'000.0 + 1'500'000.0;
+        g2::Path back = g2::reverse(g2::subPath(circle, b, b + lr));
+        std::vector<Move> plain;
+        link::appendSloped(back, tm.zt, z, MoveRole::Ramp, 450'000, plain);
+        g2::Pt p = back.start;
+        Nm pz = tm.zt;
+        for (const Move& m : plain) {
+            const double run = dmath::hypot(static_cast<double>(m.x - p.x), static_cast<double>(m.y - p.y));
+            steeper = steeper || static_cast<double>(std::abs(pz - m.z)) > run * tanA;
+            p = g2::Pt{m.x, m.y};
+            pz = m.z;
+        }
+    }
+    // Made that way, some piece of some of these ramps is steeper than its angle: the check above would catch it.
+    CHECK(steeper);
+}
+
 TEST_CASE("contour2d: triangular tabs", "[cam][contour2d]")
 {
     // Tabs 8 wide and 1 high with a 6 mm ball end mill: up from Z 0 over 4 mm, 6 mm flat at Z 1, down over 4 mm.
@@ -521,6 +588,13 @@ TEST_CASE("contour2d: compensation for wear: the tool-centre path with G41 on", 
             CHECK(m.compensation == 2);
         }
     }
+    // Inside the pocket, in the stock, a flat end mill must ramp in, which compensation does not allow: linking
+    // refuses, naming the mode the operation asked for (wear), not compensation in the control.
+    ContourCase inside = pocketWall(R"({"compensation":"wear","leadLength":2})");
+    const Status refusal = inside.validate();
+    REQUIRE_FALSE(refusal);
+    CHECK_THAT(refusal.error().message, ContainsSubstring("cutter compensation for wear is on"));
+    CHECK_THAT(refusal.error().message, !ContainsSubstring("in the control"));
 }
 
 TEST_CASE("contour2d: the nearest point along a path", "[cam][contour2d]")

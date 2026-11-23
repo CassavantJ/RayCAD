@@ -246,6 +246,11 @@ struct Options {
     // The tool's end (added after T-056): how far above its tip the tool reaches toolRadius (THE TOOL'S END above): 0
     // for a flat end, a ball's radius, a bull nose's corner radius, a pointed tool's point length. >= 0.
     Nm tipHeight = 0;
+    // Added after M3: what the passes' Move::compensation asks of the control, for the refusals to name it: Control
+    // (the control offsets the programmed contour by the tool radius) or Wear (the moves are the tool centre's and the
+    // control offsets by the wear only). Linking treats both alike.
+    enum class Compensation : std::uint8_t { Control, Wear };
+    Compensation compensation = Compensation::Control;
 };
 
 // ---------- Result ----------

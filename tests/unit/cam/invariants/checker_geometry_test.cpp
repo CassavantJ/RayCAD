@@ -206,6 +206,38 @@ TEST_CASE("invariants: rapids do not run through part or stock", "[cam][invarian
     clean(k.run(rapidAcross(1.001)));
 }
 
+TEST_CASE("invariants: a pointed tool's rapid just into uncut stock: the rapid floor catches it, samples may not",
+          "[cam][invariants][geometry]")
+{
+    // Why the engraving plug-in claims no rapid floor below the stock top (src/cam/ops/engrave.h, LEVELS): over uncut
+    // stock the rapid floor (rapidLow) is exact, while rapidStock sees stock only at its samples. A 30 degree engraver
+    // rapids 0.05 mm into the stock: its point is 0.013 mm wide there. Down at four points 0.025 mm apart along the
+    // grid's diagonal (so at least one lies 0.035 mm or more from every sample, whatever the grid's offset), the floor
+    // at the stock top reports every one; a floor claimed 0.5 mm lower leaves them to the samples, which miss some.
+    Slab k;
+    k.tool = flatMill(3);
+    k.tool.type = lib::ToolType::EngraveCutter;
+    k.tool.tipAngleDeg = 30;
+    k.tool.tipDiameter = 0;
+    int missed = 0;
+    for (int i = 0; i < 4; ++i) {
+        const double d = 0.025 * i;
+        PathBuilder b(Vec3{30 + d, 20 + d, 20});
+        b.rapid(Vec3{30 + d, 20 + d, 9.95}, MoveRole::Approach);
+        b.rapid(Vec3{30 + d, 20 + d, 20}, MoveRole::Retract);
+        const Toolpath p = b.take();
+        mainly(k.run(p), "rapidLow", {"rapidStock"});
+        Claims lowered = k.c;
+        lowered.rapidFloorZ = 9.5;
+        const auto f = test::run(p, k.g, k.tool, lowered);
+        for (const Finding& x : f) {
+            CHECK(x.id == "rapidStock");
+        }
+        missed += f.empty() ? 1 : 0;
+    }
+    CHECK(missed > 0);
+}
+
 TEST_CASE("invariants: no straight plunge into stock with a tool that does not cut at its centre",
           "[cam][invariants][geometry]")
 {
