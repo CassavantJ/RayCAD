@@ -340,6 +340,7 @@ PostInfo infoOf(const Declaration& d, const std::string& scriptName)
                                d.motion.cutterComp,
                                d.toolLengthProbe,
                                static_cast<int>(d.motion.maxArcDegrees)};
+    info.verifiedOn = d.verifiedOn;
     return info;
 }
 

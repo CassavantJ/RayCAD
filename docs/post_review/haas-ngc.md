@@ -1,6 +1,11 @@
 # Haas NGC post: review notes
 
-**Status: NOT REVIEWED by the owner.** Post: `resources/library/posts/haas-ngc.post.js` (dialect `haas-ngc`).
+**Status: not yet run on a control.** Every golden is read back by the project's round-trip interpreter (T-043) and
+the words are checked against the documentation cited below (mainly the 2015 Haas programming workbook, H1). No
+program from this post has been run on a real Haas NGC, and nobody who runs one has reviewed it yet. Review is wanted
+from people who run a Haas mill with the NGC: see [Reporting a result](README.md#reporting-a-result).
+
+Post: `resources/library/posts/haas-ngc.post.js` (dialect `haas-ngc`).
 Goldens: `tests/golden/gcode/haas-ngc/`. See [README.md](README.md). The classic-control post
 (`haas-classic.post.js`, [haas-classic.md](haas-classic.md)) writes the same words.
 
@@ -86,7 +91,7 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | G84 rigid tapping | 15 |
 | G83 peck, Haas I/J/K options off by default | 11 (Q), 31 (I J K by property) |
 
-## Unsure, unverified, or a choice the owner should confirm
+## Unsure, unverified, or a choice for someone who runs the control to confirm
 
 1. Everything is from the 2015 workbook; the NGC is assumed to read the same words (unverified on an NGC).
 2. G187: P1/P2/P3 and E from H2 quotes, not from a page read in full. The starter Haas machine sets smoothing to
@@ -116,10 +121,10 @@ G154 G73 G74 G80 G81 G82 G83 G84 G85 G89 G90 G91 G94 G98 G99 G187; M01 M03 M04 M
 `G00 G53 G49 Z0.` (machine Z zero and length offset off), `G00 G53 Y0.`, `G28 G91 Z0.` (+ `G90`), `G04 P<s.sss>`,
 cycle P seconds with three decimals, G83 with I J K instead of Q, G187 with P1-P3 and E.
 
-## Questions for the owner
+## Questions for people who run this control
 
 1. Which Haas control software version, and is it an NGC? Rigid tapping and through-spindle coolant installed?
-2. G187: is medium the right default for the shop's VF-2? Should roughing and finishing operations get different
+2. G187: is medium the right default for a VF-2 class machine? Should roughing and finishing operations get different
    levels (the post has one level per program)?
 3. Is a mist or shower coolant code fitted?
 4. Setting 28 (canned cycle act without X/Y) and Setting 22 (peck clearance) values.
@@ -127,4 +132,4 @@ cycle P seconds with three decimals, G83 with I J K instead of Q, G187 with P1-P
 
 ## Review record
 
-(empty: no review yet)
+(empty: no program from this post has been run on a control yet)

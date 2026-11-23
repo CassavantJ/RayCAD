@@ -1,6 +1,12 @@
 # Mazak Matrix post: review notes
 
-**Status: NOT REVIEWED by the owner.** Post: `resources/library/posts/mazak-matrix.post.js` (dialect `mazak-matrix`).
+**Status: not yet run on a control.** Every golden is read back by the project's round-trip interpreter (T-043), in
+both of the readings it knows for a Mazak control, and the words are checked against RS274/NGC; no Mazak manual could
+be read, so every Mazak-specific rule is [unverified]. No program from this post has been run on a real MAZATROL
+Matrix control, and nobody who runs one has reviewed it yet. Review is wanted from people who run a Mazak mill with a
+Matrix control: see [Reporting a result](README.md#reporting-a-result).
+
+Post: `resources/library/posts/mazak-matrix.post.js` (dialect `mazak-matrix`).
 Goldens: `tests/golden/gcode/mazak-matrix/`. See [README.md](README.md).
 
 For Mazak vertical machining centres with a MAZATROL Matrix control (Matrix, Matrix Nexus, Matrix 2), EIA/ISO G-code
@@ -38,12 +44,12 @@ before a G28 or G53 retract the tool rapids up to the operation's clearance heig
 machines, so its values come from a used-machine dealer listing (Surplus Record 1058083, a 2014 Nexus 530C-II TT with
 MAZATROL Matrix Nexus 2), not from Mazak; the machine file says so. Not verified.
 
-## Questions for the owner
+## Questions for people who run this control
 
 1. Which Matrix generation and software version? Its EIA/ISO programming manual settles every [unverified] item of
    mazak-smooth.md for this post.
-2. Is there a Matrix machine in the shop at all, or should this post wait?
+2. Does a Matrix control read any word of this post differently from a Smooth control?
 
 ## Review record
 
-(empty: no review yet)
+(empty: no program from this post has been run on a control yet)

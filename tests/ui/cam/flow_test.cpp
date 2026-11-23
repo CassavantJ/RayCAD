@@ -7,6 +7,13 @@
 // operation, its embedded tool and the remembered post settings back and the same toolpath hash.
 //
 // Screenshots of every step, light theme: build/shots/m2_flow_<n>_<step>.png (RAY_M2_FLOW_SHOTS names another folder).
+//
+// And M3 in one window ([m3flow], its own CTest entry ray_ui_cam_flow_m3): the fixture plate with pockets and holes,
+// a setup, then a face, a pocket2d, a contour2d, a drill and a chamfer2d operation made in the generic operation panel
+// with library tools, all up to date, the cycle-time estimate with its assumptions, the program posted with haas-ngc
+// and with mazak-smooth and each program read back by the independent G-code interpreter of the post tests
+// (tests/unit/post/roundtrip, T-043) without an issue, saved, closed and opened again with the same operations.
+// Screenshots: build/shots/m3_flow_<step>.png (RAY_M3_FLOW_SHOTS names another folder).
 #include "../scene_graph_probe.h"
 #include "../window_focus.h"
 #include "app_context.h"
@@ -20,7 +27,9 @@
 #include "cam/setup_tree.h"
 #include "cam/tools_model.h"
 #include "files.h"
+#include "gcode_interp.h" // tests/unit/post/roundtrip: the independent G-code interpreter (T-043)
 #include "palette_commands.h"
+#include "roundtrip_compare.h" // and its comparison with the toolpaths
 #include "scene_controller.h"
 #include "selection_model.h"
 #include "session.h"
@@ -29,6 +38,7 @@
 #include "viewport_item.h"
 #include "viewport_navigation.h"
 
+#include <ray/kernel.h> // the faces and edges to pick
 #include <ray/sim.h>
 #include <ray_api/cam_operation.h>
 #include <ray_api/cam_post.h>
@@ -55,10 +65,12 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 using namespace ray;
@@ -444,6 +456,233 @@ int checkIconButtons(QQuickItem* root, const QString& where)
         CHECK_FALSE(name.isEmpty());
     }
     return icons;
+}
+
+// ---------- M3: the milling flow ----------
+// fixture_plate_3 (tools/corpus_gen, the metric variant of the benchmark-part-1-like fixture plate): 160 x 100 x 20 mm,
+// two pockets with 6.35 mm corner radii and 7.62 mm deep, four counterbores, four 0.201 in tap-drill holes through, the
+// top outline chamfered.
+const QString kFixturePlate = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/fixture_plate_3.stp");
+// resources/library tools.
+const QString kFaceMill = QStringLiteral("91e50525-1a88-4f40-a282-2997b0fb4852");    // 2 in 45 deg face mill
+const QString kEndMill6 = QStringLiteral("08bc976f-3640-4b04-a389-eda6ba3e659b");    // 6 mm 3FL flat end mill
+const QString kEndMill10 = QStringLiteral("3f550375-46eb-47d0-9b8c-4fedbcb8466d");   // 10 mm 4FL flat end mill
+const QString kDrill7 = QStringLiteral("46d4dd55-0b79-41e6-b55f-d5fde055223a");      // #7 (0.201 in) jobber drill
+const QString kChamferMill = QStringLiteral("3b8df723-7be6-494f-b0a4-8dc6a3c14e72"); // 1/4 in 90 deg chamfer mill
+
+// A screenshot of this step: build/shots/m3_flow_<step>.png, or in RAY_M3_FLOW_SHOTS.
+void m3Shot(const Window& w, const char* step)
+{
+    QString dir = qEnvironmentVariable("RAY_M3_FLOW_SHOTS");
+    if (dir.isEmpty())
+        dir = QStringLiteral(RAY_SHOTS_DIR);
+    QDir().mkpath(dir);
+    w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                Qt::NoButton);
+    QTest::qWait(300);
+    w.grab().save(QDir(dir).filePath(QStringLiteral("m3_flow_%1.png").arg(QLatin1String(step))), "PNG");
+}
+
+// A library tool chosen in the operation panel's picker: searched for, its row scrolled to and clicked.
+void chooseTool(const Window& w, const QString& id, const QString& search)
+{
+    w.typeInto(QStringLiteral("toolPickerSearch"), search);
+    int row = -1;
+    const auto rowOf = [&] {
+        const int doc = pickerList(w)->rowOf(QStringLiteral("document"), id);
+        return doc >= 0 ? doc : pickerList(w)->rowOf(QStringLiteral("library"), id);
+    };
+    const bool listed = QTest::qWaitFor([&] { return (row = rowOf()) >= 0; }, 5000);
+    INFO("tool " << id.toStdString() << " after searching '" << search.toStdString() << "'");
+    REQUIRE(listed);
+    QQuickItem* view = w.shown(QStringLiteral("toolPickerView"));
+    QQuickItem* item = nullptr;
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            QMetaObject::invokeMethod(view, "positionViewAtIndex", Q_ARG(int, row), Q_ARG(int, 4 /* Contain */));
+            item = w.find(QStringLiteral("toolPickerRow.%1").arg(row));
+            return item != nullptr && item->isVisible() && item->property("itemId").toString() == id;
+        },
+        5000));
+    w.click(item);
+    REQUIRE(QTest::qWaitFor([&] { return w.op()->toolId() == id; }, 5000));
+}
+
+// Each hit picked as a click in the view picks it (the selection's own entry point), one at a time.
+void pickAll(const Window& w, const std::vector<render::PickHit>& hits)
+{
+    REQUIRE_FALSE(hits.empty());
+    for (std::size_t k = 0; k < hits.size(); ++k) {
+        w.host->selection()->applyClick(hits[k], Qt::NoModifier);
+        QCoreApplication::processEvents();
+        INFO("pick " << k << ": " << w.op()->message().toStdString());
+        REQUIRE(QTest::qWaitFor([&] { return static_cast<std::size_t>(w.op()->picks().size()) == k + 1; }, kTimeoutMs));
+    }
+}
+
+// The pocket floors: up-facing planar faces below the top, larger than a counterbore's floor.
+std::vector<render::PickHit> pocketFloors(const Window& w)
+{
+    const kernel::Shape& s = w.host->scene()->body(0)->shape;
+    const double top = kernel::bounds(s).max.z;
+    std::vector<render::PickHit> out;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Face); ++i) {
+        const kernel::SubId f{kernel::SubKind::Face, i};
+        const auto info = kernel::surfaceInfo(s, f);
+        const auto sample = kernel::faceSample(s, f);
+        if (info && sample && info->type == kernel::SurfaceType::Plane && sample->normal.z > 0.999 &&
+            info->bounds.max.z < top - 1e-6 && info->area > 400) {
+            out.push_back(
+                render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, i, info->centroid, 0});
+        }
+    }
+    return out;
+}
+
+// The edges of the plate's bottom outline (the straight edges at its lowest Z on its bounding box).
+std::vector<render::PickHit> bottomOutline(const Window& w)
+{
+    const kernel::Shape& s = w.host->scene()->body(0)->shape;
+    const Box3 b = kernel::bounds(s);
+    std::vector<render::PickHit> out;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Edge); ++i) {
+        const auto c = kernel::curveInfo(s, kernel::SubId{kernel::SubKind::Edge, i});
+        if (!c || c->type != kernel::CurveType::Line || std::abs(c->start.z - b.min.z) > 1e-6 ||
+            std::abs(c->end.z - b.min.z) > 1e-6)
+            continue;
+        const Vec3 mid{(c->start.x + c->end.x) / 2, (c->start.y + c->end.y) / 2, b.min.z};
+        if (std::abs(mid.x - b.min.x) < 1e-6 || std::abs(mid.x - b.max.x) < 1e-6 || std::abs(mid.y - b.min.y) < 1e-6 ||
+            std::abs(mid.y - b.max.y) < 1e-6)
+            out.push_back(render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Edge, i, mid, 0});
+    }
+    return out;
+}
+
+// The counterbores' top edges: the circles of 0.44 in diameter in the top face (not the tap-drill holes' nor the
+// pockets' corner arcs).
+std::vector<render::PickHit> counterboreEdges(const Window& w)
+{
+    const kernel::Shape& s = w.host->scene()->body(0)->shape;
+    const double top = kernel::bounds(s).max.z;
+    std::vector<render::PickHit> out;
+    for (std::uint32_t i = 0; i < s.count(kernel::SubKind::Edge); ++i) {
+        const auto c = kernel::curveInfo(s, kernel::SubId{kernel::SubKind::Edge, i});
+        if (c && c->type == kernel::CurveType::Circle && std::abs(c->center.z - top) < 1e-6 &&
+            std::abs(c->radius - 0.22 * 25.4) < 0.01)
+            out.push_back(render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Edge, i, c->start, 0});
+    }
+    return out;
+}
+
+unsigned coolantBits(cam::CuttingData::Coolant c)
+{
+    using C = cam::CuttingData::Coolant;
+    switch (c) {
+    case C::Flood:
+        return rtgc::kFlood;
+    case C::Mist:
+        return rtgc::kMist;
+    case C::ThroughTool:
+        return rtgc::kThrough;
+    case C::Air:
+        return rtgc::kAir;
+    case C::Off:
+        return 0;
+    }
+    return 0;
+}
+
+// The program `text`, posted with `postId` from the document's setup with the post dialog still open on it, read back
+// by the independent G-code interpreter of the post tests (tests/unit/post/roundtrip, T-043) for the control the post
+// is written for, and compared there with the toolpaths of the setup's operations: every issue it finds (none is
+// expected), each naming its line. A Mazak program is read both ways the interpreter knows, as the post tests do (no
+// Mazak manual decides between them). The control's settings the program cannot carry (coolant codes, dwell units,
+// what M6 does) are the post properties the dialog posted with.
+std::vector<std::string> roundTripIssues(const Window& w, const QString& postId, const QByteArray& text)
+{
+    const doc::DocStatePtr state = w.document()->state();
+    REQUIRE(state->cam);
+    const cam::Setup& setup = state->cam->setups.front();
+    const lib::MachineDef* machine = api::cam_post::machineOf(*state, setup.id);
+    REQUIRE(machine != nullptr);
+    std::vector<std::shared_ptr<const cam::Toolpath>> paths; // alive while compared
+    rtgc::Expectation expected;
+    double peckClearanceMm = 0.5;
+    for (const OperationId& id : setup.operations) {
+        const cam::Operation& op = state->cam->operations.at(id);
+        if (op.suppressed)
+            continue;
+        paths.push_back(w.toolpath(id));
+        rtgc::ExpectedSection s;
+        s.name = op.name;
+        s.path = paths.back().get();
+        s.tool = op.tool.toolNumber;
+        s.lengthOffset = op.tool.lengthOffset;
+        s.diameterOffset = op.tool.diameterOffset;
+        s.rpm = op.cutting.spindleRpm;
+        s.clockwise = op.cutting.clockwise;
+        s.coolant = coolantBits(op.cutting.coolant);
+        s.wcs = rtgc::workOffsetName(setup.wcs.workOffset);
+        expected.sections.push_back(s);
+        for (const cam::Move& m : paths.back()->moves) {
+            if (m.kind == cam::MoveKind::CyclePeck || m.kind == cam::MoveKind::CycleChipBreak)
+                peckClearanceMm = static_cast<double>(cam::peckClearanceNm(m, machine)) / 1e6;
+        }
+    }
+    expected.machine = machine;
+    const auto prop = [&](const char* key) {
+        return w.post()->form()->valueOf(QLatin1String(key));
+    };
+    if (prop("peckReduction").toBool(false)) {
+        expected.peckReductionJ = prop("peckReductionJ").toDouble(0.25);
+        expected.peckMinimumK = prop("peckMinimumK").toDouble(0.25);
+    }
+    for (const QVariant& m : w.post()->messages()) {
+        const QVariantMap message = m.toMap();
+        if (message.value(QStringLiteral("kind")).toString() == QLatin1String("warning"))
+            expected.warnings.push_back(message.value(QStringLiteral("full")).toString().toStdString());
+    }
+    const std::string post = postId.toStdString();
+    const bool mazak = post.rfind("mazak", 0) == 0;
+    const bool haas = post.rfind("haas", 0) == 0;
+    std::string coolant = prop("coolantCodes").toString().toStdString();
+    if (coolant.empty()) // the controls' documented codes, as the post tests take them
+        coolant = haas ? "flood=M8/M9 through=M88/M89 air=M83/M84" : mazak ? "flood=M8/M9" : "flood=M8/M9 mist=M7/M9";
+    std::vector<std::string> issues;
+    for (int reading = 0; reading < (mazak ? 2 : 1); ++reading) {
+        rtgc::Dialect d;
+        d.name = post;
+        if (mazak) {
+            d.family = rtgc::Family::Mazak;
+            d.mazakReading = reading;
+            d.mazakM6RetractsZ = prop("m6LeavesZRetracted").toBool(false);
+            d.mazakDwellMilliseconds =
+                prop("dwellUnits").toString(QStringLiteral("milliseconds")) == QLatin1String("milliseconds");
+        } else if (post == "fanuc") {
+            d.family = rtgc::Family::Fanuc;
+        } else if (haas) {
+            d.family = rtgc::Family::Haas;
+            d.haasClassic = post == "haas-classic";
+        } else {
+            d.family = rtgc::Family::Ngc;
+            d.ngcDwellMilliseconds =
+                prop("dwellUnits").toString(QStringLiteral("seconds")) == QLatin1String("milliseconds");
+        }
+        INFO("coolant codes '" << coolant << "'");
+        REQUIRE(rtgc::parseCoolantCodes(coolant, d.coolant));
+        d.peckClearanceMm = peckClearanceMm;
+        const rtgc::Trace t = rtgc::interpret(text.toStdString(), d);
+        INFO(post << ", reading " << reading << ": " << t.segs.size() << " segments");
+        CHECK(t.segs.size() > 100);
+        const std::string tag = mazak ? "[reading " + std::to_string(reading) + "] " : "";
+        for (const rtgc::Issue& i : t.errors)
+            issues.push_back(tag + "interpreter: " + rtgc::describe(i, t.lines));
+        for (const rtgc::Issue& i : t.safety)
+            issues.push_back(tag + "safety: " + rtgc::describe(i, t.lines));
+        for (const rtgc::Issue& i : rtgc::compare(t, expected))
+            issues.push_back(tag + "compare: " + rtgc::describe(i, t.lines));
+    }
+    return issues;
 }
 
 } // namespace
@@ -1130,6 +1369,353 @@ TEST_CASE("M2 in one window: setup, drill, post, viewer, edit, post again, save 
     CHECK(w.toolpath(opId)->hash().hex() == toolpathHash);
     w.waitStatus(1, "upToDate");
     w.shot("regenerated");
+    CHECK(w.confirms == 0);
+    w.checkNoWarnings();
+}
+
+// M3 in one window (see the top of the file). Hidden from the M2 run's "~[scale]" ([.m3flow]): its own CTest entry.
+TEST_CASE("M3 in one window: face, pocket, contour, drill and chamfer, two posts read back, save and reopen",
+          "[cam][e2e][.m3flow]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+
+    // ---- 1. The fixture plate: pockets and holes ----
+    REQUIRE(w.host->files()->open(kFixturePlate));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->session()->hasDocument() && w.settled(); }, kTimeoutMs));
+    w.settle();
+    REQUIRE(w.host->scene()->bodyCount() == 1);
+    CHECK(w.document()->state()->settings.units == UnitSystem::Metric);
+    w.view()->fitAll();
+    w.click(QStringLiteral("workspaceTab.%1").arg(ui::kCamWorkspace));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->context()->workspace() == ui::kCamWorkspace; }, 5000));
+
+    // ---- 2. A setup: the top face, an origin, the machine, the material, 1 mm of stock above the part ----
+    w.click(QStringLiteral("camTreeEmptyNewSetup"));
+    REQUIRE(QTest::qWaitFor([&] { return w.setupPanel()->active() && !w.setupPanel()->previewBusy(); }, kTimeoutMs));
+    w.settle();
+    {
+        const Box3 b = kernel::bounds(w.host->scene()->body(0)->shape);
+        std::optional<QPointF> at;
+        for (const double fx : {0.92, 0.85, 0.65}) {
+            const QPointF s = w.sceneOf(Vec3{b.min.x + fx * (b.max.x - b.min.x), (b.min.y + b.max.y) / 2, b.max.z});
+            if (!at && w.clear(s))
+                at = s;
+        }
+        REQUIRE(at.has_value());
+        w.clickScene(*at);
+        REQUIRE(QTest::qWaitFor([&] { return w.setupPanel()->hasZFace(); }, kTimeoutMs));
+    }
+    REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->previewBusy(); }, kTimeoutMs));
+    {
+        QString key;
+        for (const QVariant& m : w.setupPanel()->markers()) {
+            const QString k = m.toMap().value(QStringLiteral("key")).toString();
+            QQuickItem* item = w.find(QStringLiteral("setupMarker.") + k);
+            if (item == nullptr || !item->isVisible() || !w.clear(w.centreOf(item)))
+                continue;
+            if (key.isEmpty() || k == QLatin1String("corner3"))
+                key = k;
+        }
+        REQUIRE_FALSE(key.isEmpty());
+        w.click(w.shown(QStringLiteral("setupMarker.") + key));
+        REQUIRE(QTest::qWaitFor(
+            [&] { return w.setupPanel()->values().value(QStringLiteral("origin")).toString() == key; }, 5000));
+    }
+    w.chooseInCombo(QStringLiteral("setupCombo.machine"),
+                    [&] { return w.setupPanel()->values().value(QStringLiteral("machine")).toString() == kVmc; });
+    w.chooseInCombo(QStringLiteral("setupCombo.material"),
+                    [&] { return w.setupPanel()->values().value(QStringLiteral("material")).toString() == kAl6061; });
+    w.typeInto(QStringLiteral("setupInput.zPos"), QStringLiteral("1 mm"));
+    w.window()->contentItem()->forceActiveFocus();
+    REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->previewBusy() && w.setupPanel()->canCommit(); }, kTimeoutMs));
+    w.click(QStringLiteral("setupOk"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.setupPanel()->active() && w.tree()->setupCount() == 1; }, kTimeoutMs));
+    w.settle();
+    const SetupId setupId = w.document()->state()->cam->setups.front().id;
+    {
+        const cam::Setup& s = w.document()->state()->cam->setups.front();
+        CHECK(s.postId == "haas-ngc");
+        const auto* box = std::get_if<cam::BoxStock>(&s.stock);
+        REQUIRE(box != nullptr);
+        CHECK(box->zPos == 1.0);
+    }
+    m3Shot(w, "01_setup");
+
+    // ---- 3. Five operations, each made in the generic panel with a library tool ----
+    struct Step {
+        const char* type;
+        QString tool, search;
+        std::function<std::vector<render::PickHit>()> picks; // none for face
+        std::function<void()> params;                        // fields typed in the type's own form, or none
+        std::size_t picked;
+    };
+    const std::vector<Step> steps = {
+        {"face", kFaceMill, QStringLiteral("face mill"), {}, {}, 0},
+        {"pocket2d", kEndMill6, QStringLiteral("6 mm 3FL"), [&] { return pocketFloors(w); }, {}, 2},
+        // The outline from the stock top down to the plate's bottom edges, in steps of at most 5 mm.
+        {"contour2d", kEndMill10, QStringLiteral("10 mm 4FL"), [&] { return bottomOutline(w); },
+         [&] { w.typeInto(QStringLiteral("schemaInput.maxStepdown"), QStringLiteral("5 mm")); }, 4},
+        {"drill",
+         kDrill7,
+         QStringLiteral("0.201"),
+         [&] {
+             // The four tap-drill holes (0.201 in), by their bore faces.
+             REQUIRE(QTest::qWaitFor([&] { return w.op()->holeCount() >= 8; }, kTimeoutMs));
+             std::vector<render::PickHit> out;
+             for (std::size_t i = 0; i < w.op()->holeCount(); ++i) {
+                 const api::cam_operation::Hole h = w.op()->holes()[i];
+                 if (std::abs(h.diameter - 0.201 * 25.4) < 0.01)
+                     out.push_back(
+                         render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, h.boreFace, h.top, 0});
+             }
+             return out;
+         },
+         {},
+         4},
+        {"chamfer2d", kChamferMill, QStringLiteral("chamfer mill"), [&] { return counterboreEdges(w); }, {}, 4},
+    };
+    std::vector<OperationId> ops;
+    for (const Step& step : steps) {
+        const QString type = QLatin1String(step.type);
+        INFO("operation " << step.type);
+        w.clickRow(QStringLiteral("setupRow.0"));
+        REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == 0; }, 5000));
+        w.click(QStringLiteral("camRowNewOperation.0"));
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->active(); }, 5000));
+        // The type from the panel's own list, as a user steps to it.
+        w.chooseInCombo(QStringLiteral("operationCombo.type"), [&] { return w.op()->type() == type; });
+        REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+        chooseTool(w, step.tool, step.search);
+        if (step.picks) {
+            const std::vector<render::PickHit> hits = step.picks();
+            CHECK(hits.size() == step.picked);
+            pickAll(w, hits);
+        }
+        if (step.params)
+            step.params();
+        if (w.op()->calculated().value(QStringLiteral("available")).toBool()) {
+            w.click(QStringLiteral("operationUseCalculated"));
+            REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+        } else {
+            w.typeInto(QStringLiteral("operationInput.rpm"), QStringLiteral("6000"));
+            w.typeInto(QStringLiteral("operationInput.feedCut"), QStringLiteral("600"));
+        }
+        w.window()->contentItem()->forceActiveFocus();
+        QCoreApplication::processEvents();
+        {
+            const bool previewed = QTest::qWaitFor(
+                [&] { return !w.op()->previewBusy() && w.op()->previewStatus() == QLatin1String("ok"); },
+                kTimeoutMs * 2);
+            INFO("preview '" << w.op()->previewStatus().toStdString() << "', message '"
+                             << w.op()->message().toStdString() << "', errors '"
+                             << w.op()->errors().join(QStringLiteral(" | ")).toStdString() << "'");
+            REQUIRE(previewed);
+        }
+        CHECK(w.op()->errors().isEmpty());
+        REQUIRE(w.op()->canCommit());
+        m3Shot(w, (std::string("02_panel_") + step.type).c_str());
+        const QString id = w.op()->operationId();
+        w.click(QStringLiteral("operationOk"));
+        REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+        const int row = w.tree()->rowOf(id);
+        REQUIRE(row >= 0);
+        w.waitStatus(row, "upToDate");
+        ops.push_back(OperationId{Uuid::fromString(id.toStdString())});
+    }
+    // All five in the setup, in that order, up to date; five tools with five numbers (the post changes tools by
+    // number).
+    {
+        const doc::DocStatePtr s = w.document()->state();
+        const cam::Setup& setup = s->cam->setups.front();
+        REQUIRE(setup.operations == ops);
+        std::set<int> numbers;
+        for (std::size_t i = 0; i < ops.size(); ++i) {
+            const cam::Operation& op = s->cam->operations.at(ops[i]);
+            CHECK(op.type == steps[i].type);
+            CHECK(op.geometry.size() == steps[i].picked);
+            CHECK(op.tool.tool == ToolId{Uuid::fromString(steps[i].tool.toStdString())});
+            numbers.insert(op.tool.toolNumber);
+        }
+        CHECK(numbers.size() == 5);
+    }
+    REQUIRE(w.tree()->count() == 6);
+    for (int row = 0; row < 6; ++row)
+        w.waitStatus(row, "upToDate");
+
+    // ---- 4. The cycle-time estimate: in the tree and the post dialog, marked as an estimate with its assumptions ----
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            const SetupTreeModel::CycleTimeEstimate* e = w.tree()->cycleTimeOf(setupId);
+            return e != nullptr && e->input.complete && e->input.operations.size() == 5;
+        },
+        kTimeoutMs * 2));
+    const QVariantMap setupRow = w.tree()->get(0);
+    const QString estimate = setupRow.value(QStringLiteral("cycleTime")).toString();
+    CHECK(estimate.startsWith(QStringLiteral("est. ")));
+    const QString estimateTip = setupRow.value(QStringLiteral("cycleTimeTip")).toString();
+    CHECK(estimateTip.startsWith(QStringLiteral("Estimated cycle time ")));
+    // The shipped machine definitions publish no accelerations: the estimate says it assumed them.
+    CHECK(estimateTip.contains(QStringLiteral("Machine accelerations unknown")));
+    CHECK(estimateTip.contains(QStringLiteral("assumed")));
+    CHECK(w.shown(QStringLiteral("camRowDetails.0"))->property("text").toString().endsWith(estimate));
+    w.clickRow(QStringLiteral("setupRow.0"));
+    w.view()->fitAll();
+    w.settle();
+    m3Shot(w, "03_five_operations");
+
+    // ---- 5. Posted with haas-ngc; the notice; read back by the round-trip interpreter ----
+    const QString outDir = QDir::toNativeSeparators(w.out.path() + QStringLiteral("/nc"));
+    REQUIRE(QDir().mkpath(outDir));
+    const auto postWith = [&](const QString& postId) -> QByteArray {
+        INFO("post " << postId.toStdString());
+        w.clickRow(QStringLiteral("setupRow.0"));
+        w.click(QStringLiteral("camRowPost.0"));
+        REQUIRE(QTest::qWaitFor([&] { return w.post()->active(); }, 5000));
+        w.postRead();
+        if (w.post()->postId() != postId) {
+            w.chooseInCombo(QStringLiteral("postCombo"), [&] { return w.post()->postId() == postId; });
+            w.postRead();
+        }
+        REQUIRE(w.post()->postId() == postId);
+        // The dialog: the estimate, and the notice that this shipped post is not proven on a machine (it blocks
+        // nothing).
+        CHECK(w.shown(QStringLiteral("postDialogCycleTime"))->property("text").toString() == estimateTip);
+        CHECK(w.post()->postProof() == QStringLiteral("unproven"));
+        const QString notice = w.shown(QStringLiteral("postNoticeText"))->property("text").toString();
+        CHECK(notice.startsWith(QStringLiteral("This post has not been proven on a real machine")));
+        CHECK(notice.contains(QStringLiteral("Dry-run the program before cutting")));
+        if (w.post()->values().value(QStringLiteral("directory")).toString() != outDir)
+            w.typeInto(QStringLiteral("postInput.directory"), outDir);
+        if (w.post()->values().value(QStringLiteral("pattern")).toString() != QLatin1String("{doc}_{setup}_{post}"))
+            w.typeInto(QStringLiteral("postInput.pattern"), QStringLiteral("{doc}_{setup}_{post}"));
+        REQUIRE(QTest::qWaitFor([&] { return w.post()->canPost(); }, kTimeoutMs));
+        m3Shot(w, (std::string("04_post_") + postId.toStdString()).c_str());
+        w.click(QStringLiteral("postPost"));
+        w.posted("done");
+        const QString file = w.post()->resultPath();
+        CHECK(QFileInfo(file).fileName() == QStringLiteral("fixture_plate_3_Setup_1_%1.nc").arg(postId));
+        const QByteArray text = readFile(file);
+        {
+            // Kept beside the screenshots, to read.
+            const QString shots = qEnvironmentVariableIsSet("RAY_M3_FLOW_SHOTS")
+                                      ? qEnvironmentVariable("RAY_M3_FLOW_SHOTS")
+                                      : QStringLiteral(RAY_SHOTS_DIR);
+            QDir().mkpath(shots);
+            QFile copy(QDir(shots).filePath(QStringLiteral("m3_flow_%1.nc").arg(postId)));
+            if (copy.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                copy.write(text);
+        }
+        // Every tool, each with its change.
+        for (std::size_t i = 0; i < ops.size(); ++i) {
+            const int n = w.document()->state()->cam->operations.at(ops[i]).tool.toolNumber;
+            CHECK(text.contains(QStringLiteral("T%1").arg(n).toLatin1()));
+        }
+        const std::vector<std::string> issues = roundTripIssues(w, postId, text);
+        for (const std::string& issue : issues)
+            UNSCOPED_INFO(issue);
+        CHECK(issues.empty());
+        m3Shot(w, (std::string("05_posted_") + postId.toStdString()).c_str());
+        w.click(QStringLiteral("postCancel")); // "Close"
+        REQUIRE(QTest::qWaitFor([&] { return !w.post()->active(); }, 5000));
+        return text;
+    };
+    const QByteArray haas = postWith(QStringLiteral("haas-ngc"));
+    CHECK(haas.contains("G21"));
+    // ---- 6. And with a Mazak post, read back both ways ----
+    const QByteArray mazak = postWith(QStringLiteral("mazak-smooth"));
+    CHECK(mazak.contains("G21"));
+    CHECK(mazak != haas);
+
+    // ---- 7. Saved, closed and opened again: the same five operations, parameters and toolpaths ----
+    const doc::DocStatePtr before = w.document()->state();
+    const cam::Setup setupBefore = before->cam->setups.front();
+    CHECK(setupBefore.postId == "mazak-smooth"); // the post last used is written back to the setup
+    std::map<OperationId, std::string> hashes;
+    for (const OperationId& id : ops)
+        hashes[id] = w.toolpath(id)->hash().hex();
+    const QString saved = QDir(w.out.path()).filePath(QStringLiteral("m3flow.raycad"));
+    w.host->files()->saveAs(saved);
+    // Saved: the document is the file now and has nothing unsaved (the save runs on a worker).
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !w.host->files()->busy() && QFileInfo::exists(saved) && !w.host->session()->dirty() &&
+                   QFileInfo(w.host->session()->documentPath()).fileName() == QStringLiteral("m3flow.raycad");
+        },
+        kTimeoutMs));
+    w.settle();
+    w.host->files()->close();
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->hasDocument() || w.host->files()->promptVisible(); },
+                            kTimeoutMs));
+    CHECK_FALSE(w.host->files()->promptVisible()); // nothing unsaved to ask about
+    if (w.host->files()->promptVisible())
+        w.host->files()->answerPrompt(QStringLiteral("discard"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->hasDocument(); }, kTimeoutMs));
+    REQUIRE(w.host->files()->open(saved));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->session()->hasDocument() && w.settled(); }, kTimeoutMs));
+    w.settle();
+    if (w.host->context()->workspace() != ui::kCamWorkspace)
+        w.click(QStringLiteral("workspaceTab.%1").arg(ui::kCamWorkspace));
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->count() == 6; }, 10000));
+    {
+        const doc::DocStatePtr s = w.document()->state();
+        REQUIRE(s->cam);
+        REQUIRE(s->cam->setups.size() == 1);
+        const cam::Setup& back = s->cam->setups.front();
+        CHECK(back.id == setupBefore.id);
+        CHECK(back.machine == setupBefore.machine);
+        CHECK(back.material == setupBefore.material);
+        CHECK(back.postId == setupBefore.postId);
+        CHECK(back.operations == setupBefore.operations);
+        REQUIRE(s->cam->operations.size() == 5);
+        for (const OperationId& id : ops) {
+            REQUIRE(s->cam->operations.count(id) == 1);
+            const cam::Operation& a = before->cam->operations.at(id);
+            const cam::Operation& b = s->cam->operations.at(id);
+            INFO("operation " << a.name);
+            CHECK(b.type == a.type);
+            CHECK(b.name == a.name);
+            CHECK(b.paramsJson == a.paramsJson);
+            CHECK(b.geometry.size() == a.geometry.size());
+            CHECK(b.tool.tool == a.tool.tool);
+            CHECK(b.tool.toolNumber == a.tool.toolNumber);
+            CHECK(b.tool.lengthOffset == a.tool.lengthOffset);
+            CHECK(b.tool.diameterOffset == a.tool.diameterOffset);
+            CHECK(b.cutting.spindleRpm == a.cutting.spindleRpm);
+            CHECK(b.cutting.feedCut == a.cutting.feedCut);
+            CHECK(b.cutting.feedPlunge == a.cutting.feedPlunge);
+            CHECK(b.cutting.feedRamp == a.cutting.feedRamp);
+            CHECK(b.cutting.coolant == a.cutting.coolant);
+            CHECK(b.heights.clearance == a.heights.clearance);
+            CHECK(b.heights.retract == a.heights.retract);
+            CHECK(b.heights.feedPlane == a.heights.feedPlane);
+            CHECK(b.heights.top == a.heights.top);
+            CHECK(b.heights.bottom == a.heights.bottom);
+            REQUIRE(s->cam->tools.count(b.tool.tool) == 1);
+            CHECK(s->cam->tools.at(b.tool.tool).item.contentHash() ==
+                  before->cam->tools.at(a.tool.tool).item.contentHash());
+        }
+    }
+    // Up to date in this session (the engine keeps toolpaths by input hash) and drawn: the setup row is current, so all
+    // five toolpaths are shown, none stale or dimmed, each the one posted.
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->currentIndex() == 0; }, 10000));
+    for (int row = 0; row < 6; ++row)
+        w.waitStatus(row, "upToDate");
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            int drawn = 0;
+            for (const ToolpathDisplay::Shown& s : w.display()->shown())
+                drawn += s.backplot && s.toolpath && !s.stale && !s.dim && !s.preview ? 1 : 0;
+            return drawn == 5;
+        },
+        kTimeoutMs));
+    for (const ToolpathDisplay::Shown& s : w.display()->shown()) {
+        REQUIRE(hashes.count(s.op) == 1);
+        CHECK(s.toolpath->hash().hex() == hashes.at(s.op));
+    }
+    w.view()->fitAll();
+    w.settle();
+    m3Shot(w, "06_reopened");
     CHECK(w.confirms == 0);
     w.checkNoWarnings();
 }

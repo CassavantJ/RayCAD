@@ -59,6 +59,7 @@ struct Declaration {
     bool rigidTap = false;
     bool toolLengthProbe = false;
     std::vector<DeclaredProperty> properties; // the post's, then the host's own (lineEnding, includeDate)
+    std::vector<std::string> verifiedOn;      // the controls a program from the post has run on (PostInfo::verifiedOn)
 };
 
 // The host properties every post has, declared by the host unless the post declares them itself.

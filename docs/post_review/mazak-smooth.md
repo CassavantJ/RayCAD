@@ -1,6 +1,12 @@
 # Mazak Smooth post: review notes
 
-**Status: NOT REVIEWED by the owner.** Post: `resources/library/posts/mazak-smooth.post.js` (dialect `mazak-smooth`).
+**Status: not yet run on a control.** Every golden is read back by the project's round-trip interpreter (T-043), in
+both of the readings it knows for a Mazak control, and the words are checked against RS274/NGC; no Mazak manual could
+be read (below), so every Mazak-specific rule is [unverified]. No program from this post has been run on a real
+MAZATROL Smooth control, and nobody who runs one has reviewed it yet. Review is wanted from people who run a Mazak
+mill with a Smooth control: see [Reporting a result](README.md#reporting-a-result).
+
+Post: `resources/library/posts/mazak-smooth.post.js` (dialect `mazak-smooth`).
 Goldens: `tests/golden/gcode/mazak-smooth/`. See [README.md](README.md) for how the goldens are made and reviewed.
 The Matrix post ([mazak-matrix.md](mazak-matrix.md)) is generated from this one and writes the same words.
 
@@ -120,12 +126,12 @@ Forms: `G91 G28 Z0.` / `Y0.` / `X0. Y0.` (home through the current point), `G0 G
 property), cycle P in the same unit, `M29 S<rpm>` alone before G84/G74, the next tool's `T<m>` alone after `T<n> M6`
 (property), `G05 P2` / `G05 P0`.
 
-## Questions for the owner (need the machine or its manuals)
+## Questions for people who run this control (they need the machine or its manuals)
 
 1. Which Mazak control exactly (SmoothX, SmoothG, SmoothAi, SmoothEz) and which software version? With its EIA/ISO
    programming manual every [unverified] item above can be checked.
 2. Is the control set up for EIA/ISO programs, and with which G-code system?
-3. Tool change: does M6 retract Z? Which next-tool form does the shop use? Are T numbers pockets or tool numbers?
+3. Tool change: does M6 retract Z? Which next-tool form does your shop use? Are T numbers pockets or tool numbers?
 4. Tool length: G43 H, or tool data? Which parameter?
 5. Dwell P unit; synchronous tapping form; peck return parameter.
 6. Coolant codes for mist, through-spindle and air.
@@ -134,4 +140,4 @@ property), cycle P in the same unit, `M29 S<rpm>` alone before G84/G74, the next
 
 ## Review record
 
-(empty: no review yet)
+(empty: no program from this post has been run on a control yet)

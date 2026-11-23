@@ -121,6 +121,8 @@ definePost({
   dialect: "mazak-matrix",
   fileExtension: ".nc",
   apiVersion: 1,
+  // The real controls a program from this post has run on (post_api.d.ts). None yet: see docs/post_review/mazak-matrix.md.
+  verifiedOn: [],
   capabilities: {
     arcs: "IJK",
     helical: true,
@@ -170,7 +172,7 @@ definePost({
         "through=M51/M9. A mode used with no code stops posting." },
     dwellUnits: { type: "enum", title: "Dwell P units", default: "milliseconds", values: ["milliseconds", "seconds"],
       group: "Cycles", description: "P of G4, G82, G84 and G89: integer milliseconds (P300) or seconds (P0.3). " +
-        "[unverified]: every program with a dwell gets a warning until the owner confirms the unit." },
+        "[unverified]: every program with a dwell gets a warning until someone who runs the control confirms the unit." },
     tapping: { type: "enum", title: "Tapping", default: "auto", values: ["auto", "rigidM29", "G84.2", "plainG84"],
       group: "Cycles", description: "rigidM29: M29 S.. before G84/G74. G84.2: synchronous tapping G84.2 (G84.3 left " +
         "hand). plainG84: G84/G74 with the spindle started first (floating, or synchronous by parameter). auto: " +

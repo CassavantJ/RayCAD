@@ -392,6 +392,19 @@ TEST_CASE("the output folder is shown under the home folder as ~, and otherwise 
     CHECK(PostToolModel::homeRelative(QString(), home).isEmpty());
 }
 
+// M3 closeout: a shipped post is proven only when its declaration names a control it has run on; a post from another
+// library root is not labelled either way.
+TEST_CASE("a shipped post is unproven until its declaration names a control it ran on", "[cam][post][ui]")
+{
+    using ray::ui::PostToolModel;
+    post::PostInfo info{};
+    CHECK(PostToolModel::proofOf(true, info) == QStringLiteral("unproven"));
+    CHECK(PostToolModel::proofOf(false, info).isEmpty());
+    info.verifiedOn = {"Mill A, control B, software 1.0"};
+    CHECK(PostToolModel::proofOf(true, info) == QStringLiteral("proven"));
+    CHECK(PostToolModel::proofOf(false, info).isEmpty());
+}
+
 TEST_CASE("the gate names every blocking state, for each operation", "[cam][post][gate]")
 {
     // A hand-made document: setup 1 with operations 1..6, every status the engine has.

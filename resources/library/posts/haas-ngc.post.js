@@ -118,6 +118,8 @@ definePost({
   dialect: "haas-ngc",
   fileExtension: ".nc",
   apiVersion: 1,
+  // The real controls a program from this post has run on (post_api.d.ts). None yet: see docs/post_review/haas-ngc.md.
+  verifiedOn: [],
   capabilities: {
     arcs: "IJK",
     helical: true,

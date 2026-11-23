@@ -12,6 +12,7 @@
 // maxBlockNumber and maxProgramNameLength in ProgramContext.
 // T-042: the dialect names list the two Mazak posts, mazak-smooth and mazak-matrix (one per control generation), in
 // place of mazak-eia. No other change.
+// M3 closeout: the optional verifiedOn list (PostInfo::verifiedOn), read by the post dialog only. No other change.
 
 declare function definePost(post: PostDefinition): void;
 
@@ -21,6 +22,12 @@ interface PostDefinition {
   dialect: "haas-ngc" | "haas-classic" | "fanuc" | "mazak-smooth" | "mazak-matrix" | "generic-iso" | string;
   fileExtension: string;
   apiVersion: 1;
+  // The real controls a program from this post has been run on, one string each naming the control model and its
+  // software version, as recorded in the post's file in docs/post_review ("<machine and control>, software <version>").
+  // Absent or empty (the default): the post has not been proven on any machine, and when it is one of the posts
+  // shipped with RayCAD the post dialog says so. Posts in a user's own library are not labelled either way. It changes
+  // nothing in the program the post writes.
+  verifiedOn?: string[];
   capabilities: {
     arcs: "IJK" | "R" | "none";
     helical: boolean;

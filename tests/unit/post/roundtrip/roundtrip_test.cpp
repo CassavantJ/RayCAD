@@ -2,9 +2,9 @@
 // compared with the toolpaths it was posted from (roundtrip_compare.h); the same for the pairwise property
 // combinations of the shipped test; and in-memory mutations of the goldens that the round trip must catch.
 //
-// The goldens are NOT owner-reviewed (docs/post_review/README.md). Where the interpreter disagrees with a golden, the
-// disagreement is a finding: it is listed in kKnownFindings below with the documentation it rests on, the tests pass
-// while it is still seen, and fail when a new one appears or a listed one is gone (then remove it from the list).
+// No golden has been run on a control yet (docs/post_review/README.md). Where the interpreter disagrees with a golden,
+// the disagreement is a finding: it is listed in kKnownFindings below with the documentation it rests on, the tests
+// pass while it is still seen, and fail when a new one appears or a listed one is gone (then remove it from the list).
 #include "gcode_interp.h"
 #include "roundtrip_compare.h"
 #include "shipped_matrix.h"

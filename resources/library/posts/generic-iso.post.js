@@ -111,6 +111,8 @@ definePost({
   dialect: "generic-iso",
   fileExtension: ".nc",
   apiVersion: 1,
+  // The real controls a program from this post has run on (post_api.d.ts). None yet: see docs/post_review/generic-iso.md.
+  verifiedOn: [],
   capabilities: {
     arcs: "IJK",
     helical: true,

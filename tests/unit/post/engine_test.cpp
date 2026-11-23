@@ -255,6 +255,11 @@ TEST_CASE("inspect refuses bad declarations and newer API versions", "[post][eng
         return engine.inspectSource(src, "bad.post.js");
     };
     REQUIRE(declare("{}").has_value());
+    // verifiedOn (M3 closeout): absent and empty both mean "not proven on any machine"; the entries kept in order.
+    CHECK(declare("{}")->verifiedOn.empty());
+    CHECK(declare("{ verifiedOn: [] }")->verifiedOn.empty());
+    CHECK(declare("{ verifiedOn: ['Mill A, control B, software 1.0', 'Mill C'] }")->verifiedOn ==
+          std::vector<std::string>{"Mill A, control B, software 1.0", "Mill C"});
     const auto newer = declare("{ apiVersion: 2 }");
     REQUIRE_FALSE(newer.has_value());
     CHECK(newer.error().code == ErrorCode::FormatTooNew);
@@ -279,6 +284,9 @@ TEST_CASE("inspect refuses bad declarations and newer API versions", "[post][eng
         {"{ properties: { a: { type: 'bool', title: 'A', default: 'yes' } } }", "must be true or false"},
         {"{ properties: { lineEnding: { type: 'bool', title: 'A', default: true } } }", "read by the host"},
         {"{ onLinear: 5 }", "onLinear must be a function"},
+        {"{ verifiedOn: 'Haas' }", "verifiedOn must be an array of strings"},
+        {"{ verifiedOn: [''] }", "verifiedOn must be an array of non-empty strings"},
+        {"{ verifiedOn: [3] }", "verifiedOn must be an array of non-empty strings"},
     };
     for (const Bad& b : bad) {
         INFO(b.patch);

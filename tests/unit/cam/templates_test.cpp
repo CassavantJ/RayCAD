@@ -590,7 +590,7 @@ TEST_CASE(
         INFO(t.name);
         auto rules = tpl::rulesOf(t);
         REQUIRE(rules);
-        CHECK(t.opType == "drill"); // only operation types that exist today
+        CHECK(t.opType == "drill"); // the starter templates are hole templates: drilling cycles
         REQUIRE(t.material.has_value());
         CHECK(rules->feeds.calculated);
         CHECK(t.comment.find("not copied from any table") != std::string::npos);

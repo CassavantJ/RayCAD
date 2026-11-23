@@ -122,6 +122,8 @@ definePost({
   dialect: "fanuc",
   fileExtension: ".nc",
   apiVersion: 1,
+  // The real controls a program from this post has run on (post_api.d.ts). None yet: see docs/post_review/fanuc.md.
+  verifiedOn: [],
   capabilities: {
     arcs: "IJK",
     helical: true,

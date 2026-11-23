@@ -6,6 +6,8 @@
 // the host gives it no clock, no random numbers, no file system and no locale. The host stamps the
 // date into the header only if the `includeDate` property is on (off in golden tests).
 // All number formatting is done by host functions so output is identical on every platform.
+// M3 closeout: PostInfo::verifiedOn added (definePost's optional `verifiedOn`, post_api.d.ts), so the post dialog can
+// say whether a shipped post has been run on a real control. Additive; nothing else changed.
 #pragma once
 #include "core.h"
 #include "cam.h"
@@ -26,6 +28,9 @@ struct PostInfo {
     int apiVersion;                 // host refuses scripts needing a newer API
     std::vector<PostProperty> properties;
     struct Caps { bool arcsIJK, arcsR, helical, cannedCycles, rigidTap, cutterComp, toolLengthProbe; int maxArcDeg; } caps;
+    // The real controls a program from this post has been run on, one entry each (control model and software
+    // version), as recorded in docs/post_review. Empty: not proven on any machine (the default).
+    std::vector<std::string> verifiedOn;
 };
 
 struct PostSection {                // one operation as the post sees it

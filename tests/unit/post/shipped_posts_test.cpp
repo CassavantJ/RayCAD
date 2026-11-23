@@ -9,7 +9,7 @@
 //    structural checks: the safe start block first, the end block last, no feed move without the spindle turning, no
 //    canned cycle or cutter compensation left on at a tool change or the end, Z retracted before the end.
 //  - Each refusal and warning names its cause.
-// The goldens are NOT reviewed by the owner yet (PLAN.md T-040): docs/post_review/<post>.md lists what to check.
+// No golden has been run on a control yet (docs/post_review/README.md): docs/post_review/<post>.md lists what to check.
 // To write the produced programs: set RAYCAD_GOLDEN_PRODUCED=<dir>, run "[shipped][golden]", then
 // tools/update_golden.py --produced <dir>/<post> --suite gcode/<post> for each post.
 #include "engine.h"
@@ -261,6 +261,15 @@ TEST_CASE("shipped posts load in the sandbox and declare capabilities and proper
             if (p.type == PostProperty::Type::Enum) {
                 CHECK(p.enumValues.size() >= 2);
             }
+        }
+        // A control the post declares it has run on (verifiedOn, M3 closeout) is recorded in its review document, with
+        // the result; none is yet (docs/post_review/README.md, "Status").
+        const std::string review =
+            readFile(std::string(RAY_SHIPPED_POSTS_DIR) + "/../../../docs/post_review/" + id + ".md");
+        REQUIRE_FALSE(review.empty());
+        for (const std::string& control : info->verifiedOn) {
+            INFO("verifiedOn " << control);
+            CHECK(review.find(control) != std::string::npos);
         }
         CHECK(engine.lastRun().heapAfterFreeBytes == 0);
         // And a run with the default limits frees everything too.

@@ -4,9 +4,67 @@ RayCAD is an open-source desktop CAD/CAM application for machine shops: import a
 with direct editing, program 2.5D milling, simulate, and post G-code. It is written in C++20 on Qt 6.12
 (Qt Quick) and OpenCASCADE 8.0.1.
 
-**Status: early development.** The repository currently holds the project skeleton only: the module
-libraries are stubs, the desktop application opens an empty window, and `raycad-cli` prints its version.
-`PLAN.md` is the technical plan; `BRIEF.md` is the original brief.
+**Status: pre-release.** There has been no release yet, and the programs RayCAD writes have not been run on
+a real machine. Read "Status and safety" below before you send a program to a machine. `PLAN.md` is the
+technical plan (its section 12 lists the milestones; M1, M7, M2 and M3 are done); `BRIEF.md` is the original
+brief.
+
+## Status and safety
+
+RayCAD is pre-release software. The post processors shipped with it (generic ISO, FANUC, Haas NGC, Haas
+classic, Mazak Smooth and Mazak Matrix) have been checked only by the project's own G-code interpreter, which
+reads every test program back and compares it with the toolpath it came from, and against the control
+documentation cited in `docs/post_review`. None of them has been proven on a real machine, and the machine
+definitions are generic ones taken from published specifications. The post dialog says so each time.
+
+Before you cut with a program from RayCAD:
+
+- dry-run it first: single block, with the feed hold in reach, above the part or with no tool in the spindle;
+- check the work offsets, the tool lengths and what the tool changes do on your machine;
+- read the program against your control's manual, as you would any program from a new post.
+
+If you run one of these controls and can review a post or dry-run its programs, `docs/post_review/README.md`
+says how to report what you find.
+
+RayCAD comes with no warranty of any kind, to the extent the law allows; see sections 15 and 16 of the licence
+(`LICENSE`).
+
+## What works today
+
+- **Open and look.** STEP and IGES import with progress and cancel, orbit, selection, measuring, sections, light
+  and dark themes; documents saved as `.raycad` files, with recovery after a crash.
+- **Model.** Sketches with constraints and dimensions (DXF import), extrude, cut, revolve, fillet, chamfer and
+  hole features with named parameters, a feature tree with rollback, STEP export.
+- **CAM.** Setups with stock and a work offset; a tool, holder, material and machine library; hole recognition;
+  the operation panel, built for every operation type from its parameter schema, with a live toolpath preview;
+  feeds and speeds calculated from the tool's presets for the material; shop templates; a cycle-time estimate;
+  backplot; posting through the six shipped posts or your own, and a G-code viewer linked to the toolpath.
+
+The eight operation types (`docs/operation_types.md` says how a type is written):
+
+| Type | What it does |
+|-|-|
+| `drill` | Spot drilling, drilling, peck drilling, chip breaking, tapping, boring and reaming as canned cycles, at recognised holes |
+| `face` | Faces the whole top of the stock flat with parallel strokes, zigzag or one way, at one or more depths |
+| `contour2d` | Runs the tool beside a chain of picked edges at one or more depths, with leads, roughing and finish passes, tabs and cutter compensation |
+| `pocket2d` | Clears the area above picked pocket floors with offset rings, islands left standing, entering by a helix, a ramp or a pre-drilled hole |
+| `slot` | Cuts a slot along its centre line with an end mill as wide as the slot, ramping into each depth |
+| `chamfer2d` | Chamfers or deburrs the top edges of walls with the flank of a chamfer mill or a spot drill |
+| `engrave` | Engraves along picked edges and a line of text in a single-line font, at a depth below a plane |
+| `threadmill` | Mills internal and external threads with a helix, from the hole's thread or entered values |
+
+## Known limits
+
+- The shipped posts have not been proven on a real machine (above), and the cycle-time estimate assumes
+  accelerations, as no measured data is behind it yet.
+- `pocket2d` takes the pocket's walls as vertical: drafted or undercut walls are not followed.
+- `contour2d` takes edges only when picked in the operation panel (its parameters can describe planar faces, but
+  the panel picks edges).
+- `engrave` writes one line of text.
+- CAM geometry is picked on the model's faces and edges; it cannot reference a sketch.
+- Each operation starts from the setup's stock: material removed by earlier operations is not carried to the next
+  one (there is no stock simulation yet), so a later operation may cut air where an earlier one has been.
+- macOS has never been built; the `macos-arm64` preset is untested. Windows and Linux are built and tested.
 
 ## Layout
 
@@ -116,9 +174,11 @@ reports a deliberate race in a `parallelChunks` body.
 
 ## Tests and lints
 
-`ctest` runs everything: a standalone-compile test for every public header, the module link-graph test,
-the OpenCASCADE smoke test (it calls into every toolkit the kernel links, and on Windows also proves
-they are delay-loaded), the two application smoke tests, and the lint tools with their self-tests.
+`ctest` runs everything: the unit, golden and property tests of every module, the G-code round trip of
+every shipped post, the tests that drive the desktop window, a standalone-compile test for every public
+header, the module link-graph test, the OpenCASCADE smoke test (it calls into every toolkit the kernel
+links, and on Windows also proves they are delay-loaded), the two application smoke tests, and the lint
+tools with their self-tests.
 
 ### Which tests to run
 

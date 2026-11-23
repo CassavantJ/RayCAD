@@ -798,6 +798,30 @@ Result<Declaration> Session::readDeclaration()
         return tl::unexpected(*r.problem);
     }
 
+    // Optional (M3 closeout): the real controls a program from this post has run on (PostInfo::verifiedOn).
+    JSValue verified = r.get(post_, "verifiedOn");
+    if (!r.problem && !JS_IsUndefined(verified)) {
+        std::int64_t n = 0;
+        if (!JS_IsArray(verified) || JS_GetLength(ctx_, verified, &n) || n > 1000) {
+            r.fail("verifiedOn must be an array of strings, one per control a program from this post has run on");
+        }
+        for (std::int64_t i = 0; i < n && !r.problem; ++i) {
+            JSValue item = JS_GetPropertyUint32(ctx_, verified, static_cast<std::uint32_t>(i));
+            bool ok = JS_IsString(item);
+            std::string text = ok ? toStdString(ctx_, item, ok) : std::string();
+            JS_FreeValue(ctx_, item);
+            if (!ok || text.empty()) {
+                r.fail("verifiedOn must be an array of non-empty strings (the control model and its software version)");
+            } else {
+                d.verifiedOn.push_back(std::move(text));
+            }
+        }
+    }
+    JS_FreeValue(ctx_, verified);
+    if (r.problem) {
+        return tl::unexpected(*r.problem);
+    }
+
     JSValue props = r.get(post_, "properties");
     if (!r.problem && !JS_IsUndefined(props)) {
         if (!JS_IsObject(props)) {

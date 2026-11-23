@@ -240,15 +240,25 @@ void PostToolModel::unsubscribe()
     ++docGeneration_;
 }
 
-std::vector<std::string> PostToolModel::libraryRoots() const
+std::vector<std::string> PostToolModel::libraryRoots(bool shippedOnly) const
 {
     std::vector<std::string> roots;
     api::IApp* a = app();
     if (lib::LibraryStack* stack = a ? a->libraries() : nullptr) {
-        for (const lib::LibraryStack::RootInfo& r : stack->roots())
-            roots.push_back(r.dir);
+        for (const lib::LibraryStack::RootInfo& r : stack->roots()) {
+            // The library shipped with RayCAD is the read-only root (LibraryStack::setRoots): open, not writable.
+            if (!shippedOnly || (r.open && !r.writable))
+                roots.push_back(r.dir);
+        }
     }
     return roots;
+}
+
+QString PostToolModel::proofOf(bool shipped, const post::PostInfo& info)
+{
+    if (!shipped)
+        return {}; // a post of the user's own library: not labelled either way
+    return info.verifiedOn.empty() ? QStringLiteral("unproven") : QStringLiteral("proven");
 }
 
 QString PostToolModel::documentName() const
@@ -407,6 +417,7 @@ void PostToolModel::inspect()
     info_.reset();
     postTitle_.clear();
     postMessage_.clear();
+    postProof_.clear();
     postState_ = postId_.isEmpty() ? QString() : QStringLiteral("loading");
     if (postId_.isEmpty())
         postMessage_ = trp("Choose a post: neither the setup nor its machine names one");
@@ -417,27 +428,38 @@ void PostToolModel::inspect()
         return;
     const std::uint64_t serial = ++inspectSerial_;
     const std::vector<std::string> roots = libraryRoots();
+    const std::vector<std::string> shippedRoots = libraryRoots(true);
     const std::string id = ss(postId_);
-    JobHandle<post::PostInfo> job = jobs->submit<post::PostInfo>(
-        JobInfo{"Read post", JobPriority::Interactive, false}, [roots, id](JobContext&) -> Result<post::PostInfo> {
+    struct Read {
+        post::PostInfo info;
+        bool shipped = false; // the script is the one shipped with RayCAD (no other root overrides it)
+    };
+    JobHandle<Read> job = jobs->submit<Read>(
+        JobInfo{"Read post", JobPriority::Interactive, false}, [roots, shippedRoots, id](JobContext&) -> Result<Read> {
             const std::string path = cp::findPost(roots, id);
             if (path.empty())
                 return tl::unexpected(Error{
                     ErrorCode::NotFound, "The post '" + id + "' is not in the library (posts/" + id + ".post.js)", {}});
-            return cp::inspectPost(path);
+            auto info = cp::inspectPost(path);
+            if (!info)
+                return tl::unexpected(info.error());
+            const std::string shippedPath = cp::findPost(shippedRoots, id);
+            return Read{std::move(*info), !shippedPath.empty() && shippedPath == path};
         });
     QPointer<PostToolModel> self(this);
-    job.then([self, serial](Result<post::PostInfo> r) {
+    job.then([self, serial](Result<Read> read) {
         if (!self || serial != self->inspectSerial_ || !self->active())
             return;
-        if (!r) {
+        if (!read) {
             self->postState_ = QStringLiteral("failed");
-            self->postMessage_ = qs(r.error().message);
+            self->postMessage_ = qs(read.error().message);
             emit self->postChanged();
             emit self->canPostChanged();
             return;
         }
+        const post::PostInfo* r = &read->info;
         self->info_ = *r;
+        self->postProof_ = proofOf(read->shipped, *r);
         self->postTitle_ = qs(r->title);
         self->postState_ = QStringLiteral("ok");
         const lib::MachineDef* machine = self->machine_ ? &*self->machine_ : nullptr;
@@ -456,17 +478,24 @@ QString PostToolModel::notice() const
 {
     if (!active())
         return {};
-    // PLAN.md risk 4: the shipped definitions are unverified and no post has been proven on a machine.
-    const QString prove =
-        trp("Prove the program out before cutting metal: dry run above the part (air cut), then single block with "
-            "the feed and rapid overrides turned down, then a soft material, and only then the real part.");
-    if (!machineVerified_ && !postProven())
-        return trp("Neither this post nor the machine definition (%1) has been checked on a real machine. ")
-                   .arg(machineName_.isEmpty() ? trp("none") : machineName_) +
-               prove;
+    // PLAN.md risk 4. A shipped post says whether it has been run on a real control (its declaration's verifiedOn,
+    // docs/post_review); none has yet. A post of the user's own library is not labelled either way. The machine
+    // definition says whether it was checked against the real machine (MachineDef::verified).
+    const QString dryRun =
+        trp("Dry-run the program before cutting: single block, feed hold in reach, above the part (an air cut) or "
+            "without a tool. Check the work offsets, tool lengths and tool changes.");
+    const bool postUnproven = postProof_ == QLatin1String("unproven");
+    const QString machine = machineName_.isEmpty() ? trp("none") : machineName_;
+    if (postUnproven && !machineVerified_)
+        return trp("This post has not been proven on a real machine, and the machine definition (%1) has not been "
+                   "checked against one. ")
+                   .arg(machine) +
+               dryRun;
+    if (postUnproven)
+        return trp("This post has not been proven on a real machine. ") + dryRun;
     if (!machineVerified_)
-        return trp("The machine definition (%1) has not been checked on the real machine. ").arg(machineName_) + prove;
-    return trp("This post has not been proven on a machine. ") + prove;
+        return trp("The machine definition (%1) has not been checked against the real machine. ").arg(machine) + dryRun;
+    return {};
 }
 
 // ---------- values ----------

@@ -152,6 +152,7 @@ set(RAY_TEST_LOCKS
     desktop=ray_ui_cam_tools_tests
     desktop=ray_ui_cam_post_tests
     desktop=ray_ui_cam_flow_tests
+    desktop=ray_ui_cam_flow_m3
     desktop=ray_ui_cam_templates_tests
     desktop=ray_ui_cam_flow_scale_1
     desktop=ray_ui_cam_flow_scale_1_5

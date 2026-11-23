@@ -67,7 +67,8 @@ add_executable(ray_ui_cam_post_tests post_test.cpp)
 target_link_libraries(ray_ui_cam_post_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
                                                     Qt6::Test Catch2::Catch2)
 target_include_directories(ray_ui_cam_post_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui" "${CMAKE_SOURCE_DIR}/tests/unit/cam")
-target_compile_definitions(ray_ui_cam_post_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files")
+target_compile_definitions(ray_ui_cam_post_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_SHIPPED_POSTS_DIR="${CMAKE_SOURCE_DIR}/resources/library/posts")
 set_property(TARGET ray_ui_cam_post_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_ui_cam_post_tests COMMAND ray_ui_cam_post_tests "~[wallclock]")
 set_tests_properties(ray_ui_cam_post_tests PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
@@ -84,7 +85,10 @@ set_tests_properties(ray_ui_cam_post_tests PROPERTIES ENVIRONMENT_MODIFICATION "
 add_executable(ray_ui_cam_flow_tests flow_test.cpp)
 target_link_libraries(ray_ui_cam_flow_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
                                                     Qt6::Test Catch2::Catch2)
-target_include_directories(ray_ui_cam_flow_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
+# The M3 flow reads its posted programs back with the post tests' independent interpreter (T-043, test code only).
+target_link_libraries(ray_ui_cam_flow_tests PRIVATE ray_roundtrip_compare)
+target_include_directories(ray_ui_cam_flow_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui"
+                                                         "${CMAKE_SOURCE_DIR}/tests/unit/post/roundtrip")
 target_compile_definitions(ray_ui_cam_flow_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
                                                          RAY_SHOTS_DIR="${CMAKE_SOURCE_DIR}/build/shots")
 set_property(TARGET ray_ui_cam_flow_tests PROPERTY FOLDER "tests")
@@ -97,6 +101,17 @@ if(NOT _mods)
 endif()
 list(APPEND _mods "QSG_NO_VSYNC=set:1")
 set_tests_properties(ray_ui_cam_flow_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+# M3 in one window (face, pocket, contour, drill, chamfer, two posts read back, save and reopen): its hidden [m3flow]
+# case, on its own. Screenshots: build/shots/m3_flow_*.png.
+add_test(NAME ray_ui_cam_flow_m3 COMMAND ray_ui_cam_flow_tests "[m3flow]")
+set_tests_properties(ray_ui_cam_flow_m3 PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
+ray_test_runtime_path(ray_ui_cam_flow_m3 QT)
+get_test_property(ray_ui_cam_flow_m3 ENVIRONMENT_MODIFICATION _mods)
+if(NOT _mods)
+    set(_mods)
+endif()
+list(APPEND _mods "QSG_NO_VSYNC=set:1")
+set_tests_properties(ray_ui_cam_flow_m3 PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
 # Its [scale] case (no list or check box text cut where it has room, in the setup panel, the operation panel, the post
 # dialog and the tool library) at 100 %, 150 % and 200 %, as the operation panel's.
 foreach(_scale 1 1.5 2)

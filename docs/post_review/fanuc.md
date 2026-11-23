@@ -1,7 +1,13 @@
 # FANUC post: review notes
 
-**Status: NOT REVIEWED by the owner.** Post: `resources/library/posts/fanuc.post.js` (dialect `fanuc`). Goldens:
-`tests/golden/gcode/fanuc/`. See [README.md](README.md) for how the goldens are made and how to review.
+**Status: not yet run on a control.** Every golden is read back by the project's round-trip interpreter (T-043), and
+the words are checked against RS274/NGC where it gives the same meaning; the FANUC manuals could not be read (below),
+so every FANUC-specific rule is [F1, unverified]. No program from this post has been run on a real FANUC control, and
+nobody who runs one has reviewed it yet. Review is wanted from people who run a FANUC-controlled mill: see
+[Reporting a result](README.md#reporting-a-result).
+
+Post: `resources/library/posts/fanuc.post.js` (dialect `fanuc`). Goldens: `tests/golden/gcode/fanuc/`. See
+[README.md](README.md) for how the goldens are made and how to review.
 
 **Read this first.** FANUC does not publish its operator's manuals openly, and the author of the post could not read
 them. Every FANUC-specific rule in the post is therefore marked *[F1, unverified]*: it is general knowledge of FANUC
@@ -93,7 +99,7 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | sequence numbers on/off | 08 on; all others off |
 | program number and comment sanitising | 07 |
 
-## Unsure, unverified, or a choice the owner should confirm
+## Unsure, unverified, or a choice for someone who runs the control to confirm
 
 1. Everything marked [F1, unverified] above: in particular the dwell units (`G4 P` milliseconds without a decimal
    point, cycle `P` milliseconds), G83/G73 having no P word, M29 with the spindle stopped, and `G54.1 P` for extra
@@ -136,7 +142,7 @@ Other words: N O T S F H D X Y Z I J K R Q P, comments in parentheses, `%` lines
 `G91 G28 Y0.` / `X0. Y0.` (reference return through the current point; not a move to work zero), `G0 G53 Z0.`
 (machine coordinates), `G4 P<ms>` or `G4 X<s>`, cycle P in integer milliseconds, `M29 S<rpm>` on its own line.
 
-## Questions for the owner (need the real machine or its manuals)
+## Questions for people who run this control (they need the machine or its manuals)
 
 1. Which FANUC control and builder exactly (0i-MF, 31i, ROBODRILL...)? With the manual, every [F1, unverified] item
    above can be checked.
@@ -144,9 +150,9 @@ Other words: N O T S F H D X Y Z I J K R Q P, comments in parentheses, `%` lines
    `G91 G28 Z0.` before M6 is wanted.
 3. Rigid tapping: M29 S.. form, or G84 rigid by parameter 5200#0? Spindle stopped before M29 or not?
 4. Through-spindle coolant and air blast M codes.
-5. Are program numbers 8000-9999 protected on the machine, and what O-number range does the shop use?
+5. Are program numbers 8000-9999 protected on the machine, and what O-number range does your shop use?
 6. G54.1 P (additional work offsets) installed?
 
 ## Review record
 
-(empty: no review yet)
+(empty: no program from this post has been run on a control yet)

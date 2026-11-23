@@ -1,7 +1,12 @@
 # Generic ISO / RS-274 post: review notes
 
-**Status: NOT REVIEWED by the owner.** Post: `resources/library/posts/generic-iso.post.js` (dialect `generic-iso`).
-Goldens: `tests/golden/gcode/generic-iso/`. See [README.md](README.md).
+**Status: not yet run on a control.** Every golden is read back by the project's round-trip interpreter (T-043) and
+the words are checked against the documentation cited below (RS274/NGC). No program from this post has been run on a
+real control, and nobody who runs one has reviewed it yet. Review is wanted from people who run an RS-274 / ISO
+control: see [Reporting a result](README.md#reporting-a-result).
+
+Post: `resources/library/posts/generic-iso.post.js` (dialect `generic-iso`). Goldens: `tests/golden/gcode/generic-iso/`.
+See [README.md](README.md).
 
 The post is for a control that follows the common RS-274 / ISO 6983 word meanings and has no post of its own. It
 writes only words whose meaning the NIST RS274/NGC description fixes, in their most portable form. What controls
@@ -76,7 +81,7 @@ Each file exists as `_mm.nc` and `_inch.nc`.
 | sequence numbers on/off | 08 / others |
 | program number and comment sanitising | 07 |
 
-## Unsure, unverified, or a choice the owner should confirm
+## Unsure, unverified, or a choice for someone who runs the control to confirm
 
 1. `%` and the `O` line are not RS274/NGC; most ISO controls want them. Property programNumberLine turns O off.
 2. `G0 G53 Z0.` assumes machine Z zero is the top of travel, as on most vertical machining centres. G28 on RS274/NGC
@@ -122,11 +127,11 @@ pairwise cases with the assertion stay listed in the round trip's known findings
 helix bore, was the hand-built test toolpath's own move; `helical()` in tests/unit/post/shipped_matrix.h now retracts
 straight up.
 
-## Questions for the owner
+## Questions for people who run this control
 
 1. Is there a control this generic post is meant for? If so, which, and does it want `%` and an O line?
 2. Is machine Z zero the top of travel on it?
 
 ## Review record
 
-(empty: no review yet)
+(empty: no program from this post has been run on a control yet)

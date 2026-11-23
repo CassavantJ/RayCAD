@@ -11,9 +11,11 @@
 //               overwrite rule (ask, replace, new numbered name, refuse) and whether the name is cut to the machine's
 //               maxProgramNameLength. Everything but the setup's own members is remembered per setup
 //               (cam_post::remember, in the user data folder).
-//   Notice      while the machine definition is not verified, or the post not proven on a machine (no post is yet:
-//               their goldens await the owner's review), a notice says to prove the program out step by step. It
-//               cannot be dismissed for good and changes nothing in the file.
+//   Notice      while the machine definition is not verified, or the post is a shipped one with no recorded machine
+//               verification (its declaration's verifiedOn is empty, post_api.d.ts; none has one yet, see
+//               docs/post_review), a short notice says so and to dry-run the program first. A post from the user's own
+//               library is not labelled either way. It does not block posting, cannot be dismissed for good and changes
+//               nothing in the file.
 //   Gate        the setup's operations are checked whenever the document or the engine changes
 //               (ICamEngine::statusAsync, cam_setup::setupStates, cam_post::blockers): each blocking operation is
 //               listed with its reason, with Generate where generating is the fix, and Post is disabled. post() is
@@ -74,6 +76,9 @@ class PostToolModel : public QObject {
     Q_PROPERTY(QString machineName READ machineName NOTIFY activeChanged)
     Q_PROPERTY(bool machineVerified READ machineVerified NOTIFY activeChanged)
     Q_PROPERTY(bool postProven READ postProven NOTIFY postChanged)
+    // "unproven": a post shipped with RayCAD that declares no control it has run on; "proven": one that declares one or
+    // more (PostInfo::verifiedOn); "": a post from the user's own library (not labelled), or not read yet.
+    Q_PROPERTY(QString postProof READ postProof NOTIFY postChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY postChanged) // "" when nothing is unverified
     // Field values by key: programNumber, programComment (text), units ("inch" | "metric"), directory, pattern,
     // overwrite ("ask" | "replace" | "newName" | "refuse"), limitNameLength (bool).
@@ -122,7 +127,10 @@ public:
     SchemaFormModel* form() const { return form_; }
     QString machineName() const { return machineName_; }
     bool machineVerified() const { return machineVerified_; }
-    bool postProven() const { return false; } // no post is proven on a machine yet (PLAN.md risk 4)
+    bool postProven() const { return postProof_ == QLatin1String("proven"); }
+    QString postProof() const { return postProof_; }
+    // postProof for a post read from the library shipped with RayCAD (`shipped`) or from another root.
+    static QString proofOf(bool shipped, const post::PostInfo& info);
     QString notice() const;
     QVariantMap values() const { return values_; }
     QString fileName() const { return fileName_; }
@@ -204,7 +212,8 @@ private:
     void finish(const api::cam_post::Written& written);
     void writeBack();
     void rememberNow();
-    std::vector<std::string> libraryRoots() const;
+    // The library roots, lowest first; `shippedOnly`: only the library shipped with RayCAD (the read-only root).
+    std::vector<std::string> libraryRoots(bool shippedOnly = false) const;
     QString documentName() const;
 
     QPointer<SceneController> scene_;
@@ -228,7 +237,7 @@ private:
     bool machineVerified_ = false;
     int maxNameLength_ = 0;
     QStringList posts_;
-    QString postId_, postTitle_, postState_, postMessage_;
+    QString postId_, postTitle_, postState_, postMessage_, postProof_;
     std::optional<post::PostInfo> info_;
     std::optional<lib::MachineDef> machine_; // the setup's embedded machine (the property defaults)
     QString rememberedPost_;                 // what was last used for the setup

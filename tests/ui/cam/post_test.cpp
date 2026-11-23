@@ -566,8 +566,13 @@ TEST_CASE("a setup is posted from the CAM tree: post, properties, notice, folder
     CHECK(p->form()->valueOf(QStringLiteral("smoothing")).toString() == QStringLiteral("medium")); // the machine's
     CHECK_FALSE(p->machineName().isEmpty());
     CHECK_FALSE(p->machineVerified());
-    // The notice: unverified post and machine, how to prove the program out; it cannot be closed.
+    // The notice: unverified post and machine, how to prove the program out; it cannot be closed. The shipped post
+    // declares no control it has run on (verifiedOn), so it says it is not proven.
+    CHECK(p->postProof() == QStringLiteral("unproven"));
+    CHECK_FALSE(p->postProven());
     const QString notice = w.shown(QStringLiteral("postNoticeText"))->property("text").toString();
+    CHECK(notice.startsWith(QStringLiteral("This post has not been proven on a real machine")));
+    CHECK(notice.contains(QStringLiteral("Dry-run the program before cutting")));
     CHECK(notice.contains(QStringLiteral("air cut")));
     CHECK(notice.contains(QStringLiteral("single block")));
     // It never claims a post or a machine is verified or safe.
@@ -655,6 +660,61 @@ TEST_CASE("a setup is posted from the CAM tree: post, properties, notice, folder
     w.click(QStringLiteral("postShowGcode"));
     REQUIRE(QTest::qWaitFor([&] { return !p->active() && w.gcode()->isOpen(); }, 5000));
     w.shown(QStringLiteral("gcodeView"));
+    w.checkNoWarnings();
+}
+
+// M3 closeout: whether a post is proven on a machine comes from its declaration (verifiedOn) and only for the posts
+// shipped with RayCAD; a post in the user's own library, even a copy of a shipped one or one with a shipped post's
+// name, is not labelled either way (the machine definition's own notice stays). The notice never blocks posting.
+TEST_CASE("the notice labels a shipped post unproven, a post of the user's library neither way", "[cam][post][notice]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    drillSetup(w);
+    // The user's library (the writable root) gets two posts: a copy of haas-ngc under its own name, and one that
+    // replaces haas-ngc itself (a higher root wins).
+    std::string userRoot;
+    for (const lib::LibraryStack::RootInfo& r : w.host->app()->libraries()->roots()) {
+        if (r.writable)
+            userRoot = r.dir;
+    }
+    REQUIRE_FALSE(userRoot.empty());
+    const QString posts = QDir(QString::fromStdString(userRoot)).filePath(QStringLiteral("posts"));
+    REQUIRE(QDir().mkpath(posts));
+    const QString shipped = QStringLiteral(RAY_SHIPPED_POSTS_DIR "/haas-ngc.post.js");
+    REQUIRE(QFile::copy(shipped, QDir(posts).filePath(QStringLiteral("shop-ngc.post.js"))));
+
+    openFromRow(w);
+    PostToolModel* p = w.post();
+    w.postRead();
+    CHECK(p->postId() == QStringLiteral("haas-ngc"));
+    CHECK(p->postProof() == QStringLiteral("unproven"));
+    CHECK(p->notice().startsWith(QStringLiteral("This post has not been proven on a real machine")));
+    // It does not block: with a folder, Post is enabled.
+    p->setValue(QStringLiteral("directory"), QDir::toNativeSeparators(w.out.path()));
+    REQUIRE(QTest::qWaitFor([&] { return p->canPost(); }, kTimeoutMs));
+
+    // The user's post: no word about the post; the machine definition is still unverified, and the notice says that.
+    REQUIRE(QTest::qWaitFor([&] { return p->posts().contains(QStringLiteral("shop-ngc")); }, kTimeoutMs));
+    p->setPost(QStringLiteral("shop-ngc"));
+    REQUIRE(QTest::qWaitFor(
+        [&] { return p->postState() == QLatin1String("ok") && p->postId() == QLatin1String("shop-ngc"); }, kTimeoutMs));
+    CHECK(p->postProof().isEmpty());
+    CHECK_FALSE(p->postProven());
+    const QString notice = w.shown(QStringLiteral("postNoticeText"))->property("text").toString();
+    CHECK_FALSE(notice.contains(QStringLiteral("This post")));
+    CHECK(notice.startsWith(QStringLiteral("The machine definition (")));
+    CHECK(notice.contains(QStringLiteral("Dry-run the program before cutting")));
+    REQUIRE(QTest::qWaitFor([&] { return p->canPost(); }, kTimeoutMs));
+    p->close();
+
+    // haas-ngc in the user's library replaces the shipped one: not labelled either.
+    REQUIRE(QFile::copy(shipped, QDir(posts).filePath(QStringLiteral("haas-ngc.post.js"))));
+    openFromRow(w);
+    w.postRead();
+    CHECK(p->postId() == QStringLiteral("haas-ngc"));
+    CHECK(p->postProof().isEmpty());
+    p->close();
     w.checkNoWarnings();
 }
 
@@ -829,9 +889,37 @@ TEST_CASE("the post's refusals are shown in full on their operation; no file and
     // Esc closes the dialog.
     QQuickItem* focus = w.window()->activeFocusItem();
     INFO("focus on " << (focus ? focus->objectName().toStdString() + " (" + focus->metaObject()->className() + ")"
-                               : std::string("nothing")));
+                               : std::string("nothing"))
+                     << "; focus window " << (QGuiApplication::focusWindow() == w.window() ? "this" : "another or none")
+                     << "; state '" << p->state().toStdString() << "', busy " << p->busy() << "; foreground job "
+                     << (w.host->session()->jobActive() ? w.host->session()->jobTitle().toStdString() : "none"));
     QTest::keyClick(w.window(), Qt::Key_Escape);
     REQUIRE(QTest::qWaitFor([&] { return !p->active(); }, 5000));
+
+    // Esc closes it while a job runs too. The shell's Esc cancels the foreground job, but not under the dialog: two
+    // enabled shortcuts for one key are ambiguous to Qt, which then gives the key to neither (nor to the focused
+    // field), so Esc did nothing while, say, the rebuild after the dialog's own write-back of the program number ran.
+    QObject* shellEsc = nullptr;
+    for (QObject* root : w.host->engine()->rootObjects()) {
+        if (shellEsc == nullptr)
+            shellEsc = root->findChild<QObject*>(QStringLiteral("shellCancelJobShortcut"));
+    }
+    REQUIRE(shellEsc != nullptr);
+    openFromRow(w);
+    w.postRead();
+    w.host->files()->exportTo(QStringLiteral("step"), QDir(w.out.path()).filePath(QStringLiteral("plate.step")));
+    if (QTest::qWaitFor([&] { return w.host->session()->jobActive(); }, 5000)) {
+        INFO("dialog open " << p->active() << ", job '" << w.host->session()->jobTitle().toStdString() << "'");
+        for (const QString& warning : w.host->warnings())
+            UNSCOPED_INFO(warning.toStdString());
+        CHECK_FALSE(shellEsc->property("enabled").toBool());
+        QTest::keyClick(w.window(), Qt::Key_Escape);
+        REQUIRE(QTest::qWaitFor([&] { return !p->active(); }, 5000));
+    } else {
+        WARN("the export ended before it was seen running: Esc under the dialog with a job running was not tried");
+        p->close();
+    }
+    REQUIRE(QTest::qWaitFor([&] { return !w.host->session()->jobActive(); }, kTimeoutMs));
     w.checkNoWarnings();
 }
 
