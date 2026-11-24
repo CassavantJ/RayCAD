@@ -343,6 +343,15 @@ Item {
                                             toolTipText: qsTr("Post this setup (Ctrl+P)")
                                             onClicked: CamPost.open(row.rowId)
                                         }
+                                        // T-076: the setup sheet, beside posting.
+                                        RowTool {
+                                            objectName: "camRowSheet." + row.index
+                                            visible: row.isSetup
+                                            shown: row.hovered
+                                            iconName: "document"
+                                            toolTipText: qsTr("Setup sheet for the operator (Ctrl+Shift+P)")
+                                            onClicked: CamSheet.open(row.rowId)
+                                        }
                                         // T-057: operation templates.
                                         RowTool {
                                             objectName: "camRowTemplates." + row.index
