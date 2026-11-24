@@ -38,6 +38,24 @@ struct Columns {
     }
 };
 
+// Appends the intervals of the Z rays [i0, i1) of row j, tile by tile.
+void appendRow(const Grid& gz, int j, int i0, int i1, std::vector<std::pair<float, float>>& out)
+{
+    for (int i = i0; i < i1;) {
+        const int t = i / kTileCols;
+        const Tile& tile = gz.tileOf(j, i);
+        const int end = std::min(i1, gz.col1(t));
+        const Dexel* x =
+            tile.d.data() + static_cast<std::size_t>(j % gz.rowsPerStrip) * gz.cols(t) + (i - Grid::col0(t));
+        for (; i < end; ++i, ++x) {
+            const float* p = tile.data(*x);
+            for (std::uint32_t k = 0; k < x->n; ++k) {
+                out.emplace_back(p[2 * k], p[2 * k + 1]);
+            }
+        }
+    }
+}
+
 Columns buildColumns(const Grid& gz, const MeshRegion& r, IJobSystem& jobs)
 {
     Columns c;
@@ -62,13 +80,7 @@ Columns buildColumns(const Grid& gz, const MeshRegion& r, IJobSystem& jobs)
                                   for (int x = 0; x < c.bx; ++x) {
                                       all.clear();
                                       for (int j = c.cellY(y); j < c.cellY(y + 1); ++j) {
-                                          for (int i = c.cellX(x); i < c.cellX(x + 1); ++i) {
-                                              const Dexel& dx = gz.at(j, i);
-                                              const float* p = gz.data(j, i);
-                                              for (std::uint32_t k = 0; k < dx.n; ++k) {
-                                                  all.emplace_back(p[2 * k], p[2 * k + 1]);
-                                              }
-                                          }
+                                          appendRow(gz, j, c.cellX(x), c.cellX(x + 1), all);
                                       }
                                       if (c.step > 1) {
                                           std::sort(all.begin(), all.end());

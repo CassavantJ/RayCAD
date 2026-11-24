@@ -127,8 +127,8 @@ void fillFromSoup(Grid& grid, int gi, const kernel::TriSoup& soup, const Vec3& o
     (void)jobs.parallelChunks(
         static_cast<std::size_t>(strips), 1, ctx, [&](std::size_t chunk, std::size_t, std::size_t) -> Status {
             const int s = static_cast<int>(chunk);
-            Strip& st = grid.strips[chunk].mut();
-            const int u0 = grid.row0(s), u1 = grid.row1(s);
+            StripTiles st(grid, s);
+            const int u0 = st.u0, u1 = st.u1;
             std::vector<Cross> cross;
             std::vector<float> iv;
             for (int j = u0; j < u1; ++j) {
@@ -172,9 +172,13 @@ void fillFromSoup(Grid& grid, int gi, const kernel::TriSoup& soup, const Vec3& o
                 std::sort(cross.begin(), cross.end(), [](const Cross& a, const Cross& b) {
                     return a.v < b.v || (a.v == b.v && (a.depth < b.depth || (a.depth == b.depth && a.sign > b.sign)));
                 });
-                Dexel* row = st.d.data() + static_cast<std::size_t>(j - u0) * grid.nv;
-                for (int i = 0; i < grid.nv; ++i) {
-                    row[i] = Dexel{};
+                for (int t = 0; t < grid.tilesPerStrip; ++t) {
+                    Tile& tile = st.own(t);
+                    const int w = grid.cols(t);
+                    Dexel* row = tile.d.data() + static_cast<std::size_t>(j - u0) * w;
+                    for (int i = 0; i < w; ++i) {
+                        row[i] = Dexel{};
+                    }
                 }
                 for (std::size_t c = 0; c < cross.size();) {
                     const int v = cross[c].v;
@@ -205,17 +209,21 @@ void fillFromSoup(Grid& grid, int gi, const kernel::TriSoup& soup, const Vec3& o
                         }
                         wind = next;
                     }
-                    Dexel& x = row[v];
+                    const int t = v / kTileCols;
+                    Tile& tile = st.own(t);
+                    Dexel& x = tile.d[static_cast<std::size_t>(j - u0) * grid.cols(t) + (v - Grid::col0(t))];
                     const std::size_t n = iv.size() / 2;
                     while (x.cap < n && x.cap < kMaxDexelIntervals) {
-                        st.grow(x);
+                        tile.grow(x);
                     }
                     const std::size_t keep = std::min<std::size_t>(n, x.cap);
-                    std::memcpy(st.data(x), iv.data(), sizeof(float) * 2 * keep);
+                    std::memcpy(tile.data(x), iv.data(), sizeof(float) * 2 * keep);
                     x.n = static_cast<std::uint16_t>(keep);
                 }
             }
-            st.compactIfWorthIt();
+            for (int t = 0; t < grid.tilesPerStrip; ++t) {
+                st.own(t).compactIfWorthIt();
+            }
             return Status{};
         });
 }

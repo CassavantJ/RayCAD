@@ -7,9 +7,8 @@
 // it runs alone, as its own test ray_sim_simulator_bench ("[simulator-bench]", hidden from the suite;
 // tests/tiers.cmake), apart from the stock model's benchmark in ray_sim_tests_wallclock so that neither takes much over
 // a minute. The limits are checked only in an optimised build without sanitizers, which also runs the full 112k-move
-// workload (other builds a thinned one). NOT MET, and so not checked: the seek budget at High on this 112k-move
-// program. With T-070's strips a keyframe pins 60 to 110 MB at 0.05 mm, so High's keyframe budget (simulator.h) holds
-// too few of them; the line printed gives the numbers, the T-072 report the trade-off.
+// workload (other builds a thinned one). Every tier's seek budget is checked, High's too since the stock model copies
+// tiles rather than whole strips on write (tridexel.h, SNAPSHOTS): its keyframes all fit High's keyframe budget.
 #include "simulator_test_util.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -374,9 +373,155 @@ TEST_CASE("Simulator benchmark: run and seek at every tier's resolution", "[.][s
     }
     runTier({"Low", 0.2, 4, 20.0, 250.0}, sp, moves);
     runTier({"Medium", 0.1, 4, 15.0, 150.0}, sp, moves);
-    // High: the run meets its row; the seeks do not within the keyframe budget (see the top of this file; the hidden
-    // test "Simulator keyframe budget sweep at the High cell" measures the trade-off). Measured, not checked.
-    runTier({"High", 0.05, 8, 10.0, 100.0}, sp, moves, 0, true, false);
+    runTier({"High", 0.05, 8, 10.0, 100.0}, sp, moves);
+}
+
+// Not run by default ([.]): what each keyframe costs against what actually changed in the stock between it and the
+// next, at the simulator's keyframe spacing (kKeyframeRays) and batches, keyframes never thinned; and the time of a
+// worst-case seek into each interval (restore the keyframe, recut the interval). The copy-on-write unit's diagnosis.
+TEST_CASE("Simulator keyframe cost diagnosis", "[.][sim][simulator][cowdiag]")
+{
+    SimFixture f = benchFixture(11, 0.25);
+    const SimProgram& sp = f.build();
+    const sim::detail::VerifyInput in = sim::detail::verifyInputFrom(sp);
+    const std::vector<sim::detail::Motion> motions = sim::detail::expandMotions(in);
+    struct Cfg {
+        double cell;
+        int workers;
+    };
+    for (const Cfg cfg : {Cfg{0.2, 4}, Cfg{0.1, 4}, Cfg{0.05, 8}}) {
+        jobs().setWorkerCount(cfg.workers);
+        const Result<bool> done =
+            jobs()
+                .submit<bool>(
+                    JobInfo{"diag", JobPriority::Normal, false},
+                    [&](JobContext&) -> Result<bool> {
+                        std::unique_ptr<IStockModel> m = makeTriDexelCpu(jobs());
+                        m->reset(sp.stockSolid, benchmarkStock(), StockResolution{cfg.cell});
+                        const sim::detail::TriDexelInfo ti = sim::detail::triDexelInfo(*m);
+                        const Vec3 c{ti.cx, ti.cy, ti.cz};
+                        std::vector<double> radius(sp.tools.size()), height(sp.tools.size());
+                        for (std::size_t k = 0; k < sp.tools.size(); ++k) {
+                            for (const Vec2& v : sp.tools[k].cuttingProfile) {
+                                radius[k] = std::max(radius[k], v.x);
+                            }
+                            height[k] = sp.tools[k].cuttingProfile.back().y;
+                        }
+                        std::vector<double> rays(motions.size());
+                        for (std::size_t i = 0; i < motions.size(); ++i) {
+                            rays[i] = sim::detail::rayCost(motions[i], radius[motions[i].op], height[motions[i].op],
+                                                           benchmarkStock(), c);
+                        }
+                        // As the simulator's batches (simulator.cpp batchEnd).
+                        const auto batchEnd = [&](std::size_t from, std::size_t limit) {
+                            double r = 0;
+                            std::size_t j = from;
+                            while (j < limit && motions[j].op == motions[from].op &&
+                                   j - from < sim::detail::kMaxBatchMotions) {
+                                if (j > from && r + rays[j] > sim::detail::kBatchRays) {
+                                    break;
+                                }
+                                r += rays[j];
+                                ++j;
+                            }
+                            return j;
+                        };
+                        std::vector<IStockModel::CutMove> moves;
+                        const auto cutRange = [&](std::size_t from, std::size_t to) {
+                            while (from < to) {
+                                const std::size_t j = batchEnd(from, to);
+                                moves.clear();
+                                for (std::size_t k = from; k < j; ++k) {
+                                    moves.push_back({motions[k].a, motions[k].b, motions[k].rapid});
+                                }
+                                m->cutBatch(sp.tools[motions[from].op], moves, {});
+                                from = j;
+                            }
+                        };
+                        struct Interval {
+                            std::size_t from, to;
+                            double rays, runMs, seekMs, restoreMs;
+                            sim::detail::SnapshotCost cost;
+                        };
+                        std::vector<Interval> ivs;
+                        std::shared_ptr<const IStockModel::Snapshot> prev = m->snapshot();
+                        std::size_t prevMotion = 0, i = 0;
+                        double since = 0, runMs = 0;
+                        while (i < motions.size()) {
+                            const std::size_t j = batchEnd(i, motions.size());
+                            for (std::size_t k = i; k < j; ++k) {
+                                since += rays[k];
+                            }
+                            const auto t0 = std::chrono::steady_clock::now();
+                            cutRange(i, j);
+                            runMs += seconds(t0) * 1e3;
+                            i = j;
+                            if (since >= sim::detail::kKeyframeRays || i == motions.size()) {
+                                Interval iv{prevMotion, i, since, runMs, 0, 0, sim::detail::snapshotCost(*m, *prev)};
+                                std::shared_ptr<const IStockModel::Snapshot> cur = m->snapshot();
+                                const auto t1 = std::chrono::steady_clock::now();
+                                m->restore(*prev);
+                                iv.restoreMs = seconds(t1) * 1e3;
+                                cutRange(prevMotion, i);
+                                iv.seekMs = seconds(t1) * 1e3;
+                                m->restore(*cur);
+                                ivs.push_back(iv);
+                                prev = cur;
+                                prevMotion = i;
+                                since = 0;
+                                runMs = 0;
+                            }
+                        }
+                        double sumPriv = 0, sumChanged = 0, grid[3] = {0, 0, 0}, gridChanged[3] = {0, 0, 0};
+                        std::vector<double> priv, seek;
+                        for (const Interval& iv : ivs) {
+                            double p = 0;
+                            for (int g = 0; g < 3; ++g) {
+                                p += static_cast<double>(iv.cost.privateBytes[g]);
+                                grid[g] += static_cast<double>(iv.cost.privateBytes[g]);
+                                gridChanged[g] += static_cast<double>(iv.cost.changedBytes[g]);
+                                sumChanged += static_cast<double>(iv.cost.changedBytes[g]);
+                            }
+                            sumPriv += p;
+                            priv.push_back(p / (1024.0 * 1024.0));
+                            seek.push_back(iv.seekMs);
+                        }
+                        const double mb = 1024.0 * 1024.0;
+                        std::printf(
+                            "cowdiag cell %.2f, %d workers: %zu keyframes at %.0f M rays; pinned in all %.0f MB "
+                            "(Z %.0f X %.0f Y %.0f), per keyframe median %.1f max %.1f MB; changed dexels "
+                            "%.0f MB (Z %.0f X %.0f Y %.0f); seek (restore + recut an interval) median %.1f "
+                            "p90 %.1f max %.1f ms\n",
+                            cfg.cell, cfg.workers, ivs.size(), sim::detail::kKeyframeRays / 1e6, sumPriv / mb,
+                            grid[0] / mb, grid[1] / mb, grid[2] / mb, percentile(priv, 0.5), percentile(priv, 1.0),
+                            sumChanged / mb, gridChanged[0] / mb, gridChanged[1] / mb, gridChanged[2] / mb,
+                            percentile(seek, 0.5), percentile(seek, 0.9), percentile(seek, 1.0));
+                        // The slowest intervals: where they are and what their time is made of.
+                        std::vector<std::size_t> order(ivs.size());
+                        for (std::size_t k = 0; k < order.size(); ++k) {
+                            order[k] = k;
+                        }
+                        std::sort(order.begin(), order.end(),
+                                  [&](std::size_t a, std::size_t b) { return ivs[a].seekMs > ivs[b].seekMs; });
+                        for (std::size_t k = 0; k < std::min<std::size_t>(6, order.size()); ++k) {
+                            const Interval& iv = ivs[order[k]];
+                            double p = 0;
+                            for (int g = 0; g < 3; ++g) {
+                                p += static_cast<double>(iv.cost.privateBytes[g]);
+                            }
+                            std::printf(
+                                "cowdiag   slow interval motions %zu-%zu (op %u, z %.1f): %.0f M rays, run %.1f ms, "
+                                "seek %.1f ms (restore %.2f), pinned %.1f MB\n",
+                                iv.from, iv.to, motions[iv.from].op, motions[iv.from].a.z, iv.rays / 1e6, iv.runMs,
+                                iv.seekMs, iv.restoreMs, p / mb);
+                        }
+                        std::fflush(stdout);
+                        return true;
+                    })
+                .wait();
+        REQUIRE(done);
+    }
+    jobs().setWorkerCount(8);
 }
 
 // Not run by default ([.]): the keyframe memory against the worst seek at the Medium and High cells, and a program a
@@ -400,10 +545,10 @@ TEST_CASE("Simulator keyframe budget sweep at the High cell", "[.][sim][simulato
         runTier({"Medium, 11k moves", 0.1, 4, 15.0, 150.0}, ssp, smallMoves, 0, false, false);
         runTier({"High, 11k moves", 0.05, 8, 10.0, 100.0}, ssp, smallMoves, 0, false, false);
     }
-    for (const std::uint64_t mb : {640u, 2560u}) {
+    for (const std::uint64_t mb : {192u, 320u}) {
         runTier({"Medium sweep", 0.1, 4, 15.0, 150.0}, sp, moves, mb * sim::detail::kMiB, false, false);
     }
-    for (const std::uint64_t mb : {512u, 1024u, 3072u, 4096u}) {
+    for (const std::uint64_t mb : {512u, 1024u, 1536u}) {
         runTier({"High sweep", 0.05, 8, 10.0, 100.0}, sp, moves, mb * sim::detail::kMiB, false, false);
     }
 }

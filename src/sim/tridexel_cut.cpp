@@ -103,11 +103,11 @@ bool zInterval(const ConvexPiece& pc, const Seg& g, const double* lowC, const do
     return true;
 }
 
-std::int64_t cutZ(const Grid& grid, Strip& s, int u0, int u1, const CutterShape& shape, const Seg& g,
-                  const double* tables, const ShapeTables& layout, std::vector<std::uint8_t>& tileBits, int tilesX,
-                  int tileRow0)
+std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, const Seg& g, const double* tables,
+                  const ShapeTables& layout, std::vector<std::uint8_t>& tileBits, int tilesX, int tileRow0)
 {
     const int nv = grid.nv;
+    const int u0 = s.u0, u1 = s.u1;
     std::int64_t vol = 0;
     // Piece by piece (the order is fixed; what is left is the material minus the union of the pieces' sweeps).
     for (std::size_t p = 0; p < shape.pieces.size(); ++p) {
@@ -126,7 +126,6 @@ std::int64_t cutZ(const Grid& grid, Strip& s, int u0, int u1, const CutterShape&
         // Runs of rays whose material lies below this: nothing to cut there. For the constant interval exactly its
         // bottom; otherwise the lowest the sweep can reach, less a margin far above rounding.
         const double skipBelow = constant ? static_cast<double>(cLo) : std::min(g.az, g.bz) + pc.h0 - 1e-6;
-        const int runs = (nv + kTopRun - 1) / kTopRun;
         const int j0 = std::max(u0, firstIdx(std::min(g.ay, g.by) - R, grid.cu));
         const int j1 = std::min(u1 - 1, lastIdx(std::max(g.ay, g.by) + R, grid.cu));
         for (int j = j0; j <= j1; ++j) {
@@ -136,81 +135,108 @@ std::int64_t cutZ(const Grid& grid, Strip& s, int u0, int u1, const CutterShape&
                 continue;
             }
             const int i0 = std::max(0, firstIdx(xl, grid.cv)), i1 = std::min(nv - 1, lastIdx(xh, grid.cv));
-            Dexel* row = s.d.data() + static_cast<std::size_t>(j - u0) * nv;
             const std::size_t tileRow = static_cast<std::size_t>(j / kTileCells - tileRow0) * tilesX;
             const double wy = y - g.ay;
-            float* rowTop = s.top.data() + static_cast<std::size_t>(j - u0) * runs;
-            bool changed = false;
-            for (int i = i0; i <= i1; ++i) {
-                if (i % kTopRun == 0 || i == i0) {
-                    if (changed) { // the run before: its top again
-                        const int b = (i - 1) / kTopRun;
-                        rowTop[b] = s.topOf(row + b * kTopRun, std::min(kTopRun, nv - b * kTopRun));
-                        changed = false;
+            // Tile by tile (a tile's runs are the grid's: Tile::top). A tile still shared with a snapshot is read in
+            // place and copied only at the first ray this move takes material from.
+            for (int t = i0 / kTileCols; t <= i1 / kTileCols; ++t) {
+                const int c0 = Grid::col0(t), w = grid.cols(t);
+                const int ia = std::max(i0, c0), ib = std::min(i1, c0 + w - 1);
+                const std::size_t rowOff = static_cast<std::size_t>(j - u0) * w;
+                const std::size_t topOff = static_cast<std::size_t>(j - u0) * topRuns(w);
+                // Read through rt, row and top; write (once the tile is this task's own) through wt, wrow and wtop.
+                const Tile* rt = &s.get(t);
+                Tile* wt = s.mine(t);
+                const Dexel* row = rt->d.data() + rowOff;
+                const float* top = rt->top.data() + topOff;
+                Dexel* wrow = wt != nullptr ? wt->d.data() + rowOff : nullptr;
+                float* wtop = wt != nullptr ? wt->top.data() + topOff : nullptr;
+                bool changed = false;
+                for (int i = ia; i <= ib; ++i) {
+                    const int li = i - c0;
+                    if (li % kTopRun == 0 || i == ia) {
+                        if (changed) { // the run before: its top again (changed: the tile is ours)
+                            const int b = (li - 1) / kTopRun;
+                            wtop[b] = wt->topOf(wrow + b * kTopRun, std::min(kTopRun, w - b * kTopRun));
+                            changed = false;
+                        }
+                        if (static_cast<double>(top[li / kTopRun]) <= skipBelow) {
+                            i = std::min(ib, c0 + (li / kTopRun + 1) * kTopRun - 1);
+                            continue;
+                        }
                     }
-                    if (static_cast<double>(rowTop[i / kTopRun]) <= skipBelow) {
-                        i = std::min(i1, (i / kTopRun + 1) * kTopRun - 1);
+                    const Dexel& x = row[li];
+                    if (x.n == 0) {
                         continue;
                     }
-                }
-                Dexel& x = row[i];
-                if (x.n == 0) {
-                    continue;
-                }
-                float lo = cLo, hi = cHi;
-                if (!constant) {
-                    const double xc = (i + 0.5) * grid.cv;
-                    if (level) {
-                        const double wx = xc - g.ax;
-                        double d2 = wx * wx + wy * wy;
-                        if (!g.vertical) {
-                            const double p0 = std::clamp(wx * g.ux + wy * g.uy, 0.0, g.lenXY);
-                            const double ex = wx - p0 * g.ux, ey = wy - p0 * g.uy;
-                            d2 = ex * ex + ey * ey;
-                        }
-                        if (d2 > R * R) {
-                            continue;
-                        }
-                        lo = static_cast<float>(g.az + pc.low.eval(std::sqrt(d2)));
-                    } else {
-                        if (!g.vertical) {
-                            // The sweep's bottom over this ray is at least the tip's lowest height plus the envelope
-                            // at the ray's distance from the path's line: nothing to do when the material is lower.
+                    float lo = cLo, hi = cHi;
+                    if (!constant) {
+                        const double xc = (i + 0.5) * grid.cv;
+                        if (level) {
                             const double wx = xc - g.ax;
-                            const double e = std::abs(wx * g.uy - wy * g.ux);
-                            if (e > R) {
+                            double d2 = wx * wx + wy * wy;
+                            if (!g.vertical) {
+                                const double p0 = std::clamp(wx * g.ux + wy * g.uy, 0.0, g.lenXY);
+                                const double ex = wx - p0 * g.ux, ey = wy - p0 * g.uy;
+                                d2 = ex * ex + ey * ey;
+                            }
+                            if (d2 > R * R) {
                                 continue;
                             }
-                            const double bound = std::min(g.az, g.bz) + pc.low.eval(e);
-                            if (static_cast<double>(s.data(x)[2 * x.n - 1]) <= bound) {
+                            lo = static_cast<float>(g.az + pc.low.eval(std::sqrt(d2)));
+                        } else {
+                            if (!g.vertical) {
+                                // The sweep's bottom over this ray is at least the tip's lowest height plus the
+                                // envelope at the ray's distance from the path's line: nothing to do when the material
+                                // is lower.
+                                const double wx = xc - g.ax;
+                                const double e = std::abs(wx * g.uy - wy * g.ux);
+                                if (e > R) {
+                                    continue;
+                                }
+                                const double bound = std::min(g.az, g.bz) + pc.low.eval(e);
+                                if (static_cast<double>(rt->data(x)[2 * x.n - 1]) <= bound) {
+                                    continue;
+                                }
+                            }
+                            double dlo = 0, dhi = 0;
+                            if (!zInterval(pc, g, lowC, highC, xc, y, dlo, dhi)) {
                                 continue;
                             }
+                            lo = static_cast<float>(dlo);
+                            hi = static_cast<float>(dhi);
                         }
-                        double dlo = 0, dhi = 0;
-                        if (!zInterval(pc, g, lowC, highC, xc, y, dlo, dhi)) {
-                            continue;
-                        }
-                        lo = static_cast<float>(dlo);
-                        hi = static_cast<float>(dhi);
+                    }
+                    // A ray this move takes nothing from is left alone (and its tile is not copied when shared).
+                    if (!cutsInterval(*rt, x, lo, hi)) {
+                        continue;
+                    }
+                    if (wt == nullptr) { // shared: written into a copy
+                        wt = &s.own(t);
+                        rt = wt;
+                        wrow = wt->d.data() + rowOff;
+                        wtop = wt->top.data() + topOff;
+                        row = wrow;
+                        top = wtop;
+                    }
+                    const double removed = subtractInterval(*wt, wrow[li], lo, hi);
+                    if (removed > 0) {
+                        vol += static_cast<std::int64_t>(removed * kVolumeScale + 0.5);
+                        tileBits[tileRow + static_cast<std::size_t>(i / kTileCells)] = 1;
+                        changed = true;
                     }
                 }
-                const double removed = subtractInterval(s, x, lo, hi);
-                if (removed > 0) {
-                    vol += static_cast<std::int64_t>(removed * kVolumeScale + 0.5);
-                    tileBits[tileRow + static_cast<std::size_t>(i / kTileCells)] = 1;
-                    changed = true;
+                if (changed) {
+                    const int b = (ib - c0) / kTopRun;
+                    wtop[b] = wt->topOf(wrow + b * kTopRun, std::min(kTopRun, w - b * kTopRun));
                 }
-            }
-            if (changed) {
-                const int b = i1 / kTopRun;
-                rowTop[b] = s.topOf(row + b * kTopRun, std::min(kTopRun, nv - b * kTopRun));
             }
         }
     }
     return vol;
 }
 
-bool touchesZ(const Grid& grid, const Strip& s, int u0, int u1, const CutterShape& shape, const Seg& g,
+bool touchesZ(const Grid& grid, const TileRef* tiles, int u0, int u1, const CutterShape& shape, const Seg& g,
               const double* tables, const ShapeTables& layout)
 {
     const double R = shape.rmax;
@@ -227,9 +253,10 @@ bool touchesZ(const Grid& grid, const Strip& s, int u0, int u1, const CutterShap
             continue;
         }
         const int i0 = std::max(0, firstIdx(xl, grid.cv)), i1 = std::min(nv - 1, lastIdx(xh, grid.cv));
-        const Dexel* row = s.d.data() + static_cast<std::size_t>(j - u0) * nv;
         for (int i = i0; i <= i1; ++i) {
-            const Dexel& x = row[i];
+            const int t = i / kTileCols;
+            const Tile& s = *tiles[t].get();
+            const Dexel& x = s.d[static_cast<std::size_t>(j - u0) * grid.cols(t) + (i - Grid::col0(t))];
             if (x.n == 0) {
                 continue;
             }
@@ -247,9 +274,10 @@ bool touchesZ(const Grid& grid, const Strip& s, int u0, int u1, const CutterShap
     return false;
 }
 
-void cutLateral(const Grid& grid, int gi, Strip& s, int u0, int u1, const CutterShape& shape, const Seg& g,
+void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shape, const Seg& g,
                 LateralScratch& scratch)
 {
+    const int u0 = s.u0, u1 = s.u1;
     // In the grid's own axes: rows are layers (z), columns run across the rays (y for the X grid, x for the Y grid),
     // r along the ray.
     const bool alongX = gi == kGx;
@@ -362,32 +390,49 @@ void cutLateral(const Grid& grid, int gi, Strip& s, int u0, int u1, const Cutter
                 hb[2 * p + 1] = static_cast<std::uint32_t>(hulls.size());
             }
         }
-        Dexel* row = s.d.data() + static_cast<std::size_t>(k - u0) * nv;
-        for (int j = j0; j <= j1; ++j) {
-            Dexel& x = row[j];
-            if (x.n == 0) {
-                continue;
-            }
-            const std::size_t c = static_cast<std::size_t>(j - j0);
-            float* iv = ivl.data() + 2 * c * np;
-            if (stamp[c] != run) {
-                // The column's intervals for this run, computed when the run first meets material in it.
-                stamp[c] = run;
-                const double y = (j + 0.5) * grid.cv;
-                for (std::size_t p = 0; p < np; ++p) {
-                    double lo = std::numeric_limits<double>::infinity(), hi = -lo;
-                    for (std::uint32_t h = hb[2 * p]; h < hb[2 * p + 1]; ++h) {
-                        hulls[h].cross(y, lo, hi);
-                    }
-                    iv[2 * p] = lo <= hi ? static_cast<float>(lo) : 1.0f;
-                    iv[2 * p + 1] = lo <= hi ? static_cast<float>(hi) : 0.0f;
+        // Tile by tile; a tile still shared with a snapshot is copied only at the first ray that loses material.
+        for (int t = j0 / kTileCols; t <= j1 / kTileCols; ++t) {
+            const int c0 = Grid::col0(t), w = grid.cols(t);
+            const int ja = std::max(j0, c0), jb = std::min(j1, c0 + w - 1);
+            const std::size_t rowOff = static_cast<std::size_t>(k - u0) * w;
+            const Tile* rt = &s.get(t);
+            Tile* wt = s.mine(t);
+            const Dexel* row = rt->d.data() + rowOff; // read; written through wrow once the tile is ours
+            Dexel* wrow = wt != nullptr ? wt->d.data() + rowOff : nullptr;
+            for (int j = ja; j <= jb; ++j) {
+                if (row[j - c0].n == 0) {
+                    continue;
                 }
-            }
-            for (std::size_t p = 0; p < np; ++p) {
-                if (iv[2 * p] < iv[2 * p + 1]) {
-                    subtractInterval(s, x, iv[2 * p], iv[2 * p + 1]);
-                    if (x.n == 0) {
-                        break;
+                const std::size_t c = static_cast<std::size_t>(j - j0);
+                float* iv = ivl.data() + 2 * c * np;
+                if (stamp[c] != run) {
+                    // The column's intervals for this run, computed when the run first meets material in it.
+                    stamp[c] = run;
+                    const double y = (j + 0.5) * grid.cv;
+                    for (std::size_t p = 0; p < np; ++p) {
+                        double lo = std::numeric_limits<double>::infinity(), hi = -lo;
+                        for (std::uint32_t h = hb[2 * p]; h < hb[2 * p + 1]; ++h) {
+                            hulls[h].cross(y, lo, hi);
+                        }
+                        iv[2 * p] = lo <= hi ? static_cast<float>(lo) : 1.0f;
+                        iv[2 * p + 1] = lo <= hi ? static_cast<float>(hi) : 0.0f;
+                    }
+                }
+                for (std::size_t p = 0; p < np; ++p) {
+                    // A piece that takes nothing from the ray writes nothing (tested inline: most calls in a pocket's
+                    // re-sweeps are such); the first that does in a shared tile writes into a copy.
+                    if (iv[2 * p] < iv[2 * p + 1] && cutsInterval(*rt, row[j - c0], iv[2 * p], iv[2 * p + 1])) {
+                        if (wt == nullptr) {
+                            wt = &s.own(t);
+                            rt = wt;
+                            wrow = wt->d.data() + rowOff;
+                            row = wrow;
+                        }
+                        Dexel& x = wrow[j - c0];
+                        subtractInterval(*wt, x, iv[2 * p], iv[2 * p + 1]);
+                        if (x.n == 0) {
+                            break;
+                        }
                     }
                 }
             }

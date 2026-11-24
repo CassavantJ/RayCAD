@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <iostream>
@@ -202,6 +203,51 @@ TEST_CASE("Benchmark at the Medium tier resolution, 0.1 mm, 4 workers",
           "[sim][tridexel][bench][bench-medium][wallclock]")
 {
     runTier({0.1, 4, 15.0, 0.0, true});
+}
+
+// Not run by default ([.]): the cutting kernels on one worker (no thread noise), best of three, on parts of the
+// workload from a fresh block: facing and the first pocket level, and ball scallops. For comparing kernel changes.
+TEST_CASE("Stock model kernels on one worker", "[.][sim][tridexel][kernels-1w]")
+{
+    const Workload w = benchmarkWorkload();
+    jobs().setWorkerCount(1);
+    struct Part {
+        const char* name;
+        int pass;
+        std::size_t count;
+    };
+    for (const double cell : {0.1, 0.05}) {
+        for (const Part part : {Part{"facing+pocket", 0, 16000}, Part{"scallops", 1, 4000}}) {
+            double best = 1e30;
+            std::uint64_t hash = 0;
+            for (int rep = 0; rep < 3; ++rep) {
+                std::unique_ptr<IStockModel> m = makeTriDexelCpu(jobs());
+                m->reset({}, benchmarkStock(), StockResolution{cell});
+                const std::vector<IStockModel::CutMove>& mv = w.passes[static_cast<std::size_t>(part.pass)].moves;
+                const Result<double> done =
+                    jobs()
+                        .submit<double>(JobInfo{"kernels", JobPriority::Normal, false},
+                                        [&](JobContext&) -> Result<double> {
+                                            const auto t0 = std::chrono::steady_clock::now();
+                                            for (std::size_t i = 0; i < part.count; i += 512) {
+                                                const std::size_t n = std::min<std::size_t>(512, part.count - i);
+                                                m->cutBatch(benchmarkTool(part.pass),
+                                                            std::span<const IStockModel::CutMove>(mv.data() + i, n),
+                                                            {});
+                                            }
+                                            return seconds(t0);
+                                        })
+                        .wait();
+                REQUIRE(done);
+                best = std::min(best, *done);
+                hash = sim::detail::triDexelHash(*m);
+            }
+            std::printf("kernels-1w: cell %.2f %s: %zu moves best %.3f s, hash %016llx\n", cell, part.name, part.count,
+                        best, static_cast<unsigned long long>(hash));
+            std::fflush(stdout);
+        }
+    }
+    jobs().setWorkerCount(8);
 }
 
 TEST_CASE("Benchmark at the High tier resolution, 0.05 mm, 4 and 8 workers",
