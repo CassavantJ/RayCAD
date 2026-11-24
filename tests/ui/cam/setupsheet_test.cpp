@@ -854,6 +854,15 @@ TEST_CASE("the setup sheet is blocked like posting; every setup in one document;
     const Pdf pdf = readPdf(pdfBytes);
     CHECK(pdf.pages == s->pageCount());
     w.shot(QStringLiteral("t076_sheet_all_setups"));
+    if (const QString samples = qEnvironmentVariable("RAY_T076_SAMPLES"); !samples.isEmpty()) {
+        QDir().mkpath(samples);
+        QFile pdfFile(QDir(samples).filePath(QStringLiteral("sample_all_setups.pdf")));
+        CHECK(pdfFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        pdfFile.write(pdfBytes);
+        QFile htmlFile(QDir(samples).filePath(QStringLiteral("sample_all_setups.html")));
+        CHECK(htmlFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        htmlFile.write(QByteArray::fromStdString(s->html()));
+    }
     // The paper: the preview is laid out again.
     const int revision = s->revision();
     s->setPaper(s->paper() == QLatin1String("a4") ? QStringLiteral("letter") : QStringLiteral("a4"));
