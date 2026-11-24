@@ -59,6 +59,7 @@ struct SceneItem {
 struct CaptureRequest {
     int width = 0, height = 0;
     std::function<void(std::vector<std::byte>)> done; // run on the UI thread
+    std::shared_ptr<const Theme> theme;               // T-076: drawn in this theme's colours; null: the viewport's
 };
 
 // pick (rect false: x0, y0 is the cursor) or pickRect, in logical pixels as the caller gave them (task T-015).
@@ -150,6 +151,8 @@ public:
 
     void requestFrame() override;
     void captureImage(int w, int h, std::function<void(std::vector<std::byte> png)>) override;
+    void captureImageInTheme(int w, int h, std::shared_ptr<const Theme> theme,
+                             std::function<void(std::vector<std::byte> png)>) override;
     FrameStats lastFrameStats() const override;
 
     Backdrop blurredBackdropTexture() override;

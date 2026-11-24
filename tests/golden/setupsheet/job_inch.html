@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="RayCAD">
+<title>Setup sheets: bracket</title>
+<style>
+/* RayCAD setup sheet print style (task T-076). Compiled into src/post (src/post/CMakeLists.txt) and written into the
+   style element of every sheet, so a sheet is one self-contained file. Black on white whatever the app's theme: a
+   sheet is printed and read at the machine. Only what Qt's QTextDocument renders as a browser does: type and class
+   selectors; font, colour, margin and padding properties; table borders (with the table attributes border,
+   cellspacing and cellpadding in the HTML as well, for Qt); a page break before each later setup's title, given in
+   the HTML. No external fonts or links. */
+body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; background-color: white; }
+h1 { font-size: 16pt; font-weight: bold; margin-top: 0pt; margin-bottom: 2pt; }
+h2 { font-size: 12pt; font-weight: bold; margin-top: 10pt; margin-bottom: 3pt; }
+p { margin-top: 2pt; margin-bottom: 2pt; }
+table { border-collapse: collapse; }
+th { font-weight: bold; text-align: left; vertical-align: bottom; background-color: gainsboro; padding: 2pt; }
+td { vertical-align: top; padding: 2pt; }
+table.grid { border-width: 1px; border-style: solid; border-color: black; }
+table.grid th { border-width: 1px; border-style: solid; border-color: black; }
+table.grid td { border-width: 1px; border-style: solid; border-color: black; }
+table.facts td { padding-left: 0pt; padding-right: 8pt; }
+td.label { color: dimgray; }
+td.value { font-weight: bold; }
+td.warning { font-style: italic; }
+table.notice { border-width: 2px; border-style: solid; border-color: black; }
+table.notice td { padding: 5pt; }
+table.picture { border-width: 1px; border-style: solid; border-color: dimgray; }
+table.picture td { padding: 0pt; }
+td.picture { padding-left: 0pt; padding-right: 6pt; }
+p.sub { font-size: 11pt; margin-bottom: 6pt; }
+p.small { font-size: 8pt; color: dimgray; }
+p.total { font-size: 12pt; font-weight: bold; }
+td.sign { height: 28pt; }
+@page { margin: 12mm; }
+</style>
+</head>
+<body>
+<h1>Setup sheet: Op 1 - top</h1>
+<p class="sub">Program <b>1001</b> &#8212; host test part (rev A), work offset <b>G54</b>, inches (G20)</p>
+<table class="facts" width="100%" cellspacing="0" cellpadding="2" border="0">
+<tr><td class="label">Program number</td><td class="value">1001</td><td class="label">Machine</td><td class="value">Test mill (RayCAD tests TM-1)</td></tr>
+<tr><td class="label">Program name</td><td class="value">host test part (rev A)</td><td class="label">Post</td><td class="value">Haas NGC (Next Generation Control) (haas-ngc)</td></tr>
+<tr><td class="label">Part</td><td class="value">Bracket</td><td class="label">Units</td><td class="value">Inches (G20)</td></tr>
+<tr><td class="label">File</td><td class="value">bracket</td><td class="label">Date</td><td class="value">2026-11-23</td></tr>
+<tr><td class="label">Setup</td><td class="value">Op 1 - top</td><td class="label"></td><td class="value"></td></tr>
+</table>
+<p></p>
+<table class="notice" width="100%" border="2" cellspacing="0" cellpadding="5"><tr><td>
+<p><b>This post has not been proven on a real machine, and the machine definition (Test mill) has not been checked against one.</b></p>
+<p>Dry-run the program before cutting: single block, feed hold in reach, above the part (an air cut) or without a tool. Check the work offsets, tool lengths and tool changes.</p>
+</td></tr></table>
+<h2>Work offset and stock</h2>
+<table width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td class="picture" width="440"><table class="picture" border="1" cellspacing="0" cellpadding="0"><tr><td><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFUlEQVR42mP4z8DAsACIGf7///8fAByXBZxCfMcDAAAAAElFTkSuQmCC" width="432" height="288" alt="The part in this setup"></td></tr></table></td>
+<td>
+<table class="facts" width="100%" cellspacing="0" cellpadding="2" border="0">
+<tr><td class="label">Work offset</td></tr><tr><td class="value">G54</td></tr>
+<tr><td class="label">Origin (X0 Y0 Z0)</td></tr><tr><td class="value">Top front left corner of the stock</td></tr>
+<tr><td class="label">Stock, in work coordinates</td></tr><tr><td class="value">X 0 to 4.7244<br>Y 0 to 3.1496<br>Z -0.4528 to 0 in</td></tr>
+<tr><td class="label">Stock</td></tr><tr><td class="value">Block 4.7244 &#215; 3.1496 &#215; 0.4528 in (X &#215; Y &#215; Z)<br>Beyond the part: top 0.0591, bottom 0, left 0, right 0, front 0, back 0 in</td></tr>
+<tr><td class="label">Material</td></tr><tr><td class="value">6061-T6 (Aluminium), 95 HB</td></tr>
+</table></td></tr></table>
+<h2>Tools</h2>
+<table class="grid" width="100%" border="1" cellspacing="0" cellpadding="2">
+<thead><tr><th>Tool</th><th>Description</th><th>Diameter</th><th>Flutes</th><th>Stick-out</th><th>Holder</th><th>Offsets</th><th>Used by</th></tr></thead>
+<tbody>
+<tr><td><b>T1</b></td><td><b>50 mm face mill</b><br>Face mill<br>Acme FM50-5</td><td>1.9685 in</td><td>5</td><td>1.1811 in</td><td>CAT40 ER32</td><td>H1 D1</td><td>1. Face top</td></tr>
+<tr><td><b>T2</b></td><td><b>10 mm 3-flute end mill</b><br>Flat end mill</td><td>0.3937 in</td><td>3</td><td>1.2598, 1.378 in</td><td>CAT40 ER32</td><td>H2 D2</td><td>2. Rough pocket<br>3. Finish pocket walls</td></tr>
+<tr><td><b>T3</b></td><td><b>6.6 mm jobber drill</b><br>Drill, 118&#176; point</td><td>0.2598 in</td><td>2</td><td>1.1811 in</td><td>BT40 ER32 collet chuck</td><td>H3 D3</td><td>4. Drill 6.6 thru</td></tr>
+</tbody></table>
+<h2>Operations</h2>
+<table class="grid" width="100%" border="1" cellspacing="0" cellpadding="2">
+<thead><tr><th>#</th><th>Operation</th><th>Tool</th><th>Deepest Z</th><th>Spindle</th><th>Feed</th><th>Stock to leave</th><th>Est. time</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><b>Face top</b><br>Facing</td><td><b>T1</b><br>&#216;1.9685</td><td>Z 0<br>stepdown 0.0591</td><td>6000 rpm CW<br>Flood coolant</td><td>cut 59.1 in/min<br>plunge 19.7 in/min<br>0.002 in per tooth</td><td>&#8212;</td><td>0:00:35</td></tr>
+<tr><td>2</td><td><b>Rough pocket</b><br>Pocket</td><td><b>T2</b><br>&#216;0.3937</td><td>Z -0.1575<br>stepdown 0.0787</td><td>8000 rpm CW<br>Flood coolant</td><td>cut 47.2 in/min<br>plunge 15.7 in/min<br>0.002 in per tooth</td><td>walls 0.0098<br>floor 0.0039</td><td>0:00:13</td></tr>
+<tr><td></td><td class="warning" colspan="7">Warning: An area of 0.8 mm² could not be cleared with this tool</td></tr>
+<tr><td>3</td><td><b>Finish pocket walls</b><br>Contour</td><td><b>T2</b><br>&#216;0.3937</td><td>Z -0.1575</td><td>9000 rpm CW<br>Mist</td><td>cut 35.4 in/min<br>0.0013 in per tooth</td><td>walls 0<br>floor 0</td><td>0:00:09</td></tr>
+<tr><td>4</td><td><b>Drill 6.6 thru</b><br>Peck drilling (full retract), 6 holes</td><td><b>T3</b><br>&#216;0.2598</td><td>Z -0.4724<br>peck 0.0787</td><td>1500 rpm CW<br>Flood coolant</td><td>cut 5.9 in/min</td><td>&#8212;</td><td>0:00:58</td></tr>
+</tbody></table>
+<h2>Cycle time</h2>
+<p class="total">Estimated cycle time 0:01:56</p>
+<p>Cutting 0:01:17, rapids 0:00:08, 3 tool changes 0:00:30.</p>
+<p>An estimate from the toolpaths and the machine definition: the real time depends on the control's acceleration and look-ahead and on the feed and rapid overrides. Time the first part.</p>
+<p class="small">The machine&#39;s tool change time is not known: 10 s was assumed.</p>
+<h2>Sign-off</h2>
+<table class="grid" width="100%" border="1" cellspacing="0" cellpadding="2">
+<tr><th width="34%">Set up by</th><th width="33%">Date</th><th width="33%">First part checked by</th></tr>
+<tr><td class="sign">&#160;</td><td class="sign">&#160;</td><td class="sign">&#160;</td></tr>
+</table>
+<p class="small">Made with RayCAD on 2026-11-23. Check this sheet against the program before running it.</p>
+<h1 style="page-break-before: always">Setup sheet: Op 2 - bottom</h1>
+<p class="sub">Program <b>1002</b> &#8212; host test part (rev A), work offset <b>G55</b>, inches (G20)</p>
+<table class="facts" width="100%" cellspacing="0" cellpadding="2" border="0">
+<tr><td class="label">Program number</td><td class="value">1002</td><td class="label">Machine</td><td class="value">Test mill (RayCAD tests TM-1)</td></tr>
+<tr><td class="label">Program name</td><td class="value">host test part (rev A)</td><td class="label">Post</td><td class="value">Haas NGC (Next Generation Control) (haas-ngc)</td></tr>
+<tr><td class="label">Part</td><td class="value">Bracket</td><td class="label">Units</td><td class="value">Inches (G20)</td></tr>
+<tr><td class="label">File</td><td class="value">bracket</td><td class="label">Date</td><td class="value">2026-11-23</td></tr>
+<tr><td class="label">Setup</td><td class="value">Op 2 - bottom</td><td class="label">Programmer</td><td class="value">tester</td></tr>
+</table>
+<h2>Work offset and stock</h2>
+<table width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+<td class="picture" width="440"><table class="picture" border="1" cellspacing="0" cellpadding="0"><tr><td><p>No picture.</p></td></tr></table></td>
+<td>
+<table class="facts" width="100%" cellspacing="0" cellpadding="2" border="0">
+<tr><td class="label">Work offset</td></tr><tr><td class="value">G55</td></tr>
+<tr><td class="label">Origin (X0 Y0 Z0)</td></tr><tr><td class="value">Centre of the top face of the stock</td></tr>
+<tr><td class="label">Stock, in work coordinates</td></tr><tr><td class="value">X -1.7717 to 1.7717<br>Y -1.7717 to 1.7717<br>Z -1.1811 to 0 in</td></tr>
+<tr><td class="label">Axes</td></tr><tr><td class="value">X and Y turned round (X flipped)</td></tr>
+<tr><td class="label">Stock</td></tr><tr><td class="value">Round bar &#216;3.5433 &#215; 1.1811 in long, along Z</td></tr>
+<tr><td class="label">Material</td></tr><tr><td class="value">Not chosen</td></tr>
+</table></td></tr></table>
+<h2>Tools</h2>
+<table class="grid" width="100%" border="1" cellspacing="0" cellpadding="2">
+<thead><tr><th>Tool</th><th>Description</th><th>Diameter</th><th>Flutes</th><th>Stick-out</th><th>Holder</th><th>Offsets</th><th>Used by</th></tr></thead>
+<tbody>
+<tr><td><b>T1</b></td><td><b>50 mm face mill</b><br>Face mill<br>Acme FM50-5</td><td>1.9685 in</td><td>5</td><td>1.1811 in</td><td>CAT40 ER32</td><td>H1 D1</td><td>1. Face top</td></tr>
+<tr><td><b>T2</b></td><td><b>10 mm 3-flute end mill</b><br>Flat end mill</td><td>0.3937 in</td><td>3</td><td>1.2598, 1.378 in</td><td>CAT40 ER32</td><td>H2 D2</td><td>2. Rough pocket<br>3. Finish pocket walls</td></tr>
+<tr><td><b>T3</b></td><td><b>6.6 mm jobber drill</b><br>Drill, 118&#176; point</td><td>0.2598 in</td><td>2</td><td>1.1811 in</td><td>BT40 ER32 collet chuck</td><td>H3 D3</td><td>4. Drill 6.6 thru</td></tr>
+</tbody></table>
+<h2>Operations</h2>
+<table class="grid" width="100%" border="1" cellspacing="0" cellpadding="2">
+<thead><tr><th>#</th><th>Operation</th><th>Tool</th><th>Deepest Z</th><th>Spindle</th><th>Feed</th><th>Stock to leave</th><th>Est. time</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><b>Face top</b><br>Facing</td><td><b>T1</b><br>&#216;1.9685</td><td>Z 0<br>stepdown 0.0591</td><td>6000 rpm CW<br>Flood coolant</td><td>cut 59.1 in/min<br>plunge 19.7 in/min<br>0.002 in per tooth</td><td>&#8212;</td><td>0:00:35</td></tr>
+<tr><td>2</td><td><b>Rough pocket</b><br>Pocket</td><td><b>T2</b><br>&#216;0.3937</td><td>Z -0.1575<br>stepdown 0.0787</td><td>8000 rpm CW<br>Flood coolant</td><td>cut 47.2 in/min<br>plunge 15.7 in/min<br>0.002 in per tooth</td><td>walls 0.0098<br>floor 0.0039</td><td>0:00:13</td></tr>
+<tr><td></td><td class="warning" colspan="7">Warning: An area of 0.8 mm² could not be cleared with this tool</td></tr>
+<tr><td>3</td><td><b>Finish pocket walls</b><br>Contour</td><td><b>T2</b><br>&#216;0.3937</td><td>Z -0.1575</td><td>9000 rpm CW<br>Mist</td><td>cut 35.4 in/min<br>0.0013 in per tooth</td><td>walls 0<br>floor 0</td><td>0:00:09</td></tr>
+<tr><td>4</td><td><b>Drill 6.6 thru</b><br>Peck drilling (full retract), 6 holes</td><td><b>T3</b><br>&#216;0.2598</td><td>Z -0.4724<br>peck 0.0787</td><td>1500 rpm CW<br>Flood coolant</td><td>cut 5.9 in/min</td><td>&#8212;</td><td>0:00:58</td></tr>
+</tbody></table>
+<h2>Cycle time</h2>
+<p class="total">Estimated cycle time 0:01:56</p>
+<p>Cutting 0:01:17, rapids 0:00:08, 3 tool changes 0:00:30.</p>
+<p>An estimate from the toolpaths and the machine definition: the real time depends on the control's acceleration and look-ahead and on the feed and rapid overrides. Time the first part.</p>
+<p class="small">The machine&#39;s tool change time is not known: 10 s was assumed.</p>
+<h2>Sign-off</h2>
+<table class="grid" width="100%" border="1" cellspacing="0" cellpadding="2">
+<tr><th width="34%">Set up by</th><th width="33%">Date</th><th width="33%">First part checked by</th></tr>
+<tr><td class="sign">&#160;</td><td class="sign">&#160;</td><td class="sign">&#160;</td></tr>
+</table>
+<p class="small">Made with RayCAD on 2026-11-23. Check this sheet against the program before running it.</p>
+</body>
+</html>

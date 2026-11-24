@@ -217,6 +217,10 @@ FocusScope {
                         anchors.fill: parent
                     }
                     PostDialog {}
+                    // T-076: the setup sheet dialog (cam/SetupSheetDialog.qml), over everything as the post dialog.
+                    SetupSheetDialog {
+                        view: viewport.view
+                    }
                 }
             }
         }
@@ -636,7 +640,7 @@ FocusScope {
     }
 
     // Esc cancels the foreground job wherever the focus is (only while one runs, so text fields keep their Esc,
-    // and not under a dialog, whose Esc is Cancel). The CAM post dialog, tool library and templates are such dialogs:
+    // and not under a dialog, whose Esc is Cancel). The CAM post dialog, setup sheet, tool library and templates are such dialogs:
     // each has an Esc shortcut of its own, and two enabled shortcuts with one key are ambiguous to Qt, which then
     // delivers the key to neither and not to the focused field either, so Esc did nothing at all while a job (a
     // rebuild, the view's meshing) ran under them.
@@ -644,7 +648,7 @@ FocusScope {
         objectName: "shellCancelJobShortcut"
         sequence: "Esc"
         enabled: Session.jobActive && !fileDialogs.modalShown && !CamPost.active && !CamTools.shown
-                 && !CamTemplates.shown
+                 && !CamTemplates.shown && !CamSheet.active
         onActivated: Session.cancelForegroundJob()
     }
 

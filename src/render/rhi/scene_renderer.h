@@ -93,8 +93,11 @@ private:
     void ensureWide(const detail::SceneItem& item, GpuItem& gpu, QRhiResourceUpdateBatch* u);
     bool ensureUniformCapacity(quint32 bytes);
     void writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, QSize size, QMatrix4x4& view,
-                         QMatrix4x4& projection);
-    void drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize size, quint32 frameOffset);
+                         QMatrix4x4& projection, const Theme* themeOverride = nullptr);
+    void drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize size, quint32 frameOffset, quint32 itemShift = 0,
+                   bool highlights = true);
+    // T-076: the ItemBlocks of the draw list in the given theme, each shift bytes after the draw's own.
+    void writeItemBlocks(QRhiResourceUpdateBatch* u, const Theme& theme, quint32 shift);
     int effectiveSamples(int wanted) const;
     void publishStats(double cpuMs);
     // Hover and selection (T-015): the items whose edges need the wide-line buffer, and the highlight draw list with

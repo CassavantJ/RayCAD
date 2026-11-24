@@ -48,7 +48,9 @@ add_library(ray_ui STATIC
     cam/post_logic.h # T-047
     cam/post_logic.cpp
     cam/cycletime_logic.h # T-059
-    cam/cycletime_logic.cpp)
+    cam/cycletime_logic.cpp
+    cam/setupsheet_print.h # T-076
+    cam/setupsheet_print.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -134,7 +136,8 @@ set(RAY_UI_QML_FILES
     qml/cam/ToolPicker.qml
     qml/cam/PostDialog.qml # T-047
     qml/cam/GcodeView.qml
-    qml/cam/Templates.qml) # T-057
+    qml/cam/Templates.qml # T-057
+    qml/cam/SetupSheetDialog.qml) # T-076
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -203,6 +206,8 @@ qt_add_qml_module(ray_ui
         cam/post_tool.cpp
         cam/templates_model.h # T-057
         cam/templates_model.cpp
+        cam/setupsheet_tool.h # T-076
+        cam/setupsheet_tool.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick
@@ -232,6 +237,12 @@ qt_add_resources(ray_ui "ray_ui_themes"
     PREFIX "/ray/themes"
     BASE "${CMAKE_SOURCE_DIR}/resources/themes"
     FILES ${RAY_UI_THEME_FILES})
+# T-076: the setup sheet picture's print palette (white background, dark edges), under :/ray/print/ so it is not one of
+# the themes the user picks (ThemeObject loads :/ray/themes/ only). Only IViewport::captureImageInTheme uses it.
+qt_add_resources(ray_ui "ray_ui_print_theme"
+    PREFIX "/ray/print"
+    BASE "${CMAKE_SOURCE_DIR}/resources/themes/print"
+    FILES "${CMAKE_SOURCE_DIR}/resources/themes/print/setupsheet-print.json")
 
 # ray_ui is a static library, so the QML module's resources and type registration live in the static plugin
 # ray_uiplugin that qt_add_qml_module generates. Whoever links ray_ui must link that plugin too, or the linker

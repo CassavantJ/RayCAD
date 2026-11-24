@@ -684,6 +684,19 @@ FocusScope {
                     toolTipText: qsTr("Open the program in the G-code viewer")
                     onClicked: CamPost.showGcode()
                 }
+                // T-076: the setup sheet of the same setup, next to posting (this dialog closes, the sheet opens).
+                Button {
+                    objectName: "postSetupSheet"
+                    visible: !CamPost.busy && root.state !== "asking"
+                    text: qsTr("Setup sheet…")
+                    toolTipText: qsTr("Make the setup sheet for the operator: a PDF or HTML page with the work offset, "
+                                      + "stock, tools and operations")
+                    onClicked: {
+                        const id = CamPost.setupId
+                        CamPost.close()
+                        CamSheet.open(id)
+                    }
+                }
                 Button {
                     id: cancelButton
                     objectName: "postCancel"

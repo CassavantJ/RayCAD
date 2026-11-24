@@ -553,6 +553,12 @@ void ViewportFrontend::requestFrame()
 
 void ViewportFrontend::captureImage(int w, int h, std::function<void(std::vector<std::byte> png)> done)
 {
+    captureImageInTheme(w, h, nullptr, std::move(done));
+}
+
+void ViewportFrontend::captureImageInTheme(int w, int h, std::shared_ptr<const Theme> theme,
+                                           std::function<void(std::vector<std::byte> png)> done)
+{
     if (!done)
         return;
     if (w <= 0 || h <= 0 || w > kMaxCaptureSide || h > kMaxCaptureSide) {
@@ -560,7 +566,7 @@ void ViewportFrontend::captureImage(int w, int h, std::function<void(std::vector
         outbox_->post([done = std::move(done)] { done({}); });
         return;
     }
-    captures_.push_back(CaptureRequest{w, h, std::move(done)});
+    captures_.push_back(CaptureRequest{w, h, std::move(done), std::move(theme)});
     changed(false, false);
 }
 

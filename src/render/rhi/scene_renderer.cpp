@@ -270,6 +270,8 @@ struct SceneRenderer::Capture {
     QRhiReadbackResult result;
     std::function<void(std::vector<std::byte>)> done;
     quint32 frameOffset = 0; // its FrameBlock in the uniform buffer
+    quint32 itemShift = 0;   // T-076: in another theme, where its copy of the ItemBlocks is (bytes past the draws')
+    bool themed = false;     // T-076: drawn in another theme (no selection or hover highlights)
     std::atomic<bool> finished{false};
 };
 
@@ -737,8 +739,10 @@ void SceneRenderer::syncItems(QRhiResourceUpdateBatch* u)
 }
 
 void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, QSize size, QMatrix4x4& view,
-                                    QMatrix4x4& projection)
+                                    QMatrix4x4& projection, const Theme* themeOverride)
 {
+    // T-076: a capture in another theme takes that theme's background, path and draft colours; else the viewport's.
+    const Theme* const frameTheme = themeOverride != nullptr ? themeOverride : snap_.theme.get();
     const Camera& cam = snap_.camera;
     const QVector3D eye(float(cam.eye.x), float(cam.eye.y), float(cam.eye.z));
     const QVector3D target(float(cam.target.x), float(cam.target.y), float(cam.target.z));
@@ -793,7 +797,7 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
     block.viewport[1] = float(size.height());
     block.viewport[2] = 1.0f / float(std::max(1, size.width()));
     block.viewport[3] = 1.0f / float(std::max(1, size.height()));
-    if (const Theme* theme = snap_.theme.get()) {
+    if (const Theme* theme = frameTheme) {
         toFloat4(theme->colors[static_cast<std::size_t>(Token::ViewportBgTop)], block.bgTop);
         toFloat4(theme->colors[static_cast<std::size_t>(Token::ViewportBgBottom)], block.bgBottom);
         block.misc[3] = float(metric(*theme, kMetricDash, kDefaultDashPx) * snap_.devicePixelRatio);
@@ -812,8 +816,7 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
         block.section[1] = float(plane->ny);
         block.section[2] = float(plane->nz);
         block.section[3] = float(plane->d);
-        const double thin =
-            snap_.theme ? metric(*snap_.theme, kMetricThinLine, kDefaultThinLinePx) : kDefaultThinLinePx;
+        const double thin = frameTheme ? metric(*frameTheme, kMetricThinLine, kDefaultThinLinePx) : kDefaultThinLinePx;
         block.analysis[2] = float(thin * snap_.devicePixelRatio);
         // The caps' hatch: about kHatchPeriodPx logical pixels at the camera target, snapped to a power of two (mm).
         const double dx = cam.target.x - cam.eye.x, dy = cam.target.y - cam.eye.y, dz = cam.target.z - cam.eye.z;
@@ -825,7 +828,7 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
         if (std::isfinite(wanted) && wanted > 0)
             block.analysis[3] = float(std::exp2(std::round(std::log2(wanted))));
     }
-    if (snap_.draft && snap_.theme) {
+    if (snap_.draft && frameTheme) {
         const DraftAnalysis& d = *snap_.draft;
         const QVector3D pull =
             view.mapVector(QVector3D(float(d.pull.x), float(d.pull.y), float(d.pull.z))).normalized();
@@ -834,12 +837,52 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
         block.draftPull[0] = pull.x();
         block.draftPull[1] = pull.y();
         block.draftPull[2] = pull.z();
-        const Theme& theme = *snap_.theme;
+        const Theme& theme = *frameTheme;
         toFloat4(theme.colors[std::size_t(draftToken(DraftClass::Positive))], block.draftPositive);
         toFloat4(theme.colors[std::size_t(draftToken(DraftClass::Negative))], block.draftNegative);
         toFloat4(theme.colors[std::size_t(draftToken(DraftClass::Vertical))], block.draftVertical);
     }
     u->updateDynamicBuffer(uniforms_.get(), offset, sizeof(block), &block);
+}
+
+void SceneRenderer::writeItemBlocks(QRhiResourceUpdateBatch* u, const Theme& theme, quint32 shift)
+{
+    const bool smooth = smoothEdges_;
+    const double dpr = snap_.devicePixelRatio;
+    const float edgeWidth = smooth ? float(metric(theme, kMetricThinLine, kDefaultThinLinePx) * dpr) : 1.0f;
+    for (const DrawItem& d : draws_) {
+        ItemBlock block{};
+        const QMatrix4x4 model = toMatrix(d.item->xform);
+        copyMatrix(block.model, model);
+        copyMatrix(block.normalMatrix, model.inverted().transposed());
+        // A face colour from data (T-016: imported body colours) replaces the face token.
+        const MeshStyle& style = d.item->style;
+        toFloat4(style.faceColor && d.item->kind == detail::ItemKind::Mesh
+                     ? *style.faceColor
+                     : theme.colors[static_cast<std::size_t>(style.face)],
+                 block.faceColor);
+        toFloat4(theme.colors[static_cast<std::size_t>(d.item->style.edge)], block.edgeColor);
+        block.faceColor[3] = snap_.preset.transparency ? std::clamp(d.item->style.opacity, 0.0f, 1.0f) : 1.0f;
+        block.edgeColor[3] = 1.0f;
+        if (d.item->kind == detail::ItemKind::Backplot) {
+            // T-038 (frame.glsl): width, one colour unless the style keeps PathCut, ID-buffer width, opacity.
+            const double width = metric(theme, kMetricPathLine, metric(theme, kMetricThinLine, kDefaultThinLinePx));
+            block.line[0] = float(width * dpr);
+            block.line[1] = style.edge != Token::PathCut ? 1.0f : 0.0f;
+            block.line[3] = float(std::max(width, kPathPickMinWidthPx) * dpr);
+            block.faceColor[3] = std::clamp(style.opacity, 0.0f, 1.0f);
+        } else if (d.item->kind == detail::ItemKind::Lines) {
+            block.line[0] = float(d.item->lines->widthPx * dpr);
+            block.line[1] = d.item->lines->dashed ? 1.0f : 0.0f;
+        } else {
+            block.line[0] = edgeWidth;
+        }
+        block.line[2] = smooth ? 1.0f : 0.0f;
+        block.ids[0] = float(d.item->id);
+        // T-023: draft analysis paints body faces (over their own colour too), never lines or highlights.
+        block.ids[1] = d.item->kind == detail::ItemKind::Mesh ? 1.0f : 0.0f;
+        u->updateDynamicBuffer(uniforms_.get(), d.itemUniformOffset + shift, sizeof(block), &block);
+    }
 }
 
 std::optional<Box3> SceneRenderer::visibleBounds() const
@@ -919,13 +962,17 @@ void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
     u->updateDynamicBuffer(capQuad_.get(), 0, sizeof(data), data);
 }
 
-void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize size, quint32 frameOffset)
+void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize size, quint32 frameOffset,
+                              quint32 itemShift, bool highlights)
 {
     const QRhiViewport viewport(0, 0, float(size.width()), float(size.height()));
+    // itemShift (T-076): a capture in another theme reads its own copy of the ItemBlocks, itemShift bytes on (the
+    // background's offset 0 is no ItemBlock and stays).
     const auto use = [&](QRhiGraphicsPipeline* pipeline, quint32 itemOffset) {
         cb->setGraphicsPipeline(pipeline);
         cb->setViewport(viewport);
-        const QRhiCommandBuffer::DynamicOffset offsets[2] = {{0, frameOffset}, {1, itemOffset}};
+        const QRhiCommandBuffer::DynamicOffset offsets[2] = {{0, frameOffset},
+                                                             {1, itemOffset != 0 ? itemOffset + itemShift : 0}};
         cb->setShaderResources(bindings_.get(), 2, offsets);
     };
     std::uint64_t triangles = 0;
@@ -1016,7 +1063,8 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
             drawFaces(d, set.meshBlend.get());
     }
     // 4. selection, then hover (T-015)
-    drawHighlights(cb, set, viewport, frameOffset, drawCalls);
+    if (highlights)
+        drawHighlights(cb, set, viewport, frameOffset, drawCalls);
     stats_.triangles = triangles;
     stats_.drawCalls = drawCalls;
 }
@@ -1276,7 +1324,12 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
     std::sort(selectedItems.begin(), selectedItems.end());
     selectedItems.erase(std::unique(selectedItems.begin(), selectedItems.end()), selectedItems.end());
     const quint32 highlightSlots = 2 * (quint32(selectedItems.size()) + (snap_.hover ? 1u : 0u));
-    if (!ensureUniformCapacity(frameSlots * frameSlot + (std::max<quint32>(1, maxItems) + highlightSlots) * itemSlot)) {
+    // T-076: a capture in another theme gets its own copy of the item ItemBlocks after these (no highlights in it).
+    const quint32 themedCaptures = quint32(std::count_if(
+        requests.begin(), requests.end(), [](const detail::CaptureRequest& r) { return r.theme != nullptr; }));
+    const quint32 itemRun = std::max<quint32>(1, maxItems) * itemSlot;
+    if (!ensureUniformCapacity(frameSlots * frameSlot + (std::max<quint32>(1, maxItems) + highlightSlots) * itemSlot +
+                               themedCaptures * itemRun)) {
         u->release();
         return busy();
     }
@@ -1334,42 +1387,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
                                   detail::itemPickable(item)});
     }
     if (theme) {
-        const double dpr = snap_.devicePixelRatio;
-        const float edgeWidth = smooth ? float(metric(*theme, kMetricThinLine, kDefaultThinLinePx) * dpr) : 1.0f;
-        for (const DrawItem& d : draws_) {
-            ItemBlock block{};
-            const QMatrix4x4 model = toMatrix(d.item->xform);
-            copyMatrix(block.model, model);
-            copyMatrix(block.normalMatrix, model.inverted().transposed());
-            // A face colour from data (T-016: imported body colours) replaces the face token.
-            const MeshStyle& style = d.item->style;
-            toFloat4(style.faceColor && d.item->kind == detail::ItemKind::Mesh
-                         ? *style.faceColor
-                         : theme->colors[static_cast<std::size_t>(style.face)],
-                     block.faceColor);
-            toFloat4(theme->colors[static_cast<std::size_t>(d.item->style.edge)], block.edgeColor);
-            block.faceColor[3] = snap_.preset.transparency ? std::clamp(d.item->style.opacity, 0.0f, 1.0f) : 1.0f;
-            block.edgeColor[3] = 1.0f;
-            if (d.item->kind == detail::ItemKind::Backplot) {
-                // T-038 (frame.glsl): width, one colour unless the style keeps PathCut, ID-buffer width, opacity.
-                const double width =
-                    metric(*theme, kMetricPathLine, metric(*theme, kMetricThinLine, kDefaultThinLinePx));
-                block.line[0] = float(width * dpr);
-                block.line[1] = style.edge != Token::PathCut ? 1.0f : 0.0f;
-                block.line[3] = float(std::max(width, kPathPickMinWidthPx) * dpr);
-                block.faceColor[3] = std::clamp(style.opacity, 0.0f, 1.0f);
-            } else if (d.item->kind == detail::ItemKind::Lines) {
-                block.line[0] = float(d.item->lines->widthPx * dpr);
-                block.line[1] = d.item->lines->dashed ? 1.0f : 0.0f;
-            } else {
-                block.line[0] = edgeWidth;
-            }
-            block.line[2] = smooth ? 1.0f : 0.0f;
-            block.ids[0] = float(d.item->id);
-            // T-023: draft analysis paints body faces (over their own colour too), never lines or highlights.
-            block.ids[1] = d.item->kind == detail::ItemKind::Mesh ? 1.0f : 0.0f;
-            u->updateDynamicBuffer(uniforms_.get(), d.itemUniformOffset, sizeof(block), &block);
-        }
+        writeItemBlocks(u, *theme, 0);
         // Transparent items far to near.
         if (snap_.preset.transparency) {
             const auto depthOf = [&](const DrawItem& d) {
@@ -1392,6 +1410,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
 
     // Capture targets and their FrameBlocks, written in the same batch as the main pass.
     std::vector<Capture*> started;
+    quint32 themedDone = 0;
     for (std::size_t i = 0; i < requests.size(); ++i) {
         auto capture = std::make_unique<Capture>();
         capture->done = std::move(requests[i].done);
@@ -1409,7 +1428,15 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         }
         QMatrix4x4 cview, cprojection;
         capture->frameOffset = quint32(i + 1) * frameSlot;
-        writeFrameBlock(u, capture->frameOffset, csize, cview, cprojection);
+        const Theme* captureTheme = requests[i].theme.get();
+        writeFrameBlock(u, capture->frameOffset, csize, cview, cprojection, captureTheme);
+        if (captureTheme != nullptr && theme != nullptr) {
+            // T-076: its own ItemBlocks in that theme, after the draws' and the highlights'.
+            capture->themed = true;
+            capture->itemShift = (std::max<quint32>(1, maxItems) + highlightSlots) * itemSlot + themedDone * itemRun;
+            ++themedDone;
+            writeItemBlocks(u, *captureTheme, capture->itemShift);
+        }
         capture->result.completed = [c = capture.get(), outbox = outbox_, yUp = rhi_->isYUpInFramebuffer()] {
             Image image;
             image.width = c->result.pixelSize.width();
@@ -1462,7 +1489,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         Capture& c = *capture;
         cb->beginPass(c.target.rt.get(), QColor(Qt::transparent), {1.0f, 0});
         if (theme)
-            drawScene(cb, *c.target.set, c.target.size, c.frameOffset);
+            drawScene(cb, *c.target.set, c.target.size, c.frameOffset, c.itemShift, !c.themed);
         QRhiResourceUpdateBatch* rb = rhi_->nextResourceUpdateBatch();
         rb->readBackTexture(QRhiReadbackDescription(c.target.ownedColour.get()), &c.result);
         cb->endPass(rb);
