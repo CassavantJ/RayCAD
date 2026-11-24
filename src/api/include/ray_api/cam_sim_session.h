@@ -13,9 +13,11 @@
 // own rapid rate (the slowest axis decides, as a dogleg G0 does), plus the dwell of a Dwell move or a cycle. Then each
 // operation's moves are scaled together so that the operation lasts what cam::estimateCycleTime says (its acceleration
 // and corner rules), so the timeline's total is the CAM tree's cycle-time estimate. Within one move time is spread
-// evenly along its path (t01 is a fraction of its length, sim.h TimelinePosition); inside a canned cycle, whose rapids
-// are faster than its feeds, a position between the move's ends is therefore approximate. The moves' starts and ends
-// are exact on the axis.
+// evenly along its path (t01 is a fraction of its length, sim.h TimelinePosition), except in a canned cycle: there the
+// time follows the cycle's own motion as buildBackplot expands it (the rapids down to R and back, each feed of a peck,
+// each retract, each at its own rate, and the cycle's dwell at the hole's bottom), so a time inside the cycle puts the
+// tool where the control would have it (TimelineOperation::profiles; added after T-074). Inside a dwell the tool stands
+// at the bottom; secondsAt of that place is the dwell's start. The moves' starts and ends are exact on the axis.
 //
 // STEPS. "One move per step": a move boundary is "after move f" for f = 0..moveCount (flat move index over the whole
 // program); afterMove(0) is the program's start. step(+1) from anywhere goes to the end of the move the position is in
@@ -43,21 +45,34 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ray::api::cam_sim {
 
 // ---------- The timeline ----------
+// How time runs along a move whose parts run at different rates (a canned cycle): knots (fraction of the move's time,
+// fraction of its path's length) from (0, 0) to (1, 1), both non-decreasing; linear between knots. A dwell is a knot
+// pair with the same length.
+struct MoveProfile {
+    std::uint32_t move = 0;
+    std::vector<std::pair<double, double>> knots;
+    double lengthAt(double timeFraction) const; // t01 of the place at that share of the move's time
+    double timeAt(double lengthFraction) const; // the share of the move's time when the tool first gets there
+};
+
 struct TimelineOperation {
     OperationId id;
     std::string name;
-    double startSec = 0;            // where its tool change begins
-    double toolChangeSec = 0;       // at its start
-    double endSec = 0;              // the end of its last move
-    std::uint64_t firstMove = 0;    // flat index of its first move
-    std::vector<double> moveEndSec; // per IR move, when it ends (absolute, non-decreasing)
+    double startSec = 0;               // where its tool change begins
+    double toolChangeSec = 0;          // at its start
+    double endSec = 0;                 // the end of its last move
+    std::uint64_t firstMove = 0;       // flat index of its first move
+    std::vector<double> moveEndSec;    // per IR move, when it ends (absolute, non-decreasing)
+    std::vector<MoveProfile> profiles; // sorted by move: the moves whose time is not even along the path (cycles)
     double firstMoveSec() const { return startSec + toolChangeSec; }
     std::uint64_t moves() const { return moveEndSec.size(); }
+    const MoveProfile* profileOf(std::uint32_t move) const; // null: time is even along that move
 };
 
 struct Timeline {
@@ -129,6 +144,10 @@ struct RunRequest {
     double cellMm = 0.1; // the tier preset's simulation cell (render::TierPreset::simCellMm)
     double gougeTolMm = 0.05;
     MeshAsk mesh; // the first display mesh (full)
+    // Tests only (empty in the app; added after T-074): events added to the simulator's before anything reads them, so
+    // a kind or a severity that no check raises yet goes the whole way the real ones go (placed on the timeline, in
+    // RunResult::events, the panel's markers and rows). `operation` must be one of the program's.
+    std::vector<sim::SimEvent> addedEvents;
 };
 
 struct RunResult {
@@ -138,6 +157,10 @@ struct RunResult {
     std::vector<std::string> opNames;  // parallel
     std::vector<Hash256> inputs;       // their toolpaths' input hashes (what the run was made of)
     std::vector<sim::ToolShape> tools; // parallel: the tool glyph of each
+    // Parallel: each toolpath's backplot in the model frame, made as the CAM workspace's (api::cam_operation::backplot:
+    // sim::buildBackplot with modelFromWcs and the setup's machine, arcs within 0.01 mm), for the Simulate workspace to
+    // draw with IViewport::addBackplot (added after T-074). Null for an operation without a toolpath.
+    std::vector<std::shared_ptr<const sim::Backplot>> backplots;
     std::vector<sim::SimEvent> events; // ISimulator::events
     std::vector<EventPlace> places;    // parallel to events
     Timeline timeline;

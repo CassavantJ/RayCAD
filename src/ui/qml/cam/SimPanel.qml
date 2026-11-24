@@ -2,7 +2,7 @@
 // the setup, runs the simulation (gated like posting: toolpaths that are stale, failed or missing block it, with the
 // reason and Generate all), shows the run's progress with Cancel (Esc), and then what was found: a summary with the
 // stock's resolution, an out-of-date notice when the toolpaths changed since, the visibility of the stock, the tool,
-// its holder and the fixtures, how the G-code viewer is linked (or Post… when no current program is there), and the
+// its holder, the fixtures and the toolpath, how the G-code viewer is linked (or Post… when no current program is there), and the
 // problems in time order; a row goes to its problem as its marker on the timeline does.
 import QtQuick
 import RayCad.Ui
@@ -265,6 +265,13 @@ Item {
                         text: qsTr("Fixtures")
                         checked: CamSim.showFixtures
                         onToggled: CamSim.showFixtures = checked
+                    }
+                    CheckBox {
+                        objectName: "simShow.toolpath"
+                        text: qsTr("Toolpath")
+                        checked: CamSim.showToolpath
+                        enabled: CamSim.hasResult
+                        onToggled: CamSim.showToolpath = checked
                     }
                 }
 

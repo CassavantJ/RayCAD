@@ -107,7 +107,7 @@ struct Claims {
     AbsHeights heights;                // heights; clearance also bounds the start and end
     Direction direction = Direction::Any;
     double directionBand = 0.5; // a cut is along a wall when the part is within cutting radius + stock to leave + this
-    std::optional<bool> centreCutting; // default from the tool type (centreCuttingByDefault)
+    std::optional<bool> centreCutting; // default: the tool's stated Tool::centreCutting, else centreCuttingByDefault
     double deadZoneFraction = 0.25;    // a non-centre-cutting tool cannot cut within this fraction of its radius
     std::optional<double> maxRampAngleDeg, helixMinDiameter, maxEngagementDeg;
     InitialStock initialStock = InitialStock::Box;

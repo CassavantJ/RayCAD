@@ -6,6 +6,7 @@
 #include "../scene_controller.h"
 #include "../session.h"
 #include "../ui_commands.h"
+#include "operation_view.h" // ToolpathDisplay::pathStyle: the toolpaths drawn as the CAM workspace draws them
 #include "post_tool.h"
 #include "post_view.h"
 #include "setup_tool.h" // setup_tree.h's inline setSetupTool needs the whole type
@@ -74,6 +75,9 @@ constexpr UiCommand kCamSimCommands[] = {
     {"cam.sim.toggleFixtures", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Show or hide the fixtures"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Simulate"),
      QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows or hides the vise and other fixtures in the Simulate workspace"), "", CommandContext::Sim, ""},
+    {"cam.sim.toggleToolpath", QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Show or hide the toolpath"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Simulate"),
+     QT_TRANSLATE_NOOP("ray::ui::CommandCatalog", "Shows or hides the simulated toolpaths: the moves done in full, the moves to come dimmed"), "", CommandContext::Sim, ""},
 };
 // clang-format on
 
@@ -259,6 +263,7 @@ void SimToolModel::setViewer(GcodeModel* viewer)
             // A program posted for this run: the viewer, when open, follows the stock again.
             followGcode();
         });
+        connect(viewer_, &GcodeModel::lineChosen, this, [this](int line) { seekToLine(line); });
     }
 }
 
@@ -644,6 +649,7 @@ bool SimToolModel::run()
     tierName_ = tierLabel(preset.tier);
     request.mesh.budget = budget_;
     request.mesh.full = true;
+    request.addedEvents = addedEvents_; // tests only
 
     pause();
     clearResult();
@@ -870,11 +876,19 @@ void SimToolModel::removeItems()
             if (g.holder != 0)
                 v->remove(g.holder);
         }
+        for (const Path& p : paths_) {
+            if (p.done != 0)
+                v->remove(p.done);
+            if (p.ahead != 0)
+                v->remove(p.ahead);
+        }
     }
     stockItem_ = 0;
     glyphs_.clear();
+    paths_.clear();
     itemsViewport_ = nullptr;
-    stockVisible_ = toolVisible_ = holderVisible_ = false;
+    stockVisible_ = toolVisible_ = holderVisible_ = toolpathVisible_ = false;
+    pathStale_ = false;
     stockShownKnown_ = false;
     shownVersion_ = 0;
 }
@@ -888,6 +902,7 @@ void SimToolModel::ensureItems()
         // A new viewport (or none yet): the items are made there; the stock needs a whole mesh.
         stockItem_ = 0;
         glyphs_.clear();
+        paths_.clear();
         stockShownKnown_ = false;
         itemsViewport_ = v;
         shownVersion_ = 0;
@@ -907,6 +922,56 @@ void SimToolModel::ensureItems()
                 v->setVisible(glyphs_[i].holder, false);
             }
         }
+    }
+    if (paths_.size() != result_->backplots.size()) {
+        // The toolpaths, as the CAM workspace draws them; both items share the backplot (shown by applyVisibility).
+        paths_.assign(result_->backplots.size(), Path{});
+        for (std::size_t i = 0; i < result_->backplots.size(); ++i) {
+            const std::shared_ptr<const sim::Backplot>& bp = result_->backplots[i];
+            if (!bp || bp->moveFirstVertex.size() < 2)
+                continue;
+            Path& p = paths_[i];
+            p.moves = static_cast<std::uint32_t>(bp->moveFirstVertex.size() - 1);
+            p.done = v->addBackplot(bp);
+            p.ahead = v->addBackplot(bp);
+            if (p.done != 0) {
+                v->setStyle(p.done, ToolpathDisplay::pathStyle(pathStale_, false));
+                v->setVisible(p.done, false);
+            }
+            if (p.ahead != 0) {
+                v->setStyle(p.ahead, ToolpathDisplay::pathStyle(pathStale_, true));
+                v->setVisible(p.ahead, false);
+            }
+        }
+    }
+}
+
+// The moves done (to the playhead, the move under way included) at full strength, the rest dimmed: a draw range each.
+void SimToolModel::applyPathRanges()
+{
+    render::IRenderViewport* v = viewport();
+    if (v == nullptr || v != itemsViewport_ || paths_.empty())
+        return;
+    constexpr std::pair<std::uint32_t, std::uint32_t> none{1, 0};
+    const sim::TimelinePosition p = position_;
+    for (std::size_t i = 0; i < paths_.size(); ++i) {
+        Path& path = paths_[i];
+        if (path.moves == 0)
+            continue;
+        // How many of its moves are begun: all before the current operation, none after it.
+        std::uint32_t begun = 0;
+        if (i < p.opIndex)
+            begun = path.moves;
+        else if (i == p.opIndex)
+            begun = std::min(path.moves, p.moveIndex + (p.t01 > 0 ? 1u : 0u));
+        const auto done = begun == 0 ? none : std::make_pair(0u, begun - 1);
+        const auto ahead = begun >= path.moves ? none : std::make_pair(begun, path.moves - 1);
+        if (path.done != 0 && done != path.doneRange)
+            v->setBackplotRange(path.done, done.first, done.second);
+        if (path.ahead != 0 && ahead != path.aheadRange)
+            v->setBackplotRange(path.ahead, ahead.first, ahead.second);
+        path.doneRange = done;
+        path.aheadRange = ahead;
     }
 }
 
@@ -951,6 +1016,7 @@ void SimToolModel::applyFrame(const cs::Frame& frame)
         if (g.holder != 0)
             v->setTransform(g.holder, toolPose_);
     }
+    applyPathRanges();
     ++frames_;
     lastFrame_ = frame;
     lastFrame_.mesh.reset();
@@ -1005,6 +1071,26 @@ void SimToolModel::applyVisibility(bool bodies)
     }
     toolVisible_ = toolShown;
     holderVisible_ = holderShown;
+    // The toolpaths: in the stale colour while the result is out of date, as the stock.
+    bool pathShown = false;
+    if (v != nullptr && v == itemsViewport_) {
+        const bool path = here && showToolpath_;
+        const bool restyle = stale != pathStale_;
+        for (Path& p : paths_) {
+            for (const auto& [item, dim] : {std::make_pair(p.done, false), std::make_pair(p.ahead, true)}) {
+                if (item == 0)
+                    continue;
+                if (restyle)
+                    v->setStyle(item, ToolpathDisplay::pathStyle(stale, dim));
+                if (path != p.shown)
+                    v->setVisible(item, path);
+            }
+            p.shown = path;
+            pathShown = pathShown || (path && (p.done != 0 || p.ahead != 0));
+        }
+        pathStale_ = stale;
+    }
+    toolpathVisible_ = pathShown;
     if (bodiesChange)
         applyBodies();
 }
@@ -1424,17 +1510,50 @@ void SimToolModel::followGcode()
     if (!viewer_ || !result_ || gcodeState() != QLatin1String("current"))
         return;
     std::uint32_t op = position_.opIndex, move = position_.moveIndex;
-    // The event chosen while the stock is on its way there.
-    if (currentEvent_ >= 0 && (pending_ || seekJob_.valid())) {
-        const cs::EventPlace& pl = result_->places[static_cast<std::size_t>(currentEvent_)];
-        op = pl.opIndex;
-        move = pl.moveIndex;
+    // Where the stock is on its way to (an event chosen, a line chosen) rather than a frame it passes on the way; while
+    // playing, where it is.
+    if (!playing_ && (pending_ || seekJob_.valid())) {
+        op = requested_.opIndex;
+        move = requested_.moveIndex;
     }
     if (!viewer_->isOpen())
         return; // closed by the user: an event chosen opens it (selectEvent), a frame does not
     if (const auto section = sectionOf(op)) {
+        // A line of that move current already (one the user chose, or the move shown before): it stays.
+        const PostedProgram* p = viewer_->program();
+        if (p != nullptr && viewer_->currentLine() >= 0) {
+            const auto now = p->index->moveOf(static_cast<std::size_t>(viewer_->currentLine()));
+            if (now && now->section == *section && now->move == move)
+                return;
+        }
         viewer_->showMove(*section, move);
         gcodeLine_ = viewer_->currentLine();
+    }
+}
+
+// A line made current in the viewer (GcodeModel::lineChosen): in the Simulate workspace, the end of its move.
+void SimToolModel::seekToLine(int line)
+{
+    if (!inWorkspace() || !result_ || !viewer_ || line < 0 || gcodeState() != QLatin1String("current"))
+        return;
+    const PostedProgram* p = viewer_->program();
+    const auto move = p != nullptr ? p->index->moveOf(static_cast<std::size_t>(line)) : std::nullopt;
+    if (!move || move->section >= p->sectionOps.size())
+        return; // a comment, the header, a tool change: no move
+    for (std::size_t i = 0; i < result_->ops.size() && i < result_->timeline.ops.size(); ++i) {
+        if (result_->ops[i] != p->sectionOps[move->section])
+            continue;
+        if (move->move >= result_->timeline.ops[i].moves())
+            return;
+        pause();
+        if (currentEvent_ >= 0) {
+            // No problem chosen any more: the viewer follows the stock, not the event.
+            currentEvent_ = -1;
+            applyMarks();
+            emit currentEventChanged();
+        }
+        requestSeek(sim::TimelinePosition{static_cast<std::uint32_t>(i), move->move, 1.0});
+        return;
     }
 }
 
@@ -1472,6 +1591,15 @@ void SimToolModel::setShowFixtures(bool on)
         return;
     showFixtures_ = on;
     applyVisibility();
+    emit visibilityChanged();
+}
+
+void SimToolModel::setShowToolpath(bool on)
+{
+    if (on == showToolpath_)
+        return;
+    showToolpath_ = on;
+    applyVisibility(false);
     emit visibilityChanged();
 }
 
@@ -1673,6 +1801,8 @@ bool SimToolModel::runCommand(const QString& id)
         setShowHolder(!showHolder_);
     else if (id == QLatin1String("cam.sim.toggleFixtures"))
         setShowFixtures(!showFixtures_);
+    else if (id == QLatin1String("cam.sim.toggleToolpath"))
+        setShowToolpath(!showToolpath_);
     else
         return false;
     return true;

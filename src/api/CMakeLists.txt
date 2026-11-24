@@ -30,6 +30,8 @@ add_library(ray_api STATIC
     cam_sim.cpp
     include/ray_api/cam_sim_session.h # the on-screen simulation of a setup: timeline, seeks, display meshes (T-074)
     cam_sim_session.cpp
+    include/ray_api/cam_fixtures.h # a library vise placed on a setup's stock (the fixtures panel, after T-077)
+    cam_fixtures.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

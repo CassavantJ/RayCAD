@@ -214,7 +214,8 @@ target_link_libraries(ray_ui_cam_sim_tests PRIVATE ray_ui ray_render ray_api Qt6
                                                    Qt6::Test Catch2::Catch2)
 target_include_directories(ray_ui_cam_sim_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 target_compile_definitions(ray_ui_cam_sim_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
-    RAY_SHOTS_DIR="${CMAKE_SOURCE_DIR}/build/shots")
+    RAY_SHOTS_DIR="${CMAKE_SOURCE_DIR}/build/shots"
+    RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}") # the library's vise (resources/library/fixtures)
 set_property(TARGET ray_ui_cam_sim_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_ui_cam_sim_tests COMMAND ray_ui_cam_sim_tests "~[wallclock]")
 set_tests_properties(ray_ui_cam_sim_tests PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)

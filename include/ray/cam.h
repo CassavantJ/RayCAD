@@ -65,6 +65,8 @@
 //  - SetupResolveOptions::carried, GeometryRequest::carried and ResolvedSetup::carriedStock: resolveSetup and
 //    resolveSetupGeometry resolve a FromSetupStock setup from the carried stock, and fill ResolvedGeometry::stockSlices;
 //  - the rules of FromSetupStock in operationInputHash, resolveSetup and resolveSetupGeometry are written out.
+// Amended after M3 (a tool's centre cutting, libraries.h; also in docs/interfaces/cam.h): generatorTool keeps the neck
+// and Tool::centreCutting, which geometryHash (so the input hash) covers; its comment said neither.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -508,8 +510,9 @@ using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const d
 // missing; InvalidArgument for a FromSetupStock chain that does not lead to an earlier setup.
 Result<Hash256> operationInputHash(const CamSnapshot&, const naming::IResolver&, const OperationId& op);
 // The items as GenerateInput carries them: copies with only what the input hash covers. A tool keeps its type,
-// flutes, diameters, lengths, corner radius, tip and thread pitch; a holder its gauge length and segments; a machine
-// its kind, axes, minimum and maximum rpm and rigid tapping. Everything else is the default (an empty id and name).
+// flutes, diameters, lengths, corner radius, tip, thread pitch, neck and centreCutting (read it as cutsAtCentre()); a
+// holder its gauge length and segments; a machine its kind, axes, minimum and maximum rpm and rigid tapping.
+// Everything else is the default (an empty id and name).
 lib::Tool generatorTool(const lib::Tool&);
 lib::Holder generatorHolder(const lib::Holder&);
 lib::MachineDef generatorMachine(const lib::MachineDef&);

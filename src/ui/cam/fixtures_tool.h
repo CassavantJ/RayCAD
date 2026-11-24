@@ -26,14 +26,28 @@
 //                jaw mated to the vise follows the vise. cancel() (Esc) ends the placement; the document is unchanged.
 //                Esc with no placement open closes the panel. setInSetup(body, in) adds a fixture to (or takes it out
 //                of) the fixture bodies of that setup.
+//   On stock     (after T-077) placeOnStock() stands the setup's stock in a library vise the document has (one whose
+//                library model has a description, ray_api/cam_fixtures.h: viseName, the one in the setup first): the
+//                stock's bottom on the vise's floor, or on the parallels' top when the setup has the library's
+//                parallels, centred along the jaws, the fixed jaw against one side, the moving jaw closed on the other
+//                (its opening clamped to the vise's travel, said plainly when the stock is wider). grip ("shorter",
+//                "x", "y") picks the two faces the jaws close on. The vise and parallels are placed by numbers, the jaw
+//                by its mate to the fixed jaw with the opening as the gap: ordinary placements, editable with Place
+//                afterwards. One cam.batch command (one undo step), which also makes them fixtures of the setup when
+//                they were not. Worked out once: a later change of the stock does not move them (the panel says so; run
+//                it again). The result or why not: stockMessage, stockStatus ("ok", "warning", "failed"). The placement
+//                editor also shows tiltX and tiltY (degrees about model X and Y, without a mate), which this sets for a
+//                setup whose Z is not model +Z.
 // Fixtures are never machining geometry: the operation panel refuses picks on them, and so do the CAM commands and the
 // CAM engine (cam_commands.cpp, cam::resolveSetupGeometry).
 #pragma once
 
 #include "../model/preview.h"
 #include "fixtures_logic.h"
+#include "sim_carried.h"
 
 #include <ray/api.h>
+#include <ray_api/cam_fixtures.h>
 
 #include <QtCore/QJsonObject>
 #include <QtCore/QObject>
@@ -45,8 +59,10 @@
 #include <QtQml/QQmlEngine>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <set>
+#include <vector>
 
 namespace ray::ui {
 
@@ -93,6 +109,12 @@ class FixturesToolModel : public QObject {
     Q_PROPERTY(QString previewStatus READ previewStatus NOTIFY statusChanged)
     Q_PROPERTY(bool committing READ committing NOTIFY statusChanged)
     Q_PROPERTY(bool canCommit READ canCommit NOTIFY statusChanged)
+    // On stock: the vise it places ("" when the document has none with a description), the grip, the run.
+    Q_PROPERTY(QString viseName READ viseName NOTIFY fixturesChanged)
+    Q_PROPERTY(QString grip READ grip WRITE setGrip NOTIFY gripChanged)
+    Q_PROPERTY(bool placingOnStock READ placingOnStock NOTIFY stockStatusChanged)
+    Q_PROPERTY(QString stockMessage READ stockMessage NOTIFY stockStatusChanged)
+    Q_PROPERTY(QString stockStatus READ stockStatus NOTIFY stockStatusChanged)
 
 public:
     FixturesToolModel(SceneController* scene, SelectionModel* selection, Session* session, AppContext* context,
@@ -123,6 +145,12 @@ public:
     QString previewStatus() const { return previewStatus_; }
     bool committing() const { return committing_; }
     bool canCommit() const;
+    QString viseName() const;
+    QString grip() const { return grip_; }
+    void setGrip(const QString& grip);
+    bool placingOnStock() const { return placingOnStock_; }
+    QString stockMessage() const { return stockMessage_; }
+    QString stockStatus() const { return stockStatus_; }
 
     // ---- QML ----
     Q_INVOKABLE bool open();
@@ -138,6 +166,7 @@ public:
     Q_INVOKABLE bool commit();
     Q_INVOKABLE void cancel();
     Q_INVOKABLE bool setInSetup(const QString& bodyId, bool in);
+    Q_INVOKABLE bool placeOnStock();
 
     // ---- the command catalog's hooks (cam.fixtures.*) ----
     QString commandReason(const QString& id) const;
@@ -160,8 +189,24 @@ signals:
     void statusChanged();
     void importDialogRequested();
     void committed(const QString& bodyId);
+    void gripChanged();
+    void stockStatusChanged();
 
 private:
+    // The library vise placeOnStock uses, its jaw and the setup's parallels.
+    struct ViseChoice {
+        api::cam_fixtures::ViseModel model;
+        BodyId vise, jaw;
+        std::optional<api::cam_fixtures::ParallelsModel> parallelsModel;
+        std::vector<BodyId> parallels;
+        QString name;
+    };
+    std::optional<ViseChoice> chooseVise(const doc::DocState& state) const;
+    void setStockStatus(const QString& status, const QString& message);
+    void planOnStock(ViseChoice choice, SetupId setup, doc::DocStatePtr state, doc::BuildResultPtr build,
+                     std::shared_ptr<const cam::CarriedStock> carried);
+    void applyOnStock(const api::cam_fixtures::PlacePlan& plan, const ViseChoice& choice, const QString& setupName);
+
     api::IApp* app() const;
     doc::Document* liveDoc() const;
     void subscribe();
@@ -221,6 +266,15 @@ private:
     bool previewPending_ = false;
     doc::DocStatePtr previewBase_;
     int previewsShown_ = 0;
+
+    // On stock.
+    std::vector<api::cam_fixtures::FixtureModel> models_; // the libraries' fixture descriptions
+    QString grip_ = QStringLiteral("shorter");
+    bool placingOnStock_ = false;
+    QString stockMessage_, stockStatus_;
+    std::uint64_t stockSerial_ = 0;
+    std::unique_ptr<camui::CarriedStockRequest> carried_;
+    JobHandle<std::shared_ptr<const api::cam_fixtures::PlacePlan>> stockJob_;
 };
 
 } // namespace ray::ui

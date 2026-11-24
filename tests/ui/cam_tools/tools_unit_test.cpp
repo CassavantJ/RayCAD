@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
@@ -437,4 +438,71 @@ TEST_CASE("schema messages name their field", "[tools][fields]")
     CHECK(toolsui::splitProblem(QStringLiteral("/: needs \"name\"")) ==
           std::pair<QString, QString>(QString(), QStringLiteral("needs \"name\"")));
     CHECK(toolsui::splitProblem(QStringLiteral("Something else")).first.isEmpty());
+}
+
+// After M3: a tool's centre cutting (libraries.h Tool::centreCutting) in the editor. Shown for the milling cutters
+// only;
+// "" leaves it to the type (the file has no key), "true" / "false" state it; the first choice names the type's default.
+TEST_CASE("the centre-cutting field: which types show it, its choices and the file it makes", "[tools][fields]")
+{
+    for (int i = 0; i <= static_cast<int>(lib::ToolType::EngraveCutter); ++i) {
+        const auto type = static_cast<lib::ToolType>(i);
+        bool shown = false;
+        for (const toolsui::Field& f : toolsui::toolFields(type))
+            shown = shown || std::string(f.key) == toolsui::kCentreCutting;
+        INFO(i);
+        CHECK(shown == lib::centreCuttingSettable(type));
+    }
+    const auto firstText = [](lib::ToolType type, double tip) {
+        const std::vector<toolsui::Choice> c = toolsui::centreCuttingChoices(type, tip);
+        REQUIRE(c.size() == 3);
+        CHECK(c[0].value.isEmpty());
+        CHECK(c[1].value == QStringLiteral("true"));
+        CHECK(c[2].value == QStringLiteral("false"));
+        return c[0].text;
+    };
+    CHECK(firstText(lib::ToolType::FlatEndMill, 0) == QStringLiteral("Type default (yes)"));
+    CHECK(firstText(lib::ToolType::FaceMill, 0) == QStringLiteral("Type default (no)"));
+    CHECK(firstText(lib::ToolType::ChamferMill, 0) == QStringLiteral("Type default (yes)"));
+    CHECK(firstText(lib::ToolType::ChamferMill, 1) == QStringLiteral("Type default (no)"));
+
+    // A tool that states nothing: shown as "", and the file keeps no key while it stays so.
+    lib::Tool base;
+    for (const lib::Tool& t : starterTools()) {
+        if (t.type == lib::ToolType::FlatEndMill) {
+            base = t;
+            break;
+        }
+    }
+    REQUIRE(base.type == lib::ToolType::FlatEndMill);
+    base.centreCutting.reset();
+    const QJsonObject json = jsonOf(base);
+    REQUIRE_FALSE(json.contains(QLatin1String(toolsui::kCentreCutting)));
+    const toolsui::Units mm = unitsOf(false);
+    toolsui::Values v = toolsui::toolValues(base, mm);
+    CHECK(v.fields[QLatin1String(toolsui::kCentreCutting)].isEmpty());
+    toolsui::Checked c = toolsui::checkTool(v, json, mm);
+    REQUIRE(c.ok());
+    CHECK(c.json == json);
+    // Stated "No": a JSON false the library reads back.
+    v.fields[QLatin1String(toolsui::kCentreCutting)] = QStringLiteral("false");
+    CHECK(toolsui::edited(v));
+    c = toolsui::checkTool(v, json, mm);
+    REQUIRE(c.ok());
+    CHECK(c.json.value(QLatin1String(toolsui::kCentreCutting)) == QJsonValue(false));
+    auto read = api::cam_tools::toolFromJson(QJsonDocument(c.json).toJson(QJsonDocument::Compact).toStdString());
+    REQUIRE(read);
+    CHECK(read->centreCutting == std::optional<bool>(false));
+    CHECK_FALSE(read->cutsAtCentre());
+    // A tool that states it shows it, and going back to the type's default removes the key.
+    const toolsui::Values stated = toolsui::toolValues(*read, mm);
+    CHECK(stated.fields.at(QLatin1String(toolsui::kCentreCutting)) == QStringLiteral("false"));
+    toolsui::Values back = stated;
+    back.fields[QLatin1String(toolsui::kCentreCutting)] = QString();
+    c = toolsui::checkTool(back, jsonOf(*read), mm);
+    REQUIRE(c.ok());
+    CHECK_FALSE(c.json.contains(QLatin1String(toolsui::kCentreCutting)));
+    back.fields[QLatin1String(toolsui::kCentreCutting)] = QStringLiteral("true");
+    c = toolsui::checkTool(back, jsonOf(*read), mm);
+    CHECK(c.json.value(QLatin1String(toolsui::kCentreCutting)) == QJsonValue(true));
 }

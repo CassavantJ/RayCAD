@@ -124,6 +124,31 @@ TEST_CASE("the shipped library has what PLAN.md T-031 asks for", "[lib][shipped]
     CHECK(taps.count("UNF") == 1);
 }
 
+// After M3 (libraries.h Tool::centreCutting): every shipped milling cutter states whether it cuts at its centre, and
+// the hole-making tools (whose type decides it) state nothing.
+TEST_CASE("the shipped milling cutters state their centre cutting", "[lib][shipped][centreCutting]")
+{
+    auto opened = ray::lib::ILibrary::open(kRoot);
+    REQUIRE(opened);
+    int stated = 0;
+    for (const auto& t : (*opened)->tools()) {
+        INFO(t.name);
+        if (!ray::lib::centreCuttingSettable(t.type)) {
+            CHECK_FALSE(t.centreCutting.has_value());
+            continue;
+        }
+        REQUIRE(t.centreCutting.has_value());
+        ++stated;
+        // Generic solid end mills and pointed chamfer mills do; the indexable face mill and thread mills do not.
+        const bool expected = t.type == ToolType::FlatEndMill || t.type == ToolType::BallEndMill ||
+                              t.type == ToolType::BullEndMill ||
+                              (t.type == ToolType::ChamferMill && !(t.tipDiameter > 0));
+        CHECK(*t.centreCutting == expected);
+        CHECK(t.cutsAtCentre() == expected);
+    }
+    CHECK(stated >= 15);
+}
+
 TEST_CASE("the shipped posts are in the library and the machines name them", "[lib][shipped]")
 {
     // T-040 / T-041 / T-042: the shipped posts; the posts themselves are tested in tests/unit/post

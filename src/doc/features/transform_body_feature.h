@@ -9,6 +9,7 @@
 //                                                                 of another body
 //    "gap": <length>,                                             optional, default 0; only with "mate"
 //    "angle": <angle>,                                            optional, default 0
+//    "tiltX": <angle>, "tiltY": <angle>,                          optional, default 0; only without "mate"
 //    "x": <length>, "y": <length>, "z": <length>}                 optional, default 0
 // (PLAN.md 3.2 sketched the props as `body` and `xform`; a stored matrix could not follow the part, so the placement is
 // stored as the mate and the numbers a user types.)
@@ -23,7 +24,11 @@
 //   2. Gap: the body moves `gap` along the target face's outward normal (positive: the faces stand apart; a jaw
 //      opening, the height of a parallel, the stock allowance on that side).
 //   3. Angle: the body turns by `angle` about the target face's outward normal through its centre (counter-clockwise
-//      seen from outside the target face); without a mate, about model +Z through the model origin.
+//      seen from outside the target face); without a mate, about model +Z through the model origin. Without a mate
+//      the body may first be tilted (added after T-077, for a vise placed on a setup's stock whose Z is not model +Z,
+//      a part turned over for its second side): by `tiltX` about model +X, then by `tiltY` about model +Y, both
+//      through the model origin, then by the angle about +Z (the rotation Rz(angle) Ry(tiltY) Rx(tiltX)). A tilt
+//      with a mate is refused: the faces set the orientation. Without tilts the move is exactly what it was.
 //   4. X, Y, Z: the body moves by (x, y, z) along the model axes.
 // The references are resolved where the feature stands in the history: the face on the body as the body is just before
 // this feature, the target on its body as it is then. So a mate follows every edit of the features before it (a part
@@ -61,6 +66,7 @@ struct Placement {
     std::optional<MateFace> face, target; // both or neither
     double gap = 0, angle = 0;
     Vec3 offset;
+    double tiltX = 0, tiltY = 0; // only without a mate
 };
 
 // The rigid move of steps 1 to 4 above (model frame, row-major 3x4 as kernel::transformed takes it). Pure arithmetic,

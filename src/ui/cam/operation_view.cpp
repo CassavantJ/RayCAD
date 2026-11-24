@@ -30,6 +30,11 @@ render::MeshStyle styleOf(bool stale, bool dim)
 
 } // namespace
 
+render::MeshStyle ToolpathDisplay::pathStyle(bool stale, bool dim)
+{
+    return styleOf(stale, dim);
+}
+
 ToolpathDisplay::ToolpathDisplay(SceneController* scene, Session* session, AppContext* context, QObject* parent)
     : QObject(parent), scene_(scene), session_(session), context_(context)
 {

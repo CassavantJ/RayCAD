@@ -56,8 +56,8 @@ Program mixed()
          holder(40, 50), 30);
     p.op(Path(-30, 2, 20).feed(-30, 2, -10).feed(130, 2, -10).feed(130, 2, 20).done(), endMill(10, 12, 60),
          holder(40, 50), 12);
-    p.op(Path(50, 20, 5).feed(50, 20, -5).feed(50, 20, 20).rapid(160, 20, 20).done(), endMill(10, 20, 75),
-         holder(40, 50), 40);
+    p.op(Path(50, 20, 5).feed(50, 20, -5).feed(50, 20, 20).rapid(160, 20, 20).done(),
+         notCentreCutting(endMill(10, 20, 75)), holder(40, 50), 40);
     return p;
 }
 

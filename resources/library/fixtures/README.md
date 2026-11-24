@@ -15,6 +15,22 @@ the jaws, where parallels stand, is z = 0; the fixed jaw's clamping face is the 
 x = 0; the jaws are 152.4 wide and 44.45 tall above the floor. The jaw opening is set in RayCAD as the gap of a mate
 between the moving jaw's clamping face and the fixed jaw's.
 
+## Descriptions (placing a vise on the stock)
+
+A model may have a description beside it, the same name with `.json` (`generic-vise-6in.json`), which lets the Fixtures
+panel's "Place on stock" stand a setup's stock in the vise: the stock's bottom on the floor (or on the parallels' top
+when the setup has parallels), centred along the jaws, the fixed jaw against one side, the moving jaw closed on the
+other. It names the bodies the file imports as and gives the sizes that needs, in the frame above (mm):
+
+| File | Description |
+|-|-|
+| `generic-vise-6in.json` | `"kind": "vise"`, the body and the moving jaw by name, `jawLength` 152.4, `jawHeight` 44.45, `maxOpening` 270 |
+| `generic-parallels-1x6in.json` | `"kind": "parallels"`, the two bodies by name, `height` 25.4, `thickness` 3.175 |
+
+The generic vise's `maxOpening` is where its moving jaw (60 thick) reaches the front end of its base (y = 330): a
+property of this generic model, not of any product. A shop's own vise can have a description of its own when its model
+is drawn in the same frame (`src/api/include/ray_api/cam_fixtures.h` gives the format).
+
 ## How they were made
 
 They are original, simple, generic shapes drawn for RayCAD from round numbers of the size class (jaws 6 in wide and
