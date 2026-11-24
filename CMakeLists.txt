@@ -37,6 +37,13 @@ else()
     if(RAY_WARNINGS_AS_ERRORS)
         add_compile_options(-Werror)
     endif()
+    # No multiply-add fusing anywhere, not only in the deterministic modules (ray_deterministic below): where the
+    # target has FMA (arm64; x86-64-v3), GCC and Clang fuse by default, and the same geometry came out
+    # bit-different on different code paths in one process (kernel round trip, hole hash, naming): the Linux CI
+    # (GCC 15, ubuntu-26.04) failed so, and a GCC build for x86-64-v3 reproduces its results bit for bit. MSVC
+    # does not fuse unless asked. The vcpkg overlay triplets (triplets/) build the dependencies, OpenCASCADE among
+    # them, the same way.
+    add_compile_options(-ffp-contract=off)
 endif()
 if(APPLE)
     # <AssertMacros.h> otherwise defines check(), verify() and require() as macros; core.h has CancelToken::check().

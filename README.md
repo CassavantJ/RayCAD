@@ -195,8 +195,9 @@ Every test has one of two CTest labels (`tests/tiers.cmake`):
 
 CI runs the quick tier in Debug and every test in Release and under AddressSanitizer. In an MSVC Debug build
 the randomised naming blocks are disabled (they would take hours there); ctest lists them as "Not Run
-(Disabled)". Windows Debug CI also leaves out the four S4 suites, labelled `debug-heavy` (about 25 minutes
-each in an MSVC Debug build): `ctest --preset windows-msvc-debug-ci`. Tests timed against the wall clock (cancel latencies, UI-thread stalls, start-up and drag
+(Disabled)". Windows Debug CI also leaves out the tests labelled `debug-heavy` (the four S4 suites and others that
+take 20 minutes or more each in an MSVC Debug build; `tests/tiers.cmake` lists them): `ctest --preset
+windows-msvc-debug-ci`. Debug and Release run as separate CI jobs. Tests timed against the wall clock (cancel latencies, UI-thread stalls, start-up and drag
 benchmarks) run alone. Tests that show a window take turns (the `desktop` resource lock: windows on one
 desktop share the keyboard focus, the pointer and the screen), and a test that sets the system clipboard
 holds the `clipboard` lock. The tests that show a window are also labelled `desktop`: `ctest --preset <config>-quick
