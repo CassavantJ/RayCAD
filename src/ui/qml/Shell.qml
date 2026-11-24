@@ -43,6 +43,9 @@ FocusScope {
             AppSettings.set("panels.properties.tab", tab)
     }
     readonly property real gap: Theme.panelGap
+    // T-074: made at start-up so the simulation's commands (cam.sim.open, from anywhere) are there before the Simulate
+    // workspace is first shown.
+    readonly property bool simulating: CamSim.running
 
     readonly property alias viewportHost: viewportHost
     readonly property alias viewportArea: viewportArea
@@ -113,9 +116,12 @@ FocusScope {
                 const ws = loader ? loader.item : null
                 const left = ws && ws.coverLeft !== undefined ? ws.coverLeft : 0
                 const right = ws && ws.coverRight !== undefined ? ws.coverRight : 0
+                // T-074: the Simulate workspace's timeline along the bottom.
+                const bottom = ws && ws.coverBottom !== undefined ? ws.coverBottom : 0
                 const top = Scene.bodyCount > 0 ? Theme.controlHeight + 2 * Theme.spacingXs + Theme.panelGap : 0
                 return Qt.rect(viewportArea.x + left, viewportArea.y + top,
-                               Math.max(0, viewportArea.width - left - right), Math.max(0, viewportArea.height - top))
+                               Math.max(0, viewportArea.width - left - right),
+                               Math.max(0, viewportArea.height - top - bottom))
             }
         }
         // T-022: measurement labels over the model (same geometry as the view item).
@@ -181,7 +187,22 @@ FocusScope {
                     visible: current
                     // Each workspace's own tools arrive with their tasks. CAM (T-044): the setup panel; the operation
                     // panel (T-045), the tool library (T-046) and posting (T-047) go into camWorkspace beside it.
-                    sourceComponent: index === 1 ? camWorkspace : emptyWorkspace
+                    // Simulate (T-074): simWorkspace.
+                    sourceComponent: index === 1 ? camWorkspace : index === 2 ? simWorkspace : emptyWorkspace
+                }
+            }
+            // T-047: the post dialog over everything, in CAM and in Simulate (T-074: its "Post…" offer when the
+            // simulation has no current program); made the first time either workspace is shown, so it is there,
+            // hidden, before it first opens (it takes the focus when it becomes visible).
+            Loader {
+                objectName: "postDialogLoader"
+                anchors.fill: parent
+                z: 2
+                property bool used: CamPost.active || AppContext.workspace !== 0
+                onUsedChanged: if (used) used = true // stays once made
+                active: used
+                sourceComponent: Component {
+                    PostDialog {}
                 }
             }
             Component {
@@ -222,10 +243,38 @@ FocusScope {
                         id: gcodeViewHost
                         anchors.fill: parent
                     }
-                    PostDialog {}
                     // T-076: the setup sheet dialog (cam/SetupSheetDialog.qml), over everything as the post dialog.
                     SetupSheetDialog {
                         view: viewport.view
+                    }
+                }
+            }
+            Component {
+                id: simWorkspace
+                Item {
+                    objectName: "simWorkspace"
+                    // T-074: the simulation panel on the left (cam/SimPanel.qml), the timeline along the bottom
+                    // (cam/Timeline.qml) and the G-code viewer on the right (cam/GcodeView.qml, the CAM workspace's
+                    // viewer: one CamGcode for both).
+                    readonly property real coverLeft: simPanelHost.coverLeft
+                    readonly property real coverRight: simGcodeHost.coverRight
+                    readonly property real coverBottom: simTimeline.visible ? simTimeline.height + Theme.panelGap : 0
+                    SimPanel {
+                        id: simPanelHost
+                        anchors.fill: parent
+                        anchors.bottomMargin: parent.coverBottom
+                    }
+                    GcodeView {
+                        id: simGcodeHost
+                        objectName: "simGcodeViewHost"
+                        anchors.fill: parent
+                        anchors.bottomMargin: parent.coverBottom
+                    }
+                    Timeline {
+                        id: simTimeline
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
                     }
                 }
             }
@@ -233,8 +282,11 @@ FocusScope {
         // T-044: the model tools and panels are the Design workspace's; entering CAM closes an open feature tool
         // (nothing changes in the document) and finishes the sketch being edited (its steps are saved already).
         readonly property bool camShown: AppContext.workspace === 1
-        onCamShownChanged: {
-            if (!camShown)
+        // T-074: Simulate is no Design workspace either: it shows the CAM tree on the left, and the model tools and
+        // panels are Design's only.
+        readonly property bool designShown: AppContext.workspace === 0
+        onDesignShownChanged: {
+            if (designShown)
                 return
             if (FeatureTool.active)
                 FeatureTool.cancel()
@@ -272,12 +324,12 @@ FocusScope {
         // T-092: New sketch, the plane picker, the sketch tools and the sketch's status (sketch/SketchPanel.qml).
         SketchPanel {
             anchors.fill: parent
-            visible: !viewportArea.camShown // T-044: Design only
+            visible: viewportArea.designShown // T-044: Design only
         }
         // T-098: the open feature tool's property panel and the Extrude offer after a sketch (model/FeaturePanel.qml).
         FeaturePanel {
             anchors.fill: parent
-            visible: !viewportArea.camShown
+            visible: viewportArea.designShown
         }
 
         // T-019: someone else holds the document's write lock.
@@ -678,9 +730,9 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            // T-044: the CAM workspace shows its setups and operations here.
-            title: viewportArea.camShown ? qsTr("CAM") : qsTr("Model")
-            iconName: viewportArea.camShown ? "sliders" : "cube"
+            // T-044: the CAM workspace shows its setups and operations here (T-074: and Simulate).
+            title: viewportArea.designShown ? qsTr("Model") : qsTr("CAM")
+            iconName: viewportArea.designShown ? "cube" : "sliders"
 
             ToolButton {
                 objectName: "leftPanelClose"
@@ -701,23 +753,23 @@ FocusScope {
             ModelTree {
                 id: modelTree
                 anchors.fill: parent
-                visible: !viewportArea.camShown
+                visible: viewportArea.designShown
             }
             // T-021: right-click in the tree (on a body row: selects it first).
             ContextMenu {
                 objectName: "treeContextMenu"
                 anchors.fill: parent
                 treeRoot: modelTree
-                visible: !viewportArea.camShown
+                visible: viewportArea.designShown
             }
-            // T-044: cam/CamTree.qml, made the first time the CAM workspace is shown.
+            // T-044: cam/CamTree.qml, made the first time the CAM (T-074: or Simulate) workspace is shown.
             Loader {
                 objectName: "camTreeLoader"
                 anchors.fill: parent
-                property bool used: viewportArea.camShown
-                onUsedChanged: if (viewportArea.camShown) used = true
+                property bool used: !viewportArea.designShown
+                onUsedChanged: if (!viewportArea.designShown) used = true
                 active: used
-                visible: viewportArea.camShown
+                visible: !viewportArea.designShown
                 sourceComponent: Component {
                     CamTree {}
                 }

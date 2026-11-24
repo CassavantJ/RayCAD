@@ -262,6 +262,14 @@ ArgsResult setupArgs(const SetupInput& in, const LengthFn& length, bool adding)
         if (in.partBodies.contains(in.solidBody))
             return fail(tr("The stock body cannot also be a part body"), QStringLiteral("solidBody"));
         stock = QJsonObject{{QStringLiteral("type"), QStringLiteral("solid")}, {QStringLiteral("body"), in.solidBody}};
+    } else if (in.stock == QLatin1String("fromSetup")) {
+        // T-074: the stock an earlier setup leaves (cam::FromSetupStock).
+        if (in.fromSetup.isEmpty())
+            return fail(tr("Choose the setup the stock comes from"), QStringLiteral("fromSetup"));
+        if (in.fromSetup == in.id)
+            return fail(tr("The stock cannot come from the setup itself"), QStringLiteral("fromSetup"));
+        stock =
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("fromSetup")}, {QStringLiteral("setup"), in.fromSetup}};
     } else {
         stock.insert(QStringLiteral("type"), QStringLiteral("box"));
         for (const char* key : kLengthKeys) {

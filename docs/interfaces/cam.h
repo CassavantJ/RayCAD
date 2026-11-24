@@ -57,6 +57,14 @@
 // takes LinkPass and a JobContext (the Linking section says why).
 // Amended by T-077 (fixture bodies; also in docs/interfaces/cam.h): CamSnapshot::documentFixtures, the bodies the
 // document marks as fixtures, so src/cam itself refuses to machine one (resolveSetupGeometry), whatever a setup lists.
+// Amended by T-075 (in-process stock; each also in docs/interfaces/cam.h; all additions, nothing removed or reordered):
+//  - the "In-process stock" section: kCarriedStockCellMm, CarriedStock, SimulateSetupRequest and SimulateSetupFn;
+//  - CamEngineOptions::simulateSetup and carriedEntries: src/cam may not run the simulator (PLAN.md 1.1), so the app
+//    hands the engine a function that does;
+//  - ICamEngine::carriedStock: the stock a FromSetupStock setup starts from, as a job (the simulation panel, T-074);
+//  - SetupResolveOptions::carried, GeometryRequest::carried and ResolvedSetup::carriedStock: resolveSetup and
+//    resolveSetupGeometry resolve a FromSetupStock setup from the carried stock, and fill ResolvedGeometry::stockSlices;
+//  - the rules of FromSetupStock in operationInputHash, resolveSetup and resolveSetupGeometry are written out.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -77,6 +85,7 @@ struct CylinderStock { double diameter = 0, length = 0; int axis = 2; double end
 struct SolidStock    { BodyId body; };
 struct FromSetupStock{ SetupId previous; };                            // in-process stock carried from an earlier setup
 using StockDef = std::variant<BoxStock, CylinderStock, SolidStock, FromSetupStock>;
+struct CarriedStock;   // T-075: the stock an earlier setup leaves (the "In-process stock" section)
 
 struct Wcs {
     // Orientation and origin are defined by references so they follow model edits.
@@ -439,6 +448,16 @@ public:
     // Ids are not per document: the caller leaves out operations another open document has (a second copy of a file).
     // The default does nothing (an engine without per-operation state).
     virtual void forget(std::span<const OperationId>) {}
+    // ---- Added by T-075 (in-process stock) ----
+    // The stock setup `setup` (whose stock is FromSetupStock) starts from, for display and the on-screen simulation:
+    // from the engine's cache, or made by this job as a generation of one of its operations would make it (the earlier
+    // setup's toolpaths from the cache or generated, then simulated through CamEngineOptions::simulateSetup), with
+    // progress, cancelled through the handle. NotFound for no such setup, InvalidArgument for one whose stock is not
+    // carried or an engine without simulateSetup. Empty by default.
+    virtual JobHandle<std::shared_ptr<const CarriedStock>> carriedStock(doc::DocStatePtr, doc::BuildResultPtr, SetupId)
+    {
+        return {};
+    }
 };
 
 // ---------- The engine (task T-032) ----------
@@ -469,6 +488,12 @@ using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const d
 //   with each part body, the CamSnapshot::holeThreads of the hole features named on its faces, by feature id);
 //   the stock (its definition; a solid stock's body content; a previous setup's stock and operation hashes for
 //   FromSetupStock) and the WCS (mode, corner, the flips when either is set, and its references as they resolve).
+//   T-075, FromSetupStock in full: everything of the earlier setup that its operations consume (part and fixture
+//   bodies, its own stock, recursively for a chain, WCS and machine), the input hash of each of its operations that is
+//   not suppressed, in its order (so an edit of one, a tool, the order, a suppression or a fixture body of that setup
+//   counts: the generators keep clear of fixtures, so a fixture can change its toolpaths), and kCarriedStockCellMm with
+//   the version of the carrying and slicing rules. Not: the earlier setup's names, program number, post, work offset,
+//   or anything an input hash leaves out (an edit there cannot change the stock it leaves).
 // Not in it: names, the template id, tool number and offset registers, program number and comment, post, work
 // offset, operation order, bodies the setup does not use, the document's other features, the library items' ids,
 // names, vendor text, comments, presets (cutting data is the operation's), thread designation, body material and
@@ -513,7 +538,12 @@ lib::MachineDef generatorMachine(const lib::MachineDef&);
 //   CylinderStock  axis along WCS X, Y or Z (axis 0, 1, 2), centred on the part box across the axis; its + end lies
 //                  endOffset beyond the part box along the axis and it runs `length` back from there.
 //   SolidStock     the body as it lies in the WCS; stockBounds is its box in the WCS orientation.
-//   FromSetupStock the simulated stock of an earlier setup, which does not exist yet: InvalidArgument saying so.
+//   FromSetupStock the simulated stock of an earlier setup (T-075): SetupResolveOptions::carried, carried from that
+//                  setup's WCS through the model frame into this one; stockBounds is its box in the WCS orientation,
+//                  each side on the earlier stock box where it lies within 1 um of it, else (across the earlier X or Y)
+//                  one cell outward, never past that box, rounded outward to whole nanometres (src/cam/stock.h says
+//                  why). Without SetupResolveOptions::carried, or with one of another setup: InvalidArgument saying the
+//                  earlier setup must be simulated first (the CAM engine does that; ICamEngine::carriedStock).
 // Origin, on the stock box in the WCS orientation:
 //   StockCorner (Wcs::stockCornerIndex 0..7), seen from +Z (looking down, X to the right, Y up):
 //        top (Z max)        bottom (Z min)
@@ -531,8 +561,13 @@ struct ResolvedSetup {
     Box3 partBounds;             // box of the part bodies, in the WCS; all zero when the setup has none
     Box3 stockBounds;            // in the WCS
     kernel::Shape stockSolid;    // the stock solid in the WCS; null unless SetupResolveOptions::stockSolid
+                                 // (always null for FromSetupStock: carriedStock is its solid)
+    // Added by T-075: for FromSetupStock, the carried stock in this setup's WCS (closed, outward, mm); else null.
+    std::shared_ptr<const kernel::TriSoup> carriedStock = {};
 };
-struct SetupResolveOptions { bool stockSolid = false; };
+// T-075: carried, the stock a FromSetupStock setup starts from (CarriedStock::setup must be its previous setup); it
+// must outlive the call. Not read for other stock types.
+struct SetupResolveOptions { bool stockSolid = false; const CarriedStock* carried = nullptr; };
 // Cheap enough for a live preview: an axis-aligned frame takes the bounds from the model boxes, a tilted one measures
 // each body in it with kernel::boundsIn (T-044: no copy of the body is made). Errors: ReferenceBroken for a part, fixture or stock body that is
 // not built or a reference that does not resolve usably; InvalidArgument for a WCS or stock the setup cannot have
@@ -548,6 +583,9 @@ struct GeometryRequest {
     const Setup& setup;
     const Operation& op;
     const naming::IResolver& resolver;
+    // Added by T-075: the stock a FromSetupStock setup starts from (the engine fills it; null for other setups, or
+    // when the engine has no CamEngineOptions::simulateSetup). Lives for the call.
+    const CarriedStock* carried = nullptr;
 };
 using ResolveGeometryFn = std::function<Result<ResolvedGeometry>(const GeometryRequest&, JobContext&)>;
 // The engine's default: resolveSetup, then partShapes and fixtureShapes are the setup's bodies in order (model
@@ -555,11 +593,61 @@ using ResolveGeometryFn = std::function<Result<ResolvedGeometry>(const GeometryR
 // resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty; partNames
 // the part bodies' element maps and holeThreads the snapshot's (T-035). T-077: a part body or a geometry reference on
 // a body that CamSnapshot::documentFixtures or the setup's fixtureBodies lists is InvalidArgument, naming the fixture.
+// T-075: a FromSetupStock setup resolves from GeometryRequest::carried (resolveSetup), and stockSlices is filled from
+// it: pairs (z, loops), z ascending from the stock's bottom, the loops (WCS XY, mm; outer loops counter-clockwise,
+// holes clockwise, lines only) the shadow of the carried material ABOVE z (as kernel::sliceAt's "just above z"), grown
+// by one cell of kCarriedStockCellMm; the levels are the bottom and each distinct column top (64 at most, else every top
+// rounded down to a whole cell), so the material above a depth is the slice at the highest level at or below it.
+// Coarser than the stock only toward more material, except a wall or fin thinner than one cell, which the simulation
+// itself can lose (src/cam/stock.h). Other setups: stockSlices empty, as before.
 Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest&, JobContext&);
+
+// ---------- In-process stock (task T-075) ----------
+// A setup whose stock is FromSetupStock starts from the stock an earlier setup leaves: the engine generates that
+// setup's toolpaths (from its cache, or there and then), has them simulated at kCarriedStockCellMm (material removal
+// only, no checks), keeps the result, and resolves the later setup from it, carried through the model frame (the earlier
+// setup's modelFromWcs, then the later one's wcsFromModel), so a flip or any other re-orientation works. src/cam cannot
+// run the simulator (src/sim depends on src/cam, PLAN.md 1.1): the app gives the engine CamEngineOptions::simulateSetup
+// (src/api: a simulator of its own at that cell, sim.h finalStock). Without it a FromSetupStock setup does not resolve.
+//
+// The fixed CAM resolution: kCarriedStockCellMm, never the tier's (the tier's cell is for display, sim.h). 0.25 mm
+// (0.010 in): the carried stock is what later setups plan rest cuts and safe moves against, so it errs toward more
+// material by up to a cell and a half (src/cam/stock.h), an air cut of a few tenths of a millimetre at this cell; a
+// wall or fin thinner than one cell can be lost by the simulation, and below 0.25 mm such a wall is foil in a job shop's
+// work. Its cost grows with the area over cell^2: on BP1 (6.25 x 4.25 x 0.75 in, setup 1 of 8,214 moves) the run takes
+// about 0.12 s on 8 workers and the stock is 1.1 million triangles, 25 MB (0.2 mm: 1.7 million, 40 MB; 0.5 mm: 0.28
+// million, 6 MB), and slicing it for each operation of the next setup 0.04 s (tests/unit/cam/carried_bp1_test.cpp,
+// "[.measure]"). The engine keeps CamEngineOptions::carriedEntries of them.
+inline constexpr double kCarriedStockCellMm = 0.25;
+// The stock at the end of setup `setup`: deterministic for its inputs (whatever the tier, worker count or timing).
+struct CarriedStock {
+    SetupId setup;                                  // the earlier setup (FromSetupStock::previous)
+    Hash256 key;                                    // the FromSetupStock part of operationInputHash: what it was made of
+    std::shared_ptr<const kernel::TriSoup> solid;   // closed, welded, outward; in that setup's WCS, mm
+    Xform modelFromWcs = Xform::identity();         // that setup's frame (ResolvedSetup::modelFromWcs)
+    Box3 bounds;                                    // that setup's stock box, which the simulation spanned (its WCS)
+    double cellMm = kCarriedStockCellMm;
+};
+// What simulateSetup is asked: run `setup` from its starting stock through `toolpaths` and return the stock at the end.
+struct SimulateSetupRequest {
+    const CamSnapshot& snapshot;
+    const naming::IResolver& resolver;
+    const Setup& setup;
+    const ResolvedSetup& resolved;   // its frame; stockSolid (box, cylinder, solid) or carriedStock (FromSetupStock)
+    std::vector<std::shared_ptr<const Toolpath>> toolpaths;   // its operations that are not suppressed, in its order
+    double cellMm = kCarriedStockCellMm;
+};
+// A closed soup in the setup's WCS (sim.h ISimulator::finalStock of a run at cellMm with safetyChecks and gouges off).
+// Called on a worker; polls ctx.cancel and reports on ctx.progress; must be a pure function of the request.
+using SimulateSetupFn = std::function<Result<kernel::TriSoup>(const SimulateSetupRequest&, JobContext&)>;
 
 struct CamEngineOptions {
     ResolveGeometryFn resolveGeometry;   // empty: resolveSetupGeometry
     std::size_t cacheEntries = 256;      // toolpaths kept by input hash; the least recently used go first
+    // Added by T-075: empty: a FromSetupStock setup does not resolve (InvalidArgument). The carried stocks are kept
+    // by CarriedStock::key, at most carriedEntries of them (each tens of megabytes); the least recently used go first.
+    SimulateSetupFn simulateSetup = {};
+    std::size_t carriedEntries = 4;
 };
 // The engine. status() may be called from any thread. generate() and generateAllStale() return at once: the hash is
 // computed on the calling thread, the toolpath on a worker of `jobs`, and the result is applied on the UI thread
@@ -570,7 +658,10 @@ struct CamEngineOptions {
 // operation Stale. `jobs`, and the dispatcher it posts to, must outlive the engine; continuations that run after the
 // engine is gone do nothing. T-045: a running generation's status carries its progress (OpState::progress); the
 // listeners (ICamEngine::subscribe) are called as that section says; statusAsync, validate and preview run wholly on
-// workers of `jobs`.
+// workers of `jobs`. T-075: an operation of a FromSetupStock setup gets its carried stock from the engine's cache (by
+// CarriedStock::key, so a new key is the only invalidation), or makes it inside its own job (the earlier setup's
+// toolpaths, filed in the cache as a preview's are, then simulateSetup), with that job's progress and cancel; jobs that
+// need the same stock meanwhile wait for it (each still answering its own cancel) instead of simulating it again.
 std::unique_ptr<ICamEngine> makeCamEngine(IJobSystem& jobs, std::shared_ptr<const OperationRegistry> types,
                                           CamSnapshotFn snapshot, CamEngineOptions options = {});
 

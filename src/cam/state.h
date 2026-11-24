@@ -45,6 +45,11 @@ struct GeneratorItems {
 };
 Result<GeneratorItems> generatorItemsOf(const CamState& state, const Setup& setup, const Operation& op);
 
+// T-075: the key of the stock setup `setup` (a FromSetupStock setup of the snapshot) starts from: the FromSetupStock
+// part of operationInputHash (state.cpp putCarried), so it changes exactly when that stock may change, and two setups
+// carrying from the same one share it. Errors as operationInputHash; InvalidArgument for a setup of another stock.
+Result<Hash256> carriedStockKey(const CamSnapshot& snapshot, const naming::IResolver& resolver, const Setup& setup);
+
 // "'Rough pocket'" or the id when the name is empty: how messages name an operation or a setup.
 std::string label(const Operation& op);
 std::string label(const Setup& setup);

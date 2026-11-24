@@ -340,3 +340,36 @@ target_include_directories(ray_cam_fixture_tests PRIVATE "${CMAKE_SOURCE_DIR}/sr
 target_compile_definitions(ray_cam_fixture_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_cam_fixture_tests)
+# In-process stock between setups (task T-075): the carried stock re-oriented and sliced (src/cam/stock.h), through the
+# engine with a stand-in simulator (staleness, the cache, waiting, cancel), and on benchmark part 1 with the app's
+# simulator (ray_api/cam_sim.h): the flip, a setup 1 edit, and the same bits for the three tier presets (render's
+# presetFor, hence ray_render) and 1, 4 and 16 workers. src/ for the private headers (cam/stock.h, cam/geom2d.h).
+add_executable(ray_cam_carried_tests
+    carried_bp1_test.cpp
+    carried_engine_test.cpp
+    carried_stock_test.cpp
+)
+target_link_libraries(ray_cam_carried_tests PRIVATE ray_api ray_render ray_store ray_doc ray_cam ray_sim ray_post
+    ray_naming ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_carried_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_carried_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+set_property(TARGET ray_cam_carried_tests PROPERTY FOLDER "tests")
+# The tier presets and worker counts on BP1 ([tiers]) take about a minute: their own test (tests/tiers.cmake).
+add_test(NAME ray_cam_carried_tests COMMAND ray_cam_carried_tests "~[tiers]")
+ray_test_runtime_path(ray_cam_carried_tests QT) # ray_render (render::presetFor) brings Qt6Core
+add_test(NAME ray_cam_carried_tiers COMMAND ray_cam_carried_tests "[tiers]")
+ray_test_runtime_path(ray_cam_carried_tiers QT)
+# The on-screen simulation's api layer (task T-074, ray_api/cam_sim_session.h): the timeline's arithmetic; a real
+# document with a seeded collision (the vise of the fixture tests) run, its event placed and the tool shown there, the
+# display meshes asked for by region and budget, and its clean twin; a setup turned over with its stock from the first
+# (the setup states and preview from ICamEngine::carriedStock, the run from it). Built as the fixture tests are.
+add_executable(ray_cam_sim_session_tests sim_session_test.cpp)
+target_link_libraries(ray_cam_sim_session_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_sim ray_post ray_naming
+    ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_sim_session_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_sim_session_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_sim_session_tests)

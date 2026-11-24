@@ -23,6 +23,8 @@ add_library(ray_cam STATIC
     json_number.h
     state.cpp    # OperationRegistry, operationInputHash (task T-032)
     state.h
+    stock.cpp    # in-process stock: carried into a later setup's frame and sliced (task T-075)
+    stock.h
     toolpath.cpp # Toolpath::serialize, deserialize, hash: the RCTP format
     templates.cpp # operation templates: variables, rules, the plan of an application (task T-057)
     templates.h

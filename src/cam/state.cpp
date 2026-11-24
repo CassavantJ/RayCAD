@@ -8,6 +8,8 @@
 // rebuild, after undo and redo, and after a reload.
 #include "state.h"
 
+#include "stock.h"
+
 #include <algorithm>
 #include <exception>
 #include <new>
@@ -397,6 +399,48 @@ void putHoleThreads(Hasher& h, const CamSnapshot& snapshot, const BodyId& id)
 
 Result<Hash256> operationHash(const CamSnapshot& snapshot, const naming::IResolver& resolver, const OperationId& id,
                               int depth);
+Status putSetup(Hasher& h, const CamSnapshot& snapshot, const naming::IResolver& resolver, const Setup& setup,
+                std::size_t setupIndex, int depth);
+
+// The stock left by the earlier setup a FromSetupStock setup names (cam.h operationInputHash): that setup as its
+// operations consume it, every operation of it that is not suppressed, in order, and the carrying rules (T-075:
+// kCarriedStockCellMm and kCarriedRulesVersion, so a change of the cell or of the slicing makes the later setup stale).
+// This is CarriedStock::key's content too (carriedStockKey).
+Status putCarried(Hasher& h, const CamSnapshot& snapshot, const naming::IResolver& resolver, const Setup& setup,
+                  std::size_t setupIndex, int depth)
+{
+    const CamState& cam = *snapshot.cam;
+    const FromSetupStock& from = std::get<FromSetupStock>(setup.stock);
+    std::size_t previousIndex = 0;
+    const Setup* previous = detail::findSetup(cam, from.previous, &previousIndex);
+    if (previous == nullptr) {
+        return failure(ErrorCode::NotFound, "The stock of setup " + label(setup) + " comes from setup " +
+                                                from.previous.value.toString() + ", which is not in the document");
+    }
+    if (previousIndex >= setupIndex || depth > static_cast<int>(cam.setups.size())) {
+        return failure(ErrorCode::InvalidArgument, "The stock of setup " + label(setup) +
+                                                       " must come from an "
+                                                       "earlier setup");
+    }
+    RAY_CAM_TRY(putSetup(h, snapshot, resolver, *previous, previousIndex, depth + 1));
+    for (const OperationId& opId : previous->operations) {
+        const auto op = cam.operations.find(opId);
+        if (op == cam.operations.end() || op->second.suppressed) {
+            continue;
+        }
+        auto opHash = operationHash(snapshot, resolver, opId, depth + 1);
+        if (!opHash) {
+            Error e = opHash.error();
+            e.message = "The stock of setup " + label(setup) + " depends on " + label(op->second) + ": " + e.message;
+            return tl::unexpected(std::move(e));
+        }
+        put(h, *opHash);
+    }
+    h.str("carried");
+    h.i64(detail::kCarriedRulesVersion);
+    h.f64(kCarriedStockCellMm);
+    return {};
+}
 
 // Everything of a setup that the operations in it consume: part and fixture bodies, stock, WCS and machine.
 Status putSetup(Hasher& h, const CamSnapshot& snapshot, const naming::IResolver& resolver, const Setup& setup,
@@ -424,34 +468,8 @@ Status putSetup(Hasher& h, const CamSnapshot& snapshot, const naming::IResolver&
         h.f64(cyl->diameter).f64(cyl->length).i64(cyl->axis).f64(cyl->endOffset);
     } else if (const auto* solid = std::get_if<SolidStock>(&setup.stock)) {
         RAY_CAM_TRY(putBody(h, snapshot, solid->body, "The stock body of setup " + label(setup)));
-    } else if (const auto* from = std::get_if<FromSetupStock>(&setup.stock)) {
-        // The stock left by an earlier setup: its own stock and setup, and every operation that cuts it.
-        std::size_t previousIndex = 0;
-        const Setup* previous = detail::findSetup(cam, from->previous, &previousIndex);
-        if (previous == nullptr) {
-            return failure(ErrorCode::NotFound, "The stock of setup " + label(setup) + " comes from setup " +
-                                                    from->previous.value.toString() + ", which is not in the document");
-        }
-        if (previousIndex >= setupIndex || depth > static_cast<int>(cam.setups.size())) {
-            return failure(ErrorCode::InvalidArgument, "The stock of setup " + label(setup) +
-                                                           " must come from an "
-                                                           "earlier setup");
-        }
-        RAY_CAM_TRY(putSetup(h, snapshot, resolver, *previous, previousIndex, depth + 1));
-        for (const OperationId& opId : previous->operations) {
-            const auto op = cam.operations.find(opId);
-            if (op == cam.operations.end() || op->second.suppressed) {
-                continue;
-            }
-            auto opHash = operationHash(snapshot, resolver, opId, depth + 1);
-            if (!opHash) {
-                Error e = opHash.error();
-                e.message =
-                    "The stock of setup " + label(setup) + " depends on " + label(op->second) + ": " + e.message;
-                return tl::unexpected(std::move(e));
-            }
-            put(h, *opHash);
-        }
+    } else if (std::holds_alternative<FromSetupStock>(setup.stock)) {
+        RAY_CAM_TRY(putCarried(h, snapshot, resolver, setup, setupIndex, depth));
     }
     // WCS.
     h.str("wcs");
@@ -566,6 +584,33 @@ Result<Hash256> operationInputHash(const CamSnapshot& snapshot, const naming::IR
         return failure(ErrorCode::Internal, "Unexpected failure while hashing an operation");
     }
 }
+
+namespace detail {
+
+Result<Hash256> carriedStockKey(const CamSnapshot& snapshot, const naming::IResolver& resolver, const Setup& setup)
+{
+    try {
+        if (!snapshot.cam) {
+            return failure(ErrorCode::NotFound, "The document has no CAM state");
+        }
+        if (!std::holds_alternative<FromSetupStock>(setup.stock)) {
+            return failure(ErrorCode::InvalidArgument,
+                           "The stock of setup " + label(setup) + " is not carried from an earlier setup");
+        }
+        std::size_t setupIndex = 0;
+        if (findSetup(*snapshot.cam, setup.id, &setupIndex) == nullptr) {
+            return failure(ErrorCode::NotFound, "Setup " + label(setup) + " is not in the document");
+        }
+        Hasher h;
+        h.str("raycad.cam.carried-stock.v1");
+        RAY_CAM_TRY(putCarried(h, snapshot, resolver, setup, setupIndex, 0));
+        return h.finish();
+    } catch (const std::bad_alloc&) {
+        return failure(ErrorCode::Internal, "Out of memory while hashing a setup's stock");
+    }
+}
+
+} // namespace detail
 
 // ---------- What a generator receives ----------
 

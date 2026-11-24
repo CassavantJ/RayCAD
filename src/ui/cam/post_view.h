@@ -127,6 +127,10 @@ public:
     Q_INVOKABLE void findPrevious();
 
     // ---- C++ ----
+    // T-074 (the Simulate workspace): opens the viewer on move `move` of section `section`, as a move picked in the
+    // view does (its first line current and scrolled to, all of its lines marked), without highlighting anything in the
+    // view. False (and lineInfo says why) when there is no program or no line writes that move.
+    bool showMove(std::uint32_t section, std::uint32_t move);
     void setProgram(std::shared_ptr<const PostedProgram> program);
     const PostedProgram* program() const { return program_.get(); }
     // The move the view highlights for the current line (null when none).

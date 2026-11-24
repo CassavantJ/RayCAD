@@ -443,6 +443,35 @@ void GcodeModel::onPathPicked(const render::PickHit& hit)
     emit scrollRequested(current_);
 }
 
+bool GcodeModel::showMove(std::uint32_t section, std::uint32_t move)
+{
+    if (!program_ || section >= program_->sectionOps.size())
+        return false;
+    if (!open_) {
+        open_ = true;
+        emit openChanged();
+        updatePathPicking();
+    }
+    const QString opName = section < program_->sectionNames.size() ? program_->sectionNames[section] : QString();
+    const auto lines = program_->index->linesOf(camui::MoveRef{section, move});
+    if (!lines) {
+        lineInfo_ = trv("%1, move %2: no line of the program writes this move").arg(opName).arg(move + 1);
+        emit currentChanged();
+        return false;
+    }
+    current_ = anchor_ = static_cast<int>(lines->first);
+    pickedFirst_ = static_cast<int>(lines->first);
+    pickedLast_ = static_cast<int>(lines->second);
+    highlighted_ = false; // nothing in the view: the simulation shows the tool there
+    lineInfo_ =
+        lines->first == lines->second
+            ? trv("%1, move %2: line %3").arg(opName).arg(move + 1).arg(lines->first + 1)
+            : trv("%1, move %2: lines %3 to %4").arg(opName).arg(move + 1).arg(lines->first + 1).arg(lines->second + 1);
+    emit currentChanged();
+    emit scrollRequested(current_);
+    return true;
+}
+
 // ---------- copy ----------
 QString GcodeModel::selectionText() const
 {

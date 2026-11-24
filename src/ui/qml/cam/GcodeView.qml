@@ -341,7 +341,8 @@ Item {
             list.positionViewAtIndex(line, ListView.Contain)
         }
         function onOpenChanged() {
-            if (CamGcode.open)
+            // T-074: the CAM and the Simulate workspace each have a viewer of CamGcode; the one shown takes the focus.
+            if (CamGcode.open && root.visible)
                 list.forceActiveFocus()
         }
     }

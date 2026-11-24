@@ -448,11 +448,23 @@ Item {
                 ChoiceRow {
                     key: "stock"
                     label: qsTr("Stock")
-                    choices: [
-                        { value: "box", text: qsTr("Box") },
-                        { value: "cylinder", text: qsTr("Cylinder") },
-                        { value: "solid", text: qsTr("Solid body") }
-                    ]
+                    choices: {
+                        const list = [
+                            { value: "box", text: qsTr("Box") },
+                            { value: "cylinder", text: qsTr("Cylinder") },
+                            { value: "solid", text: qsTr("Solid body") }
+                        ]
+                        // T-074: what an earlier setup leaves (simulated by the CAM engine).
+                        if (CamSetup.active && (CamSetup.earlierSetups.length > 0 || root.stock === "fromSetup"))
+                            list.push({ value: "fromSetup", text: qsTr("From an earlier setup") })
+                        return list
+                    }
+                }
+                ChoiceRow {
+                    visible: root.stock === "fromSetup"
+                    key: "fromSetup"
+                    label: qsTr("Stock from")
+                    choices: CamSetup.active ? root.listChoices(CamSetup.earlierSetups, "id", "name") : []
                 }
                 OffsetRow {
                     visible: root.stock === "box"

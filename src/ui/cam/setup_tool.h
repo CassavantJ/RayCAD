@@ -23,7 +23,10 @@
 //                (api::cam_setup::previewSetup, cancelling a superseded resolve): the stock is shown translucent in the
 //                scene's one preview slot (BodyOverlay) and the WCS triad, in the axis colours with X, Y and Z labels,
 //                at the origin (drawTriad: line items now, the renderer's line primitive behind one function). A
-//                failure shows in the status line and the last good preview stays.
+//                failure shows in the status line and the last good preview stays. T-074: a stock "from an earlier
+//                setup" (cam::FromSetupStock, values.stock "fromSetup" and values.fromSetup) is what the CAM engine
+//                simulates for it (ICamEngine::carriedStock, an app job with progress, camui::CarriedStockRequest),
+//                shown as a mesh item of its own; the WCS shown for the tree's setup resolves from it the same way.
 //   OK / Cancel  commit() runs cam.setup.add or cam.setup.edit through the action registry as Caller::User (one undo
 //                step; the user's own click needs no confirmation, the API's confirm hook is for automation only).
 //                cancel() (Esc) ends the preview: the document is exactly as it was. Leaving the CAM workspace or
@@ -32,6 +35,7 @@
 
 #include "../model/preview.h"
 #include "setup_logic.h"
+#include "sim_carried.h"
 
 #include <ray/api.h>
 #include <ray_api/cam_setup.h>
@@ -90,6 +94,8 @@ class SetupToolModel : public QObject {
     // [{id, name, role ("part" | "fixture" | "none")}] every built body; [{id, name}] the machines; posts by stem;
     // [{id, name}] the materials, "" (none) first.
     Q_PROPERTY(QVariantList bodies READ bodies NOTIFY optionsChanged)
+    // T-074: [{id, name}] the setups before this one, which its stock may come from (values.stock "fromSetup").
+    Q_PROPERTY(QVariantList earlierSetups READ earlierSetups NOTIFY optionsChanged)
     Q_PROPERTY(QVariantList machines READ machines NOTIFY optionsChanged)
     Q_PROPERTY(QVariantList materials READ materials NOTIFY optionsChanged)
     Q_PROPERTY(QStringList posts READ posts NOTIFY optionsChanged)
@@ -129,6 +135,7 @@ public:
     bool hasXEdge() const { return !xEdge_.isEmpty(); }
     bool hasVertex() const { return !vertex_.isEmpty(); }
     QVariantList bodies() const;
+    QVariantList earlierSetups() const;
     QVariantList machines() const { return machines_; }
     QVariantList materials() const { return materials_; }
     QStringList posts() const { return posts_; }
@@ -205,6 +212,10 @@ private:
     void drawTriad(const api::cam_setup::Preview& preview);
     void keepInView(const api::cam_setup::Preview& preview);
     void updateWcs();
+    // T-074: the WCS of a setup resolved (from its carried stock when its stock comes from an earlier setup).
+    void resolveWcs(const doc::DocStatePtr& state, const doc::BuildResultPtr& build, const SetupId& id,
+                    std::shared_ptr<const cam::CarriedStock> carried, std::uint64_t serial);
+    void removeStockMesh();
     std::optional<QPointF> toView(Vec3 world) const;
     QString exprOf(const QString& text) const;
     QString bodyName(const QString& id) const;
@@ -228,6 +239,7 @@ private:
     int wcsOffset_ = 1;
     std::uint64_t wcsSerial_ = 0;
     JobHandle<std::shared_ptr<const api::cam_setup::Preview>> wcsJob_;
+    std::unique_ptr<camui::CarriedStockRequest> wcsCarried_; // T-074
 
     // The document observed.
     std::string docId_;
@@ -271,6 +283,10 @@ private:
     std::optional<api::cam_setup::Preview> preview_;
     int previewsShown_ = 0;
     int resolvesCancelled_ = 0;
+    // T-074: a stock carried from an earlier setup: asked of the CAM engine, shown as a mesh item of its own.
+    std::unique_ptr<camui::CarriedStockRequest> resolveCarried_;
+    render::ItemId stockMeshItem_ = 0;
+    render::IRenderViewport* stockMeshViewport_ = nullptr;
 
     // This session's last machine and material (the defaults of the next new setup).
     QString lastMachine_, lastMaterial_;

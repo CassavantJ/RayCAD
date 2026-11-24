@@ -10,6 +10,8 @@
 //              manager (shortcuts.h) reports any other pair as a conflict, and a test fails on one among the defaults.
 //              The command palette lists a Cam command only in the CAM workspace, and Model and Sketch ones
 //              everywhere else (CommandCatalog::inPalette).
+//              Sim (T-074): while the Simulate workspace is shown (play, step, the timeline); like Cam, Model and
+//              Sketch do not apply there, and the palette lists a Sim command only in that workspace.
 //   Fronts     a UI command that is the user's way to a registry action (model.tool.extrude for
 //              feature.extrude.add, sketch.tool.trim for sketch.trim, ...) names it, and the palette and the
 //              shortcut list then show only the UI command (the action stays in the registry for scripts and agents,
@@ -23,10 +25,12 @@
 
 namespace ray::ui {
 
-enum class CommandContext : std::uint8_t { Global, Model, Sketch, Cam };
+enum class CommandContext : std::uint8_t { Global, Model, Sketch, Cam, Sim };
 
 // The CAM workspace's index in AppContext::workspaceNames ("Design", "CAM", "Simulate").
 inline constexpr int kCamWorkspace = 1;
+// T-074: the Simulate workspace's.
+inline constexpr int kSimWorkspace = 2;
 
 struct UiCommand {
     const char* id;
@@ -59,6 +63,7 @@ std::span<const UiCommand> camPostUiCommands();      // cam/post_tool.cpp: cam.p
 std::span<const UiCommand> camTemplatesUiCommands(); // cam/templates_model.cpp: cam.templates.* (T-057)
 std::span<const UiCommand> camSheetUiCommands();     // cam/setupsheet_tool.cpp: cam.setupSheet.* (T-076)
 std::span<const UiCommand> camFixturesUiCommands();  // cam/fixtures_tool.cpp: cam.fixtures.* (T-077)
+std::span<const UiCommand> camSimUiCommands();       // cam/sim_tool.cpp: cam.sim.* (T-074)
 // All of the above, in that order.
 const std::vector<UiCommand>& allUiCommands();
 

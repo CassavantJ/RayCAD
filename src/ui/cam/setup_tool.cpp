@@ -164,6 +164,7 @@ SetupToolModel::~SetupToolModel()
         d->cancelPreview();
     if (scene_)
         scene_->preview().clear(this);
+    removeStockMesh(); // T-074
     if (filterSaved_ && selection_)
         selection_->setFilterMask(savedFilter_);
     wcsJob_.cancel();
@@ -549,8 +550,10 @@ void SetupToolModel::loadSetup(const doc::DocState& state, const cam::Setup& s)
     } else if (const auto* solid = std::get_if<cam::SolidStock>(&s.stock)) {
         values_[QStringLiteral("stock")] = QStringLiteral("solid");
         values_[QStringLiteral("solidBody")] = idText(solid->body.value);
-    } else {
-        values_[QStringLiteral("stock")] = QStringLiteral("box"); // stock from an earlier setup: not offered yet
+    } else if (const auto* from = std::get_if<cam::FromSetupStock>(&s.stock)) {
+        // T-074: the stock an earlier setup leaves.
+        values_[QStringLiteral("stock")] = QStringLiteral("fromSetup");
+        values_[QStringLiteral("fromSetup")] = idText(from->previous.value);
     }
     values_[QStringLiteral("origin")] = camui::originKey(s.wcs);
     values_[QStringLiteral("workOffset")] = s.wcs.workOffset;
@@ -748,6 +751,24 @@ QVariantList SetupToolModel::bodies() const
     return out;
 }
 
+// T-074: the setups the stock may come from: those before the one edited (every one for a new setup), in program order.
+QVariantList SetupToolModel::earlierSetups() const
+{
+    QVariantList out;
+    doc::Document* d = liveDoc();
+    if (!active() || d == nullptr)
+        return out;
+    const doc::DocStatePtr state = d->state();
+    if (!state || !state->cam)
+        return out;
+    for (const cam::Setup& s : state->cam->setups) {
+        if (id_ && s.id == *id_)
+            break;
+        out.push_back(QVariantMap{{QStringLiteral("id"), idText(s.id.value)}, {QStringLiteral("name"), qs(s.name)}});
+    }
+    return out;
+}
+
 QString SetupToolModel::bodyName(const QString& id) const
 {
     doc::Document* d = liveDoc();
@@ -820,6 +841,7 @@ camui::SetupInput SetupToolModel::input() const
     }
     in.axis = values_.value(QStringLiteral("axis")).toString();
     in.solidBody = values_.value(QStringLiteral("solidBody")).toString();
+    in.fromSetup = values_.value(QStringLiteral("fromSetup")).toString(); // T-074
     in.origin = values_.value(QStringLiteral("origin")).toString();
     in.workOffset = values_.value(QStringLiteral("workOffset")).toInt();
     in.programNumber = values_.value(QStringLiteral("programNumber")).toString();
@@ -1101,26 +1123,57 @@ void SetupToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPtr 
             ++resolvesCancelled_;
         const std::uint64_t serial = previewSerial_;
         const SetupId id = *id_;
-        resolveJob_ = jobs->submit<std::shared_ptr<const api::cam_setup::Preview>>(
-            JobInfo{"Setup preview", JobPriority::Interactive, false},
-            [state, build, id](JobContext& ctx) -> Result<std::shared_ptr<const api::cam_setup::Preview>> {
-                auto p = api::cam_setup::previewSetup(state, build, id, ctx);
-                if (!p)
-                    return tl::unexpected(p.error());
-                return std::make_shared<const api::cam_setup::Preview>(std::move(*p));
-            });
         QPointer<SetupToolModel> self(this);
-        resolveJob_.then([self, serial](Result<std::shared_ptr<const api::cam_setup::Preview>> r) {
-            if (!self || serial != self->previewSerial_ || !self->active())
-                return; // superseded, or the panel closed
-            self->resolveJob_ = {};
-            if (!r) {
-                if (r.error().code != ErrorCode::Cancelled)
-                    self->setStatus(QStringLiteral("failed"), qs(r.error().message));
-                return; // the last good preview stays
-            }
-            self->showPreview(**r);
-        });
+        const auto resolve = [self, serial, state, build, id](std::shared_ptr<const cam::CarriedStock> carried) {
+            IJobSystem* jobs = self && self->scene_ ? self->scene_->jobs() : nullptr;
+            if (jobs == nullptr)
+                return;
+            self->resolveJob_ = jobs->submit<std::shared_ptr<const api::cam_setup::Preview>>(
+                JobInfo{"Setup preview", JobPriority::Interactive, false},
+                [state, build, id, carried](JobContext& ctx) -> Result<std::shared_ptr<const api::cam_setup::Preview>> {
+                    auto p = api::cam_setup::previewSetup(state, build, id, ctx, carried.get());
+                    if (!p)
+                        return tl::unexpected(p.error());
+                    return std::make_shared<const api::cam_setup::Preview>(std::move(*p));
+                });
+            self->resolveJob_.then([self, serial](Result<std::shared_ptr<const api::cam_setup::Preview>> r) {
+                if (!self || serial != self->previewSerial_ || !self->active())
+                    return; // superseded, or the panel closed
+                self->resolveJob_ = {};
+                if (!r) {
+                    if (r.error().code != ErrorCode::Cancelled)
+                        self->setStatus(QStringLiteral("failed"), qs(r.error().message));
+                    return; // the last good preview stays
+                }
+                self->showPreview(**r);
+            });
+        };
+        // T-074: a stock from an earlier setup is what the CAM engine simulates for it (an app job with progress).
+        const cam::Setup* setup = nullptr;
+        if (state->cam) {
+            for (const cam::Setup& s : state->cam->setups)
+                setup = s.id == id ? &s : setup;
+        }
+        cam::ICamEngine* engine = app() ? app()->cam() : nullptr;
+        if (setup != nullptr && std::holds_alternative<cam::FromSetupStock>(setup->stock) && engine != nullptr) {
+            if (!resolveCarried_)
+                resolveCarried_ = std::make_unique<camui::CarriedStockRequest>();
+            resolveCarried_->start(
+                *engine, state, build, {id},
+                [self, serial, resolve, id](api::cam_setup::CarriedStocks stocks, std::map<SetupId, Error> errors) {
+                    if (!self || serial != self->previewSerial_ || !self->active())
+                        return;
+                    if (const auto e = errors.find(id); e != errors.end()) {
+                        if (e->second.code != ErrorCode::Cancelled)
+                            self->setStatus(QStringLiteral("failed"),
+                                            trs("The stock from the earlier setup: %1").arg(qs(e->second.message)));
+                        return;
+                    }
+                    resolve(stocks[id]);
+                });
+        } else {
+            resolve(nullptr);
+        }
     }
     if (previewPending_)
         startPreview();
@@ -1129,12 +1182,24 @@ void SetupToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPtr 
 void SetupToolModel::showPreview(const api::cam_setup::Preview& p)
 {
     preview_ = p;
-    if (scene_) {
+    const render::MeshStyle style{render::Token::StockFace, render::Token::ModelEdge, 0.35f, true, false};
+    removeStockMesh();
+    if (scene_ && p.stockMesh) {
+        // T-074: a stock carried from an earlier setup is a mesh already: shown as it is, never picked.
+        scene_->preview().clear(this);
+        if (render::IRenderViewport* v = scene_->viewport()) {
+            render::MeshStyle meshStyle = style;
+            meshStyle.showEdges = false;
+            stockMeshItem_ = v->addMesh(p.stockMesh, Xform::identity(), meshStyle);
+            if (stockMeshItem_ != 0)
+                v->setPickMode(stockMeshItem_, render::PickMode::Never);
+            stockMeshViewport_ = v;
+        }
+    } else if (scene_) {
         api::viewer::Body stock;
         stock.id = BodyId{Uuid::fromString("5e7c0000-0000-4000-8000-000000000000")}; // display only, never stored
         stock.name = "Stock";
         stock.shape = p.stock;
-        const render::MeshStyle style{render::Token::StockFace, render::Token::ModelEdge, 0.35f, true, false};
         std::vector<api::viewer::Body> bodies;
         bodies.push_back(std::move(stock));
         scene_->preview().show(this, std::move(bodies), {}, false, style);
@@ -1174,7 +1239,19 @@ void SetupToolModel::clearPreview()
         scene_->preview().clear(this);
     if (lines_)
         lines_->clear();
+    removeStockMesh();
+    if (resolveCarried_)
+        resolveCarried_->cancel();
     preview_.reset();
+}
+
+void SetupToolModel::removeStockMesh()
+{
+    render::IRenderViewport* v = scene_ ? scene_->viewport() : nullptr;
+    if (stockMeshItem_ != 0 && v != nullptr && v == stockMeshViewport_)
+        v->remove(stockMeshItem_);
+    stockMeshItem_ = 0;
+    stockMeshViewport_ = nullptr;
 }
 
 // The WCS triad at the origin: X, Y and Z in the axis colours. Drawn as viewport line items through the line overlay;
@@ -1342,6 +1419,8 @@ void SetupToolModel::updateWcs()
         ++wcsSerial_;
         wcsJob_.cancel();
         wcsJob_ = {};
+        if (wcsCarried_)
+            wcsCarried_->cancel(); // T-074
         wcsState_.reset();
         wcsBuild_.reset();
         if (wcsShown_) {
@@ -1362,10 +1441,43 @@ void SetupToolModel::updateWcs()
     wcsJob_.cancel();
     const std::uint64_t serial = ++wcsSerial_;
     const SetupId id = setup->id;
+    QPointer<SetupToolModel> self(this);
+    // T-074: a stock carried from an earlier setup comes from the CAM engine (an app job) before the frame resolves.
+    if (std::holds_alternative<cam::FromSetupStock>(setup->stock)) {
+        cam::ICamEngine* engine = app() ? app()->cam() : nullptr;
+        if (engine == nullptr)
+            return;
+        if (!wcsCarried_)
+            wcsCarried_ = std::make_unique<camui::CarriedStockRequest>();
+        wcsCarried_->start(
+            *engine, state, build, {id},
+            [self, serial, state, build, id](api::cam_setup::CarriedStocks stocks, std::map<SetupId, Error> errors) {
+                if (!self || serial != self->wcsSerial_ || !self->wcsLines_)
+                    return;
+                if (errors.count(id) != 0) {
+                    // Not known until the earlier setup can be simulated: no WCS (the tree says why).
+                    self->wcsShown_.reset();
+                    self->wcsLines_->clear();
+                    emit self->markersChanged();
+                    return;
+                }
+                self->resolveWcs(state, build, id, stocks[id], serial);
+            });
+        return;
+    }
+    resolveWcs(state, build, id, nullptr, serial);
+}
+
+void SetupToolModel::resolveWcs(const doc::DocStatePtr& state, const doc::BuildResultPtr& build, const SetupId& id,
+                                std::shared_ptr<const cam::CarriedStock> carried, std::uint64_t serial)
+{
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    if (jobs == nullptr)
+        return;
     wcsJob_ = jobs->submit<std::shared_ptr<const api::cam_setup::Preview>>(
         JobInfo{"Setup WCS", JobPriority::Interactive, false},
-        [state, build, id](JobContext& ctx) -> Result<std::shared_ptr<const api::cam_setup::Preview>> {
-            auto p = api::cam_setup::previewSetup(state, build, id, ctx);
+        [state, build, id, carried](JobContext& ctx) -> Result<std::shared_ptr<const api::cam_setup::Preview>> {
+            auto p = api::cam_setup::previewSetup(state, build, id, ctx, carried.get());
             if (!p)
                 return tl::unexpected(p.error());
             return std::make_shared<const api::cam_setup::Preview>(std::move(*p));
@@ -1410,7 +1522,7 @@ QVariantMap SetupToolModel::wcsLabel() const
 bool SetupToolModel::previewBusy() const
 {
     const bool meshing = scene_ && scene_->preview().owner() == this && scene_->preview().meshing();
-    const bool resolving = resolveJob_.valid() && !resolveJob_.done();
+    const bool resolving = (resolveJob_.valid() && !resolveJob_.done()) || (resolveCarried_ && resolveCarried_->busy());
     return pickPending_ || previewTimer_.isActive() || previewBusy_ || previewPending_ || resolving || meshing ||
            committing_;
 }

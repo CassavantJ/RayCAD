@@ -380,6 +380,8 @@ const std::vector<UiCommand>& allUiCommands()
         out.insert(out.end(), sheets.begin(), sheets.end());
         const std::span<const UiCommand> fixtures = camFixturesUiCommands(); // T-077
         out.insert(out.end(), fixtures.begin(), fixtures.end());
+        const std::span<const UiCommand> sim = camSimUiCommands(); // T-074
+        out.insert(out.end(), sim.begin(), sim.end());
         return out;
     }();
     return all;
@@ -403,20 +405,25 @@ CommandContext CommandCatalog::activeContext() const
 {
     if (context_ && context_->workspace() == kCamWorkspace)
         return CommandContext::Cam;
+    if (context_ && context_->workspace() == kSimWorkspace)
+        return CommandContext::Sim; // T-074
     return contextProbe_ ? contextProbe_() : CommandContext::Model;
 }
 
 bool CommandCatalog::inPalette(const Command& command) const
 {
     const bool cam = context_ && context_->workspace() == kCamWorkspace;
+    const bool sim = context_ && context_->workspace() == kSimWorkspace; // T-074
     switch (command.context) {
     case CommandContext::Global:
         return true;
     case CommandContext::Cam:
         return cam;
+    case CommandContext::Sim:
+        return sim;
     case CommandContext::Model:
     case CommandContext::Sketch:
-        return !cam;
+        return !cam && !sim;
     }
     return true;
 }
