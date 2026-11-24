@@ -41,8 +41,11 @@ are estimates of both strategies by the same model, not measured machine times.*
   not rebuilt by the generator). The benchmark parts' features take 0.2 to 1.6 s each with adaptive roughing (the two
   BP1 pockets the slowest) and under 0.2 s with plain pocketing (best of three, measured alone the same day, with the
   generator's hidden "[timing]" case).
-- (e) Open: a crash seen only on Linux when 32 copies of the adaptive engine run as threads in one process is being
-  investigated separately. It is not looked at here.
+- (e) Crashes and, rarely, a wrong result were seen when 32 copies of the adaptive engine ran as threads in one
+  process, on Linux and on Windows. They were traced to the development computer's processor, not to the code: crash
+  dumps show instructions executed wrongly over intact memory, and the operating system logs corrected processor
+  errors. No shared state was found in the engine. Until the same tests have run on other hardware, the claims of
+  identical results under heavy parallel load rest on a machine known to be faulty.
 - (f) Nothing has been cut on a real machine, and the comparison is of estimates. The machine definitions do not state
   their accelerations, so the estimate uses a deliberately slow default (below); real times will differ, probably more
   for adaptive roughing, which changes direction far more often.
