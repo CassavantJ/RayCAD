@@ -495,6 +495,12 @@ TEST_CASE("contour2d: triangular tabs", "[cam][contour2d]")
     flat.op.paramsJson =
         R"({"tabs":true,"tabShape":"triangular","tabCount":3,"tabWidth":8,"tabHeight":1,"rampAngle":15})";
     (void)flat.path();
+    // After M3: a ball end mill whose library entry says it does not cut at its centre (Tool::centreCutting) is taken
+    // at its word, as the flat end mill is.
+    ContourCase ball = c;
+    ball.tool.centreCutting = false;
+    REQUIRE_FALSE(ball.validate());
+    CHECK_THAT(ball.validate().error().message, ContainsSubstring("steeper than the ramp angle"));
 }
 
 TEST_CASE("contour2d: compensation in the control programs the contour and switches G41 on a straight lead",

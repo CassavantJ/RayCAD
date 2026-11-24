@@ -1,5 +1,6 @@
 {
   "bodyMaterial": "carbide",
+  "centreCutting": false,
   "comment": "Generic carbide single-profile 60 degree thread mill: cuts any 60 degree pitch it fits (threadPitch 0 means any). The 60 degree profile is the ISO 68-1 / ASME B1.1 basic profile. A 4.2 mm neck from the profile up to 20 mm from the tip, so an M8 internal thread (6.8 mm tap drill: 2 x 1 mm + 4.2 mm = 6.2 mm) can be milled 20 mm deep. Dimensions: approximate generic proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
   "cornerRadius": 0,
   "defaultToolNumber": 0,

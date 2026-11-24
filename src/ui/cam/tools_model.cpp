@@ -849,6 +849,26 @@ QVariantList ToolLibraryModel::rows() const
     return out;
 }
 
+QVariantList ToolLibraryModel::centreCuttingChoices() const
+{
+    lib::ToolType type = lib::ToolType::FlatEndMill;
+    double tip = 0;
+    if (draft_ && !draft_->holder) {
+        const auto& f = draft_->values.fields;
+        const auto at = [&f](const char* key) {
+            const auto it = f.find(QLatin1String(key));
+            return it == f.end() ? QString() : it->second;
+        };
+        type = api::cam_tools::toolTypeFromName(at("type").toStdString()).value_or(type);
+        const auto d = toolsui::parseValue("length", at("tipDiameter"), units(), nullptr);
+        tip = d && *d > 0 ? *d : 0;
+    }
+    QVariantList out;
+    for (const toolsui::Choice& c : toolsui::centreCuttingChoices(type, tip))
+        out.push_back(QVariantMap{{QStringLiteral("value"), c.value}, {QStringLiteral("text"), c.text}});
+    return out;
+}
+
 QVariantMap ToolLibraryModel::problems() const
 {
     QVariantMap out;

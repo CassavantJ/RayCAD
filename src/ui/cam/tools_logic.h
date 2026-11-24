@@ -2,7 +2,8 @@
 //
 //   Profile   the side view of a tool, and of its holder, to scale, in mm: an outline (x across the axis, y up from the
 //             tip), the cutting part, and the holder's stack of cones above the stick-out. Drawn only from the
-//             geometry fields (the ones Tool::geometryHash covers), so the drawing changes when and only when they do.
+//             geometry fields (the ones Tool::geometryHash covers), so the drawing changes when and only when they do
+//             (except centre cutting, after M3: in the hash when it is not the type's default, and not drawn).
 //   Catalog   one entry per tool or holder the manager lists (the open document's embedded ones and the library's),
 //             and the filter: words of the text (name, vendor, order number, type, thread, comment), tool type,
 //             diameter range (mm), a material that has a cutting preset. Results are sorted by a key (diameter, name or
@@ -91,6 +92,14 @@ struct Field {
 inline constexpr const char* kTrContext = "ray::ui::ToolLibraryModel";
 // The tool fields the editor shows for a type, in order (name and type first; comment last).
 std::vector<Field> toolFields(lib::ToolType type);
+// Centre cutting (after M3; shown for the types of lib::centreCuttingSettable): a "choice" whose value is "" (the file
+// leaves it to the type: lib::centreCuttingByDefault), "true" or "false".
+inline constexpr const char* kCentreCutting = "centreCutting";
+struct Choice {
+    QString value, text;
+};
+// Its choices for a tool of this type and tip diameter (mm): the type's default first ("Type default (yes)"), Yes, No.
+std::vector<Choice> centreCuttingChoices(lib::ToolType type, double tipDiameter);
 const std::vector<Field>& presetFields();
 const std::vector<Field>& holderFields();
 const std::vector<Field>& segmentFields();

@@ -46,6 +46,11 @@
 // Changed after M3 so a tool can say it has a neck (a thread mill's or a long-reach end mill's reduced body above its
 // flutes): Tool::neckDiameter and Tool::neckLength, optional (JSON written only when not 0, so files and documents
 // without a neck read and write as before, and their contentHash and geometryHash stay as they were).
+// Changed after M3 so a tool says whether it cuts at its centre (the safety checks guessed it from the type and took
+// every flat end mill as not centre-cutting): Tool::centreCutting, optional (JSON "centreCutting", written only when
+// stated, so files and documents without it read and write as before and take the type's default),
+// Tool::cutsAtCentre, centreCuttingByDefault and centreCuttingSettable. geometryHash covers the answer only where it is
+// not the type's default, so the hash of every tool that existed before is what it was.
 #pragma once
 #include "core.h"
 #include <chrono>
@@ -83,12 +88,26 @@ struct Tool {
     // neck. neckLength 0 with a neck diameter: the neck runs up to the shoulder. Optional: JSON "neckDiameter",
     // "neckLength", written only when not 0.
     double neckDiameter = 0, neckLength = 0;
+    // Centre cutting (added after M3): the end teeth reach the axis, so the tool may go straight down into material.
+    // nullopt: the type's default (centreCuttingByDefault). Read through cutsAtCentre(): a drill and a spot drill
+    // always cut at their centre and a tap, reamer and boring bar never do (they follow a hole), whatever is stated;
+    // the milling cutters (centreCuttingSettable) take the stated value. Optional: JSON "centreCutting", written only
+    // when stated.
+    std::optional<bool> centreCutting;
+    bool cutsAtCentre() const;
     Hash256 contentHash() const;    // BLAKE3 of toJson(*this): every field above, name, presets and extraJson included
     // BLAKE3 of the shape alone: type, flutes, the five diameters and lengths, corner radius, tip angle and diameter,
-    // thread pitch, and the neck when there is one. Not the id, names, vendor text, thread designation, body material,
-    // presets, tool number, comment or unknown keys.
+    // thread pitch, the neck when there is one, and cutsAtCentre() when it is not centreCuttingByDefault. Not the id,
+    // names, vendor text, thread designation, body material, presets, tool number, comment or unknown keys.
     Hash256 geometryHash() const;
 };
+// Whether a tool cuts at its centre when its file does not say: flat, bull nose and ball end mills, engraving cutters,
+// drills and spot drills yes; a chamfer mill when it is pointed (no tipDiameter); face mills, thread mills, taps,
+// reamers and boring bars no. (Added after M3.)
+bool centreCuttingByDefault(const Tool&);
+// The types whose Tool::centreCutting is read (the milling cutters: flat, ball and bull nose end mills, chamfer, face
+// and thread mills, engraving cutters); for the others cutsAtCentre() is the default. (Added after M3.)
+bool centreCuttingSettable(ToolType);
 struct HolderSegment { double height = 0, lowerDiameter = 0, upperDiameter = 0; };   // stacked cones/cylinders from the gauge line down
 struct Holder {
     HolderId id; std::string name, vendor; std::vector<HolderSegment> segments; double gaugeLength = 0;

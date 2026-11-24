@@ -331,21 +331,8 @@ std::string mmText(double mm)
 
 bool centreCutting(const lib::Tool* tool)
 {
-    if (tool == nullptr) {
-        return false;
-    }
-    using T = lib::ToolType;
-    switch (tool->type) {
-    case T::Drill:
-    case T::SpotDrill:
-    case T::BallEndMill:
-    case T::EngraveCutter:
-        return true;
-    case T::ChamferMill:
-        return !(tool->tipDiameter > 0);
-    default:
-        return false;
-    }
+    // The tool's own answer (libraries.h Tool::cutsAtCentre: stated in the library, else its type's default).
+    return tool != nullptr && tool->cutsAtCentre();
 }
 
 double cutStockCell(const Box3& b)

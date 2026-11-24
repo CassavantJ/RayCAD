@@ -82,7 +82,8 @@
 //
 // ENTRY (linking): free from outside the stock or through area already cut, else a ramp along the lead-in or the
 // contour at rampAngle (planar passes; passes with tabs only along their lead-in), else a plunge for a tool that cuts
-// at its centre (ball end mills); compensation allows no ramp (link.h). Linking's refusal names why.
+// at its centre (ball end mills, unless the tool library says one does not: Tool::cutsAtCentre); compensation allows
+// no ramp (link.h). Linking's refusal names why.
 //
 // CHECKS (InvalidArgument unless said): tool type (flat, bull, ball end mill, face mill) and diameter; flute length
 // against the deepest cut of a pass (the stepdown, or the whole depth for the finish and spring passes); stick-out

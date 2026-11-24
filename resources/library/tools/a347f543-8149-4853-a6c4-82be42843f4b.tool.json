@@ -1,5 +1,6 @@
 {
   "bodyMaterial": "carbide",
+  "centreCutting": false,
   "comment": "Generic carbide full-form thread mill for 20 threads per inch (pitch 1.27 mm); diameter 4.5 mm stays inside the 1/4-20 UNC basic minor diameter 4.975 mm (resources/standards/threads.json, ASME B1.1). A 2.9 mm neck (below the 2.94 mm root of its teeth) up to 17 mm from the tip. Dimensions: approximate generic proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
   "cornerRadius": 0,
   "defaultToolNumber": 0,

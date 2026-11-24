@@ -223,6 +223,10 @@ Value toValue(const Tool& t)
     if (t.neckLength != 0) {
         members.push_back({"neckLength", num(t.neckLength)});
     }
+    // Optional (added after M3): written only when stated, so a tool that leaves it to its type is the JSON it was.
+    if (t.centreCutting) {
+        members.push_back({"centreCutting", boolean(*t.centreCutting)});
+    }
     return finish(std::move(members), t.comment, t.extraJson);
 }
 
@@ -415,6 +419,9 @@ Result<Tool> decodeTool(const Value& v)
     t.defaultToolNumber = intOr(v, "defaultToolNumber");
     t.neckDiameter = numberOr(v, "neckDiameter");
     t.neckLength = numberOr(v, "neckLength");
+    if (const Value* cc = v.find("centreCutting"); cc != nullptr && cc->isBool()) {
+        t.centreCutting = cc->asBool(); // absent: the type's default (a file written before the key existed)
+    }
     if (const Value* presets = v.find("presets")) {
         std::set<std::pair<Uuid, std::string>> seen;
         for (std::size_t i = 0; i < presets->asArray().size(); ++i) {
@@ -737,7 +744,67 @@ Hash256 Tool::geometryHash() const
     if (neckDiameter != 0 || neckLength != 0) {
         h.str("neck").f64(neckDiameter).f64(neckLength);
     }
+    // Centre cutting (after M3) only when it is not the type's default, so the hash of every earlier tool, and of one
+    // that states the default, is what it was.
+    if (const bool cuts = cutsAtCentre(); cuts != centreCuttingByDefault(*this)) {
+        h.str("centreCutting").i64(cuts ? 1 : 0);
+    }
     return h.finish();
+}
+
+// Centre cutting (libraries.h; a shop-practice judgment, after M3). Solid end mills of every shape are made
+// centre-cutting almost without exception today, and a ball or a V point has its cutting edges at the axis by its
+// shape; a chamfer mill with a flat at its tip does not cut on that flat. An indexable face mill's inserts sit on its
+// rim, and a thread mill's teeth on its side; a tap, reamer or boring bar follows a hole.
+bool centreCuttingByDefault(const Tool& t)
+{
+    switch (t.type) {
+    case ToolType::FlatEndMill:
+    case ToolType::BallEndMill:
+    case ToolType::BullEndMill:
+    case ToolType::EngraveCutter:
+    case ToolType::SpotDrill:
+    case ToolType::Drill:
+        return true;
+    case ToolType::ChamferMill:
+        return !(t.tipDiameter > 0);
+    case ToolType::FaceMill:
+    case ToolType::Tap:
+    case ToolType::Reamer:
+    case ToolType::BoringBar:
+    case ToolType::ThreadMill:
+        return false;
+    }
+    return false;
+}
+
+bool centreCuttingSettable(ToolType type)
+{
+    switch (type) {
+    case ToolType::FlatEndMill:
+    case ToolType::BallEndMill:
+    case ToolType::BullEndMill:
+    case ToolType::ChamferMill:
+    case ToolType::FaceMill:
+    case ToolType::ThreadMill:
+    case ToolType::EngraveCutter:
+        return true;
+    case ToolType::SpotDrill:
+    case ToolType::Drill:
+    case ToolType::Tap:
+    case ToolType::Reamer:
+    case ToolType::BoringBar:
+        return false;
+    }
+    return false;
+}
+
+bool Tool::cutsAtCentre() const
+{
+    if (centreCutting && centreCuttingSettable(type)) {
+        return *centreCutting;
+    }
+    return centreCuttingByDefault(*this);
 }
 
 Hash256 Holder::geometryHash() const
