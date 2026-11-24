@@ -26,6 +26,8 @@ add_library(ray_api STATIC
     cam_cycletime.cpp
     include/ray_api/cam_setupsheet.h # setup sheets: the gate, the HTML, file names and output (T-076)
     cam_setupsheet.cpp
+    include/ray_api/cam_sim.h # the SimProgram of a setup, and the simulator that carries stock between setups (T-075)
+    cam_sim.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

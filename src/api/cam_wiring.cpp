@@ -12,6 +12,8 @@
 // delays start-up by more than kLibraryWait nor hangs it: it becomes an issue when its read fails.
 #include "app_impl.h"
 
+#include <ray_api/cam_sim.h>
+
 #include <algorithm>
 #include <set>
 #include <system_error>
@@ -83,6 +85,14 @@ public:
         app_.adoptJob(job, "Toolpath preview");
         return job;
     }
+    // T-075: the stock a setup carries from an earlier one, an app job like the rest.
+    JobHandle<std::shared_ptr<const cam::CarriedStock>> carriedStock(doc::DocStatePtr state, doc::BuildResultPtr build,
+                                                                     SetupId setup) override
+    {
+        auto job = inner_->carriedStock(std::move(state), std::move(build), setup);
+        app_.adoptJob(job, "Simulate setup stock");
+        return job;
+    }
 
     void cancel(const std::set<OperationId>& ops)
     {
@@ -141,7 +151,11 @@ Status AppImpl::initCam(const AppOptions& options)
 {
     operationTypes_ = std::make_shared<cam::OperationRegistry>();
     cam::registerBuiltinOperationTypes(*operationTypes_); // drill, face, contour2d, ... (cam.h lists them)
-    auto engine = cam::makeCamEngine(*jobs_, operationTypes_, &doc::camSnapshot);
+    // T-075: the engine carries stock between setups through the simulator (ray_api/cam_sim.h), which src/cam may not
+    // call itself.
+    cam::CamEngineOptions engineOptions;
+    engineOptions.simulateSetup = cam_sim::makeSetupSimulator(*jobs_);
+    auto engine = cam::makeCamEngine(*jobs_, operationTypes_, &doc::camSnapshot, std::move(engineOptions));
     if (!engine) {
         return fail(ErrorCode::Internal, "The CAM engine could not start");
     }

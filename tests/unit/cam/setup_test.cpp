@@ -464,13 +464,12 @@ TEST_CASE("box, cylinder and solid stock produce the expected bounds", "[cam][se
         CHECK(same3(apply(at0.wcsFromModel, Vec3{3, 4, 5}), Vec3{3, 4, 5}));
         CHECK(at0.stockSolid.contentHash() == f.shape(2).contentHash());
     }
-    SECTION("stock from an earlier setup is refused until in-process stock exists")
+    SECTION("stock from an earlier setup needs that setup simulated first (T-075: the engine carries it)")
     {
         s.stock = FromSetupStock{s.id};
         const Error e = resolveFails(snap, s, *resolver);
         CHECK(e.code == ErrorCode::InvalidArgument);
-        CHECK_THAT(e.message, ContainsSubstring("not available yet"));
-        CHECK_THAT(e.message, ContainsSubstring("use box, cylinder or solid stock"));
+        CHECK_THAT(e.message, ContainsSubstring("must be simulated first"));
     }
 }
 

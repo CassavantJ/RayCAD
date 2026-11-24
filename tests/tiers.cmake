@@ -78,6 +78,9 @@ set(RAY_DEBUG_HEAVY_TESTS
     # The geometry core's three 10,000-case arc-fitting sweeps (split from ray_cam_geom2d_tests by the tag [sweeps]):
     # most of that suite's 5 to 9 minutes in MSVC Debug, seconds in Release. The rest of the suite stays in Debug.
     ray_cam_geom2d_sweeps
+    # T-075: BP1 generated nine times (three tier presets, 1, 4 and 16 workers): 35 to 52 s in Release, 14.5 minutes
+    # in MSVC Debug (measured, CPU time over wall time 3.8).
+    ray_cam_carried_tiers
     # T-070: the stock model's PLAN.md section 9 benchmark, 112k moves at 0.2, 0.1 and 0.05 mm (about a minute in
     # Release, far longer in MSVC Debug, where only its memory limits are checked).
     ray_sim_tests_wallclock
@@ -103,7 +106,8 @@ set(RAY_TEST_PROCESSORS
     ray_doc_s4=6                # 6.0
     ray_doc_s4_revolve=7        # 6.8
     ray_doc_s4_hole=6           # 6.4
-    ray_kernel_blend_stress=2)  # 2.0 (8 threads that mostly wait on each other)
+    ray_kernel_blend_stress=2   # 2.0 (8 threads that mostly wait on each other)
+    ray_cam_carried_tiers=4)    # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those
 # cases out ("~[wallclock]"); here a test <test>_wallclock runs just them ("[wallclock]"), alone, with the suite's

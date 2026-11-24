@@ -13,7 +13,10 @@
 // What it reads is what operationInputHash covers (state.cpp putSetup): the part and stock bodies by content, the
 // stock definition, the origin mode and corner, the flips, and the WCS references through the geometry of what they
 // resolve to (surface normal and orientation, curve direction, vertex point). Nothing else of the setup is read.
+// T-075: a FromSetupStock setup's stock box comes from the carried stock in step 3 (src/cam/stock.h orientCarried, in
+// O), its soup is moved into the WCS after step 5, and resolveSetupGeometry slices it (stock.h carriedSlices).
 #include "state.h"
+#include "stock.h"
 
 #include <algorithm>
 #include <array>
@@ -437,6 +440,7 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
         int cylinderAxis = -1;
         Nm cylinderRadius = 0;
         const naming::ResolverBody* stockBody = nullptr;
+        std::shared_ptr<kernel::TriSoup> carriedSoup; // T-075: FromSetupStock, in the WCS orientation until step 5
         const auto needPart = [&](const char* kind) -> Status {
             if (!part) {
                 return failure(ErrorCode::InvalidArgument, std::string(kind) + " stock of " + where +
@@ -499,14 +503,27 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
             }
             stockNm = toNmBox(*b);
         } else if (const auto* from = std::get_if<FromSetupStock>(&setup.stock)) {
-            // The seam for in-process stock (PLAN.md T-075): the simulated result of the earlier setup, re-oriented
-            // into this one, once the stock simulation exists. Until then nothing honest can be returned.
-            const Setup* previous = snapshot.cam ? detail::findSetup(*snapshot.cam, from->previous) : nullptr;
-            return failure(ErrorCode::InvalidArgument,
-                           "The stock of " + where + " comes from " +
-                               (previous ? "setup " + label(*previous) : "setup " + from->previous.value.toString()) +
-                               ", and stock carried over from an earlier setup is not available yet: use box, "
-                               "cylinder or solid stock");
+            // In-process stock (T-075, src/cam/stock.h): the simulated end of the earlier setup, re-oriented into this
+            // one through the model frame.
+            const CarriedStock* carried = options.carried;
+            if (carried == nullptr || !carried->solid || carried->setup != from->previous) {
+                const Setup* previous = snapshot.cam ? detail::findSetup(*snapshot.cam, from->previous) : nullptr;
+                return failure(
+                    ErrorCode::InvalidArgument,
+                    "The stock of " + where + " comes from " +
+                        (previous ? "setup " + label(*previous) : "setup " + from->previous.value.toString()) +
+                        ", which must be simulated first to know it (the CAM engine does that when it "
+                        "generates this setup's operations)");
+            }
+            auto oriented = detail::orientCarried(*carried, rotationOf(r), ctx);
+            if (!oriented) {
+                Error e = oriented.error();
+                e.message = "The stock of " + where + ": " + e.message;
+                return tl::unexpected(std::move(e));
+            }
+            stockNm.lo = oriented->lo;
+            stockNm.hi = oriented->hi;
+            carriedSoup = std::make_shared<kernel::TriSoup>(std::move(oriented->soup));
         }
 
         // 4. The origin, in nanometres in the WCS orientation.
@@ -556,9 +573,13 @@ Result<ResolvedSetup> resolveSetup(const CamSnapshot& snapshot, const Setup& set
         out.modelFromWcs = Xform{{r.x.x, r.y.x, r.z.x, t.x, r.x.y, r.y.y, r.z.y, t.y, r.x.z, r.y.z, r.z.z, t.z}};
         out.partBounds = part ? toWcs(partNm, origin) : Box3{};
         out.stockBounds = toWcs(stockNm, origin);
+        if (carriedSoup) {
+            detail::shiftSoup(*carriedSoup, o); // O to the WCS
+            out.carriedStock = std::move(carriedSoup);
+        }
 
-        // 6. The stock solid, in the WCS, when asked for.
-        if (options.stockSolid) {
+        // 6. The stock solid, in the WCS, when asked for (a carried stock has its soup instead).
+        if (options.stockSolid && !out.carriedStock) {
             RAY_CAM_TRY(ctx.cancel.check());
             const Box3& s = out.stockBounds;
             Result<kernel::Shape> made = kernel::Shape{};
@@ -598,7 +619,9 @@ Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest& request, Jo
     try {
         const CamSnapshot& snapshot = request.snapshot;
         const Setup& setup = request.setup;
-        auto resolved = resolveSetup(snapshot, setup, request.resolver, ctx);
+        SetupResolveOptions options;
+        options.carried = request.carried; // T-075: read only for a FromSetupStock setup
+        auto resolved = resolveSetup(snapshot, setup, request.resolver, ctx, options);
         if (!resolved) {
             return tl::unexpected(resolved.error());
         }
@@ -626,6 +649,15 @@ Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest& request, Jo
         ResolvedGeometry geom;
         geom.wcsFromModel = resolved->wcsFromModel;
         geom.stockBounds = resolved->stockBounds;
+        if (resolved->carriedStock && request.carried != nullptr) {
+            // T-075: the slices of the carried stock (src/cam/stock.h SLICES).
+            auto slices = detail::carriedSlices(*resolved->carriedStock, resolved->stockBounds, request.carried->cellMm,
+                                                detail::carriedTopPad(*request.carried, resolved->wcsFromModel), ctx);
+            if (!slices) {
+                return tl::unexpected(slices.error());
+            }
+            geom.stockSlices = std::move(*slices);
+        }
         for (const BodyId& id : setup.partBodies) {
             const naming::ResolverBody* body = detail::bodyOf(snapshot, id); // resolveSetup checked they are built
             geom.partShapes.push_back(body->shape);
