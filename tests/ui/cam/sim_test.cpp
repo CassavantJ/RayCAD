@@ -80,6 +80,7 @@ using ray::ui::PostToolModel;
 using ray::ui::SetupToolModel;
 using ray::ui::SetupTreeModel;
 using ray::ui::SimToolModel;
+namespace cs = ray::api::cam_sim;
 
 namespace {
 
@@ -182,6 +183,45 @@ struct Window {
                 return found;
         }
         return nullptr;
+    }
+    // The first item of that name that is visible (each workspace has a G-code viewer of its own).
+    static QQuickItem* findVisible(QQuickItem* item, const QString& objectName)
+    {
+        if (!item->isVisible())
+            return nullptr;
+        if (item->objectName() == objectName)
+            return item;
+        for (QQuickItem* child : item->childItems()) {
+            if (QQuickItem* found = findVisible(child, objectName))
+                return found;
+        }
+        return nullptr;
+    }
+    // Brings line `line` of the viewer in `host` into sight and clicks it, as the user does.
+    void clickGcodeLine(QQuickItem* viewerHost, int line) const
+    {
+        GcodeModel* g = gcode();
+        QQuickItem* list = find(QStringLiteral("gcodeList"), viewerHost);
+        REQUIRE(list != nullptr);
+        // In the middle of the list (an edge of it may lie under the timeline or a panel).
+        REQUIRE(QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, line), Q_ARG(int, 1 /* Center */)));
+        // The row laid out where the list shows it (a pooled delegate keeps its old place until the list polishes).
+        QPointF at;
+        const bool there = QTest::qWaitFor(
+            [&] {
+                QQuickItem* item = findVisible(viewerHost, QStringLiteral("gcodeLine.%1").arg(line));
+                if (item == nullptr)
+                    return false;
+                at = item->mapToScene(QPointF(std::min(item->width() / 2, 160.0), item->height() / 2));
+                const QPointF inList = list->mapFromScene(at);
+                return inList.y() > 0 && inList.y() < list->height() && inList.x() > 0 && inList.x() < list->width();
+            },
+            5000);
+        INFO("G-code line " << line);
+        REQUIRE(there);
+        grab();
+        clickScene(at);
+        REQUIRE(QTest::qWaitFor([&] { return g->currentLine() == line; }, 5000));
     }
     // A visible item, searched in the Simulate workspace first (the CAM workspace has a G-code viewer too).
     QQuickItem* shown(const QString& objectName) const
@@ -447,6 +487,91 @@ void addTurnedOverSetup(const Window& w)
     w.generate(3);
 }
 
+// The plate held in the library's vise (T-077, resources/library/fixtures), placed with plain moves of transform_body:
+// the fixed jaw's clamping face against the plate's front (y = 0), the moving jaw against its back (y = 80), the vise's
+// floor 14.45 mm below the plate's bottom so the jaws' top is at z = 30, 20 mm above the plate. Setup 1 (box stock 2 mm
+// around in X only, none in Y where the jaws are; the vise and its jaw as fixtures); peck drilling of the two front
+// holes (y = 26.7) with the shipped 6 mm drill 25 mm out of a 60 mm holder (c1), generated: the holder reaches 3.3 mm
+// over the fixed jaw, and once the tip is 5 mm into the plate it comes down on the jaw. A real HolderHitsFixture,
+// nothing seeded.
+void buildViseJob(const Window& w)
+{
+    const BodyId plateId = w.plate();
+    const QString vise = QStringLiteral(RAY_SOURCE_DIR "/resources/library/fixtures/generic-vise-6in.step");
+    REQUIRE(QFileInfo::exists(vise));
+    (void)w.invokeResult("file.import", jsonText(QJsonObject{{QStringLiteral("path"), vise},
+                                                             {QStringLiteral("role"), QStringLiteral("fixture")}}));
+    w.settle();
+    BodyId viseId, jawId;
+    for (const doc::Body& b : w.document()->state()->bodies) {
+        if (b.name == "Generic 6 in vise")
+            viseId = b.id;
+        else if (b.name == "Generic 6 in vise moving jaw")
+            jawId = b.id;
+    }
+    REQUIRE(viseId.value != Uuid{});
+    REQUIRE(jawId.value != Uuid{});
+    (void)w.invokeResult("feature.transform_body.add", R"({"id":")" + id('f', 8) + R"(","props":{"body":")" +
+                                                           viseId.value.toString() + R"(","x":60,"y":0,"z":-14.45}})");
+    (void)w.invokeResult("feature.transform_body.add", R"({"id":")" + id('f', 9) + R"(","props":{"body":")" +
+                                                           jawId.value.toString() +
+                                                           R"(","x":60,"y":29.2,"z":-14.45}})");
+    w.settle();
+    const lib::MachineDef* m = w.host->app()->libraries()->machine(MachineId{Uuid::fromString(kVmc)});
+    REQUIRE(m != nullptr);
+    (void)w.invokeResult("cam.setup.add",
+                         R"({"id":")" + id('a', 1) + R"(","name":"In the vise","partBodies":[")" +
+                             plateId.value.toString() + R"("],"fixtureBodies":[")" + viseId.value.toString() +
+                             R"(",")" + jawId.value.toString() + R"("],"machine":")" + kVmc +
+                             R"(","stock":{"type":"box","xNeg":2,"xPos":2,"yNeg":0,"yPos":0,"zNeg":0,"zPos":0},)"
+                             R"("library":{"machines":[)" +
+                             api::cam_setup::machineJson(*m) + "]}}");
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() >= 1; }, kTimeoutMs));
+    const lib::Tool* drill = w.host->app()->libraries()->tool(ToolId{Uuid::fromString(kDrill6)});
+    REQUIRE(drill != nullptr);
+    const std::string holder = R"({"schema":1,"id":")" + id('e', 2) +
+                               R"(","name":"60 mm holder","gaugeLength":40,)"
+                               R"("segments":[{"height":40,"lowerDiameter":60,"upperDiameter":60}]})";
+    (void)w.invokeResult("cam.library.embed",
+                         R"({"tools":[)" + api::cam_tools::toolJson(*drill) + R"(],"holders":[)" + holder + "]}");
+    w.settle();
+    JobContext ctx;
+    auto holes = api::cam_operation::holesOf(w.document()->state(), w.document()->build(), setupId(1), ctx);
+    REQUIRE(holes);
+    QJsonArray refs;
+    for (const api::cam_operation::Hole& h : *holes) {
+        if (h.top.y > 40 || refs.size() >= 2)
+            continue; // the front row only
+        const QJsonObject args{{QStringLiteral("body"), QString::fromStdString(h.body.value.toString())},
+                               {QStringLiteral("kind"), QStringLiteral("face")},
+                               {QStringLiteral("index"), static_cast<int>(h.boreFace)}};
+        refs.push_back(object(w.invokeResult("model.reference", jsonText(args))).value(QStringLiteral("ref")));
+    }
+    REQUIRE(refs.size() == 2);
+    QJsonObject drillOp{
+        {QStringLiteral("id"), QString::fromStdString(id('c', 1))},
+        {QStringLiteral("setup"), QString::fromStdString(id('a', 1))},
+        {QStringLiteral("type"), QStringLiteral("drill")},
+        {QStringLiteral("name"), QStringLiteral("Drill")},
+        {QStringLiteral("tool"), QJsonObject{{QStringLiteral("tool"), QString::fromStdString(kDrill6)},
+                                             {QStringLiteral("holder"), QString::fromStdString(id('e', 2))},
+                                             {QStringLiteral("stickOut"), 25.0},
+                                             {QStringLiteral("number"), 1}}},
+        {QStringLiteral("cutting"), QJsonObject{{QStringLiteral("rpm"), 1500},
+                                                {QStringLiteral("feedCut"), 150},
+                                                {QStringLiteral("feedPlunge"), 150}}},
+        // Clearance above the jaws (the generator refuses one below a fixture's top); R 8 above the plate.
+        {QStringLiteral("heights"), QJsonObject{{QStringLiteral("clearance"), 25},
+                                                {QStringLiteral("retract"), 8},
+                                                {QStringLiteral("feedPlane"), 8},
+                                                {QStringLiteral("top"), 0},
+                                                {QStringLiteral("bottom"), 0}}},
+        {QStringLiteral("geometry"), refs},
+        {QStringLiteral("params"), QJsonObject{{QStringLiteral("cycle"), QStringLiteral("peck")}}}};
+    (void)w.invokeResult("cam.operation.add", jsonText(drillOp));
+    w.generate(1);
+}
+
 // Posts setup `setup` through the panel's offer (the post dialog, its gate), into the window's output folder.
 void postFromPanel(const Window& w)
 {
@@ -611,6 +736,78 @@ TEST_CASE(
     REQUIRE(QTest::qWaitFor([&] { return s->currentEvent() == *collision; }, 5000));
     w.simIdle();
     CHECK(s->position().moveIndex == res->places[static_cast<std::size_t>(*collision)].moveIndex);
+
+    // ---- The other way (added after T-074): a line clicked in the viewer takes the simulation to its move ----
+    // A line of the facing (operation 1) part way through its section: the stock and the tool go to the end of the move
+    // it writes (the first, were there several), and the line clicked stays the viewer's current line.
+    std::optional<std::uint32_t> faceSection;
+    for (std::size_t i = 0; i < program->sectionOps.size(); ++i) {
+        if (program->sectionOps[i] == res->ops[1])
+            faceSection = static_cast<std::uint32_t>(i);
+    }
+    REQUIRE(faceSection.has_value());
+    std::vector<int> faceLines;
+    for (const post::GcodeLineMap& m : program->index->map) {
+        if (m.sectionIndex == *faceSection)
+            faceLines.push_back(static_cast<int>(m.line));
+    }
+    REQUIRE(faceLines.size() > 8);
+    const int faceLine = faceLines[faceLines.size() / 2];
+    const auto faceMove = program->index->moveOf(static_cast<std::size_t>(faceLine));
+    REQUIRE(faceMove.has_value());
+    const auto faceStatus = w.statuses().at(opId(1));
+    REQUIRE(faceStatus.toolpath);
+    REQUIRE(faceMove->move < faceStatus.toolpath->moves.size());
+    w.clickGcodeLine(viewer, faceLine);
+    w.simIdle();
+    CHECK(g->currentLine() == faceLine);
+    // The line's move, without the CAM workspace's "its toolpath is not shown" (here the simulation draws it).
+    CHECK(g->lineInfo() == QStringLiteral("Line %1: Face, move %2").arg(faceLine + 1).arg(faceMove->move + 1));
+    CHECK(s->currentEvent() == -1); // no problem chosen any more
+    CHECK(s->position().opIndex == 1);
+    CHECK(s->position().moveIndex == faceMove->move);
+    CHECK(s->position().t01 == 1);
+    CHECK(s->positionSec() == Catch::Approx(res->timeline.secondsAt({1, faceMove->move, 1})).margin(1e-9));
+    {
+        const cam::Move& mv = faceStatus.toolpath->moves[faceMove->move];
+        const Vec3 end = apply(res->modelFromWcs, Vec3{mv.x / 1e6, mv.y / 1e6, mv.z / 1e6});
+        const Vec3 at{s->toolPose().m[3], s->toolPose().m[7], s->toolPose().m[11]};
+        INFO("tip " << at.x << ", " << at.y << ", " << at.z << "; move end " << end.x << ", " << end.y << ", "
+                    << end.z);
+        CHECK(distance(at, end) < 1e-3);
+    }
+    w.shotsBothThemes(QStringLiteral("simgaps_gcode_line"));
+    // A line that writes no move (the program's start, a comment, a tool change): nothing moves.
+    int quiet = 0;
+    while (quiet < g->lineCount() && program->index->moveOf(static_cast<std::size_t>(quiet)).has_value())
+        ++quiet;
+    REQUIRE(quiet < g->lineCount());
+    const sim::TimelinePosition before = s->position();
+    const int framesBefore = s->framesApplied();
+    w.clickGcodeLine(viewer, quiet);
+    w.simIdle();
+    CHECK(g->currentLine() == quiet);
+    CHECK(s->framesApplied() == framesBefore);
+    CHECK(s->position().opIndex == before.opIndex);
+    CHECK(s->position().moveIndex == before.moveIndex);
+    CHECK(s->position().t01 == before.t01);
+    // The CAM workspace's viewer is as it was: a line clicked there is current and moves no simulation.
+    w.toWorkspace(ui::kCamWorkspace);
+    QQuickItem* camViewer = nullptr;
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            camViewer = Window::findVisible(w.window()->contentItem(), QStringLiteral("gcodeViewHost"));
+            return camViewer != nullptr;
+        },
+        5000));
+    const int camLine = faceLines[faceLines.size() / 4];
+    w.clickGcodeLine(camViewer, camLine);
+    w.simIdle();
+    CHECK(g->currentLine() == camLine);
+    CHECK_FALSE(s->seeking());
+    CHECK(s->framesApplied() == framesBefore);
+    CHECK(s->position().moveIndex == before.moveIndex);
+    w.toWorkspace(ui::kSimWorkspace);
     w.checkNoWarnings();
 }
 
@@ -764,6 +961,68 @@ TEST_CASE("the clean twin: no marker; play, pause, speed, scrub, steps, the togg
     CHECK(s->toolVisible());
     CHECK(s->holderVisible());
 
+    // ---- The toolpaths (added after T-074): shown by default, the moves done in full, those to come dimmed ----
+    {
+        const std::pair<std::uint32_t, std::uint32_t> none{1, 0};
+        REQUIRE(res->backplots.size() == 2);
+        CHECK(s->showToolpath());
+        CHECK(s->toolpathVisible());
+        const auto n0 = static_cast<std::uint32_t>(res->timeline.ops[0].moves());
+        const auto n1 = static_cast<std::uint32_t>(res->timeline.ops[1].moves());
+        for (std::size_t op = 0; op < 2; ++op) {
+            CHECK(s->pathItem(op, false) != 0);
+            CHECK(s->pathItem(op, true) != 0);
+        }
+        // At the end: everything done.
+        CHECK(s->pathRange(0, false) == std::make_pair(0u, n0 - 1));
+        CHECK(s->pathRange(0, true) == none);
+        CHECK(s->pathRange(1, false) == std::make_pair(0u, n1 - 1));
+        CHECK(s->pathRange(1, true) == none);
+        // At the start: nothing done.
+        w.view()->forceActiveFocus();
+        w.key(Qt::Key_Home);
+        w.simIdle();
+        CHECK(s->pathRange(0, false) == none);
+        CHECK(s->pathRange(0, true) == std::make_pair(0u, n0 - 1));
+        CHECK(s->pathRange(1, true) == std::make_pair(0u, n1 - 1));
+        // Part way through the facing: its moves up to the one under way done, the rest ahead; the drilling all done.
+        const cs::TimelineOperation& facing = res->timeline.ops[1];
+        s->scrubTo((facing.firstMoveSec() + facing.endSec) / 2 / total);
+        w.simIdle();
+        const sim::TimelinePosition p = s->position();
+        REQUIRE(p.opIndex == 1);
+        const std::uint32_t begun = p.moveIndex + (p.t01 > 0 ? 1u : 0u);
+        CHECK(s->pathRange(0, false) == std::make_pair(0u, n0 - 1));
+        CHECK(s->pathRange(0, true) == none);
+        CHECK(s->pathRange(1, false) == std::make_pair(0u, begun - 1));
+        CHECK(s->pathRange(1, true) == std::make_pair(begun, n1 - 1));
+        w.view()->fitAll();
+        w.simIdle();
+        // The picture part way through the facing's first layer (later layers lie under the ones done): the passes
+        // made in full, those to come over the rest of the plate dimmed.
+        s->scrubTo((facing.firstMoveSec() + 0.08 * (facing.endSec - facing.firstMoveSec())) / total);
+        w.simIdle();
+        w.shotsBothThemes(QStringLiteral("simgaps_toolpath"));
+        // The toggle (the panel's fifth) and its command.
+        w.click(QStringLiteral("simShow.toolpath"));
+        CHECK_FALSE(s->showToolpath());
+        CHECK_FALSE(s->toolpathVisible());
+        CHECK(s->stockVisible()); // the others as they were
+        w.click(QStringLiteral("simShow.toolpath"));
+        CHECK(s->toolpathVisible());
+        ui::CommandCatalog* catalog = w.singleton<ui::CommandCatalog>("Commands");
+        REQUIRE(catalog->trigger(QStringLiteral("cam.sim.toggleToolpath")));
+        CHECK_FALSE(s->toolpathVisible());
+        REQUIRE(catalog->trigger(QStringLiteral("cam.sim.toggleToolpath")));
+        CHECK(s->toolpathVisible());
+        // Only in the Simulate workspace.
+        w.toWorkspace(ui::kCamWorkspace);
+        CHECK_FALSE(s->toolpathVisible());
+        w.toWorkspace(ui::kSimWorkspace);
+        CHECK(s->toolpathVisible());
+        w.simIdle(); // the gate checked again on coming back
+    }
+
     // ---- Cancel mid-run: the button, then Esc ----
     REQUIRE(s->run());
     CHECK(s->running());
@@ -901,6 +1160,204 @@ TEST_CASE(
                       << ": " << res->events[i].message);
     w.view()->fitAll();
     w.shotsBothThemes(QStringLiteral("t074_setup2_simulated"));
+    w.checkNoWarnings();
+}
+
+// =============================================================================================================
+// added after T-074
+TEST_CASE("a real holder collision: the library vise, its marker, the holder at the contact, the problem's row",
+          "[ui][cam][sim][holder]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate);
+    w.toWorkspace(ui::kCamWorkspace);
+    buildViseJob(w);
+    w.toWorkspace(ui::kSimWorkspace);
+    SimToolModel* s = w.sim();
+    w.shown(QStringLiteral("simPanel"));
+    REQUIRE(QTest::qWaitFor([&] { return s->setupIdText().toStdString() == id('a', 1); }, 5000));
+    w.runSim();
+    const auto res = s->result();
+    REQUIRE(res);
+    for (std::size_t i = 0; i < res->events.size(); ++i)
+        UNSCOPED_INFO(ui::camui::eventKindName(static_cast<int>(res->events[i].kind))
+                      << " op " << res->places[i].opIndex << " move " << res->events[i].moveIndex << " at "
+                      << res->places[i].sec << " s: " << res->events[i].message);
+    std::optional<int> hit;
+    for (std::size_t i = 0; i < res->events.size(); ++i) {
+        // Nothing seeded: the stock is the plate's own size, the drill's rapids stay above it.
+        CHECK(res->events[i].kind != sim::EventKind::RapidIntoStock);
+        if (res->events[i].kind == sim::EventKind::HolderHitsFixture && !hit)
+            hit = static_cast<int>(i);
+    }
+    REQUIRE(hit.has_value());
+    CHECK(res->events[static_cast<std::size_t>(*hit)].severity == sim::Severity::Error);
+    CHECK(s->errorCount() > 0);
+
+    // ---- Its marker on the timeline, clicked ----
+    QQuickItem* track = w.shown(QStringLiteral("simTrack"));
+    const QVariantList markers = s->markers(track->width());
+    int markerIndex = -1;
+    for (int k = 0; k < markers.size() && markerIndex < 0; ++k) {
+        if (markers[k].toMap().value(QStringLiteral("events")).toList().contains(*hit))
+            markerIndex = k;
+    }
+    REQUIRE(markerIndex >= 0);
+    const QVariantMap marker = markers[markerIndex].toMap();
+    CHECK(marker.value(QStringLiteral("severity")).toString() == QStringLiteral("error"));
+    QQuickItem* markerItem = w.shown(QStringLiteral("simMarker.%1").arg(markerIndex));
+    CHECK(markerItem->property("colour").value<QColor>() == w.host->theme()->property("error").value<QColor>());
+    const int chosen = marker.value(QStringLiteral("first")).toInt();
+    w.click(QStringLiteral("simMarker.%1").arg(markerIndex));
+    REQUIRE(QTest::qWaitFor([&] { return s->currentEvent() == chosen; }, 5000));
+    w.simIdle();
+    const cs::EventPlace& place = res->places[static_cast<std::size_t>(chosen)];
+    const sim::SimEvent& event = res->events[static_cast<std::size_t>(chosen)];
+    CHECK(event.kind == sim::EventKind::HolderHitsFixture);
+    CHECK(s->position().opIndex == place.opIndex);
+    CHECK(s->position().moveIndex == place.moveIndex);
+    CHECK(s->position().t01 == Catch::Approx(place.t01).margin(1e-9));
+    CHECK(s->positionSec() == Catch::Approx(place.sec).margin(1e-6));
+
+    // ---- The holder shown at the contact ----
+    const Xform pose = s->toolPose();
+    const Vec3 tip{pose.m[3], pose.m[7], pose.m[11]};
+    const Vec3 want = apply(res->modelFromWcs, event.position);
+    INFO("tip " << tip.x << ", " << tip.y << ", " << tip.z << "; event " << want.x << ", " << want.y << ", " << want.z);
+    CHECK(distance(tip, want) < 0.05);
+    CHECK(s->shownOp() == static_cast<int>(place.opIndex));
+    CHECK(s->holderItem(place.opIndex) != 0);
+    CHECK(s->holderVisible());
+    CHECK(s->toolVisible());
+    // The holder glyph stands where the tool is (its pose is the tool's); its lowest ring is at the jaws' top (z 30 in
+    // the model) and reaches over the fixed jaw's clamping face (y = 0).
+    const sim::ToolShape& tool = res->tools[place.opIndex];
+    REQUIRE_FALSE(tool.holderProfile.empty());
+    double holderBottom = 1e9, holderRadius = 0;
+    for (const Vec2& v : tool.holderProfile) {
+        holderBottom = std::min(holderBottom, v.y);
+        holderRadius = std::max(holderRadius, v.x);
+    }
+    INFO("holder bottom at z " << tip.z + holderBottom << ", radius " << holderRadius);
+    CHECK(tip.z + holderBottom <= 30 + 0.05);
+    CHECK(tip.z + holderBottom >= 30 - 0.5);
+    CHECK(tip.y - holderRadius < 0);
+
+    // ---- The problem's row ----
+    QQuickItem* row = w.shown(QStringLiteral("simEvent.%1").arg(chosen));
+    const QVariantMap e = s->events()[chosen].toMap();
+    CHECK(e.value(QStringLiteral("title")).toString() == QStringLiteral("Holder hits a fixture"));
+    CHECK(e.value(QStringLiteral("severity")).toString() == QStringLiteral("error"));
+    CHECK(e.value(QStringLiteral("operation")).toString() == QStringLiteral("Drill"));
+    CHECK(e.value(QStringLiteral("move")).toInt() == static_cast<int>(place.moveIndex) + 1);
+    CHECK(e.value(QStringLiteral("time")).toString() == ui::camui::formatClock(place.sec));
+    QQuickItem* message = w.find(QStringLiteral("simEventMessage.%1").arg(chosen), row);
+    REQUIRE(message != nullptr);
+    CHECK(message->property("text").toString() == QString::fromStdString(event.message));
+    CHECK(row->property("current").toBool());
+    CHECK(s->summary().contains(QStringLiteral("error")));
+    w.view()->fitAll();
+    w.simIdle();
+    w.shotsBothThemes(QStringLiteral("simgaps_holder_collision"));
+    // The row goes there too: from the start, a click on it.
+    w.view()->forceActiveFocus();
+    w.key(Qt::Key_Home);
+    w.simIdle();
+    REQUIRE(s->positionSec() == 0);
+    w.click(QStringLiteral("simEvent.%1").arg(chosen));
+    w.simIdle();
+    CHECK(s->currentEvent() == chosen);
+    CHECK(s->position().moveIndex == place.moveIndex);
+    CHECK(s->position().t01 == Catch::Approx(place.t01).margin(1e-9));
+    w.checkNoWarnings();
+}
+
+TEST_CASE("a warning the whole way: its amber marker and row, and both seek there", "[ui][cam][sim][warning]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate);
+    w.toWorkspace(ui::kCamWorkspace);
+    buildPlateJob(w, 8.0); // the clean twin: no event of its own
+    w.toWorkspace(ui::kSimWorkspace);
+    SimToolModel* s = w.sim();
+    // No check raises a Warning yet: one is added where the simulator's events go (cam_sim::RunRequest::addedEvents),
+    // on the facing (the program's operation 1), at the end of a straight feed part way through it.
+    const auto face = w.statuses().at(opId(1)).toolpath;
+    REQUIRE(face);
+    std::uint32_t k = static_cast<std::uint32_t>(face->moves.size() / 2);
+    while (k + 1 < face->moves.size() &&
+           !(face->moves[k].kind == cam::MoveKind::Linear &&
+             (face->moves[k].x != face->moves[k - 1].x || face->moves[k].y != face->moves[k - 1].y)))
+        ++k;
+    REQUIRE(k + 1 < face->moves.size());
+    const cam::Move& mv = face->moves[k];
+    const Vec3 at{mv.x / 1e6, mv.y / 1e6, mv.z / 1e6};
+    s->setAddedEvents({sim::SimEvent{sim::EventKind::ExcessEngagement, sim::Severity::Warning, opId(1), k, at, 0,
+                                     "The cutter's engagement went over its limit here (added by the test)"}});
+    w.runSim();
+    s->setAddedEvents({});
+    const auto res = s->result();
+    REQUIRE(res);
+    REQUIRE(res->events.size() == 1);
+    CHECK(s->errorCount() == 0);
+    CHECK(s->warningCount() == 1);
+    CHECK(s->summary().startsWith(QStringLiteral("1 warning.")));
+    const QColor amber = w.host->theme()->property("warning").value<QColor>();
+    CHECK(w.shown(QStringLiteral("simSummary"))->property("color").value<QColor>() == amber);
+    const cs::EventPlace& place = res->places[0];
+    CHECK(place.opIndex == 1);
+    CHECK(place.moveIndex == k);
+
+    // ---- The amber marker ----
+    QQuickItem* track = w.shown(QStringLiteral("simTrack"));
+    const QVariantList markers = s->markers(track->width());
+    REQUIRE(markers.size() == 1);
+    CHECK(markers[0].toMap().value(QStringLiteral("severity")).toString() == QStringLiteral("warning"));
+    QQuickItem* markerItem = w.shown(QStringLiteral("simMarker.0"));
+    CHECK(markerItem->property("colour").value<QColor>() == amber);
+    CHECK(markerItem->x() + markerItem->width() / 2 ==
+          Catch::Approx(place.sec / res->timeline.totalSec * track->width()).margin(1.0));
+    w.click(QStringLiteral("simMarker.0"));
+    REQUIRE(QTest::qWaitFor([&] { return s->currentEvent() == 0; }, 5000));
+    w.simIdle();
+    CHECK(s->position().opIndex == 1);
+    CHECK(s->position().moveIndex == k);
+    CHECK(s->position().t01 == Catch::Approx(place.t01).margin(1e-9));
+    CHECK(s->positionSec() == Catch::Approx(place.sec).margin(1e-6));
+    const Vec3 tip{s->toolPose().m[3], s->toolPose().m[7], s->toolPose().m[11]};
+    CHECK(distance(tip, apply(res->modelFromWcs, at)) < 0.05);
+
+    // ---- Its row: amber, the machinist's title, the message as raised ----
+    QQuickItem* row = w.shown(QStringLiteral("simEvent.0"));
+    const QVariantMap e = s->events()[0].toMap();
+    CHECK(e.value(QStringLiteral("severity")).toString() == QStringLiteral("warning"));
+    CHECK(e.value(QStringLiteral("title")).toString() ==
+          ui::camui::eventTitle(static_cast<int>(sim::EventKind::ExcessEngagement)));
+    CHECK(e.value(QStringLiteral("operation")).toString() == QStringLiteral("Face"));
+    CHECK(e.value(QStringLiteral("move")).toInt() == static_cast<int>(k) + 1);
+    QQuickItem* message = w.find(QStringLiteral("simEventMessage.0"), row);
+    REQUIRE(message != nullptr);
+    CHECK(message->property("text").toString().contains(QStringLiteral("added by the test")));
+    CHECK(row->property("current").toBool());
+    w.view()->fitAll();
+    w.simIdle();
+    w.shotsBothThemes(QStringLiteral("simgaps_warning"));
+    // The row seeks too, and the previous / next problem keys find it.
+    w.view()->forceActiveFocus();
+    w.key(Qt::Key_End);
+    w.simIdle();
+    w.click(QStringLiteral("simEvent.0"));
+    w.simIdle();
+    CHECK(s->position().moveIndex == k);
+    w.view()->forceActiveFocus();
+    w.key(Qt::Key_Home);
+    w.simIdle();
+    w.key(Qt::Key_Right, Qt::ControlModifier);
+    w.simIdle();
+    CHECK(s->currentEvent() == 0);
+    CHECK(s->positionSec() == Catch::Approx(place.sec).margin(1e-6));
     w.checkNoWarnings();
 }
 

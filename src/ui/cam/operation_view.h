@@ -52,6 +52,10 @@ public:
     void setPreview(const OperationId& op, const SetupId& setup, std::shared_ptr<const sim::Backplot> backplot);
     void clearPreview();
 
+    // How a toolpath is drawn (setStyle of its backplot item): by move type, or all in the stale colour, dimmed or not.
+    // The Simulate workspace draws its toolpaths with it too (sim_tool.h).
+    static render::MeshStyle pathStyle(bool stale, bool dim);
+
     // ---- C++ (tests) ----
     struct Shown {
         OperationId op;

@@ -601,10 +601,13 @@ public:
         const double longer = std::max(s.max.x - s.min.x, s.max.y - s.min.y);
         const double hs = o.stockCell > 0 ? o.stockCell : std::max(0.1, longer / 1500);
         stock_.init(s, hs, rCut_ + 4 * hs + 1, c_.initialStock, &pm, c_.allowedCuts);
-        centreCutting_ = c_.centreCutting
-                             ? *c_.centreCutting
-                             : centreCuttingByDefault(in.tool.type) &&
-                                   !(in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0);
+        // The claim, else what the tool's library entry states (after M3), else the checker's default by type (which
+        // stays more cautious than lib::centreCuttingByDefault: end mills are taken as not cutting at their centre).
+        const bool stated = in.tool.centreCutting.has_value() && lib::centreCuttingSettable(in.tool.type);
+        centreCutting_ = c_.centreCutting ? *c_.centreCutting
+                         : stated ? in.tool.cutsAtCentre()
+                                  : centreCuttingByDefault(in.tool.type) &&
+                                        !(in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0);
         // T-055: a chamfer mill with a flat at its tip cuts everywhere on its cone beyond that flat, so only the flat
         // is its dead zone; other tools that do not cut at their centre have the fraction of the radius.
         deadRadius_ = in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0 && !c_.centreCutting

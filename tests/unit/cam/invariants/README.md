@@ -46,7 +46,7 @@ the measured value and the allowed one, and a one-line message. The bounds are f
 | `rapidPart` | A rapid's tool (any zone) inside the part grown by `rapidClearance` deeper than `tolerance` | See "Part contacts" |
 | `rapidStock` | A rapid's tool inside remaining stock | See "Stock contacts" |
 | `fluteLength` | Remaining stock inside the tool above its flutes during a cut (engagement deeper than the flutes) | See "Stock contacts" |
-| `plunge` | A straight plunge into stock (stock within `deadZoneFraction` of the radius, 0.25, of the axis; for a chamfer mill with a flat at its tip, within that flat, T-055) with a tool that does not cut at its centre (`Claims::centreCutting`, default by type: drills, spot drills, ball, chamfer and engraving tools do) | Stock samples |
+| `plunge` | A straight plunge into stock (stock within `deadZoneFraction` of the radius, 0.25, of the axis; for a chamfer mill with a flat at its tip, within that flat, T-055) with a tool that does not cut at its centre (`Claims::centreCutting`, else the tool's stated `Tool::centreCutting`, else by type: drills, spot drills, ball, chamfer and engraving tools do) | Stock samples |
 | `rampAngle` | A ramp or helix into stock steeper than `maxRampAngleDeg` | Exact angle; "into stock" by samples |
 | `helix` | A helix into stock narrower than `helixMinDiameter` | Exact diameter; "into stock" by samples |
 | `direction` | A cut along a part wall (within cutting radius + stock to leave + 0.5 mm, one side only) climb where conventional was asked, or the reverse (clockwise spindle: climb keeps the wall on the right) | Checked at each cut piece's middle on the 0.25 mm part grid |

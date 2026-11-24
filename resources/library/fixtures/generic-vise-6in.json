@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "kind": "vise",
+  "body": "Generic 6 in vise",
+  "movingJaw": "Generic 6 in vise moving jaw",
+  "jawLength": 152.4,
+  "jawHeight": 44.45,
+  "maxOpening": 270
+}

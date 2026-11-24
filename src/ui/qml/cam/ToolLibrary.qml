@@ -56,7 +56,8 @@ Item {
             readonly property var choices: ({
                 type: CamTools.toolTypes,
                 opClass: CamTools.opClasses,
-                material: popup.materialChoices
+                material: popup.materialChoices,
+                centreCutting: CamTools.centreCuttingChoices
             })
             readonly property var materialChoices: {
                 const out = []

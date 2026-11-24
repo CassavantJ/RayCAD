@@ -3,7 +3,8 @@
 // (a generic vise, parallels) or from a STEP file, and places one: a click on the fixture's face that goes against the
 // part, a click on the part's face, then a gap, X, Y, Z and a turn. Every change previews the fixture where it would
 // go; Apply (Enter) places it as one undo step, Cancel (Esc) leaves the document as it was; Esc with nothing being
-// placed closes the panel.
+// placed closes the panel. "Vise on the stock" (after T-077) stands the setup's stock in a library vise in one step
+// (CamFixtures.placeOnStock), the jaws gripping the faces chosen.
 import QtQuick
 import QtQuick.Dialogs
 import RayCad.Ui
@@ -244,6 +245,66 @@ Item {
                     }
                 }
 
+                // A library vise stood on the setup's stock.
+                Column {
+                    objectName: "fixtureOnStock"
+                    // Not while a fixture is being placed by hand: one thing at a time, and the panel stays short.
+                    visible: CamFixtures.viseName !== "" && CamFixtures.setupName !== "" && !root.placing
+                    spacing: Theme.spacingS
+                    Label {
+                        text: qsTr("Vise on the stock")
+                        font: Theme.strongFont
+                    }
+                    Row {
+                        spacing: Theme.spacingS
+                        Label {
+                            width: root.labelWidth
+                            anchors.verticalCenter: parent.verticalCenter
+                            secondary: true
+                            text: qsTr("Grip across")
+                        }
+                        ComboBox {
+                            id: gripCombo
+                            objectName: "fixtureGrip"
+                            width: root.fieldWidth
+                            readonly property var keys: ["shorter", "x", "y"]
+                            // Read with the label: "Grip across X" closes the jaws on the faces at X min and max.
+                            model: [qsTr("The shorter side"), qsTr("X"), qsTr("Y")]
+                            currentIndex: Math.max(0, gripCombo.keys.indexOf(CamFixtures.grip))
+                            enabled: !CamFixtures.placingOnStock
+                            Accessible.name: qsTr("The stock faces the jaws grip")
+                            onActivated: CamFixtures.grip = gripCombo.keys[gripCombo.currentIndex]
+                        }
+                    }
+                    Button {
+                        objectName: "fixturePlaceOnStock"
+                        enabled: !CamFixtures.placingOnStock && !CamFixtures.importing
+                        text: CamFixtures.placingOnStock ? qsTr("Placing…") : qsTr("Place on stock")
+                        toolTipText: qsTr("Stand the stock of %1 in %2: on its floor (or on the setup's parallels), centred along the jaws, the moving jaw closed on it")
+                                     .arg(CamFixtures.setupName).arg(CamFixtures.viseName)
+                        onClicked: CamFixtures.placeOnStock()
+                    }
+                    Label {
+                        objectName: "fixtureOnStockNote"
+                        width: root.rowWidth
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideNone
+                        secondary: true
+                        font: Theme.smallFont
+                        text: qsTr("Placed once from the stock as it is now: if the stock changes, place it again.")
+                    }
+                    Label {
+                        objectName: "fixtureOnStockMessage"
+                        visible: text !== ""
+                        width: root.rowWidth
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideNone
+                        color: CamFixtures.stockStatus === "failed" ? Theme.error
+                               : CamFixtures.stockStatus === "warning" ? Theme.warning : Theme.textSecondary
+                        text: CamFixtures.stockMessage
+                    }
+                }
+
                 // Adding one.
                 Label {
                     text: qsTr("Add")
@@ -311,6 +372,19 @@ Item {
                         key: "angle"
                         label: qsTr("Turn")
                         placeholder: qsTr("Degrees about the face's normal")
+                    }
+                    // Tilts: for a fixture moved by numbers alone (Place on stock sets them for a setup turned over).
+                    FieldRow {
+                        key: "tiltX"
+                        visible: (!CamFixtures.hasFace && !CamFixtures.hasTarget) || (root.values.tiltX || "") !== ""
+                        label: qsTr("Tilt X")
+                        placeholder: qsTr("Degrees about model X")
+                    }
+                    FieldRow {
+                        key: "tiltY"
+                        visible: (!CamFixtures.hasFace && !CamFixtures.hasTarget) || (root.values.tiltY || "") !== ""
+                        label: qsTr("Tilt Y")
+                        placeholder: qsTr("Degrees about model Y")
                     }
                     FieldRow {
                         key: "x"

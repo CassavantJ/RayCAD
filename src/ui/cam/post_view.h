@@ -146,6 +146,9 @@ signals:
     void revisionChanged();
     // The view should bring `line` into sight.
     void scrollRequested(int line);
+    // The user made `line` current (selectLine without extending: a click, the arrow keys, a find), not showMove. The
+    // Simulate workspace seeks there (sim_tool.h, "G-code"); the CAM workspace does nothing with it. Added after T-074.
+    void lineChosen(int line);
 
 private:
     struct Shown {

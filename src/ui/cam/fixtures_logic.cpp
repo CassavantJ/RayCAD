@@ -69,17 +69,21 @@ PlacementArgs placementProps(const PlacementInput& in, const CheckFn& check)
         const char* key;
         const QString* text;
         bool angle;
-    } fields[] = {{"gap", &in.gap, false},
-                  {"x", &in.x, false},
-                  {"y", &in.y, false},
-                  {"z", &in.z, false},
-                  {"angle", &in.angle, true}};
+    } fields[] = {{"gap", &in.gap, false},   {"x", &in.x, false},        {"y", &in.y, false},
+                  {"z", &in.z, false},       {"angle", &in.angle, true}, {"tiltX", &in.tiltX, true},
+                  {"tiltY", &in.tiltY, true}};
     for (const auto& f : fields) {
         if (isZero(*f.text))
             continue;
         if (QLatin1String(f.key) == QLatin1String("gap") && !mate) {
             out.error = trs("A gap needs a mate: pick the two faces first");
             out.field = QStringLiteral("gap");
+            return out;
+        }
+        if (QLatin1String(f.key).startsWith(QLatin1String("tilt")) && mate) {
+            out.error =
+                trs("A tilt is for a fixture moved by numbers alone: with a mate the faces set its orientation");
+            out.field = QLatin1String(f.key);
             return out;
         }
         const QString expression = expressionOf(*f.text, f.angle ? QStringLiteral("deg") : in.unitLabel);
@@ -98,7 +102,7 @@ PlacementArgs placementProps(const PlacementInput& in, const CheckFn& check)
 QJsonObject editPatch(const QJsonObject& props)
 {
     QJsonObject patch = props;
-    for (const char* key : {"mate", "gap", "angle", "x", "y", "z"}) {
+    for (const char* key : {"mate", "gap", "angle", "tiltX", "tiltY", "x", "y", "z"}) {
         if (!patch.contains(QLatin1String(key)))
             patch.insert(QLatin1String(key), QJsonValue::Null);
     }

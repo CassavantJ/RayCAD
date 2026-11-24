@@ -1,5 +1,6 @@
 {
   "bodyMaterial": "carbide inserts",
+  "centreCutting": false,
   "comment": "Generic 2 in, 45 degree lead, 4-insert indexable face mill on a 3/4 in arbour (shankDiameter is the body diameter, fluteLength the largest depth of cut). Dimensions: approximate generic proportions (measure the real cutter). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
   "cornerRadius": 0,
   "defaultToolNumber": 0,

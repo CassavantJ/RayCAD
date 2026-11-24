@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -336,10 +337,10 @@ TEST_CASE("travel limits", "[sim][verify]")
 
 TEST_CASE("plunges with a tool that does not cut at its centre", "[sim][verify]")
 {
-    SECTION("bad: a flat end mill straight down into the stock")
+    SECTION("bad: a flat end mill that does not cut at its centre straight down into the stock")
     {
         Program p = withStock();
-        p.op(Path(50, 40, 5).feed(50, 40, -5).done(), toolA(), holder(40, 50), 40);
+        p.op(Path(50, 40, 5).feed(50, 40, -5).done(), notCentreCutting(toolA()), holder(40, 50), 40);
         const std::vector<SimEvent> ev = verify(p);
         INFO(describe(ev));
         CHECK(summary(ev, p) == Strings{"PlungeWithNonCentreCutting@0.0"});
@@ -350,12 +351,56 @@ TEST_CASE("plunges with a tool that does not cut at its centre", "[sim][verify]"
         p.op(Path(50, 40, 5).feed(50, 40, -5).done(), endMill(10, 30, 80, lib::ToolType::Drill), holder(40, 50), 40);
         CHECK(verify(p).empty());
     }
+    SECTION("the tool's own answer (Tool::centreCutting), else its type's default, across the tool types")
+    {
+        using T = lib::ToolType;
+        struct Case {
+            const char* what;
+            T type;
+            double cornerRadius, tipAngle, tipDiameter;
+            bool byDefault; // cuts at its centre with nothing stated
+            bool settable;  // a stated value is read
+        };
+        const Case cases[] = {
+            {"flat end mill", T::FlatEndMill, 0, 0, 0, true, true},
+            {"bull nose end mill", T::BullEndMill, 1, 0, 0, true, true},
+            {"ball end mill", T::BallEndMill, 5, 0, 0, true, true},
+            {"pointed chamfer mill", T::ChamferMill, 0, 90, 0, true, true},
+            {"chamfer mill with a tip flat", T::ChamferMill, 0, 90, 2, false, true},
+            {"face mill", T::FaceMill, 0, 0, 0, false, true},
+            {"thread mill", T::ThreadMill, 0, 0, 0, false, true},
+            {"engraving cutter", T::EngraveCutter, 0, 60, 0, true, true},
+            {"drill", T::Drill, 0, 118, 0, true, false},
+            {"spot drill", T::SpotDrill, 0, 90, 0, true, false},
+            {"reamer", T::Reamer, 0, 0, 0, false, false},
+            {"boring bar", T::BoringBar, 0, 0, 0, false, false},
+        };
+        for (const Case& c : cases) {
+            for (const std::optional<bool> stated :
+                 {std::optional<bool>{}, std::optional<bool>{true}, std::optional<bool>{false}}) {
+                lib::Tool t = endMill(10, 20, 75, c.type);
+                t.cornerRadius = c.cornerRadius;
+                t.tipAngleDeg = c.tipAngle;
+                t.tipDiameter = c.tipDiameter;
+                t.centreCutting = stated;
+                const bool cuts = stated && c.settable ? *stated : c.byDefault;
+                CHECK(lib::centreCuttingSettable(c.type) == c.settable);
+                CHECK(t.cutsAtCentre() == cuts);
+                Program p = withStock();
+                p.op(Path(50, 40, 5).feed(50, 40, -5).done(), t, holder(40, 50), 40);
+                const std::vector<SimEvent> ev = verify(p);
+                INFO(c.what << ", stated " << (stated ? (*stated ? "yes" : "no") : "nothing") << "\n" << describe(ev));
+                CHECK(summary(ev, p) == (cuts ? Strings{} : Strings{"PlungeWithNonCentreCutting@0.0"}));
+            }
+        }
+    }
     SECTION("ramps: 3 degrees is a ramp, 10 degrees a plunge")
     {
         for (const double deg : {3.0, 10.0}) {
             const double run = 2.5 / dmath::tan(deg * 3.14159265358979323846 / 180.0);
             Program p = withStock();
-            p.op(Path(20, 40, 5).feed(20, 40, 0.5).feed(20 + run, 40, -2).done(), toolA(), holder(40, 50), 40);
+            p.op(Path(20, 40, 5).feed(20, 40, 0.5).feed(20 + run, 40, -2).done(), notCentreCutting(toolA()),
+                 holder(40, 50), 40);
             const std::vector<SimEvent> ev = verify(p);
             INFO(deg << " degrees\n" << describe(ev));
             CHECK(summary(ev, p) == (deg < 5 ? Strings{} : Strings{"PlungeWithNonCentreCutting@0.1"}));

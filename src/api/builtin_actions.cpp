@@ -200,7 +200,8 @@ constexpr CommandText kCommandTexts[] = {
      "Copies tools, holders, machines or materials into the document, or updates the copies it has", "CAM"},
     // T-057: several CAM commands as one undo step (applying a template set).
     {"cam.batch", "Several CAM Changes",
-     "Applies several CAM commands (operations, library items, a setup edit) in order as one undo step", "CAM"},
+     "Applies several CAM commands (operations, library items, a setup edit, fixture moves) in order as one undo step",
+     "CAM"},
 };
 
 std::string titleCase(std::string_view name)

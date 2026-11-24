@@ -234,6 +234,12 @@ private:
                 "its centre: an engraving cutter, a spot drill, a pointed chamfer mill or a ball end mill; " +
                 "the tool is a " + toolWord(t.type) + (t.type == T::ChamferMill ? " with a flat tip" : std::string()));
         }
+        if (!t.cutsAtCentre()) {
+            // Its library entry says so (Tool::centreCutting, after M3), whatever its type would suggest.
+            return invalid(
+                std::string("Engraving plunges straight into the material, so it needs a tool that cuts at ") +
+                "its centre; the tool library says this " + toolWord(t.type) + " does not");
+        }
         const Nm depth = toNm(p_.depth);
         if (pointed(t)) {
             const Nm reach = pointLengthNm(t.diameter, t.tipAngleDeg, t.tipDiameter);

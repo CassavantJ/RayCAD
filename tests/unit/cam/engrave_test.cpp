@@ -408,6 +408,11 @@ TEST_CASE("engraving refuses, naming the cause", "[cam][engrave][validate]")
         lib::Tool flatTip = tool(lib::ToolType::ChamferMill, 6, 90);
         flatTip.tipDiameter = 1;
         refused(engraveCase(plate(), {}, text, flatTip), ErrorCode::InvalidArgument, "chamfer mill with a flat tip");
+        // After M3: a tool of an engraving type whose library entry says it does not cut at its centre.
+        lib::Tool ball = tool(lib::ToolType::BallEndMill, 3, 0);
+        ball.centreCutting = false;
+        refused(engraveCase(plate(), {}, text, ball), ErrorCode::InvalidArgument,
+                "the tool library says this ball end mill does not");
     }
     SECTION("deeper than the point")
     {
