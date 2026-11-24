@@ -15,17 +15,23 @@
 #include "setup_tool.h"
 #include "setup_tree.h"
 
+#include <ray_api/cam_setup.h>
 #include <ray_api/feature_edit.h>
 #include <ray_api/viewer.h>
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QLocale>
+#include <QtCore/QStringList>
 #include <QtCore/QUrl>
 
 #include <algorithm>
+#include <map>
 #include <utility>
+#include <variant>
 
 namespace ray::ui {
 
@@ -76,7 +82,7 @@ const cam::Setup* findSetup(const doc::DocState& state, const SetupId& id)
 
 QString fieldOf(const QString& message)
 {
-    for (const char* key : {"gap", "angle", "mate.face", "mate.target"}) {
+    for (const char* key : {"gap", "angle", "tiltX", "tiltY", "mate.face", "mate.target"}) {
         if (message.contains(QLatin1Char('\'') + QLatin1String(key) + QLatin1Char('\'')))
             return QString::fromLatin1(key).replace(QStringLiteral("mate."), QString());
     }
@@ -136,6 +142,9 @@ FixturesToolModel::FixturesToolModel(SceneController* scene, SelectionModel* sel
 
 FixturesToolModel::~FixturesToolModel()
 {
+    ++stockSerial_;
+    if (stockJob_.valid())
+        stockJob_.cancel();
     if (commands_)
         commands_->setUiHandler(QStringLiteral("cam.fixtures."), {});
     if (doc::Document* d = liveDoc(); d != nullptr && !body_.isEmpty())
@@ -368,11 +377,20 @@ void FixturesToolModel::loadLibrary()
         for (const lib::LibraryStack::RootInfo& r : stack->roots())
             roots.emplace_back(r.dir, r.name);
     }
+    models_.clear();
     for (const camui::LibraryFixture& f : camui::libraryFixtures(roots)) {
         library_.push_back(QVariantMap{
             {QStringLiteral("name"), f.name}, {QStringLiteral("path"), f.path}, {QStringLiteral("root"), f.root}});
+        // Its description beside it (ray_api/cam_fixtures.h), for Place on stock; a file that does not read is skipped.
+        const QFileInfo model(f.path);
+        QFile description(model.dir().filePath(model.completeBaseName() + QStringLiteral(".json")));
+        if (description.open(QIODevice::ReadOnly)) {
+            if (auto parsed = api::cam_fixtures::parseFixtureModel(description.readAll().toStdString()))
+                models_.push_back(std::move(*parsed));
+        }
     }
     emit libraryChanged();
+    emit fixturesChanged();
 }
 
 std::optional<SetupId> FixturesToolModel::targetSetup() const
@@ -596,9 +614,10 @@ bool FixturesToolModel::place(const QString& bodyId)
         feature_ = f->id;
         existing_ = true;
         const QJsonObject props = propsOf(*f);
-        for (const char* key : {"gap", "x", "y", "z", "angle"}) {
-            values_[QLatin1String(key)] =
-                camui::valueText(props.value(QLatin1String(key)), QLatin1String(key) == QLatin1String("angle"), unit);
+        for (const char* key : {"gap", "x", "y", "z", "angle", "tiltX", "tiltY"}) {
+            const QLatin1String k(key);
+            values_[k] = camui::valueText(props.value(k),
+                                          k == QLatin1String("angle") || k.startsWith(QLatin1String("tilt")), unit);
         }
         const QJsonObject mate = props.value(QStringLiteral("mate")).toObject();
         face_ = mate.value(QStringLiteral("face")).toObject();
@@ -662,8 +681,9 @@ void FixturesToolModel::setValue(const QString& key, const QVariant& value)
 {
     if (body_.isEmpty())
         return;
-    static const QStringList keys = {QStringLiteral("gap"), QStringLiteral("x"), QStringLiteral("y"),
-                                     QStringLiteral("z"), QStringLiteral("angle")};
+    static const QStringList keys = {QStringLiteral("gap"),  QStringLiteral("x"),     QStringLiteral("y"),
+                                     QStringLiteral("z"),    QStringLiteral("angle"), QStringLiteral("tiltX"),
+                                     QStringLiteral("tiltY")};
     if (!keys.contains(key))
         return;
     values_[key] = value.toString();
@@ -788,6 +808,9 @@ void FixturesToolModel::takePick(int bodyIndex, kernel::SubId sub)
             if (facePick) {
                 self->face_ = ref;
                 self->pickMode_ = self->target_.isEmpty() ? QStringLiteral("target") : QString();
+                // A mate sets the orientation: the tilts of a move by numbers go.
+                if (self->values_.remove(QStringLiteral("tiltX")) + self->values_.remove(QStringLiteral("tiltY")) > 0)
+                    emit self->valuesChanged();
             } else {
                 self->target_ = ref;
                 self->targetBody_ = picked;
@@ -816,6 +839,8 @@ camui::PlacementArgs FixturesToolModel::arguments() const
     in.y = values_.value(QStringLiteral("y")).toString();
     in.z = values_.value(QStringLiteral("z")).toString();
     in.angle = values_.value(QStringLiteral("angle")).toString();
+    in.tiltX = values_.value(QStringLiteral("tiltX")).toString();
+    in.tiltY = values_.value(QStringLiteral("tiltY")).toString();
     in.unitLabel = units_ ? units_->unitLabel() : QStringLiteral("mm");
     const camui::CheckFn check = [&](const QString& expression, bool angle, QString* error) {
         if (!state)
@@ -943,7 +968,7 @@ bool FixturesToolModel::canCommit() const
 
 bool FixturesToolModel::busy() const
 {
-    return importing_ || pickPending_ || previewBusy_ || previewTimer_.isActive() || committing_ ||
+    return importing_ || pickPending_ || previewBusy_ || previewTimer_.isActive() || committing_ || placingOnStock_ ||
            (scene_ && scene_->preview().owner() == this && scene_->preview().meshing());
 }
 
@@ -992,6 +1017,291 @@ bool FixturesToolModel::commit()
 void FixturesToolModel::cancel()
 {
     closePlacement();
+}
+
+// ---------- on stock ----------
+void FixturesToolModel::setGrip(const QString& grip)
+{
+    const QString g = grip == QLatin1String("x") || grip == QLatin1String("y") ? grip : QStringLiteral("shorter");
+    if (g == grip_)
+        return;
+    grip_ = g;
+    emit gripChanged();
+}
+
+void FixturesToolModel::setStockStatus(const QString& status, const QString& message)
+{
+    stockStatus_ = status;
+    stockMessage_ = message;
+    emit stockStatusChanged();
+}
+
+// The vise with a library description the document has (one that is a fixture of the setup first), its moving jaw
+// (one in the setup, else the first after it in the document, else any), and the setup's parallels (a described pair,
+// both fixtures of the setup).
+std::optional<FixturesToolModel::ViseChoice> FixturesToolModel::chooseVise(const doc::DocState& state) const
+{
+    const std::optional<SetupId> setupId = targetSetup();
+    const cam::Setup* setup = setupId ? findSetup(state, *setupId) : nullptr;
+    const auto inSetup = [&](const BodyId& id) {
+        return setup != nullptr &&
+               std::find(setup->fixtureBodies.begin(), setup->fixtureBodies.end(), id) != setup->fixtureBodies.end();
+    };
+    const auto named = [&](const std::string& name) {
+        std::vector<std::size_t> out;
+        for (std::size_t i = 0; i < state.bodies.size(); ++i) {
+            if (state.bodies[i].role == doc::Body::Role::Fixture && state.bodies[i].name == name)
+                out.push_back(i);
+        }
+        return out;
+    };
+    std::optional<ViseChoice> best;
+    bool bestInSetup = false;
+    for (const api::cam_fixtures::FixtureModel& m : models_) {
+        if (m.kind != api::cam_fixtures::FixtureModel::Kind::Vise)
+            continue;
+        const std::vector<std::size_t> jaws = named(m.vise.movingJaw);
+        for (const std::size_t i : named(m.vise.body)) {
+            const bool in = inSetup(state.bodies[i].id);
+            if (best && (bestInSetup || !in))
+                continue;
+            std::optional<std::size_t> jaw;
+            for (const std::size_t j : jaws) {
+                if (!jaw && inSetup(state.bodies[j].id))
+                    jaw = j;
+            }
+            for (const std::size_t j : jaws) {
+                if (!jaw && j > i)
+                    jaw = j;
+            }
+            if (!jaw && !jaws.empty())
+                jaw = jaws.front();
+            if (!jaw)
+                continue;
+            best = ViseChoice{m.vise, state.bodies[i].id,      state.bodies[*jaw].id, std::nullopt,
+                              {},     qs(state.bodies[i].name)};
+            bestInSetup = in;
+        }
+    }
+    if (!best || setup == nullptr)
+        return best;
+    for (const api::cam_fixtures::FixtureModel& m : models_) {
+        if (m.kind != api::cam_fixtures::FixtureModel::Kind::Parallels)
+            continue;
+        std::vector<BodyId> pair;
+        for (const std::string& name : m.parallels.bodies) {
+            for (const BodyId& b : setup->fixtureBodies) {
+                const auto body = std::find_if(state.bodies.begin(), state.bodies.end(),
+                                               [&](const doc::Body& x) { return x.id == b; });
+                if (body != state.bodies.end() && body->name == name &&
+                    std::find(pair.begin(), pair.end(), b) == pair.end()) {
+                    pair.push_back(b);
+                    break;
+                }
+            }
+        }
+        if (pair.size() == 2) {
+            best->parallelsModel = m.parallels;
+            best->parallels = pair;
+            break;
+        }
+    }
+    return best;
+}
+
+QString FixturesToolModel::viseName() const
+{
+    doc::Document* d = liveDoc();
+    if (d == nullptr || models_.empty())
+        return {};
+    const std::optional<ViseChoice> choice = chooseVise(*d->state());
+    return choice ? choice->name : QString();
+}
+
+bool FixturesToolModel::placeOnStock()
+{
+    if (placingOnStock_)
+        return false;
+    if (doc_ == nullptr || liveDoc() == nullptr)
+        subscribe();
+    doc::Document* d = liveDoc();
+    api::IApp* a = app();
+    if (d == nullptr || a == nullptr)
+        return false;
+    if (const QString reason = commandReason(QString()); !reason.isEmpty()) {
+        setStockStatus(QStringLiteral("failed"), reason);
+        return false;
+    }
+    closePlacement();
+    if (models_.empty())
+        loadLibrary();
+    const std::optional<SetupId> setupId = targetSetup();
+    const doc::DocStatePtr state = d->state();
+    const cam::Setup* setup = setupId ? findSetup(*state, *setupId) : nullptr;
+    if (setup == nullptr) {
+        setStockStatus(QStringLiteral("failed"), trs("Add a setup first: the vise goes on its stock"));
+        return false;
+    }
+    std::optional<ViseChoice> choice = chooseVise(*state);
+    if (!choice) {
+        setStockStatus(QStringLiteral("failed"),
+                       trs("There is no library vise in the document: add the generic vise from the library first"));
+        return false;
+    }
+    const doc::BuildResultPtr build = d->build();
+    if (!build || d->rebuildPending() || d->builtState() != state) {
+        setStockStatus(QStringLiteral("failed"), trs("The model is still being rebuilt: try again when it is done"));
+        return false;
+    }
+    placingOnStock_ = true;
+    const std::uint64_t serial = ++stockSerial_;
+    setStockStatus(QString(), trs("Placing %1 on the stock of %2…").arg(choice->name, qs(setup->name)));
+    // A stock from an earlier setup is what the CAM engine simulates for it (an app job with progress).
+    cam::ICamEngine* engine = a->cam();
+    if (std::holds_alternative<cam::FromSetupStock>(setup->stock) && engine != nullptr) {
+        if (!carried_)
+            carried_ = std::make_unique<camui::CarriedStockRequest>();
+        QPointer<FixturesToolModel> self(this);
+        const SetupId id = *setupId;
+        carried_->start(*engine, state, build, {id},
+                        [self, serial, c = *choice, id, state, build](api::cam_setup::CarriedStocks stocks,
+                                                                      std::map<SetupId, Error> errors) {
+                            if (!self || serial != self->stockSerial_)
+                                return;
+                            if (const auto e = errors.find(id); e != errors.end()) {
+                                self->placingOnStock_ = false;
+                                self->setStockStatus(
+                                    e->second.code == ErrorCode::Cancelled ? QString() : QStringLiteral("failed"),
+                                    trs("The stock from the earlier setup: %1").arg(qs(e->second.message)));
+                                return;
+                            }
+                            self->planOnStock(c, id, state, build, stocks[id]);
+                        });
+        return true;
+    }
+    planOnStock(std::move(*choice), *setupId, state, build, nullptr);
+    return true;
+}
+
+void FixturesToolModel::planOnStock(ViseChoice choice, SetupId setupId, doc::DocStatePtr state,
+                                    doc::BuildResultPtr build, std::shared_ptr<const cam::CarriedStock> carried)
+{
+    using api::cam_fixtures::PlacePlan;
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    api::IApp* a = app();
+    if (jobs == nullptr || a == nullptr) {
+        placingOnStock_ = false;
+        setStockStatus(QStringLiteral("failed"), trs("The fixtures panel is not available"));
+        return;
+    }
+    api::cam_fixtures::PlaceRequest rq;
+    rq.state = state;
+    rq.build = build;
+    rq.setup = setupId;
+    rq.viseModel = choice.model;
+    rq.vise = choice.vise;
+    rq.jaw = choice.jaw;
+    rq.parallelsModel = choice.parallelsModel;
+    rq.parallels = choice.parallels;
+    rq.grip = grip_ == QLatin1String("x")   ? api::cam_fixtures::Grip::AcrossX
+              : grip_ == QLatin1String("y") ? api::cam_fixtures::Grip::AcrossY
+                                            : api::cam_fixtures::Grip::Shorter;
+    rq.unit = (units_ ? units_->unitLabel() : QStringLiteral("mm")).toStdString();
+    rq.namePattern = trs("Place %1").toStdString();
+    const std::string docId = docId_;
+    const std::uint64_t serial = stockSerial_;
+    stockJob_ = jobs->submit<std::shared_ptr<const PlacePlan>>(
+        JobInfo{"Vise on the stock", JobPriority::Interactive, false},
+        [a, docId, rq, carried](JobContext& ctx) mutable -> Result<std::shared_ptr<const PlacePlan>> {
+            // The setup's frame and stock box, as the setup panel shows them.
+            auto frame = api::cam_setup::previewSetup(rq.state, rq.build, rq.setup, ctx, carried.get());
+            if (!frame)
+                return tl::unexpected(frame.error());
+            rq.modelFromWcs = frame->resolved.modelFromWcs;
+            rq.stock = frame->resolved.stockBounds;
+            const doc::DocStatePtr base = rq.state;
+            rq.buildBefore = [a, docId, base, &ctx](const FeatureId& f) -> Result<doc::BuildResultPtr> {
+                const doc::DocStatePtr snapshot = api::feature_edit::stateBefore(*base, f);
+                if (!snapshot)
+                    return tl::unexpected(Error{ErrorCode::NotFound, "The placement is not in the document", {}});
+                return api::feature_edit::buildSnapshot(*a, docId, snapshot, ctx);
+            };
+            auto plan = api::cam_fixtures::planViseOnStock(rq);
+            if (!plan)
+                return tl::unexpected(plan.error());
+            return std::make_shared<const PlacePlan>(std::move(*plan));
+        });
+    QPointer<FixturesToolModel> self(this);
+    const QString setupTitle = setupName();
+    stockJob_.then([self, serial, choice, setupTitle](Result<std::shared_ptr<const PlacePlan>> r) {
+        if (!self || serial != self->stockSerial_)
+            return;
+        self->stockJob_ = {};
+        if (!r) {
+            self->placingOnStock_ = false;
+            self->setStockStatus(r.error().code == ErrorCode::Cancelled ? QString() : QStringLiteral("failed"),
+                                 qs(r.error().message));
+            return;
+        }
+        self->applyOnStock(**r, choice, setupTitle);
+    });
+}
+
+void FixturesToolModel::applyOnStock(const api::cam_fixtures::PlacePlan& plan, const ViseChoice& choice,
+                                     const QString& setupTitle)
+{
+    api::IApp* a = app();
+    QJsonObject args = jsonObject(plan.batchArgsJson);
+    args.insert(QStringLiteral("document"), QString::fromStdString(docId_));
+    JobHandle<api::ActionResult> job = a != nullptr
+                                           ? a->actions().invoke("cam.batch", jsonText(args), api::Caller::User)
+                                           : JobHandle<api::ActionResult>{};
+    if (!job.valid()) {
+        placingOnStock_ = false;
+        setStockStatus(QStringLiteral("failed"), trs("The placement could not be saved"));
+        return;
+    }
+    const auto len = [this](double mm) {
+        return units_ ? units_->formatLength(mm) : QLocale::c().toString(mm, 'f', 3) + QStringLiteral(" mm");
+    };
+    const api::cam_fixtures::ViseFit& fit = plan.fit;
+    QStringList lines;
+    lines << trs("%1 is on the stock of %2, gripping it across %3 (%4).")
+                 .arg(choice.name, setupTitle, fit.acrossX ? QStringLiteral("X") : QStringLiteral("Y"),
+                      len(fit.across));
+    lines << (choice.parallelsModel ? trs("The stock stands on the parallels; the jaws hold %1 of its %2 height.")
+                                    : trs("The stock stands on the vise's floor; the jaws hold %1 of its %2 height."))
+                 .arg(len(std::max(fit.gripDepth, 0.0)), len(fit.height));
+    bool warn = false;
+    if (fit.tooWide) {
+        lines << trs("The stock is %1 across the jaws, but %2 opens to %3: the moving jaw is shown fully open and does "
+                     "not hold it.")
+                     .arg(len(fit.across), choice.name, len(choice.model.maxOpening));
+        warn = true;
+    }
+    if (fit.gripDepth <= 0) {
+        lines << trs("The jaws do not reach the stock.");
+        warn = true;
+    } else if (fit.jawAboveStock > 0.0005) {
+        lines << trs("The jaws stand %1 above the stock's top: the tools must clear them.").arg(len(fit.jawAboveStock));
+        warn = true;
+    }
+    if (!plan.addedToSetup.empty())
+        lines << trs("It is now a fixture of %1.").arg(setupTitle);
+    const QString done = lines.join(QLatin1Char(' '));
+    const bool warned = warn;
+    QPointer<FixturesToolModel> self(this);
+    const std::uint64_t serial = stockSerial_;
+    job.then([self, serial, done, warned](Result<api::ActionResult> r) {
+        if (!self || serial != self->stockSerial_)
+            return;
+        self->placingOnStock_ = false;
+        if (!r)
+            self->setStockStatus(QStringLiteral("failed"), qs(r.error().message));
+        else
+            self->setStockStatus(warned ? QStringLiteral("warning") : QStringLiteral("ok"), done);
+        emit self->fixturesChanged();
+    });
 }
 
 } // namespace ray::ui

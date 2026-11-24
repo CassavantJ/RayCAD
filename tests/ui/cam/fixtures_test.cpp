@@ -4,7 +4,8 @@
 // mated to the plate's front face with clicks in the view, lowered with a typed Z, previewed, applied (one undo step)
 // and undone; the moving jaw mated to the fixed jaw with the plate's width as the gap, so it closes on the plate; Esc
 // cancels a placement and then closes the panel; the operation panel refuses a face of a fixture as geometry and takes
-// the plate's. Screenshots go to build/shots/t077_*.png, in both themes.
+// the plate's. Screenshots go to build/shots/t077_*.png, in both themes. After T-077, the vise and parallels placed on
+// the setup's stock with "Place on stock" (one undo step, across Y then X): build/shots/fixsnap_*.png.
 // First, on their own: operation_tool.h's QPointer members need these classes whole.
 #include "cam/operation_view.h"
 #include "cam/setup_tool.h"
@@ -468,6 +469,135 @@ TEST_CASE("the fixtures panel adds the generic vise, mates it to the part and cl
     CHECK(w.operation()->picks().isEmpty());
     w.shotsBothThemes(QStringLiteral("t077_operation_refuses_fixture"));
     w.operation()->cancel();
+    w.checkNoWarnings();
+}
+
+// After T-077: the vise placed on the setup's stock from the panel. The plate (120 x 80 x 10) with a setup whose stock
+// is the plate; the generic vise and parallels added from the library (both fixtures of the setup); "Place on stock"
+// with the grip on the shorter side (across Y, 80): the plate stands on the parallels, the moving jaw closed on its
+// front face, the fixed jaw's back 60 behind its back face, centred along X; the jaws stand above the plate's top and
+// the panel says so; one undo step, undone and redone; again across X (the four placements edited, not added); the
+// vise's placement opened by hand shows its numbers.
+TEST_CASE("the fixtures panel places the vise on the setup's stock in one step", "[ui][cam][fixtures]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPlate);
+    const BodyId plate = w.host->scene()->body(0)->id;
+    const Box3 part = w.boxOf(plate);
+    const lib::MachineDef* m = w.host->app()->libraries()->machine(MachineId{Uuid::fromString(kVmc)});
+    REQUIRE(m != nullptr);
+    (void)w.invokeResult("cam.setup.add", R"({"id":")" + kSetup + R"(","name":"Op 1 - top","partBodies":[")" +
+                                              plate.value.toString() + R"("],"machine":")" + kVmc +
+                                              R"(","library":{"machines":[)" + api::cam_setup::machineJson(*m) + "]}}");
+    w.toWorkspace(1);
+    REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() == 1; }, kTimeoutMs));
+    w.key(Qt::Key_F, Qt::ShiftModifier);
+    REQUIRE(QTest::qWaitFor([&] { return w.fixtures()->shown(); }, 5000));
+    // No vise yet: the section is not shown.
+    CHECK(w.fixtures()->viseName().isEmpty());
+    CHECK_FALSE(w.find(QStringLiteral("fixtureOnStock"))->isVisible());
+
+    // ---- The vise and the parallels from the library; each opens for placing by hand, which is cancelled ----
+    const QVariantList library = w.fixtures()->library();
+    const auto add = [&](const QString& name, int fixturesAfter) {
+        int index = -1;
+        for (int i = 0; i < library.size(); ++i) {
+            if (library[i].toMap().value(QStringLiteral("name")).toString() == name)
+                index = i;
+        }
+        REQUIRE(index >= 0);
+        w.shown(QStringLiteral("fixturesLibrary"))->setProperty("currentIndex", index);
+        w.click(QStringLiteral("fixturesAdd"));
+        REQUIRE(QTest::qWaitFor(
+            [&] { return w.fixtures()->fixtures().size() == fixturesAfter && !w.fixtures()->placing().isEmpty(); },
+            kTimeoutMs));
+        w.idle();
+        w.fixtures()->cancel();
+        w.idle();
+    };
+    add(QStringLiteral("Generic vise 6in"), 2);
+    add(QStringLiteral("Generic parallels 1x6in"), 4);
+    const BodyId vise = w.bodyNamed("Generic 6 in vise");
+    const BodyId jaw = w.bodyNamed("Generic 6 in vise moving jaw");
+    const BodyId parA = w.bodyNamed("Generic parallel 1/8 x 1 x 6 in A");
+    const BodyId parB = w.bodyNamed("Generic parallel 1/8 x 1 x 6 in B");
+    CHECK(setupOf(*w.document()->state()).fixtureBodies.size() == 4);
+    CHECK(transformCount(*w.document()->state()) == 0);
+    CHECK(w.fixtures()->viseName() == QStringLiteral("Generic 6 in vise"));
+    w.shown(QStringLiteral("fixtureOnStock"));
+    QQuickItem* note = w.shown(QStringLiteral("fixtureOnStockNote"));
+    CHECK_THAT(note->property("text").toString().toStdString(), ContainsSubstring("if the stock changes"));
+    CHECK(w.fixtures()->grip() == QStringLiteral("shorter"));
+
+    // ---- Place on stock: one undo step; the plate on the parallels, the jaws closed across Y ----
+    const std::size_t undoBefore = w.document()->undoCount();
+    w.click(QStringLiteral("fixturePlaceOnStock"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.fixtures()->placingOnStock() && !w.fixtures()->stockStatus().isEmpty(); },
+                            kTimeoutMs));
+    w.idle();
+    INFO(w.fixtures()->stockMessage().toStdString());
+    // The jaws stand 44.45 - 25.4 - 10 = 9.05 above the plate's top: said as a warning.
+    REQUIRE(w.fixtures()->stockStatus() == QStringLiteral("warning"));
+    CHECK_THAT(w.fixtures()->stockMessage().toStdString(), ContainsSubstring("above the stock's top"));
+    CHECK_THAT(w.fixtures()->stockMessage().toStdString(), ContainsSubstring("parallels"));
+    CHECK(w.document()->undoCount() == undoBefore + 1);
+    CHECK(w.document()->undoCommand()->name == "cam.batch");
+    CHECK(transformCount(*w.document()->state()) == 4);
+    const double cx = (part.min.x + part.max.x) / 2;
+    const auto placedAcrossY = [&] {
+        const Box3 j = w.boxOf(jaw), v = w.boxOf(vise), a = w.boxOf(parA), b = w.boxOf(parB);
+        CHECK(j.max.y == Catch::Approx(part.min.y).margin(1e-5));         // closed on the front face
+        CHECK(v.max.y == Catch::Approx(part.max.y + 60).margin(1e-5));    // the fixed jaw on the back face
+        CHECK((j.min.x + j.max.x) / 2 == Catch::Approx(cx).margin(1e-5)); // centred along the jaws
+        CHECK(a.max.z == Catch::Approx(part.min.z).margin(1e-5));         // the plate on the parallels
+        CHECK(b.max.z == Catch::Approx(part.min.z).margin(1e-5));
+        CHECK(j.max.z == Catch::Approx(part.min.z - 25.4 + 44.45).margin(1e-5));
+        CHECK(std::min(a.min.y, b.min.y) == Catch::Approx(part.min.y).margin(1e-5)); // against the jaws
+        CHECK(std::max(a.max.y, b.max.y) == Catch::Approx(part.max.y).margin(1e-5));
+    };
+    placedAcrossY();
+    w.view()->fitAll();
+    w.idle();
+    w.shotsBothThemes(QStringLiteral("fixsnap_on_stock"));
+
+    // ---- Undo takes all of it back in one step; redo places it again ----
+    (void)w.invokeResult("edit.undo", "{}");
+    w.settle();
+    CHECK(transformCount(*w.document()->state()) == 0);
+    CHECK(w.boxOf(jaw).min.y == Catch::Approx(50.8).margin(1e-5)); // where the file has it
+    (void)w.invokeResult("edit.redo", "{}");
+    w.settle();
+    placedAcrossY();
+
+    // ---- Across X: the same placements, edited ----
+    QQuickItem* grip = w.shown(QStringLiteral("fixtureGrip"));
+    w.fixtures()->setGrip(QStringLiteral("x"));
+    REQUIRE(QTest::qWaitFor([&] { return grip->property("currentIndex").toInt() == 1; }, 5000));
+    w.click(QStringLiteral("fixturePlaceOnStock"));
+    REQUIRE(QTest::qWaitFor([&] { return !w.fixtures()->placingOnStock() && !w.fixtures()->stockStatus().isEmpty(); },
+                            kTimeoutMs));
+    w.idle();
+    CHECK(w.fixtures()->stockStatus() == QStringLiteral("warning"));
+    CHECK(transformCount(*w.document()->state()) == 4);
+    const Box3 j = w.boxOf(jaw);
+    CHECK(j.min.x == Catch::Approx(part.max.x).margin(1e-5));
+    CHECK((j.min.y + j.max.y) / 2 == Catch::Approx((part.min.y + part.max.y) / 2).margin(1e-5));
+    CHECK(w.boxOf(vise).min.x == Catch::Approx(part.min.x - 60).margin(1e-5));
+    w.view()->fitAll();
+    w.idle();
+    w.shotsBothThemes(QStringLiteral("fixsnap_on_stock_across_x"));
+
+    // ---- Still an ordinary placement: opened by hand, it shows its numbers ----
+    REQUIRE(w.fixtures()->place(QString::fromStdString(vise.value.toString())));
+    w.idle();
+    CHECK(w.fixtures()->placingExisting());
+    CHECK(w.fixtures()->values().value(QStringLiteral("angle")).toString() == QStringLiteral("-90 deg"));
+    CHECK_FALSE(w.fixtures()->hasFace());
+    w.shown(QStringLiteral("fixtureField.tiltX"));
+    w.shotsBothThemes(QStringLiteral("fixsnap_vise_by_hand"));
+    w.fixtures()->cancel();
+    w.idle();
     w.checkNoWarnings();
 }
 

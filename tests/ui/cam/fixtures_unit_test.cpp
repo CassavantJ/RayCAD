@@ -68,6 +68,18 @@ TEST_CASE("the placement's props: units added to plain numbers, zeros left out, 
     CHECK(a.error.contains(QStringLiteral("90 deg")));
     // No fixture: nothing to do.
     CHECK_FALSE(placementProps(PlacementInput{}, kAccept).error.isEmpty());
+    // Tilts (degrees when plain) are for a move without a mate; with one they are refused, naming the field.
+    PlacementInput tilted;
+    tilted.body = QStringLiteral("b1");
+    tilted.tiltX = QStringLiteral("180");
+    tilted.tiltY = QStringLiteral("0");
+    a = placementProps(tilted, kAccept);
+    REQUIRE(a.error.isEmpty());
+    CHECK(text(a.props) == R"({"body":"b1","tiltX":"180 deg"})");
+    tilted.face = ref(QStringLiteral("b1"));
+    tilted.target = ref(QStringLiteral("p1"));
+    a = placementProps(tilted, kAccept);
+    CHECK(a.field == QStringLiteral("tiltX"));
 }
 
 TEST_CASE("the edit patch removes what the placement no longer has; stored values read back", "[ui][cam][fixtures]")
@@ -76,7 +88,7 @@ TEST_CASE("the edit patch removes what the placement no longer has; stored value
                             {QStringLiteral("x"), QStringLiteral("1 mm")}};
     const QJsonObject patch = editPatch(props);
     CHECK(patch.value(QStringLiteral("x")).toString() == QStringLiteral("1 mm"));
-    for (const char* key : {"mate", "gap", "angle", "y", "z"})
+    for (const char* key : {"mate", "gap", "angle", "tiltX", "tiltY", "y", "z"})
         CHECK(patch.value(QLatin1String(key)).isNull());
     CHECK(valueText(QJsonValue(12.7), false, QStringLiteral("in")) == QStringLiteral("0.5 in"));
     CHECK(valueText(QJsonValue(12.7), false, QStringLiteral("mm")) == QStringLiteral("12.7 mm"));
