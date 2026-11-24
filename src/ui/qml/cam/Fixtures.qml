@@ -385,10 +385,13 @@ Item {
         }
     }
 
-    // Esc cancels the placement (or closes the panel) wherever the focus is while no job claims it.
+    // Esc cancels the placement (or closes the panel) wherever the focus is while no job claims it and no dialog over
+    // the workspace (post, setup sheet, tool library, templates) has its own Esc: two enabled Esc shortcuts are
+    // ambiguous to Qt and neither would fire (Shell.qml stands back for the same dialogs).
     Shortcut {
         sequence: "Esc"
-        enabled: CamFixtures.shown && !Session.jobActive
+        enabled: CamFixtures.shown && !Session.jobActive && !CamPost.active && !CamTools.shown
+                 && !CamTemplates.shown && !CamSheet.active
         onActivated: CamFixtures.escape()
     }
 

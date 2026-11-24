@@ -45,6 +45,7 @@ QString typeTitle(const QString& type)
         {"fillet", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Fillet")},
         {"chamfer", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Chamfer")},
         {"hole", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Hole")},
+        {"transform_body", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Move body")}, // T-077
     };
     for (const auto& [t, title] : titles) {
         if (type == QLatin1String(t))
@@ -64,6 +65,8 @@ QString iconOf(const QString& type)
         return type == QLatin1String("fillet") ? QStringLiteral("fillet3d") : type;
     if (type == QLatin1String("import"))
         return QStringLiteral("cube");
+    if (type == QLatin1String("transform_body")) // T-077: a fixture placed against the part
+        return QStringLiteral("lock");
     return QStringLiteral("document");
 }
 
@@ -583,6 +586,10 @@ bool FeatureTreeModel::edit(int row)
             engine_->singletonInstance<FeatureToolModel*>(QStringLiteral("RayCad.Ui"), QStringLiteral("FeatureTool"));
     if (r.type == QLatin1String("import")) {
         setMessage(trt("An imported body has no properties to edit"));
+        return false;
+    }
+    if (r.type == QLatin1String("transform_body")) { // T-077
+        setMessage(trt("%1 places a body: change it in the CAM workspace's Fixtures panel (Shift+F)").arg(r.name));
         return false;
     }
     if (rollback_ >= 0 && row > rollback_) {
