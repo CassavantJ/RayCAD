@@ -49,15 +49,21 @@ jobs:
             os: macos-latest
             triplet: arm64-osx-dynamic
             qt_arch: clang_64
-          # The test preset of each configuration (tests/tiers.cmake): Debug runs the quick tier (on Windows without
-          # the debug-heavy tests), Release every test.
+          # The test preset of each configuration on Linux and macOS (tests/tiers.cmake): Debug runs the quick tier,
+          # Release every test.
           - config: debug
             tests: debug-quick
           - config: release
             tests: release
+          # Windows also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself
+          # rather than through a test preset (an -LE given with --preset was not combined with the preset's own
+          # exclusion): what windows-msvc-debug-ci and windows-msvc-release select, less the label desktop.
           - preset: windows-msvc
             config: debug
-            tests: debug-ci
+            windows_tests: '-C Debug -L "^quick$" -LE "^(debug-heavy|desktop)$"'
+          - preset: windows-msvc
+            config: release
+            windows_tests: '-C Release -LE "^desktop$"'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -165,13 +171,19 @@ jobs:
       # 20 minutes or more each in an MSVC Debug build and would take this job past its limit; Linux and macOS Debug
       # run them, as every Release does. ctest runs one job per processor of the runner; tests with threads of their own take several
       # (PROCESSORS) and timed tests run alone.
+      # Windows leaves out the tests that show a window (label desktop). The runner's one screen is smaller than
+      # their windows (1440 x 900, and up to twice that at the 150 % and 200 % runs): a window cannot be sized as the
+      # test asks (glass: "width 1200" never reached) and clicks land off it, so nearly all of them failed there
+      # (runs 45129357124, 45454955286). Qt's offscreen platform is no way out on Windows: there the window tests
+      # skip their pixel checks like on Linux, and the gallery and two CAM suites then fail on font metrics. They run
+      # on a developer's desktop (tools\verify.cmd, RAY_TEST_SCREEN), and Linux and macOS run them offscreen here.
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
           cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} || exit /b 1
-          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
+          ctest --test-dir build/${{ matrix.preset }} ${{ matrix.windows_tests }} --output-on-failure --timeout 300 --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
       # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
       # the offscreen platform.
