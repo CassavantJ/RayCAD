@@ -93,6 +93,8 @@ class ToolLibraryModel : public QObject {
     Q_PROPERTY(QVariantMap values READ values NOTIFY valuesChanged)
     Q_PROPERTY(QVariantList rows READ rows NOTIFY valuesChanged)        // presets or segments
     Q_PROPERTY(QVariantMap problems READ problems NOTIFY valuesChanged) // field key -> message
+    // [{value, text}] of a tool's centre-cutting field: the default of its type and tip as now edited, Yes, No.
+    Q_PROPERTY(QVariantList centreCuttingChoices READ centreCuttingChoices NOTIFY valuesChanged)
     // [{key, label, kind}]; announced only when the list itself changes (a form is not made again for nothing).
     Q_PROPERTY(QVariantList fields READ fields NOTIFY fieldsChanged)
     Q_PROPERTY(QVariantList rowFields READ rowFields NOTIFY fieldsChanged)
@@ -146,6 +148,7 @@ public:
     QVariantMap values() const;
     QVariantList rows() const;
     QVariantMap problems() const;
+    QVariantList centreCuttingChoices() const;
     QVariantList fields() const { return fields_; }
     QVariantList rowFields() const { return rowFields_; }
     QString status() const { return status_; }

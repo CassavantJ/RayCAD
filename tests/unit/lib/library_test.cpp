@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <optional>
 #include <string>
 
 using namespace libtest;
@@ -168,6 +169,56 @@ TEST_CASE("saving keeps keys this version does not know", "[lib]")
     CHECK(saved.find("\"comment\": \"from the manual\"") != std::string::npos);
     CHECK(saved.find("\"maxRpm\": 10000") != std::string::npos);
     CHECK(library->issues().empty());
+}
+
+// After M3 (libraries.h Tool::centreCutting): a tool file written before the key existed loads with its type's default
+// and is saved back without it; a stated value is written to the file and read back.
+TEST_CASE("centre cutting: an old file without it, then stated, round-trips through the folder", "[lib][centreCutting]")
+{
+    TempDir dir;
+    auto face = sampleTool(1, ray::lib::ToolType::FaceMill, 50);
+    auto flat = sampleTool(2);
+    const std::string faceFile = toolFile(dir.dir(), fixedId(1));
+    const std::string flatFile = toolFile(dir.dir(), fixedId(2));
+    // The files as a RayCAD from before wrote them (nothing stated: no key).
+    {
+        auto writer = openLibrary(dir.dir());
+        REQUIRE(writer->save(face));
+        REQUIRE(writer->save(flat));
+    }
+    const std::string oldFace = readFile(faceFile);
+    REQUIRE(oldFace.find("centreCutting") == std::string::npos);
+    REQUIRE(readFile(flatFile).find("centreCutting") == std::string::npos);
+
+    auto library = openLibrary(dir.dir());
+    CHECK(library->issues().empty());
+    REQUIRE(library->tools().size() == 2);
+    const auto loadedFace = library->tools()[0];
+    const auto loadedFlat = library->tools()[1];
+    CHECK_FALSE(loadedFace.centreCutting.has_value());
+    CHECK_FALSE(loadedFace.cutsAtCentre()); // a face mill does not cut at its centre by default
+    CHECK_FALSE(loadedFlat.centreCutting.has_value());
+    CHECK(loadedFlat.cutsAtCentre()); // a flat end mill does
+    // Saved again unchanged: the file is what it was.
+    REQUIRE(library->save(loadedFace));
+    CHECK(readFile(faceFile) == oldFace);
+
+    // Stated both ways, saved, read back from the folder.
+    auto faceYes = loadedFace;
+    faceYes.centreCutting = true;
+    auto flatNo = loadedFlat;
+    flatNo.centreCutting = false;
+    REQUIRE(library->save(faceYes));
+    REQUIRE(library->save(flatNo));
+    CHECK(readFile(faceFile).find("\"centreCutting\": true") != std::string::npos);
+    CHECK(readFile(flatFile).find("\"centreCutting\": false") != std::string::npos);
+    auto reopened = openLibrary(dir.dir());
+    CHECK(reopened->issues().empty());
+    REQUIRE(reopened->tools().size() == 2);
+    CHECK(reopened->tools()[0].centreCutting == std::optional<bool>(true));
+    CHECK(reopened->tools()[0].cutsAtCentre());
+    CHECK(reopened->tools()[1].centreCutting == std::optional<bool>(false));
+    CHECK_FALSE(reopened->tools()[1].cutsAtCentre());
 }
 
 TEST_CASE("an item that would not pass its schema is not written", "[lib]")

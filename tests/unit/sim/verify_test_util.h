@@ -57,6 +57,13 @@ inline lib::Tool endMill(double diameter, double flute, double overall, lib::Too
     }
     return t;
 }
+// The same tool, its library entry saying it does not cut at its centre (lib::Tool::centreCutting; a flat end mill
+// cuts at its centre by default since that was added).
+inline lib::Tool notCentreCutting(lib::Tool t)
+{
+    t.centreCutting = false;
+    return t;
+}
 
 // A toolpath written move by move, in mm.
 class Path {

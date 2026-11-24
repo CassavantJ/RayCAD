@@ -514,7 +514,9 @@ private:
         if (R_ < 1000) {
             return invalid("The tool is smaller than 0.002 mm");
         }
-        centreCutting_ = t.type == T::BallEndMill;
+        // Only a ball end mill is taken to cut at its centre here (the tabs' way down, contour2d.h), and not one whose
+        // library entry says it does not (Tool::centreCutting, after M3).
+        centreCutting_ = t.type == T::BallEndMill && t.cutsAtCentre();
         plan_.toolRadius = R_;
         return {};
     }

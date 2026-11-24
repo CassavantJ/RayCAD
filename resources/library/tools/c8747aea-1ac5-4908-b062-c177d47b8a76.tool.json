@@ -1,5 +1,6 @@
 {
   "bodyMaterial": "carbide",
+  "centreCutting": true,
   "comment": "Generic square end mill, 1/4 in diameter. Lengths: approximate regular-length inch catalogue proportions (measure the real tool). Cutting data: conservative generic starting values computed by tools/gen_library.py from its per-material factors (not copied from any table); compare with the published ranges in Machinery's Handbook (Industrial Press), 'Speeds and Feeds', and the Wikipedia article 'Speeds and feeds' (HSS cutting speed table). Start low, watch the cut, and adjust for the machine, holder and stick-out.",
   "cornerRadius": 0,
   "defaultToolNumber": 0,

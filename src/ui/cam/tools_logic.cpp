@@ -283,6 +283,7 @@ const std::vector<Field>& allToolFields()
         RAY_F("neckDiameter", "Neck diameter", "length"),
         RAY_F("neckLength", "Neck length", "length"),
         RAY_F("overallLength", "Overall length", "length"),
+        RAY_F("centreCutting", "Centre cutting", "choice"),
         RAY_F("defaultToolNumber", "Tool number", "int"),
         RAY_F("comment", "Comment", "multiline"),
     };
@@ -329,6 +330,8 @@ QString formatJson(const char* kind, const QJsonValue& v, const Units& units)
 {
     if (numeric(kind))
         return formatValue(kind, v.toDouble(), units);
+    if (v.isBool()) // centreCutting: "true" / "false"; absent: "" (the type's default)
+        return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     return v.toString();
 }
 
@@ -350,6 +353,14 @@ void apply(const std::map<QString, QString>& fields, const std::map<QString, QSt
         const auto was = shown.find(key);
         if (was != shown.end() && was->second == value)
             continue; // as shown: the stored value (or its absence) stays exactly
+        if (key == QLatin1String(kCentreCutting)) {
+            // A yes/no the file may leave out: "" is the type's default, so the key goes.
+            if (value.isEmpty())
+                json.remove(key);
+            else
+                json[key] = value == QLatin1String("true");
+            continue;
+        }
         if (!numeric(f->kind)) {
             json[key] = value;
             continue;
@@ -617,10 +628,14 @@ std::vector<Field> toolFields(lib::ToolType type)
     case lib::ToolType::BoringBar:
         break;
     }
+    // Centre cutting (after M3): the milling cutters, where it varies from tool to tool; a drill always cuts at its
+    // centre and a tap, reamer or boring bar never does.
+    if (lib::centreCuttingSettable(type))
+        extra.push_back(QLatin1String(kCentreCutting));
     static const QStringList optional = {QStringLiteral("cornerRadius"), QStringLiteral("tipAngle"),
                                          QStringLiteral("tipDiameter"),  QStringLiteral("threadPitch"),
                                          QStringLiteral("threadSpec"),   QStringLiteral("neckDiameter"),
-                                         QStringLiteral("neckLength")};
+                                         QStringLiteral("neckLength"),   QLatin1String(kCentreCutting)};
     std::vector<Field> out;
     for (const Field& f : allToolFields()) {
         const QString key = QLatin1String(f.key);
@@ -629,6 +644,18 @@ std::vector<Field> toolFields(lib::ToolType type)
         out.push_back(f);
     }
     return out;
+}
+
+std::vector<Choice> centreCuttingChoices(lib::ToolType type, double tipDiameter)
+{
+    lib::Tool t;
+    t.type = type;
+    t.tipDiameter = tipDiameter;
+    return {{QString(), lib::centreCuttingByDefault(t)
+                            ? tr(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "Type default (yes)"))
+                            : tr(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "Type default (no)"))},
+            {QStringLiteral("true"), tr(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "Yes"))},
+            {QStringLiteral("false"), tr(QT_TRANSLATE_NOOP("ray::ui::ToolLibraryModel", "No"))}};
 }
 
 const std::vector<Field>& presetFields()

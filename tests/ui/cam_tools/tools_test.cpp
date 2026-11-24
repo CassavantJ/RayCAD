@@ -77,6 +77,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -1341,6 +1342,73 @@ TEST_CASE("a tool's neck: shown, edited, drawn and saved", "[cam][tools][gaps]")
     REQUIRE(m->newItem(QStringLiteral("drill")));
     w.idle();
     CHECK_FALSE(w.find(QStringLiteral("toolInput.neckDiameter")));
+    m->revert();
+    w.checkNoWarnings();
+}
+
+// After M3: whether a tool cuts at its centre (libraries.h Tool::centreCutting) in the editor. The starter flat end
+// mill states it (read-only "Yes"); a copy is set to No in the field's list and saved to the file; a new face mill
+// shows its type's default by name, which follows the type; a drill has no such field.
+TEST_CASE("a tool's centre cutting: shown, chosen and saved", "[cam][tools][gaps]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open();
+    ToolLibraryModel* m = w.tools();
+    lib::Tool flat;
+    for (const lib::Tool& t : w.stack()->tools()) {
+        if (t.type == lib::ToolType::FlatEndMill) {
+            flat = t;
+            break;
+        }
+    }
+    REQUIRE(flat.centreCutting == std::optional<bool>(true));
+    w.selectRow(QStringLiteral("library"), qs(flat.id.value.toString()));
+    CHECK(m->readOnly());
+    CHECK(w.field("centreCutting") == QStringLiteral("true"));
+    CHECK(w.shown(QStringLiteral("toolText.centreCutting"))->property("text").toString() == QStringLiteral("Yes"));
+
+    // A copy: No, chosen in the list as a click would, then saved.
+    m->duplicate();
+    w.idle();
+    REQUIRE_FALSE(m->readOnly());
+    QQuickItem* combo = w.shown(QStringLiteral("toolChoice.centreCutting"));
+    CHECK(combo->property("count").toInt() == 3);
+    REQUIRE(QTest::qWaitFor([&] { return combo->property("currentText").toString() == QStringLiteral("Yes"); }, 5000));
+    combo->setProperty("currentIndex", 2);
+    QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, 2));
+    w.idle();
+    CHECK(w.field("centreCutting") == QStringLiteral("false"));
+    CHECK(m->problems().isEmpty());
+    w.click("toolSave");
+    w.idle();
+    const lib::Tool saved =
+        fileTool(w.userLibrary() + QStringLiteral("/tools/") + m->selectedId() + QStringLiteral(".tool.json"));
+    CHECK(saved.centreCutting == std::optional<bool>(false));
+    CHECK_FALSE(saved.cutsAtCentre());
+
+    // A new face mill: nothing stated, its type's default named; it follows the type.
+    REQUIRE(m->newItem(QStringLiteral("faceMill")));
+    w.idle();
+    CHECK(w.field("centreCutting").isEmpty());
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            QQuickItem* c = w.find(QStringLiteral("toolChoice.centreCutting"));
+            return c && c->property("currentText").toString() == QStringLiteral("Type default (no)");
+        },
+        5000));
+    m->setValue(QStringLiteral("type"), QStringLiteral("flatEndMill"));
+    w.idle();
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            QQuickItem* c = w.find(QStringLiteral("toolChoice.centreCutting"));
+            return c && c->property("currentText").toString() == QStringLiteral("Type default (yes)");
+        },
+        5000));
+    // A drill always cuts at its centre: no field.
+    m->setValue(QStringLiteral("type"), QStringLiteral("drill"));
+    w.idle();
+    CHECK_FALSE(w.find(QStringLiteral("toolChoice.centreCutting")));
     m->revert();
     w.checkNoWarnings();
 }
