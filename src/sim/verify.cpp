@@ -518,7 +518,8 @@ Result<std::vector<SimEvent>> verifyProgram(const VerifyInput& in, IJobSystem& j
     std::uint32_t firstOver[3] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     for (std::uint32_t i = 0; i < motions.size(); ++i) {
-        if ((i & 1023u) == 0) {
+        // A motion takes about a microsecond, up to milliseconds when a stick-out is searched: poll often.
+        if ((i & 63u) == 0) {
             if (Status s = ctx.cancel.check(); !s) {
                 return tl::unexpected(s.error());
             }

@@ -150,6 +150,10 @@ Result<CutStockResult> runCutStock(const VerifyInput& in, const std::vector<Moti
             if (bits[k] == 0 || !suspicious(k)) {
                 continue;
             }
+            // A motion asked here costs a few stock queries (more when a stick-out or flute length is searched).
+            if (Status s = ctx.cancel.check(); !s) {
+                return tl::unexpected(s.error());
+            }
             flush(k);
             pending = k - i + 1; // this one is cut here
             const bool down = m.b.z < m.a.z;

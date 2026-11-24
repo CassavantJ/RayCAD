@@ -47,7 +47,7 @@ Program mixed()
     p.fixtures.push_back(boxSoup(box(0, -15, -40, 100, -5, 5)));
     // 180 mm of X travel: the last operation's rapid to X160 makes the program 190 long (it starts at X-30).
     lib::MachineDef m;
-    m.axes = {{'X', 0, 180}, {'Y', 0, 80}, {'Z', -300, 0}};
+    m.axes = {{'X', 0, 180, 0, 0, 0}, {'Y', 0, 80, 0, 0, 0}, {'Z', -300, 0, 0, 0, 0}};
     p.machine = m;
     p.op(Path(-20, 40, 20).rapid(50, 40, -5).rapid(50, 40, 20).done(), endMill(10, 20, 75), holder(40, 50), 40);
     p.op(Path(-20, 40, 5).feed(-20, 40, -5).feed(110, 40, -5).rapid(50, 46, -4).rapid(50, 46, 20).done(),

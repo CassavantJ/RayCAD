@@ -46,7 +46,7 @@ lib::Tool camDrill(double diameter)
 lib::MachineDef camMachine()
 {
     lib::MachineDef m;
-    m.axes = {{'X', 0, 762}, {'Y', 0, 406}, {'Z', -508, 0}};
+    m.axes = {{'X', 0, 762, 0, 0, 0}, {'Y', 0, 406, 0, 0, 0}, {'Z', -508, 0, 0, 0, 0}};
     return m;
 }
 
@@ -63,11 +63,11 @@ struct GoldenCase {
 TEST_CASE("generated toolpaths raise no events", "[sim][verify]")
 {
     const GoldenCase cases[] = {
-        {"adaptive2d_islands", box(0, 0, 0, 40, 30, 20), 6},
-        {"adaptive2d_ramp", box(0, 0, 0, 50, 20, 10), 6},
-        {"adaptive2d_open", box(0, 0, 0, 40, 30, 12), 6},
+        {"adaptive2d_islands", box(0, 0, 0, 40, 30, 20), 6, 0, 0, 0, 0},
+        {"adaptive2d_ramp", box(0, 0, 0, 50, 20, 10), 6, 0, 0, 0, 0},
+        {"adaptive2d_open", box(0, 0, 0, 40, 30, 12), 6, 0, 0, 0, 0},
         {"adaptive2d_predrill", box(0, 0, 0, 60, 40, 15), 6, 20, 15, 11, 9},
-        {"pocket2d_finish", box(0, 0, 0, 60, 40, 15), 10},
+        {"pocket2d_finish", box(0, 0, 0, 60, 40, 15), 10, 0, 0, 0, 0},
         {"pocket2d_predrill", box(0, 0, 0, 60, 40, 15), 8, 30, 20, 7, 9},
     };
     for (const GoldenCase& c : cases) {

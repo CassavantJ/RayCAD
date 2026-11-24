@@ -292,7 +292,7 @@ TEST_CASE("tool and holder against fixtures", "[sim][verify]")
 TEST_CASE("travel limits", "[sim][verify]")
 {
     lib::MachineDef m;
-    m.axes = {{'X', 0, 100}, {'Y', 0, 80}, {'Z', -300, 0}};
+    m.axes = {{'X', 0, 100, 0, 0, 0}, {'Y', 0, 80, 0, 0, 0}, {'Z', -300, 0, 0, 0, 0}};
     SECTION("bad: the program is longer in X than the machine travels")
     {
         Program p;
