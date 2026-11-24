@@ -1601,6 +1601,16 @@ void OperationToolModel::takePoint(int bodyIndex, kernel::SubId sub, Vec3 at)
         if (selection_)
             selection_->clear();
     };
+    // T-077: as for edges and faces, a point is picked on the part, never on a fixture or another body.
+    {
+        doc::Document* d = liveDoc();
+        const cam::Setup* setup = d != nullptr ? setupOf(*d->state()) : nullptr;
+        if (setup == nullptr ||
+            std::find(setup->partBodies.begin(), setup->partBodies.end(), body->id) == setup->partBodies.end()) {
+            refuse(trs("%1 is not a part body of the setup: pick on the part").arg(qs(body->name)));
+            return;
+        }
+    }
     if (!holesReady_) {
         refuse(trs("The setup is still being worked out: click again in a moment"));
         return;

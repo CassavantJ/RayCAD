@@ -323,3 +323,20 @@ set_tests_properties(ray_cam_adaptive_concurrency PROPERTIES TIMEOUT 1200)
 add_test(NAME ray_cam_adaptive_slow COMMAND ray_cam_adaptive_tests "[slow]")
 ray_test_runtime_path(ray_cam_adaptive_slow)
 set_tests_properties(ray_cam_adaptive_slow PROPERTIES TIMEOUT 3600)
+# Fixture bodies (task T-077): the shipped fixture models are the shapes fixture_models.h builds (and that test writes
+# them when asked); fixtures are refused as machining geometry by the CAM commands, by src/cam and by templates; and the
+# acceptance case: a holder through the vise jaw of a real document raises HolderHitsFixture in the safety checks
+# (src/sim/verify.h), its twin with the vise clear raises nothing. src/ for sim/verify.h, the rest as the templates tests.
+add_executable(ray_cam_fixture_tests
+    fixture_cam_test.cpp
+    fixture_library_test.cpp
+    fixture_models.h
+    fixture_verify_test.cpp
+)
+target_link_libraries(ray_cam_fixture_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_sim ray_post ray_naming
+    ray_kernel ray_lib ray_core Catch2::Catch2WithMain)
+target_include_directories(ray_cam_fixture_tests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src/doc"
+    "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+target_compile_definitions(ray_cam_fixture_tests PRIVATE RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+ray_add_test(ray_cam_fixture_tests)

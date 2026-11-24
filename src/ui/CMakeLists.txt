@@ -50,7 +50,9 @@ add_library(ray_ui STATIC
     cam/cycletime_logic.h # T-059
     cam/cycletime_logic.cpp
     cam/setupsheet_print.h # T-076
-    cam/setupsheet_print.cpp)
+    cam/setupsheet_print.cpp
+    cam/fixtures_logic.h # T-077
+    cam/fixtures_logic.cpp)
 ray_module(ray_ui)
 target_include_directories(ray_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # ray_api brings ray_api/viewer.h: the viewer's kernel and naming queries (src/ui may link only api and render).
@@ -137,7 +139,8 @@ set(RAY_UI_QML_FILES
     qml/cam/PostDialog.qml # T-047
     qml/cam/GcodeView.qml
     qml/cam/Templates.qml # T-057
-    qml/cam/SetupSheetDialog.qml) # T-076
+    qml/cam/SetupSheetDialog.qml # T-076
+    qml/cam/Fixtures.qml) # T-077
 qt_add_qml_module(ray_ui
     URI RayCad.Ui
     VERSION 1.0
@@ -208,6 +211,8 @@ qt_add_qml_module(ray_ui
         cam/templates_model.cpp
         cam/setupsheet_tool.h # T-076
         cam/setupsheet_tool.cpp
+        cam/fixtures_tool.h # T-077
+        cam/fixtures_tool.cpp
     QML_FILES ${RAY_UI_QML_FILES}
     DEPENDENCIES
         QtQuick

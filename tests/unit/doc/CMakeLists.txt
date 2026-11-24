@@ -18,6 +18,7 @@ add_executable(ray_doc_tests
     sketch_dimension_commands_test.cpp
     sketch_solved_store_test.cpp
     state_test.cpp
+    transform_body_test.cpp # T-077
 )
 # The rebuild tests use kernel shapes and element maps directly (PLAN.md 1.1 lets doc depend on kernel and naming).
 target_link_libraries(ray_doc_tests PRIVATE ray_doc ray_kernel ray_naming ray_sketch ray_core Catch2::Catch2WithMain)

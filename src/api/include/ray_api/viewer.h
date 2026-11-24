@@ -32,6 +32,7 @@ struct Body {
     std::optional<naming::ElementMap> map;
     std::array<float, 4> color{0.75f, 0.75f, 0.75f, 1.0f}; // linear RGBA from the source file (display hint only)
     bool visible = true;
+    bool fixture = false; // T-077: the document marks it a fixture (doc::Body::Role::Fixture); drawn in FixtureFace
 };
 
 // ---------- Opening a file without a document (tests and tools) ----------

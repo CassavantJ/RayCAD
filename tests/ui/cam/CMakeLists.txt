@@ -132,12 +132,14 @@ endforeach()
 add_executable(ray_ui_cam_unit_tests cam_unit_test.cpp
     operation_unit_test.cpp # T-045: the schema form over every registered type and synthetic schemas, the panel logic
     post_unit_test.cpp # T-047: the viewer's tokens and index, post properties as a form, the gate through cam.post
-    cycletime_unit_test.cpp) # T-059: the cycle-time estimate's text, and a setup's input from the engine's statuses
+    cycletime_unit_test.cpp # T-059: the cycle-time estimate's text, and a setup's input from the engine's statuses
+    fixtures_unit_test.cpp) # T-077: the fixture panel's props, edit patch, history place and library models
 target_link_libraries(ray_ui_cam_unit_tests PRIVATE ray_ui ray_api Qt6::Core Catch2::Catch2WithMain)
 target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
 target_include_directories(ray_ui_cam_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/tests/unit/cam") # T-047: test.op
 target_compile_definitions(ray_ui_cam_unit_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
-                                                         RAY_SHIPPED_POSTS_DIR="${CMAKE_SOURCE_DIR}/resources/library/posts")
+                                                         RAY_SHIPPED_POSTS_DIR="${CMAKE_SOURCE_DIR}/resources/library/posts"
+                                                         RAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_property(TARGET ray_ui_cam_unit_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_ui_cam_unit_tests COMMAND ray_ui_cam_unit_tests)
 ray_test_runtime_path(ray_ui_cam_unit_tests QT)
@@ -179,3 +181,23 @@ if(NOT _mods)
 endif()
 list(APPEND _mods "QSG_NO_VSYNC=set:1")
 set_tests_properties(ray_ui_cam_sheet_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+
+# Fixture bodies (task T-077): the fixtures panel on the real window as above (the generic vise from the library, mated
+# with clicks, applied, undone, Esc, the jaw closed on the part, the operation panel refusing a fixture's face). Its
+# screenshots go to build/shots/t077_*.png.
+add_executable(ray_ui_cam_fixtures_tests fixtures_test.cpp)
+target_link_libraries(ray_ui_cam_fixtures_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml
+                                                        Qt6::Quick Qt6::Test Catch2::Catch2)
+target_include_directories(ray_ui_cam_fixtures_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui")
+target_compile_definitions(ray_ui_cam_fixtures_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_SHOTS_DIR="${CMAKE_SOURCE_DIR}/build/shots")
+set_property(TARGET ray_ui_cam_fixtures_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_ui_cam_fixtures_tests COMMAND ray_ui_cam_fixtures_tests)
+set_tests_properties(ray_ui_cam_fixtures_tests PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
+ray_test_runtime_path(ray_ui_cam_fixtures_tests QT)
+get_test_property(ray_ui_cam_fixtures_tests ENVIRONMENT_MODIFICATION _mods)
+if(NOT _mods)
+    set(_mods)
+endif()
+list(APPEND _mods "QSG_NO_VSYNC=set:1")
+set_tests_properties(ray_ui_cam_fixtures_tests PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")

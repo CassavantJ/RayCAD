@@ -292,6 +292,12 @@ Result<SetupHoles> setupHoles(const doc::DocStatePtr& state, const doc::BuildRes
     geom.wcsFromModel = resolved->wcsFromModel;
     geom.holeThreads = snap.holeThreads;
     for (const BodyId& b : setup->partBodies) {
+        // T-077: holes on a fixture are never machined (a setup saved before fixtures were refused as part bodies).
+        if (std::binary_search(snap.documentFixtures.begin(), snap.documentFixtures.end(), b) ||
+            std::find(setup->fixtureBodies.begin(), setup->fixtureBodies.end(), b) != setup->fixtureBodies.end()) {
+            return fail(ErrorCode::InvalidArgument, "A part body of the setup (" + b.value.toString() +
+                                                        ") is a fixture: fixtures are never machined");
+        }
         const auto it = build->bodies.find(b);
         if (it == build->bodies.end()) {
             return fail(ErrorCode::ReferenceBroken, "A part body of the setup is not built");

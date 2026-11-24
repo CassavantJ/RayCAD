@@ -24,6 +24,7 @@ add_library(ray_doc STATIC
     features/sketch_commands.cpp
     features/sketch_feature.cpp
     features/sketch_json.cpp
+    features/transform_body_feature.cpp # T-077
     json.cpp
     json_number.cpp
     rebuild.cpp

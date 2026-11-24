@@ -90,6 +90,8 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.sketch.add",
                                                         "feature.sketch.edit",
                                                         "feature.suppress",
+                                                        "feature.transform_body.add", // T-077
+                                                        "feature.transform_body.edit",
                                                         "param.remove",
                                                         "param.rename",
                                                         "param.set",

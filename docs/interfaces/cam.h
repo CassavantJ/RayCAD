@@ -55,6 +55,8 @@
 // parts, the assumptions and notes; estimateCycleTime takes tool numbers (the plan draft's form stays).
 // Amended by T-051 (linking): EntryKind::Plunge, PreDrillPoint, LinkOptions' added members, LinkPass, and linkPasses
 // takes LinkPass and a JobContext (the Linking section says why).
+// Amended by T-077 (fixture bodies; also in docs/interfaces/cam.h): CamSnapshot::documentFixtures, the bodies the
+// document marks as fixtures, so src/cam itself refuses to machine one (resolveSetupGeometry), whatever a setup lists.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -449,6 +451,11 @@ struct CamSnapshot {
     // Added by T-035: the thread of every tapped hole feature of the document, by feature id (the TopoName::origin
     // of the "hole.*" names on its faces). The document's thread is not modelled, so only this tells CAM about it.
     std::map<FeatureId, HoleThread> holeThreads;
+    // Added by T-077: the bodies the document marks as fixtures (doc::Body::Role::Fixture), sorted. A fixture is a
+    // collision body and never machining geometry: resolveSetupGeometry refuses (InvalidArgument) a setup that lists
+    // one among its part bodies and an operation geometry reference on one, before anything is generated. Empty in
+    // snapshots made before it (nothing is refused then that was not before).
+    std::vector<BodyId> documentFixtures = {};
 };
 using CamSnapshotFn = std::function<CamSnapshot(const doc::DocStatePtr&, const doc::BuildResultPtr&)>;
 
@@ -546,7 +553,8 @@ using ResolveGeometryFn = std::function<Result<ResolvedGeometry>(const GeometryR
 // The engine's default: resolveSetup, then partShapes and fixtureShapes are the setup's bodies in order (model
 // frame), `selected` / `selectedShapeIndex` the operation's geometry references as they resolve (one entry per
 // resolved element; a reference on a body that is not a part body is ReferenceBroken), stockSlices empty; partNames
-// the part bodies' element maps and holeThreads the snapshot's (T-035).
+// the part bodies' element maps and holeThreads the snapshot's (T-035). T-077: a part body or a geometry reference on
+// a body that CamSnapshot::documentFixtures or the setup's fixtureBodies lists is InvalidArgument, naming the fixture.
 Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest&, JobContext&);
 
 struct CamEngineOptions {

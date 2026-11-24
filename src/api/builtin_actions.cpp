@@ -155,6 +155,12 @@ constexpr CommandText kCommandTexts[] = {
     {"feature.chamfer.edit", "Edit Chamfer", "Changes a chamfer's edges or distance", "Model"},
     {"feature.hole.add", "Hole", "Drills simple, tapped, counterbored or countersunk holes at sketch points", "Model"},
     {"feature.hole.edit", "Edit Hole", "Changes a hole's kind, sizes, depth, thread or points", "Model"},
+    // T-077: placing a body (a fixture against the part) by a face mate and offsets.
+    {"feature.transform_body.add", "Move Body",
+     "Moves a body: a face of it onto a face of another body (opposed, centred), then a gap, a turn and X, Y, Z "
+     "offsets",
+     "Model"},
+    {"feature.transform_body.edit", "Edit Move Body", "Changes a body move's mate, gap, turn or offsets", "Model"},
     {"sketch.set", "Replace Sketch", "Replaces the whole model of a sketch (and optionally its plane)", "Sketch"},
     {"sketch.entity.add", "Add Sketch Entities", "Adds points, lines, arcs, circles, splines or slots to a sketch",
      "Sketch"},
