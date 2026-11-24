@@ -72,7 +72,8 @@ foreach(_target IN ITEMS ray_render_tests ray_ui_controls_tests ray_ui_viewport_
                          ray_ui_section_tests ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests
                          ray_ui_cam_operation_tests ray_ui_cam_post_tests ray_ui_cam_flow_tests
                          ray_ui_cam_templates_tests ray_ui_cam_sheet_tests
-                         ray_ui_cam_fixtures_tests) # T-077
+                         ray_ui_cam_fixtures_tests # T-077
+                         ray_ui_cam_sim_tests) # T-074
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support/driver_threads_listener.cpp")
 endforeach()
 
@@ -86,7 +87,8 @@ foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_star
                          ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests
                          ray_ui_cam_post_tests ray_ui_cam_flow_tests
                          ray_ui_cam_templates_tests ray_ui_cam_sheet_tests
-                         ray_ui_cam_fixtures_tests) # T-077
+                         ray_ui_cam_fixtures_tests # T-077
+                         ray_ui_cam_sim_tests) # T-074
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/screen/test_screen_listener.cpp")
     target_link_libraries(${_target} PRIVATE ray_ui_test_screen)
 endforeach()
@@ -103,7 +105,8 @@ foreach(_target IN ITEMS ray_ui_controls_tests ray_ui_viewport_tests ray_ui_star
                          ray_ui_sketch_tests ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests
                          ray_ui_cam_post_tests ray_ui_cam_flow_tests
                          ray_ui_cam_templates_tests ray_ui_cam_sheet_tests
-                         ray_ui_cam_fixtures_tests) # T-077
+                         ray_ui_cam_fixtures_tests # T-077
+                         ray_ui_cam_sim_tests) # T-074
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/foreign_input_listener.cpp"
                                       "${CMAKE_CURRENT_SOURCE_DIR}/ui/window_focus.cpp")
     target_link_libraries(${_target} PRIVATE Qt6::GuiPrivate) # window_focus.cpp: QWindowSystemInterface
@@ -113,7 +116,8 @@ endforeach()
 # The stall tests ([wallclock]) judge the time the UI thread itself was busy or blocked in its worst gap, not the time
 # it was runnable and not run (ui/ui_watchdog.h).
 foreach(_target IN ITEMS ray_ui_viewport_tests ray_ui_start_tests ray_ui_measure_tests ray_ui_sketch_tests
-                         ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests)
+                         ray_ui_model_tests ray_ui_cam_tests ray_ui_cam_operation_tests
+                         ray_ui_cam_sim_tests) # T-074
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/ui_watchdog.cpp")
 endforeach()
 

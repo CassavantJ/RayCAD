@@ -28,6 +28,8 @@ add_library(ray_api STATIC
     cam_setupsheet.cpp
     include/ray_api/cam_sim.h # the SimProgram of a setup, and the simulator that carries stock between setups (T-075)
     cam_sim.cpp
+    include/ray_api/cam_sim_session.h # the on-screen simulation of a setup: timeline, seeks, display meshes (T-074)
+    cam_sim_session.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

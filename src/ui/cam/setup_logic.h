@@ -70,7 +70,8 @@ struct SetupInput {
     QString id; // the setup id
     QString name;
     QStringList partBodies, fixtureBodies;
-    QString stock;                      // "box", "cylinder", "solid"
+    QString stock;                      // "box", "cylinder", "solid", "fromSetup" (T-074)
+    QString fromSetup;                  // fromSetup: the earlier setup's id (T-074)
     std::map<QString, QString> lengths; // field text by key: xNeg xPos yNeg yPos zNeg zPos diameter length endOffset
     QString axis;                       // cylinder: "x", "y", "z"
     QString solidBody;                  // solid: the body id

@@ -45,6 +45,8 @@ QString contextName(CommandContext c)
         return QCoreApplication::translate("ray::ui::ShortcutManager", "Sketch");
     case CommandContext::Cam:
         return QCoreApplication::translate("ray::ui::ShortcutManager", "CAM");
+    case CommandContext::Sim: // T-074
+        return QCoreApplication::translate("ray::ui::ShortcutManager", "Simulate");
     case CommandContext::Global:
         break;
     }

@@ -134,7 +134,8 @@ set(RAY_WALLCLOCK_SPLITS
     ray_ui_cam_tests=ray_ui_cam_tests
     ray_ui_cam_operation_tests=ray_ui_cam_operation_tests
     ray_ui_cam_tools_tests=ray_ui_cam_tools_tests
-    ray_ui_cam_post_tests=ray_ui_cam_post_tests)
+    ray_ui_cam_post_tests=ray_ui_cam_post_tests
+    ray_ui_cam_sim_tests=ray_ui_cam_sim_tests) # T-074
 
 # Whole tests timed against the wall clock, besides the <test>_wallclock splits: they run alone.
 set(RAY_SERIAL_TESTS
@@ -184,6 +185,7 @@ set(RAY_TEST_LOCKS
     desktop=ray_ui_cam_flow_scale_2
     desktop=ray_ui_cam_sheet_tests # T-076
     desktop=ray_ui_cam_fixtures_tests # T-077
+    desktop=ray_ui_cam_sim_tests # T-074
     clipboard=ray_ui_measure_tests  # copies a value and the whole result, then reads the clipboard back
     clipboard=ray_ui_cam_post_tests) # copies G-code lines and the whole program, then reads the clipboard back
 

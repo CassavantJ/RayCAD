@@ -4,9 +4,11 @@
 #include <ray_api/cam_setup.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <set>
 #include <system_error>
+#include <variant>
 
 namespace ray::api::cam_setup {
 
@@ -32,10 +34,56 @@ const naming::ResolverBody* bodyOf(const cam::CamSnapshot& snap, const BodyId& i
     return it == snap.bodies.end() ? nullptr : &*it;
 }
 
+// A closed soup (mm) moved by `xf` as a flat-shaded display mesh with one face range.
+std::shared_ptr<const kernel::Mesh> meshOf(const kernel::TriSoup& soup, const Xform& xf)
+{
+    auto mesh = std::make_shared<kernel::Mesh>();
+    const std::size_t triangles = soup.indices.size() / 3;
+    mesh->positions.reserve(triangles * 9);
+    mesh->normals.reserve(triangles * 9);
+    mesh->indices.reserve(triangles * 3);
+    const auto at = [&](std::uint32_t v) {
+        return apply(xf, Vec3{soup.positions[3 * v], soup.positions[3 * v + 1], soup.positions[3 * v + 2]});
+    };
+    for (std::size_t t = 0; t < triangles; ++t) {
+        const Vec3 a = at(soup.indices[3 * t]), b = at(soup.indices[3 * t + 1]), c = at(soup.indices[3 * t + 2]);
+        const Vec3 u{b.x - a.x, b.y - a.y, b.z - a.z}, w{c.x - a.x, c.y - a.y, c.z - a.z};
+        Vec3 n{u.y * w.z - u.z * w.y, u.z * w.x - u.x * w.z, u.x * w.y - u.y * w.x};
+        const double len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (len > 0) {
+            n = Vec3{n.x / len, n.y / len, n.z / len};
+        }
+        for (const Vec3& p : {a, b, c}) {
+            mesh->positions.insert(mesh->positions.end(),
+                                   {static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z)});
+            mesh->normals.insert(mesh->normals.end(),
+                                 {static_cast<float>(n.x), static_cast<float>(n.y), static_cast<float>(n.z)});
+            mesh->indices.push_back(static_cast<std::uint32_t>(mesh->indices.size()));
+        }
+    }
+    mesh->faces.push_back(kernel::FaceRange{kernel::SubId{kernel::SubKind::Face, 0}, 0,
+                                            static_cast<std::uint32_t>(mesh->indices.size())});
+    return mesh;
+}
+
 } // namespace
 
+std::vector<SetupId> carriedSetups(const doc::DocState& state)
+{
+    std::vector<SetupId> out;
+    if (!state.cam) {
+        return out;
+    }
+    for (const cam::Setup& s : state.cam->setups) {
+        if (std::holds_alternative<cam::FromSetupStock>(s.stock)) {
+            out.push_back(s.id);
+        }
+    }
+    return out;
+}
+
 Result<Preview> previewSetup(const doc::DocStatePtr& state, const doc::BuildResultPtr& build, const SetupId& setupId,
-                             JobContext& ctx)
+                             JobContext& ctx, const cam::CarriedStock* carried)
 {
     if (!state || !build) {
         return tl::unexpected(Error{ErrorCode::InvalidArgument, "The model is not built yet", {}});
@@ -51,7 +99,9 @@ Result<Preview> previewSetup(const doc::DocStatePtr& state, const doc::BuildResu
     }
     // A solid stock is shown as its body lies in the model: no copy of the body moved into the WCS and back.
     const auto* solid = std::get_if<cam::SolidStock>(&setup->stock);
-    auto resolved = cam::resolveSetup(snap, *setup, *resolver, ctx, cam::SetupResolveOptions{solid == nullptr});
+    const bool fromSetup = std::holds_alternative<cam::FromSetupStock>(setup->stock);
+    cam::SetupResolveOptions options{solid == nullptr && !fromSetup, fromSetup ? carried : nullptr};
+    auto resolved = cam::resolveSetup(snap, *setup, *resolver, ctx, options);
     if (!resolved) {
         return tl::unexpected(resolved.error());
     }
@@ -59,7 +109,14 @@ Result<Preview> previewSetup(const doc::DocStatePtr& state, const doc::BuildResu
         return tl::unexpected(ok.error());
     }
     Preview out;
-    if (solid != nullptr) {
+    if (fromSetup) {
+        // T-074: the carried stock, in this setup's WCS, moved back into the model.
+        if (!resolved->carriedStock) {
+            return tl::unexpected(Error{ErrorCode::Internal, "The carried stock did not resolve", {}});
+        }
+        out.stockMesh = meshOf(*resolved->carriedStock, resolved->modelFromWcs);
+        resolved->carriedStock.reset();
+    } else if (solid != nullptr) {
         const naming::ResolverBody* body = bodyOf(snap, solid->body);
         if (body == nullptr) {
             return tl::unexpected(Error{ErrorCode::ReferenceBroken, "The stock body is not built", {}});
@@ -91,7 +148,8 @@ Result<Preview> previewSetup(const doc::DocStatePtr& state, const doc::BuildResu
     return out;
 }
 
-std::map<SetupId, Status> setupStates(const doc::DocStatePtr& state, const doc::BuildResultPtr& build, JobContext& ctx)
+std::map<SetupId, Status> setupStates(const doc::DocStatePtr& state, const doc::BuildResultPtr& build, JobContext& ctx,
+                                      const CarriedStocks* carried)
 {
     std::map<SetupId, Status> out;
     if (!state || !build || !state->cam) {
@@ -105,6 +163,21 @@ std::map<SetupId, Status> setupStates(const doc::DocStatePtr& state, const doc::
     for (const cam::Setup& setup : snap.cam->setups) {
         if (ctx.cancel.cancelled()) {
             break;
+        }
+        if (std::holds_alternative<cam::FromSetupStock>(setup.stock)) {
+            // T-074: from its carried stock when the caller has it; else everything but the stock (see the header).
+            const auto it = carried != nullptr ? carried->find(setup.id) : CarriedStocks::const_iterator{};
+            if (carried != nullptr && it != carried->end() && it->second) {
+                auto resolved =
+                    cam::resolveSetup(snap, setup, *resolver, ctx, cam::SetupResolveOptions{false, it->second.get()});
+                out[setup.id] = resolved ? Status{} : Status(tl::unexpected(resolved.error()));
+            } else {
+                cam::Setup frameOnly = setup;
+                frameOnly.stock = cam::BoxStock{};
+                auto resolved = cam::resolveSetup(snap, frameOnly, *resolver, ctx);
+                out[setup.id] = resolved ? Status{} : Status(tl::unexpected(resolved.error()));
+            }
+            continue;
         }
         auto resolved = cam::resolveSetup(snap, setup, *resolver, ctx);
         out[setup.id] = resolved ? Status{} : Status(tl::unexpected(resolved.error()));

@@ -229,6 +229,10 @@ void SetupTreeModel::unsubscribe()
     statusJob_ = {};
     setupJob_.cancel();
     setupJob_ = {};
+    if (carried_)
+        carried_->cancel(); // T-074
+    carriedJob_.cancel();
+    carriedJob_ = {};
     statuses_ = {};
     noticeTimer_.stop();
     generating_.clear();
@@ -368,7 +372,7 @@ void SetupTreeModel::refresh()
         ++self->revision_;
         emit self->changed();
     };
-    statusJob_.then([self, serial, shown](Result<std::map<OperationId, cam::OpState>> r) {
+    statusJob_.then([self, serial, shown, state, build](Result<std::map<OperationId, cam::OpState>> r) {
         if (!self || serial != self->statusSerial_)
             return;
         self->statusJob_ = {};
@@ -377,7 +381,8 @@ void SetupTreeModel::refresh()
         self->statuses_.ops = std::move(*r);
         ++self->statusRuns_;
         shown();
-        self->estimateCycleTimes(); // T-059
+        self->estimateCycleTimes();                 // T-059
+        self->refreshCarried(state, build, serial); // T-074
     });
     setupJob_.then([self, serial, shown](Result<std::shared_ptr<const std::map<SetupId, Status>>> r) {
         if (!self || serial != self->statusSerial_)
@@ -389,6 +394,64 @@ void SetupTreeModel::refresh()
         shown();
     });
     emit changed();
+}
+
+// T-074: the setups whose stock comes from an earlier setup, from that stock, once the earlier setups are up to date.
+void SetupTreeModel::refreshCarried(const doc::DocStatePtr& state, const doc::BuildResultPtr& build,
+                                    std::uint64_t serial)
+{
+    api::IApp* a = app();
+    cam::ICamEngine* engine = a ? a->cam() : nullptr;
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    if (!state || !build || engine == nullptr || jobs == nullptr)
+        return;
+    std::vector<SetupId> ready;
+    for (const SetupId& id : api::cam_setup::carriedSetups(*state)) {
+        if (camui::chainReady(*state, id, statuses_.ops))
+            ready.push_back(id);
+    }
+    if (!carried_)
+        carried_ = std::make_unique<camui::CarriedStockRequest>();
+    carriedJob_.cancel();
+    if (ready.empty()) {
+        carried_->cancel();
+        return;
+    }
+    QPointer<SetupTreeModel> self(this);
+    carried_->start(
+        *engine, state, build, ready,
+        [self, serial, state, build](api::cam_setup::CarriedStocks stocks, std::map<SetupId, Error> errors) {
+            if (!self || serial != self->statusSerial_)
+                return;
+            IJobSystem* jobs = self->scene_ ? self->scene_->jobs() : nullptr;
+            if (jobs == nullptr)
+                return;
+            auto shared = std::make_shared<const api::cam_setup::CarriedStocks>(std::move(stocks));
+            self->carriedJob_ = jobs->submit<std::shared_ptr<const std::map<SetupId, Status>>>(
+                JobInfo{"CAM setup status", JobPriority::Interactive, false},
+                [state, build, shared](JobContext& ctx) -> Result<std::shared_ptr<const std::map<SetupId, Status>>> {
+                    return std::make_shared<const std::map<SetupId, Status>>(
+                        api::cam_setup::setupStates(state, build, ctx, shared.get()));
+                });
+            self->carriedJob_.then(
+                [self, serial, shared, errors](Result<std::shared_ptr<const std::map<SetupId, Status>>> r) {
+                    if (!self || serial != self->statusSerial_ || !r)
+                        return;
+                    self->carriedJob_ = {};
+                    for (const auto& [id, stock] : *shared) {
+                        if (const auto it = (*r)->find(id); it != (*r)->end())
+                            self->statuses_.setups[id] = it->second;
+                    }
+                    for (const auto& [id, error] : errors) {
+                        if (error.code != ErrorCode::Cancelled)
+                            self->statuses_.setups[id] = Status(tl::unexpected(error));
+                    }
+                    if (!self->rows_.empty())
+                        emit self->dataChanged(self->index(0), self->index(self->count() - 1));
+                    ++self->revision_;
+                    emit self->changed();
+                });
+        });
 }
 
 // ---------- cycle time (T-059) ----------

@@ -112,7 +112,18 @@ var paths = {
     "refresh": { d: "M 12.75 8 A 4.75 4.75 0 1 1 11.2 4.5 M 12.25 2 V 5 H 9.25" },
     // T-047: post a setup (a program page with lines of code and an arrow leaving it).
     "post": { d: "M 10.5 6 V 2.25 H 2.75 V 13.75 H 10.5 V 11.5 M 4.75 5 H 8.25 M 4.75 7.5 H 7 M 4.75 10 H 7.75 "
-                 + "M 8.75 8.75 H 14.25 M 12.25 6.75 L 14.25 8.75 L 12.25 10.75" }
+                 + "M 8.75 8.75 H 14.25 M 12.25 6.75 L 14.25 8.75 L 12.25 10.75" },
+    // T-074: the simulation's transport (plain triangles and bars) and the Simulate workspace (a cutter above a block
+    // with a step cut out of it).
+    "chevron-left": { d: "M 9.75 4.5 L 6.25 8 L 9.75 11.5" },
+    "play": { fill: true, d: "M 4.5 2.75 L 13 8 L 4.5 13.25 Z" },
+    "pause": { fill: true, d: "M 4 3 H 6.75 V 13 H 4 Z M 9.25 3 H 12 V 13 H 9.25 Z" },
+    "step-forward": { d: "M 4 3.5 L 10 8 L 4 12.5 Z M 12.25 3.5 V 12.5" },
+    "step-back": { d: "M 12 3.5 L 6 8 L 12 12.5 Z M 3.75 3.5 V 12.5" },
+    "to-start": { d: "M 3.25 3.5 V 12.5 M 8.75 3.5 L 4.75 8 L 8.75 12.5 M 13.25 3.5 L 9.25 8 L 13.25 12.5" },
+    "to-end": { d: "M 12.75 3.5 V 12.5 M 7.25 3.5 L 11.25 8 L 7.25 12.5 M 2.75 3.5 L 6.75 8 L 2.75 12.5" },
+    "simulate": { d: "M 6.5 1.75 H 9.5 V 5.5 H 6.5 Z M 7.25 5.5 V 8.25 H 8.75 V 5.5 "
+                     + "M 2.25 9.75 H 6.25 V 11.25 H 13.75 V 14.25 H 2.25 Z" }
 };
 
 function path(name) {

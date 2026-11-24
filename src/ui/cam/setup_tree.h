@@ -4,7 +4,9 @@
 //
 //   Badges     operations: ICamEngine::status (up to date, stale, generating with its progress, failed with the
 //              message, broken reference, suppressed); setups: their own resolution first (a broken reference of the
-//              WCS or the stock, from api::cam_setup::setupStates), then the worst of their operations. Statuses are
+//              WCS or the stock, from api::cam_setup::setupStates; T-074: a setup whose stock comes from an earlier
+//              setup is checked from that stock, ICamEngine::carriedStock, once the earlier setups are up to date, and
+//              before that everything of it but the stock), then the worst of their operations. Statuses are
 //              worked out on the job system (a superseded run is cancelled) whenever the document changes (an edit in
 //              either workspace, undo, redo) or publishes a build, and when a generation the tree started ends; the
 //              progress of those comes from their jobs. T-045: the engine's own statuses come from
@@ -18,6 +20,8 @@
 //              operation of a setup), each one action and, where the document changes, one undo step. Every action
 //              is also a command (cam.tree.*, Cam context) on the current row.
 #pragma once
+
+#include "sim_carried.h"
 
 #include <ray/api.h>
 #include <ray_api/cam_cycletime.h>
@@ -100,7 +104,17 @@ public:
     int currentIndex() const { return current_; }
     void setCurrentIndex(int index);
     QString message() const { return message_; }
-    bool busy() const { return (statusJob_.valid() && !statusJob_.done()) || (setupJob_.valid() && !setupJob_.done()); }
+    bool busy() const
+    {
+        return (statusJob_.valid() && !statusJob_.done()) || (setupJob_.valid() && !setupJob_.done()) ||
+               (carried_ && carried_->busy()) || (carriedJob_.valid() && !carriedJob_.done()); // T-074
+    }
+    // T-074: the setup's own status as the tree holds it (nullopt while not known).
+    std::optional<Status> setupState(const SetupId& id) const
+    {
+        const auto it = statuses_.setups.find(id);
+        return it == statuses_.setups.end() ? std::nullopt : std::optional<Status>(it->second);
+    }
 
     // ---- QML ----
     Q_INVOKABLE QVariantMap get(int row) const;
@@ -214,6 +228,11 @@ private:
     QTimer noticeTimer_;  // coalesces the engine's notifications (progress comes at up to 30 Hz)
     std::map<OperationId, JobHandle<std::shared_ptr<const cam::Toolpath>>> generating_; // started here
     std::map<OperationId, double> progress_;
+    // T-074: setups whose stock comes from an earlier setup are resolved again from that stock (camui::chainReady,
+    // ICamEngine::carriedStock) once the statuses say the earlier setups are up to date.
+    void refreshCarried(const doc::DocStatePtr& state, const doc::BuildResultPtr& build, std::uint64_t serial);
+    std::unique_ptr<camui::CarriedStockRequest> carried_;
+    JobHandle<std::shared_ptr<const std::map<SetupId, Status>>> carriedJob_;
     cam::ICamEngine* engine_ = nullptr; // the engine subscribed to (the app's, which outlives this model's use)
     int engineListener_ = 0;
     int notices_ = 0;
