@@ -8,11 +8,13 @@
 // All number formatting is done by host functions so output is identical on every platform.
 // M3 closeout: PostInfo::verifiedOn added (definePost's optional `verifiedOn`, post_api.d.ts), so the post dialog can
 // say whether a shipped post has been run on a real control. Additive; nothing else changed.
+// T-076: SetupSheetInput's optional members and renderSetupSheetsHtml (the setup sheet section below). Additive.
 #pragma once
 #include "core.h"
 #include "cam.h"
 #include "libraries.h"
 #include <map>
+#include <span>
 
 namespace ray::post {
 
@@ -94,7 +96,23 @@ struct OutputRule { std::string directory; std::string fileNamePattern; bool ove
 Result<std::string> writeProgram(const PostOutput&, const PostInfo&, const PostJob&, const OutputRule&);   // returns final path; atomic write
 
 // ---------- Setup sheet ----------
-struct SetupSheetInput { const PostJob* job; cam::CycleTime time; std::vector<std::byte> fixtureImagePng; Box3 stock; };
+// Amended by T-076: SetupSheetInput gains the four members after `stock` (the post that writes the program, whether it
+// is one shipped with RayCAD, the stock material and the part's name: a PostJob carries none of them), all optional
+// with defaults; and renderSetupSheetsHtml, one document for several setups. `time`: cam::estimateCycleTime of the job's
+// sections in order, so time.operations[i] is job->sections[i] (fewer entries: those operations show no time). `stock`:
+// the stock box in the WCS (cam::ResolvedSetup::stockBounds). The HTML is deterministic (no clock: the date is
+// job->fixedDate, none when empty), uses only what Qt's QTextDocument renders as well as a browser does, prints black
+// on white, embeds the picture as a data: URL and HTML-escapes every text that comes from the user or a library.
+struct SetupSheetInput {
+    const PostJob* job; cam::CycleTime time; std::vector<std::byte> fixtureImagePng; Box3 stock;
+    const PostInfo* post = nullptr;           // the post writing the program (title; verifiedOn); null: none chosen
+    bool postShipped = true;                  // a post shipped with RayCAD: an empty verifiedOn gets the "not proven" notice
+    const lib::Material* material = nullptr;  // the setup's stock material (cam::Setup::material); null: none chosen
+    std::string partName;                     // the part bodies' names; job->documentName is the file's
+};
 Result<std::string> renderSetupSheetHtml(const SetupSheetInput&);   // self-contained HTML; PDF is produced by the UI layer from this HTML
+// Several setups (a whole job) in one document, in the order given, each starting on a new page. InvalidArgument when
+// the list is empty or an input has no job.
+Result<std::string> renderSetupSheetsHtml(std::span<const SetupSheetInput>);
 
 } // namespace ray::post

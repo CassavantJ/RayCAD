@@ -1,0 +1,28 @@
+/* RayCAD setup sheet print style (task T-076). Compiled into src/post (src/post/CMakeLists.txt) and written into the
+   style element of every sheet, so a sheet is one self-contained file. Black on white whatever the app's theme: a
+   sheet is printed and read at the machine. Only what Qt's QTextDocument renders as a browser does: type and class
+   selectors; font, colour, margin and padding properties; table borders (with the table attributes border,
+   cellspacing and cellpadding in the HTML as well, for Qt); a page break before each later setup's title, given in
+   the HTML. No external fonts or links. */
+body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; background-color: white; }
+h1 { font-size: 16pt; font-weight: bold; margin-top: 0pt; margin-bottom: 2pt; }
+h2 { font-size: 12pt; font-weight: bold; margin-top: 10pt; margin-bottom: 3pt; }
+p { margin-top: 2pt; margin-bottom: 2pt; }
+table { border-collapse: collapse; }
+th { font-weight: bold; text-align: left; vertical-align: bottom; background-color: gainsboro; padding: 2pt; }
+td { vertical-align: top; padding: 2pt; }
+table.grid { border-width: 1px; border-style: solid; border-color: black; }
+table.grid th { border-width: 1px; border-style: solid; border-color: black; }
+table.grid td { border-width: 1px; border-style: solid; border-color: black; }
+table.facts td { padding-left: 0pt; padding-right: 8pt; }
+td.label { color: dimgray; }
+td.value { font-weight: bold; }
+td.warning { font-style: italic; }
+table.notice { border-width: 2px; border-style: solid; border-color: black; }
+table.notice td { padding: 5pt; }
+table.picture { border-width: 1px; border-style: solid; border-color: dimgray; }
+p.sub { font-size: 11pt; margin-bottom: 6pt; }
+p.small { font-size: 8pt; color: dimgray; }
+p.total { font-size: 12pt; font-weight: bold; }
+td.sign { height: 28pt; }
+@page { margin: 12mm; }

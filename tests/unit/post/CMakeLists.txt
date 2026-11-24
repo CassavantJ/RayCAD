@@ -9,7 +9,8 @@ add_executable(ray_post_tests
     engine_test.cpp
     host_additions_test.cpp
     shipped_posts_test.cpp
-    bench_test.cpp)
+    bench_test.cpp
+    setupsheet_test.cpp) # T-076: the setup sheet's HTML and its goldens (tests/golden/setupsheet)
 # ray_cam for Toolpath::deserialize: the shipped-post matrix (T-040, T-041) posts the drilling operation's golden
 # toolpaths (tests/golden/toolpaths).
 target_link_libraries(ray_post_tests PRIVATE ray_post ray_cam ray_core Catch2::Catch2WithMain)
@@ -20,7 +21,8 @@ target_compile_definitions(ray_post_tests PRIVATE
     RAY_GOLDEN_GCODE_DIR="${CMAKE_SOURCE_DIR}/tests/golden/gcode/host"
     RAY_GOLDEN_GCODE_ROOT="${CMAKE_SOURCE_DIR}/tests/golden/gcode"
     RAY_TOOLPATH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden/toolpaths"
-    RAY_SHIPPED_POSTS_DIR="${CMAKE_SOURCE_DIR}/resources/library/posts")
+    RAY_SHIPPED_POSTS_DIR="${CMAKE_SOURCE_DIR}/resources/library/posts"
+    RAY_GOLDEN_SETUPSHEET_DIR="${CMAKE_SOURCE_DIR}/tests/golden/setupsheet")
 if(RAY_SANITIZE)
     target_compile_definitions(ray_post_tests PRIVATE RAY_SANITIZED_BUILD)
 endif()
