@@ -206,7 +206,8 @@ TEST_CASE("random doubles round-trip through the shortest text", "[doc][number]"
     }
 }
 
-#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+// Not with Apple's libc++ for macOS below 26: its floating-point std::from_chars is unavailable there.
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L && !(defined(__APPLE__) && defined(_LIBCPP_VERSION))
 // The standard library's shortest round-trip conversion picks the same digits (closest, ties to even), so where
 // it exists it is an independent check of ours.
 namespace {

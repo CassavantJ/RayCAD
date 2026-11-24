@@ -1,5 +1,6 @@
 // compat::fromCharsFallback (src/core/from_chars_double.h), the reader of doubles used where Apple's libc++ has no
-// floating-point std::from_chars, against std::from_chars here, where it exists.
+// floating-point std::from_chars, against std::from_chars where it exists, and compat::fromChars on fixed values
+// everywhere.
 #include <catch2/catch_test_macros.hpp>
 
 #include "from_chars_double.h"
@@ -11,6 +12,8 @@
 #include <string>
 #include <system_error>
 
+// Apple's libc++ for macOS below 26 has no floating-point std::from_chars to compare with.
+#if !(defined(__APPLE__) && defined(_LIBCPP_VERSION))
 namespace {
 
 struct Read {
@@ -104,6 +107,8 @@ TEST_CASE("fromCharsFallback rounds as std::from_chars on random decimals", "[co
     }
 }
 
+#endif
+
 TEST_CASE("fromCharsFallback reports a number out of range", "[core][from_chars]")
 {
     double v = 3.0;
@@ -112,4 +117,30 @@ TEST_CASE("fromCharsFallback reports a number out of range", "[core][from_chars]
     CHECK(r.ec == std::errc::result_out_of_range);
     CHECK(r.ptr == big.data() + big.size());
     CHECK(v == 3.0);
+}
+
+TEST_CASE("compat::fromChars reads fixed values", "[core][from_chars]")
+{
+    struct Case {
+        const char* text;
+        std::chars_format fmt;
+        double value;
+        std::ptrdiff_t used;
+    };
+    for (const Case& c :
+         {Case{"0.1", std::chars_format::general, 0.1, 3}, Case{"12.75mm", std::chars_format::general, 12.75, 5},
+          Case{"-.25", std::chars_format::general, -0.25, 4}, Case{"2.5e+3x", std::chars_format::general, 2500.0, 6},
+          Case{"1e5", std::chars_format::fixed, 1.0, 1}, Case{"123.456 7", std::chars_format::fixed, 123.456, 7}}) {
+        INFO(c.text);
+        const std::string s = c.text;
+        double v = 0;
+        const auto r = ray::compat::fromChars(s.data(), s.data() + s.size(), v, c.fmt);
+        CHECK(r.ec == std::errc());
+        CHECK(r.ptr - s.data() == c.used);
+        CHECK(v == c.value);
+    }
+    double v = 4.0;
+    const std::string plus = "+1";
+    CHECK(ray::compat::fromChars(plus.data(), plus.data() + plus.size(), v).ec == std::errc::invalid_argument);
+    CHECK(v == 4.0);
 }
