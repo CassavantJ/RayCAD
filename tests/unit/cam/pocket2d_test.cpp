@@ -143,6 +143,115 @@ TEST_CASE("pocket2d depths: equal steps no deeper than the stepdown, from the to
     }
 }
 
+TEST_CASE("pocket2d depths: a flat face adds a depth only where the pocket reaches it at that depth", "[cam][pocket2d]")
+{
+    // area_depths.h: a face between the floor and the top adds its depth where the area the tool reaches there
+    // overlaps it; one the area cannot reach adds none (it would repeat the next depth's passes).
+    const auto planOf = [](const Case& c) {
+        auto plan = c.plan();
+        INFO((plan ? "" : plan.error().message));
+        REQUIRE(plan);
+        REQUIRE(plan->pockets.size() == 1);
+        return *plan;
+    };
+    const auto outside = [](const kernel::Shape& part, double stepdown) {
+        Case c;
+        c.op = pocketOp(R"({"stepdown":)" + std::to_string(stepdown) + "}");
+        c.tool = endMill(6);
+        c.geom = geometryOn(part, {upFace(part, 5)});
+        return c;
+    };
+    SECTION("a low island inside the pocket: its top is a depth")
+    {
+        // The golden block's pocket A in one step of 8 from Z 20 to Z 12: the square island's top at Z 16 is a depth.
+        Case c;
+        c.op = pocketOp(R"({"stepdown":10})");
+        c.tool = endMill(6);
+        c.geom = geometryOn(block(), {upFace(block(), 12)});
+        CHECK(planOf(c).pockets[0].depths == std::vector<Nm>{16 * kMm, 12 * kMm});
+    }
+    SECTION("a closed pocket inside the part, roughing its outside: no depth at its floor")
+    {
+        // One step of 10 from Z 15 to the floor round the plate at Z 5; the inner pocket's floor at Z 10 is inside the
+        // footprint but closed off from the area by the plate at every depth.
+        const kernel::Shape part = outsidePlate(true, false);
+        Case c = outside(part, 10);
+        CHECK(planOf(c).pockets[0].depths == std::vector<Nm>{5 * kMm});
+        // The same toolpath as the plate without the pocket.
+        const kernel::Shape plain = outsidePlate(false, false);
+        const Case d = outside(plain, 10);
+        auto a = c.generate();
+        auto b = d.generate();
+        REQUIRE(a);
+        REQUIRE(b);
+        CHECK(a->hash() == b->hash());
+    }
+    SECTION("an inner pocket whose floor is at a depth the stepdown needs anyway: that depth, without the pocket")
+    {
+        const kernel::Shape part = outsidePlate(true, false);
+        const Case c = outside(part, 5);
+        const ops::Pocket2dPlan plan = planOf(c);
+        CHECK(plan.pockets[0].depths == std::vector<Nm>{10 * kMm, 5 * kMm});
+        // Both depths cut the same rings round the plate; none enters the inner pocket (x 20..40, y 10..30).
+        CHECK(boxesAt(plan, 10 * kMm) == boxesAt(plan, 5 * kMm));
+        for (const Box2& b : boxesAt(plan, 10 * kMm)) {
+            CHECK_FALSE((b.x0 >= 20 * kMm && b.x1 <= 40 * kMm && b.y0 >= 10 * kMm && b.y1 <= 30 * kMm));
+        }
+    }
+    SECTION("a step of the part open to the area: its floor is a depth and the step is cleared")
+    {
+        // The step across the plate's front (y 0..8, down to Z 11) is open to the area round the plate: above Z 11 the
+        // area takes it in, so it is cleared down to its floor, with or without the inner pocket (which adds nothing).
+        for (const bool inner : {false, true}) {
+            const kernel::Shape part = outsidePlate(inner, true);
+            const Case c = outside(part, 10);
+            const ops::Pocket2dPlan plan = planOf(c);
+            CHECK(plan.pockets[0].depths == std::vector<Nm>{11 * kMm, 5 * kMm});
+            // The tool centre goes over the step at Z 11 (its room reaches y 8 - r = 5 there), not at Z 5.
+            const g2::Pt overStep{30 * kMm, 4 * kMm};
+            std::map<Nm, g2::Where> where;
+            for (const ops::PocketCoverage& cov : plan.pockets[0].coverage) {
+                for (const Nm z : cov.depths) {
+                    where[z] = g2::locate(overStep, cov.room);
+                }
+            }
+            CHECK(where[11 * kMm] == g2::Where::Inside);
+            CHECK(where[5 * kMm] == g2::Where::Outside);
+        }
+    }
+    SECTION("a step on a closed pocket's wall: outside the footprint, no depth")
+    {
+        // The ledge x 10..20 at Z 10 on the wall of the pocket whose floor is at Z 7: the pocket's footprint is its
+        // wall loop at the floor (x 20..50), so the ledge is wall, not pocket, and the one step from Z 15 to Z 7 stays.
+        const kernel::Shape part = outsidePlate(false, false, true);
+        Case c;
+        c.op = pocketOp(R"({"stepdown":10})");
+        c.tool = endMill(6);
+        c.geom = geometryOn(part, {upFace(part, 7)});
+        CHECK(planOf(c).pockets[0].depths == std::vector<Nm>{7 * kMm});
+    }
+    SECTION("a face only partly inside the area: a depth where the area reaches it")
+    {
+        // The pad's top at Z 10 lies in the strip past the step's open edge at x 25..32 only; its interior point does
+        // not, so a test of one point would miss it. One step of 4 from Z 12 to the floor at Z 8, and the pad's top.
+        const kernel::Shape part = padStepPart();
+        Case c;
+        c.op = pocketOp(R"({"stepdown":5})");
+        c.tool = endMill(6);
+        c.geom = geometryOn(part, {upFace(part, 8)});
+        c.clears = {clearClaim({rectPoly(8, 0, 32, 14)}, 8)};
+        const ops::Pocket2dPlan plan = planOf(c);
+        CHECK(plan.pockets[0].open);
+        CHECK(plan.pockets[0].depths == std::vector<Nm>{10 * kMm, 8 * kMm});
+        auto pad = g2::faceBoundary(part, upFace(part, 10), Xform::identity());
+        REQUIRE(pad);
+        const std::optional<g2::Pt> inside = g2::interiorPoint(pad->region);
+        REQUIRE(inside);
+        CHECK(g2::locate(*inside, plan.pockets[0].footprint) == g2::Where::Outside);
+        c.path();
+    }
+}
+
 TEST_CASE("pocket2d rings: the room is the pocket shrunk by the tool radius and the stock to leave, then a stepover "
           "at a time, cut climb from the inside out",
           "[cam][pocket2d]")

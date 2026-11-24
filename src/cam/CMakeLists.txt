@@ -74,6 +74,9 @@ add_library(ray_cam STATIC
     ops/adaptive2d/op.cpp
     ops/adaptive2d/op.h
     ops/adaptive2d/op_plan.cpp
+    # the depths of the area above a floor face and the area at each, shared by pocket2d and adaptive2d
+    ops/area_depths.cpp
+    ops/area_depths.h
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)

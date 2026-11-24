@@ -19,3 +19,7 @@ set_property(TARGET ray_bench_adaptive_review PROPERTY FOLDER "tests")
 add_test(NAME ray_bench_adaptive_review COMMAND ray_bench_adaptive_review "[adaptive_review]")
 ray_test_runtime_path(ray_bench_adaptive_review)
 set_tests_properties(ray_bench_adaptive_review PROPERTIES TIMEOUT 1800)
+# The outsides of BP1 and BP2 on the whole parts take only the levels they need (known issue (g), fixed): seconds, so
+# quick (tests/tiers.cmake).
+add_test(NAME ray_bench_adaptive_review_depths COMMAND ray_bench_adaptive_review "[depths]")
+ray_test_runtime_path(ray_bench_adaptive_review_depths)

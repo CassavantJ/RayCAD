@@ -233,8 +233,8 @@ const Block kBp1{inch(-0.125), inch(-0.125), inch(6.125), inch(4.125), inch(0.75
 const Block kBp2{inch(-0.125), inch(-0.125), inch(3.125), inch(3.125), inch(2.1)};
 
 // The models. Each feature is roughed on a model with only what it needs: on the whole part, the outside's operation
-// also clears the open step and takes a level of cut at the floor of every pocket inside the part (the depth rule of
-// pocket2d.h DEPTHS, which adaptive2d shares; the report's first section and wholePart() below).
+// also clears BP2's open step, which is open to the outside's area (the depth rule of pocket2d.h DEPTHS, which
+// adaptive2d shares: area_depths.h; the report's first section and `whole` in buildPack below).
 kernel::Shape bp1Model(bool ring, bool pockets)
 {
     const Block& b = kBp1;
@@ -1719,36 +1719,52 @@ TEST_CASE("Write the adaptive review pack", "[.][write]")
     }
 }
 
-// FAILS TODAY (found by T-062; hidden so that it does not fail the tiers until the operations are fixed): the depth
-// rule shared by pocket2d and adaptive2d (pocket2d.h DEPTHS: "every up-facing flat face of the part inside the
-// footprint ... adds that depth") adds a level of cut at the floor of a pocket that lies inside the part, where the
-// area being cut cannot reach. Roughing the outside of BP1's plate (one 0.65 in level for adaptive at a 25.4 mm
-// stepdown, three for plain pocketing at 6.35 mm) takes one more level at the plate's pocket floors, 0.375 in down: the
-// same passes are run twice. A face should add a depth only where it meets the area being cut.
-TEST_CASE("Known defect: a pocket floor inside the part adds a level of cut to the outside's roughing", "[.][defect]")
+// The outsides on the whole parts take the levels of the outside on its own (found by T-062, known issue (g), fixed
+// since: the depth rule shared by pocket2d and adaptive2d, area_depths.h, once added a level of cut at the floor of
+// every pocket inside the part, which the outside's area cannot reach, and ran the same passes again there). BP1:
+// one 0.65 in level for adaptive at a 25.4 mm stepdown, three for plain pocketing at 6.35 mm, with the two pockets
+// (0.375 in deep) in the plate. BP2: the step (0.5 in down, open to the outside's area) is one more level for adaptive,
+// whose two 0.625 in levels pass it; plain pocketing's 0.25 in levels include its depth; the circular pocket (0.75 in,
+// closed inside the block) adds none. Run in the quick tier (ray_bench_adaptive_review_depths; regions only, no
+// engine).
+TEST_CASE("The outside on the whole part takes no level of cut at a pocket floor inside the part", "[depths]")
 {
     Library lib;
-    const Feature iso = features(lib)[0]; // bp1_perimeter
-    REQUIRE(iso.key == "bp1_perimeter");
-    const kernel::Shape whole = bp1Model(true, true);
-    const ResolvedGeometry g = geometryOn(whole, {upFace(whole, kBp1.t - inch(0.65))});
-    for (bool adaptive : {true, false}) {
-        const Strategy s = strategyFor(iso, adaptive);
-        const Operation op = operationFor(s);
-        const GenerateInput in{op, iso.tool, nullptr, *iso.machine, g};
-        JobContext ctx;
-        std::size_t depths = 0;
-        if (adaptive) {
-            auto plan = ops::planAdaptive2d(in, ctx, ops::Adaptive2dStage::Regions);
-            REQUIRE(plan);
-            depths = plan->areas.at(0).depths.size();
-        } else {
-            auto plan = ops::planPocket2d(in, ctx, ops::PlanStage::Regions);
-            REQUIRE(plan);
-            depths = plan->pockets.at(0).depths.size();
+    const std::vector<Feature> feats = features(lib);
+    const Feature& bp1 = feats[0];
+    const Feature& bp2 = feats[2];
+    REQUIRE(bp1.key == "bp1_perimeter");
+    REQUIRE(bp2.key == "bp2_outside1");
+    const kernel::Shape wholeBp1 = bp1Model(true, true);
+    const kernel::Shape wholeBp2 = bp2Model(kBp2.t, 1.25, true, true);
+    struct Want {
+        const Feature* iso;
+        const kernel::Shape* shape;
+        double floorZ;
+        int extraAdaptive, extraPocket; // levels over what the stepdown needs
+    };
+    for (const Want& w :
+         {Want{&bp1, &wholeBp1, kBp1.t - inch(0.65), 0, 0}, Want{&bp2, &wholeBp2, kBp2.t - inch(1.25), 1, 0}}) {
+        const ResolvedGeometry g = geometryOn(*w.shape, {upFace(*w.shape, w.floorZ)});
+        for (bool adaptive : {true, false}) {
+            const Strategy s = strategyFor(*w.iso, adaptive);
+            const Operation op = operationFor(s);
+            const GenerateInput in{op, w.iso->tool, nullptr, *w.iso->machine, g};
+            JobContext ctx;
+            std::size_t depths = 0;
+            if (adaptive) {
+                auto plan = ops::planAdaptive2d(in, ctx, ops::Adaptive2dStage::Regions);
+                REQUIRE(plan);
+                depths = plan->areas.at(0).depths.size();
+            } else {
+                auto plan = ops::planPocket2d(in, ctx, ops::PlanStage::Regions);
+                REQUIRE(plan);
+                depths = plan->pockets.at(0).depths.size();
+            }
+            INFO(w.iso->key << " on the whole part, " << (adaptive ? "adaptive2d" : "pocket2d") << ": " << depths
+                            << " depths, the stepdown needs " << s.levels);
+            CHECK(depths == static_cast<std::size_t>(s.levels + (adaptive ? w.extraAdaptive : w.extraPocket)));
         }
-        INFO((adaptive ? "adaptive2d" : "pocket2d") << ": " << depths << " depths, the stepdown needs " << s.levels);
-        CHECK(depths == static_cast<std::size_t>(s.levels));
     }
 }
 

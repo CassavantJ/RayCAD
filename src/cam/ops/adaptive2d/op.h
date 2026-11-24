@@ -8,14 +8,17 @@
 // stockToLeaveWall + kAdaptiveFitToleranceNm wide outside every run of open edges (r the tool radius), so the tool can
 // come in from outside the stock. At each depth z the area is the footprint minus the material at z - stockToLeaveFloor
 // and above (islands lower than the top are cut over until the depth reaches them), keeping the pieces that meet the
-// floor face.
+// floor face. The depths and the area at each are pocket2d's rule, in its one implementation: area_depths.h.
 //
 // HEIGHTS (Operation::heights) from the top of the stock box, as pocket2d.h HEIGHTS: clearance, retract and feedPlane
 // for linking, top where the material starts; ordered clearance >= retract >= feedPlane >= top, retract >= 0.
 // heights.bottom is not read.
 // DEPTHS (pocket2d.h DEPTHS, without its floor finishing): bottom = floor + stockToLeaveFloor; n = ceil((top -
-// bottom) / stepdown) equal steps z_i = top - round((top - bottom) * i / n), and every up-facing flat face strictly
-// between them (an island's top, a step) adds its height + stockToLeaveFloor.
+// bottom) / stepdown) equal steps z_i = top - round((top - bottom) * i / n), and an up-facing flat face whose height +
+// stockToLeaveFloor lies strictly between them adds that depth only where the area the tool reaches there (the area at
+// that depth shrunk by r + stockToLeaveWall + kAdaptiveFitToleranceNm, grown back by r) overlaps it (an island's top,
+// a lower step of the part open to the area); the floor of a pocket closed off inside the part, which the area does
+// not reach, adds none (pocket2d.h DEPTHS says it in full).
 //
 // AT EACH DEPTH (adaptive2d/entry.h planAdaptive, one call per depth; a depth whose engine input is the same as an
 // earlier depth's, as with straight walls, reuses that result: the input has no Z, so the passes are the same):

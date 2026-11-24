@@ -2,6 +2,7 @@
 // every depth (pocket2d's rules, as op.h says), planAdaptive per depth, the passes, the statistics and the linking
 // options. Every rule is stated in op.h; this file follows them in its order. Deterministic: integer nanometres,
 // std::map and sorted vectors only.
+#include "../area_depths.h"
 #include "../op_params.h"
 #include "../pocket2d.h" // parsePointList: the pre-drilled points' grammar, shared with the form
 #include "op.h"
@@ -728,49 +729,7 @@ private:
                 const Nm down = (span * i * 2 + n) / (2 * n);
                 a.depths.push_back(a.top - down);
             }
-            RAY_A2D_TRY(flatTops(a));
         }
-        return {};
-    }
-
-    // Flat tops inside the footprint between the floor and the top: a depth each (pocket2d.h DEPTHS).
-    Status flatTops(Area& a)
-    {
-        const kernel::Shape& shape = in_.geom.partShapes[a.part];
-        const Xform& f = in_.geom.wcsFromModel;
-        const std::uint32_t faces = shape.count(kernel::SubKind::Face);
-        for (std::uint32_t i = 0; i < faces; ++i) {
-            RAY_A2D_TRY(ctx_.cancel.check());
-            const kernel::SubId face{kernel::SubKind::Face, i};
-            const auto info = kernel::surfaceInfo(shape, face);
-            if (!info || info->type != kernel::SurfaceType::Plane) {
-                continue;
-            }
-            const auto sample = kernel::faceSample(shape, face);
-            if (!sample) {
-                continue;
-            }
-            const Vec3& n = sample->normal;
-            const double up = f.m[8] * n.x + f.m[9] * n.y + f.m[10] * n.z;
-            if (!(up > 0.999)) {
-                continue;
-            }
-            auto fb = geom2d::faceBoundary(shape, face, f);
-            if (!fb || !fb->facesUp) {
-                continue;
-            }
-            const Nm z = fb->z + stockFloor_;
-            if (z <= a.bottom || z >= a.top) {
-                continue;
-            }
-            const std::optional<Pt> inside = geom2d::interiorPoint(fb->region);
-            if (!inside || geom2d::locate(*inside, a.footprint) != Where::Inside) {
-                continue;
-            }
-            a.depths.push_back(z);
-        }
-        std::sort(a.depths.begin(), a.depths.end(), std::greater<>());
-        a.depths.erase(std::unique(a.depths.begin(), a.depths.end()), a.depths.end());
         return {};
     }
 
@@ -807,31 +766,30 @@ private:
         return {};
     }
 
-    // The area at every depth, and the check that the tool fits it (op.h THE AREAS).
+    // The area's depths with its flat faces, the area at every depth, and the check that the tool fits it (op.h THE
+    // AREAS, DEPTHS; area_depths.h).
     Status regions()
     {
         for (Area& a : areas_) {
-            Regions material;
-            const Regions floorOnly{a.floorRegion};
-            for (const Nm z : a.depths) {
+            AreaDepthsInput in;
+            in.part = &in_.geom.partShapes[a.part];
+            in.frame = in_.geom.wcsFromModel;
+            in.footprint = a.footprint;
+            in.floor = a.floorRegion;
+            in.top = a.top;
+            in.low = a.bottom;
+            in.stockFloor = stockFloor_;
+            in.keep = r_ + stockWall_ + kAdaptiveFitToleranceNm; // AT EACH DEPTH: the regions, then the tool radius
+            in.reach = r_;
+            in.levels = a.depths;
+            AreaDepths area;
+            RAY_A2D_ASSIGN(area, areaDepths(in, [&](Nm z) { return slice(a.part, z); }, ctx_));
+            a.depths = area.depths;
+            for (std::size_t d = 0; d < a.depths.size(); ++d) {
+                const Nm z = a.depths[d];
                 RAY_A2D_TRY(ctx_.cancel.check());
-                const Regions* s = nullptr;
-                RAY_A2D_ASSIGN(s, slice(a.part, z - stockFloor_));
-                if (material.empty()) {
-                    material = *s;
-                } else if (!s->empty()) {
-                    RAY_A2D_ASSIGN(material, geom2d::unite(material, *s, ctx_));
-                }
-                Regions free;
-                RAY_A2D_ASSIGN(free, geom2d::subtract(a.footprint, material, ctx_));
-                Regions kept;
-                for (Region& piece : free) {
-                    Regions meet;
-                    RAY_A2D_ASSIGN(meet, geom2d::intersect(Regions{piece}, floorOnly, ctx_));
-                    if (geom2d::area(meet) > 0) {
-                        kept.push_back(std::move(piece));
-                    }
-                }
+                Regions& kept = area.region[d];
+                Regions& material = area.material[d];
                 Regions room;
                 RAY_A2D_ASSIGN(room, geom2d::offset(kept, -(r_ + stockWall_ + kAdaptiveFitToleranceNm), ctx_));
                 if (room.empty()) {
@@ -841,7 +799,7 @@ private:
                                   ") from every wall and island");
                 }
                 a.region.push_back(std::move(kept));
-                a.material.push_back(material);
+                a.material.push_back(std::move(material));
             }
         }
         return {};

@@ -13,9 +13,10 @@
 //   is open where the point kOpenProbeNm outside it (at the middle of each piece of at most kOpenPieceNm) is not
 //   material just above the floor (geom2d::sliceRegions at the floor).
 // At each depth z the pocket region is the footprint minus the material at z - stockToLeaveFloor and above (the union
-// of the part's slices at every depth of the pocket, each taken stockToLeaveFloor lower, from the top down to z, so an
-// island lower than the top is cut over until the depth reaches it, and the stock to leave on its top is kept),
-// keeping the pieces that meet the floor face.
+// of the part's slices at every depth of the pocket and at the height of every candidate face of DEPTHS, each taken
+// stockToLeaveFloor lower, from the top down to z, so an island lower than the top is cut over until the depth reaches
+// it, and the stock to leave on its top is kept), keeping the pieces that meet the floor face (area_depths.h holds
+// this rule and DEPTHS' for pocket2d and adaptive2d both).
 //
 // HEIGHTS (Operation::heights), all relative to the top of the stock box (ResolvedGeometry::stockBounds.max.z):
 //   clearance, retract, feedPlane as linking uses them (link.h Options), top = where the material starts (the first
@@ -24,9 +25,15 @@
 // DEPTHS of one pocket, absolute WCS Z: bottom = floor + stockToLeaveFloor; roughBottom = bottom + floorAllowance when
 //   finishFloor, else bottom. n = ceil((top - roughBottom) / stepdown) roughing depths z_i = top - round((top -
 //   roughBottom) * i / n) (integer nm, half away from zero), i = 1..n, so z_n = roughBottom exactly and no step exceeds
-//   the stepdown. Every up-facing flat face of the part inside the footprint whose height + stockToLeaveFloor lies
-//   strictly between roughBottom and the top (the top of an island lower than the top, a step) adds that depth, so it
-//   is cleared rather than left under the next depth up. finishFloor adds the floor depth `bottom` after them.
+//   the stepdown. A candidate face is an up-facing flat face of the part that overlaps the footprint and whose height
+//   + stockToLeaveFloor lies strictly between roughBottom and the top. It adds that depth only where the area the tool
+//   reaches at that depth (the pocket region there shrunk by r + stockToLeaveWall, grown back by r) overlaps the face
+//   in a part wider than 2 kFaceMeetNm (10 um): the top of an island lower than the top, a lower step of the part open
+//   to the pocket, such a face partly inside the pocket; it is then cleared rather than left under the next depth up.
+//   A face the tool does not reach at its height adds nothing (the floor of a pocket closed off inside the part when
+//   the part's outside is roughed; a ledge on a closed pocket's wall, outside the footprint): what the tool cuts there
+//   is what it cuts at the next depth down, and a depth would only repeat those passes. finishFloor adds the floor
+//   depth `bottom` after them.
 //
 // RINGS. At each depth: the roughing room R = the region shrunk by r + stockToLeaveWall + wallAllowance (r the tool
 // radius, wallAllowance only when finishWalls); rings are R shrunk by k * s for k = 0, 1, ... while not empty (s the

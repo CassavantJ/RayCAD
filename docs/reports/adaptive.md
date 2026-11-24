@@ -49,17 +49,22 @@ are estimates of both strategies by the same model, not measured machine times.*
 - (f) Nothing has been cut on a real machine, and the comparison is of estimates. The machine definitions do not state
   their accelerations, so the estimate uses a deliberately slow default (below); real times will differ, probably more
   for adaptive roughing, which changes direction far more often.
-- (g) Found while making this report, and not fixed here: roughing the outside of a part that has pockets takes an
-  extra level of cut at each pocket's floor depth, although the outside's passes never reach those pockets (adaptive
-  roughing and plain pocketing share the rule that does it). On the whole BP1 plate the perimeter takes
-  2 levels with adaptive roughing (88.3 s) instead of 1
-  (45.7 s), and 4 with plain pocketing (232.8 s) instead of
-  3 (181.6 s). On the whole BP2 block the outside takes
-  4 levels with adaptive roughing (147.4 s) and 5 with plain
-  pocketing (223.7 s), against 2 and 5 on its own; it
-  also clears the open step there, which belongs to the same open area. Every other figure in this report is for each
-  feature on a model of its own, without this effect. A test that fails until the rule is fixed:
-  `ray_bench_adaptive_review "[defect]"`.
+- (g) Fixed. Found while making this report: roughing the outside of a part that has pockets took an extra level of
+  cut at each pocket's floor depth and ran the same passes again there, although the outside's passes never reach
+  those pockets. Now a flat face adds a level only where the area being cut reaches it at that depth (one rule,
+  shared by adaptive roughing and plain pocketing). On the whole BP1 plate the perimeter takes
+  1 level of cut with adaptive roughing (45.7 s) and 3 with
+  plain pocketing (181.6 s), as on its own (1 and 45.7 s;
+  3 and 181.6 s). On the whole BP2 block the outside takes
+  3 levels with adaptive roughing (119.7 s) and 5 with plain
+  pocketing (223.7 s), against 2 (58.4 s) and
+  5 (206.7 s) on its own. The difference is the open step: it is open to the
+  outside's area, whose passes run over it at every level above its floor, so the outside's operation clears it down
+  to its floor, which takes adaptive roughing one level more (neither of its two levels is at the step's depth; one of
+  plain pocketing's is). That level is a whole level of the area: it also cuts the ring round the block, so the next
+  level down takes only a thin layer of the ring: the time added is that extra pass round the ring and the step
+  itself. The circular pocket, closed inside the block, adds no level. Every other figure in this
+  report is for each feature on a model of its own. The test `ray_bench_adaptive_review_depths` keeps the levels so.
 
 ## How to read the figures
 

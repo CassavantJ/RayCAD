@@ -2,6 +2,7 @@
 // depth, the rings, the coverage check, the passes and the linking options. Every rule is stated in pocket2d.h; this
 // file follows them in its order. Deterministic: integer nanometres (geom2d), dmath for the one angle, std::map and
 // sorted vectors only.
+#include "area_depths.h"
 #include "op_params.h"
 #include "pocket2d.h"
 
@@ -702,53 +703,10 @@ private:
                     pk.depths.push_back(pk.top - down);
                 }
             }
-            RAY_P2D_TRY(flatTops(pk));
             if (p_.finishFloor) {
                 pk.depths.push_back(pk.bottom);
             }
         }
-        return {};
-    }
-
-    // Flat tops inside the footprint between the floor and the top (an island lower than the top, a step): a depth
-    // each (pocket2d.h DEPTHS), so they are cleared and not left under the next depth up.
-    Status flatTops(Pocket& pk)
-    {
-        const kernel::Shape& shape = in_.geom.partShapes[pk.part];
-        const Xform& f = in_.geom.wcsFromModel;
-        const std::uint32_t faces = shape.count(kernel::SubKind::Face);
-        for (std::uint32_t i = 0; i < faces; ++i) {
-            RAY_P2D_TRY(ctx_.cancel.check());
-            const kernel::SubId face{kernel::SubKind::Face, i};
-            const auto info = kernel::surfaceInfo(shape, face);
-            if (!info || info->type != kernel::SurfaceType::Plane) {
-                continue;
-            }
-            const auto sample = kernel::faceSample(shape, face);
-            if (!sample) {
-                continue;
-            }
-            const Vec3& n = sample->normal;
-            const double up = f.m[8] * n.x + f.m[9] * n.y + f.m[10] * n.z; // the normal's Z in the WCS
-            if (!(up > 0.999)) {
-                continue;
-            }
-            auto fb = geom2d::faceBoundary(shape, face, f);
-            if (!fb || !fb->facesUp) {
-                continue;
-            }
-            const Nm z = fb->z + stockFloor_;
-            if (z <= pk.roughBottom || z >= pk.top) {
-                continue;
-            }
-            const std::optional<Pt> inside = geom2d::interiorPoint(fb->region);
-            if (!inside || geom2d::locate(*inside, pk.footprint) != Where::Inside) {
-                continue;
-            }
-            pk.depths.push_back(z);
-        }
-        std::sort(pk.depths.begin(), pk.depths.end(), std::greater<>());
-        pk.depths.erase(std::unique(pk.depths.begin(), pk.depths.end()), pk.depths.end());
         return {};
     }
 
@@ -786,32 +744,29 @@ private:
         return {};
     }
 
-    // The pocket's region, roughing room and finishing room at every depth (pocket2d.h THE POCKET, RINGS).
+    // The pocket's depths with its flat faces, and its region, roughing room and finishing room at every depth
+    // (pocket2d.h THE POCKET, DEPTHS, RINGS; area_depths.h).
     Status regions()
     {
         for (Pocket& pk : pockets_) {
-            Regions material;
-            const Regions floorOnly{pk.floorRegion};
-            for (const Nm z : pk.depths) {
+            AreaDepthsInput a;
+            a.part = &in_.geom.partShapes[pk.part];
+            a.frame = in_.geom.wcsFromModel;
+            a.footprint = pk.footprint;
+            a.floor = pk.floorRegion;
+            a.top = pk.top;
+            a.low = pk.roughBottom;
+            a.stockFloor = stockFloor_;
+            a.keep = r_ + stockWall_; // the finishing pass's room; without finishWalls the roughing room's
+            a.reach = r_;
+            a.levels = pk.depths;
+            AreaDepths area;
+            RAY_P2D_ASSIGN(area, areaDepths(a, [&](Nm z) { return slice(pk.part, z); }, ctx_));
+            pk.depths = area.depths;
+            for (std::size_t d = 0; d < pk.depths.size(); ++d) {
+                const Nm z = pk.depths[d];
                 RAY_P2D_TRY(ctx_.cancel.check());
-                const Regions* s = nullptr;
-                // Material from stockToLeaveFloor below z up: the stock left on a floor or an island's top is kept.
-                RAY_P2D_ASSIGN(s, slice(pk.part, z - stockFloor_));
-                if (material.empty()) {
-                    material = *s;
-                } else if (!s->empty()) {
-                    RAY_P2D_ASSIGN(material, geom2d::unite(material, *s, ctx_));
-                }
-                Regions free;
-                RAY_P2D_ASSIGN(free, geom2d::subtract(pk.footprint, material, ctx_));
-                Regions kept;
-                for (Region& piece : free) {
-                    Regions meet;
-                    RAY_P2D_ASSIGN(meet, geom2d::intersect(Regions{piece}, floorOnly, ctx_));
-                    if (geom2d::area(meet) > 0) {
-                        kept.push_back(std::move(piece));
-                    }
-                }
+                Regions& kept = area.region[d];
                 Regions rough, finish;
                 RAY_P2D_ASSIGN(rough, shrink(kept, r_ + stockWall_ + wallAllowance_));
                 RAY_P2D_ASSIGN(rough, withoutSlivers(std::move(rough)));

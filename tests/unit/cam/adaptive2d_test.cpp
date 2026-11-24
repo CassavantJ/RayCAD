@@ -213,6 +213,53 @@ TEST_CASE("adaptive2d: equal steps no deeper than the stepdown, one engine run f
     CHECK(helixEnds.count(15'000'000) == 1);
 }
 
+TEST_CASE("adaptive2d: a flat face adds a depth only where the area reaches it at that depth", "[cam][adaptive2d]")
+{
+    // pocket2d's rule (area_depths.h), shared: the same cases as pocket2d_test.cpp's, with adaptive2d's own room.
+    const auto depthsOf = [](const kernel::Shape& part, double floorZ, double stepdown) {
+        AdaptiveCase c;
+        c.op = adaptiveOp(R"({"stepdown":)" + std::to_string(stepdown) + R"(,"stepover":20})");
+        c.tool = endMill(6);
+        c.geom = geometryOn(part, {upFace(part, floorZ)});
+        JobContext ctx;
+        auto plan = ops::planAdaptive2d(c.input(), ctx, ops::Adaptive2dStage::Regions);
+        INFO((plan ? "" : plan.error().message));
+        REQUIRE(plan);
+        REQUIRE(plan->areas.size() == 1);
+        return plan->areas[0].depths;
+    };
+    const kernel::Shape golden = goldenBlock();
+    const kernel::Shape inner = outsidePlate(true, false);
+    const kernel::Shape step = outsidePlate(true, true);
+    const kernel::Shape ledge = outsidePlate(false, false, true);
+    const kernel::Shape pad = padStepPart();
+    // a low island inside the pocket: its top (Z 16) is a depth
+    CHECK(depthsOf(golden, 12, 10) == std::vector<Nm>{16'000'000, 12'000'000});
+    // a closed pocket inside the part, roughing its outside: no depth at its floor (Z 10)
+    CHECK(depthsOf(inner, 5, 10) == std::vector<Nm>{5'000'000});
+    // its floor at a depth the stepdown needs anyway: that depth
+    CHECK(depthsOf(inner, 5, 5) == std::vector<Nm>{10'000'000, 5'000'000});
+    // a step of the part open to the area (Z 11): a depth
+    CHECK(depthsOf(step, 5, 10) == std::vector<Nm>{11'000'000, 5'000'000});
+    // a step on a closed pocket's wall (Z 10), outside its footprint: no depth
+    CHECK(depthsOf(ledge, 7, 10) == std::vector<Nm>{7'000'000});
+    // a face only partly inside the area (the pad's top, Z 10): a depth
+    CHECK(depthsOf(pad, 8, 5) == std::vector<Nm>{10'000'000, 8'000'000});
+
+    // The outside of the plate with the inner pocket is roughed exactly as the plate without it.
+    const kernel::Shape plain = outsidePlate(false, false);
+    AdaptiveCase a, b;
+    a.op = b.op = adaptiveOp(R"({"stepdown":10,"stepover":20})");
+    a.tool = b.tool = endMill(6);
+    a.geom = geometryOn(inner, {upFace(inner, 5)});
+    b.geom = geometryOn(plain, {upFace(plain, 5)});
+    auto pa = a.generate();
+    auto pb = b.generate();
+    REQUIRE(pa);
+    REQUIRE(pb);
+    CHECK(pa->hash() == pb->hash());
+}
+
 TEST_CASE("adaptive2d: the entry order of the setting, and the fall-back to a smaller helix", "[cam][adaptive2d]")
 {
     SECTION("ramp first in a pocket where a helix would fit: a ramp, and no fall-back warning")

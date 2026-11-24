@@ -107,6 +107,43 @@ inline kernel::Shape pocketBlock(double x0, double y0, double x1, double y1, dou
     return cut(s, prism({roundedRect(x0, y0, x1, y1, r)}, floorZ, 16));
 }
 
+// The depth rule's cases (area_depths.h; pocket2d_test.cpp and adaptive2d_test.cpp "flat faces"):
+// A plate 60 x 40 x 15 (x 0..60, y 0..40, Z 0..15) in a stock 5 mm larger at the sides, its outside cut down to Z 5:
+// the floor at Z 5 round the part is the area to rough (open to the outside). Optionally
+//   innerPocket  a closed pocket x 20..40, y 10..30 (corner radius 2) down to Z 10, inside the plate;
+//   step         a step across the whole front of the plate, y 0..8, down to Z 11, open to the area round it;
+//   ledge        a closed pocket x 10..50, y 10..30 down to Z 10 whose part x 20..50 goes on down to Z 7: a step on its
+//                wall at Z 10 (pick the floor at Z 7).
+inline kernel::Shape outsidePlate(bool innerPocket, bool step, bool ledge = false)
+{
+    kernel::Shape s = box(Vec3{-5, -5, 0}, Vec3{65, 45, 15});
+    s = cut(s, prism({roundedRect(-6, -6, 66, 46, 0), roundedRect(0, 0, 60, 40, 0)}, 5, 16));
+    if (innerPocket) {
+        s = cut(s, prism({roundedRect(20, 10, 40, 30, 2)}, 10, 16));
+    }
+    if (step) {
+        s = cut(s, box(Vec3{-6, -6, 11}, Vec3{66, 8, 16}));
+    }
+    if (ledge) {
+        s = cut(s, box(Vec3{10, 10, 10}, Vec3{50, 30, 16}));
+        s = cut(s, box(Vec3{20, 10, 7}, Vec3{50, 30, 16}));
+    }
+    return s;
+}
+// A block x 0..70, y -5..30, Z 0..12 with a step x 8..32, y 0..14 down to Z 8, open to the front, and in front of it,
+// across a 2 mm gap, a pad (x 25..70, y -5..-2, joined to the block at x 50..70) whose top is at Z 10. The strip the
+// step's area runs out into past its open edge (2 r + stock to leave wide) covers the pad's top at x 25..32 only: the
+// pad's top face lies partly inside the area, and its point geom2d::interiorPoint (x 47.5) outside it.
+inline kernel::Shape padStepPart()
+{
+    kernel::Shape s = box(Vec3{0, -5, 0}, Vec3{70, 30, 12});
+    s = cut(s, box(Vec3{-1, -6, 10}, Vec3{71, 0, 13}));  // the front 5 mm down to Z 10
+    s = cut(s, box(Vec3{-1, -2, -1}, Vec3{50, 0, 13}));  // a gap 2 mm wide behind it, closed at x 50..70
+    s = cut(s, box(Vec3{-1, -6, -1}, Vec3{25, -2, 13})); // the pad starts at x 25
+    s = cut(s, box(Vec3{8, -1, 8}, Vec3{32, 14, 13}));   // the step
+    return s;
+}
+
 // The up-facing planar faces at height z whose box lies in [x0, x1] x [y0, y1].
 inline std::vector<kernel::SubId> upFaces(const kernel::Shape& s, double z, double x0 = -1e9, double y0 = -1e9,
                                           double x1 = 1e9, double y1 = 1e9)
