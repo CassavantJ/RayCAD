@@ -79,7 +79,10 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_cam_geom2d_sweeps
     # T-070: the stock model's PLAN.md section 9 benchmark, 112k moves at 0.2, 0.1 and 0.05 mm (about a minute in
     # Release, far longer in MSVC Debug, where only its memory limits are checked).
-    ray_sim_tests_wallclock)
+    ray_sim_tests_wallclock
+    # T-072: the simulator's run and seek on the same workload at the three cells (about 45 s in Release; a thinned
+    # workload in Debug, which checks no time).
+    ray_sim_simulator_bench)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
@@ -133,7 +136,8 @@ set(RAY_SERIAL_TESTS
     ray_core_jobs_tests     # a cancelled job returns within 100 ms
     ray_sketch_drag_bench   # the median drag step under 16 ms
     ray_store_bench         # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
-    ray_render_backplot_cost) # 2 M backplot segments under the 500k-triangle baseline frame time on WARP
+    ray_render_backplot_cost # 2 M backplot segments under the 500k-triangle baseline frame time on WARP
+    ray_sim_simulator_bench) # T-072: simulation run and seek times per tier (section 9)
 
 # "<lock>=<test>", one list entry per test and lock.
 #   desktop    every test that shows a window. The windows of one desktop share the active window (only it gets keys

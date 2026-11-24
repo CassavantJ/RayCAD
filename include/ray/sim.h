@@ -21,6 +21,14 @@
 //    does not hold (whether it cuts at its centre; its overall length and shank for the stick-out it allows).
 //  - SimProgram's solids are in the setup WCS, the toolpaths' frame (it said nothing).
 //  - verifyFast: what it checks, against what, and its cut-stock check at a fixed cell (it said "no stock model").
+//
+// Changed in T-072 (simulator, keyframes, gouges; each also in docs/interfaces/sim.h; src/sim/simulator.h says how):
+//  - SimProgram: partSolid must be triangulated within 0.009 mm of the design part (the checks and gouges rely on it).
+//  - SimOptions::safetyChecks and SimOptions::gouges, added at the end (both true by default): a run that only carries
+//    stock to the next setup (T-075) turns them off. gougeTolMm: what it is measured against and its minimum.
+//  - ISimulator::position() and runEnd(), added at the end: where the stock and tool are, and where the run stopped.
+//  - The comments of ISimulator now state what run, events, seek, stock, toolPose, totalMoves and finalStock do, the
+//    timeline's positions, cancel and threading.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -181,6 +189,9 @@ struct SimProgram {                        // one setup
     std::vector<std::shared_ptr<const cam::Toolpath>> toolpaths;   // parallel to ops
     std::vector<ToolShape> tools;                                  // parallel to ops
     // Closed soups in the setup WCS (the toolpaths' frame), mm. stockSolid is the stock at the start of the setup.
+    // partSolid must be triangulated within 0.009 mm of the design part (added by T-072: the checks allow a rapid that
+    // much into it, and gouges allow the part's chords that much; a coarser soup reads as gouges and rapids into the
+    // part where a pass follows a curved face).
     kernel::TriSoup partSolid, stockSolid;
     std::vector<kernel::TriSoup> fixtureSolids;
     Xform modelFromWcs;
@@ -189,8 +200,19 @@ struct SimProgram {                        // one setup
     // (the checks then take the tool as not cutting at its centre and give no stick-out limit).
     std::vector<const lib::Tool*> toolDefs = {};
 };
-struct SimOptions { StockResolution resolution; double gougeTolMm = 0.05; bool stopOnError = false; };
+// resolution: the stock model's cell (the tier preset's; a run that carries stock uses its own fixed one).
+// gougeTolMm (settled in T-072): how far the cutting part of the tool may go into the PART (not the part plus stock to
+// leave) before it is a Gouge; measured exactly against the part's triangles, not on the stock cells, so it does not
+// depend on the resolution; raised to 0.03 mm when smaller (below that the part's and the tool's chords could read as a
+// gouge on a pass that follows the design surface). stopOnError: the removal stops at the end of the move of the first
+// Error event. Added by T-072: safetyChecks (verifyFast's checks run inside the run, their events in events()) and
+// gouges (the gouge test); off, run() only removes material.
+struct SimOptions { StockResolution resolution; double gougeTolMm = 0.05; bool stopOnError = false;
+                    bool safetyChecks = true; bool gouges = true; };
 
+// A place on the timeline: every move before moveIndex of operation opIndex (and every earlier operation) done, and of
+// move moveIndex the fraction t01 of its path's length (arcs and canned cycles as buildBackplot draws them; zero-length
+// motions at its start included). (op, m, 1) is (op, m + 1, 0). Settled in T-072.
 struct TimelinePosition { std::uint32_t opIndex; std::uint32_t moveIndex; double t01; };   // t01 = fraction along the move
 
 class ISimulator {
@@ -203,15 +225,47 @@ public:
     // message states; that model runs only when there is such a contact. Results do not depend on the tier or the
     // thread count. Fast enough to run after every toolpath generation.
     virtual Result<std::vector<SimEvent>> verifyFast(const SimProgram&, JobContext&) = 0;
-    // Full material-removal run. Stores a stock keyframe every N moves so scrubbing backwards is fast.
+    // Full material-removal run (settled in T-072): the checks and the gouge test (SimOptions), then the stock model is
+    // reset from stockSolid in its bounding box (the setup WCS) and every move is cut through cutBatch in batches,
+    // keeping stock keyframes (snapshots) as it goes so a seek recuts only from the nearest one; the spacing follows the
+    // work done and is widened to keep the keyframes' memory within a budget (src/sim/simulator.h, which gives the seek
+    // times that follow). Progress on ctx.progress, cancel polled between batches (tens of milliseconds; up to about
+    // 0.2 s in long facing moves at 0.05 mm). Afterwards the stock and the tool are at runEnd(). It copies what it needs:
+    // the SimProgram may go away after it returns. InvalidArgument without a stock solid. A cancelled or failed run leaves
+    // the simulator empty (totalMoves 0, no events, seek refused) and ready for another run; stock() is then undefined.
+    // A run replaces the last one (its keyframes too).
     virtual Status run(const SimProgram&, const SimOptions&, JobContext&) = 0;
+    // The checks' events and the gouges, sorted by (opIndex, moveIndex), at one move the checks' kinds first. Gouge:
+    // amountMm the depth (an upper bound, within about 0.015 mm), moveIndex the first of a run of gouging moves of one
+    // operation, the message names the deepest. Kept until the next run.
     virtual std::span<const SimEvent> events() const = 0;               // sorted by (opIndex, moveIndex)
+    // Puts the stock and the tool at a position (see TimelinePosition; an operation or move past the end, or past where
+    // stopOnError stopped, means runEnd(); t01 is clamped). A forward seek with no keyframe between continues from where
+    // the stock is (playback costs the moves played); otherwise the last keyframe at or before the position is restored
+    // and the moves from it cut. The stock at a position is the same, bit for bit, however it was reached. No cancel:
+    // its time is bounded by the keyframe spacing. InvalidArgument before a successful run.
     virtual Status seek(TimelinePosition) = 0;                          // budget: PLAN.md section 9, via IStockModel::snapshot keyframes
+    // The live stock model, in the setup WCS (place its meshes with SimProgram::modelFromWcs). Its version() and
+    // toMesh(changedSinceVersion) give the tiles a seek or run changed.
     virtual const IStockModel& stock() const = 0;
+    // The tool at position(): modelFromWcs with the tool tip as its origin and the WCS's +Z as the tool axis, ready for
+    // render::IViewport::setTransform of a tool glyph (whose tip is at its origin). Before a run: identity.
     virtual Xform toolPose() const = 0;
-    virtual std::uint64_t totalMoves() const = 0;
+    virtual std::uint64_t totalMoves() const = 0;                       // IR moves of every operation of the last run
+    // The stock at runEnd() (whatever position() is): closed, welded, outward-oriented, in the setup WCS, at the run's
+    // resolution (IStockModel::toSolid: its size grows with 1 / cell^2, up to about 0.3 s at 0.1 mm). Carried stock
+    // needs a fixed, coarse cell that does not come from the tier: run a simulator of its own at that cell, with
+    // safetyChecks and gouges off. Empty before a successful run.
     virtual kernel::TriSoup finalStock() const = 0;                     // feeds cam::FromSetupStock
+    // Added by T-072: where the stock and the tool are (the position the last seek resolved to; after a run, runEnd()).
+    virtual TimelinePosition position() const = 0;
+    // Added by T-072: the end of the last run: the last move of the last operation with moves at t01 1, or the move of
+    // the first Error event when stopOnError stopped it there. {0, 0, 0} before a run or for a program without moves.
+    virtual TimelinePosition runEnd() const = 0;
 };
+// The stock model may be null (a CPU tri-dexel model is made). Threads: one at a time calls run, seek and verifyFast;
+// the const functions may run together, but not during a run or a seek. Everything is DETERMINISTIC: events, removed
+// volumes and the stock do not depend on the worker count, the batching or the keyframe spacing (src/sim/simulator.h).
 std::unique_ptr<ISimulator> makeSimulator(IJobSystem&, std::unique_ptr<IStockModel>);
 
 // As-machined vs design comparison (v2): signed distance per display vertex.
