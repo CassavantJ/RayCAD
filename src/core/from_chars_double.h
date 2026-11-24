@@ -2,30 +2,26 @@
 // (by relative path) without a link dependency; it adds nothing to the public interface in include/ray.
 //
 // Apple's libc++ ships floating-point std::from_chars only in the libc++ of macOS 26 and later, and marks it
-// unavailable when building for an earlier macOS (RayCAD's deployment target is Qt's minimum, 14.4). There this
-// reads the same grammar itself and converts the characters it accepted with the standard stream in the classic
-// locale; libc++ converts those with strtod_l, which rounds correctly, so the value is the one std::from_chars gives.
-// Differences on that path only: "inf", "nan" and hexadecimal are refused (every caller refuses a non-finite value
-// anyway), and a value that underflows to zero is reported as out of range. Everywhere else this is
-// std::from_chars itself.
+// unavailable when building for an earlier macOS (RayCAD's deployment target is Qt's minimum, 14.4). There
+// fromChars is fromCharsFallback: it reads the same grammar itself and converts the characters it accepted with the
+// standard stream in the classic locale; libc++ and libstdc++ convert those with strtod_l, which rounds correctly,
+// so the value is the one std::from_chars gives. Differences of the fallback: "inf", "nan" and hexadecimal are
+// refused (every caller refuses a non-finite value anyway), and a value that underflows to zero is reported as out
+// of range. Everywhere else fromChars is std::from_chars itself. tests/unit/core/from_chars_test.cpp checks the
+// fallback against std::from_chars on the platforms that have both.
 #pragma once
 
 #include <charconv>
-#include <system_error>
-
-#if defined(__APPLE__) && defined(_LIBCPP_VERSION)
 #include <locale>
 #include <sstream>
 #include <string>
-#define RAY_FROM_CHARS_DOUBLE_FALLBACK 1
-#endif
+#include <system_error>
 
 namespace ray::compat {
 
-inline std::from_chars_result fromChars(const char* first, const char* last, double& value,
-                                        std::chars_format fmt = std::chars_format::general)
+inline std::from_chars_result fromCharsFallback(const char* first, const char* last, double& value,
+                                                std::chars_format fmt = std::chars_format::general)
 {
-#if defined(RAY_FROM_CHARS_DOUBLE_FALLBACK)
     const auto isDigit = [](char c) {
         return c >= '0' && c <= '9';
     };
@@ -69,6 +65,13 @@ inline std::from_chars_result fromChars(const char* first, const char* last, dou
     }
     value = v;
     return {p, std::errc()};
+}
+
+inline std::from_chars_result fromChars(const char* first, const char* last, double& value,
+                                        std::chars_format fmt = std::chars_format::general)
+{
+#if defined(__APPLE__) && defined(_LIBCPP_VERSION)
+    return fromCharsFallback(first, last, value, fmt);
 #else
     return std::from_chars(first, last, value, fmt);
 #endif

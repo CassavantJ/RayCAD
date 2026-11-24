@@ -1,6 +1,7 @@
 # core unit tests (task T-002): identity, hashing, units, dmath, logging.
 add_executable(ray_core_tests
     dmath_test.cpp
+    from_chars_test.cpp
     hash_test.cpp
     identity_test.cpp
     log_test.cpp
