@@ -41,7 +41,8 @@ set(RAY_SLOW_TESTS
     ray_cam_invariants_slow   # the property tests of every operation type on their large seed sets (T-058)
     ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
     ray_bench_adaptive_review # docs/reports/adaptive.md rebuilt and compared (T-062)
-    ray_render_backplot_cost) # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
+    ray_render_backplot_cost  # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
+    ray_render_stock_cost)    # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
@@ -133,7 +134,8 @@ set(RAY_SERIAL_TESTS
     ray_core_jobs_tests     # a cancelled job returns within 100 ms
     ray_sketch_drag_bench   # the median drag step under 16 ms
     ray_store_bench         # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
-    ray_render_backplot_cost) # 2 M backplot segments under the 500k-triangle baseline frame time on WARP
+    ray_render_backplot_cost  # 2 M backplot segments under the 500k-triangle baseline frame time on WARP
+    ray_render_stock_cost)    # T-073: frame time of a 2 M-triangle stock against the same triangles as one mesh
 
 # "<lock>=<test>", one list entry per test and lock.
 #   desktop    every test that shows a window. The windows of one desktop share the active window (only it gets keys
