@@ -87,10 +87,13 @@ set(RAY_DEBUG_HEAVY_TESTS
     # T-072: the simulator's run and seek on the same workload at the three cells (about 45 s in Release; a thinned
     # workload in Debug, which checks no time).
     ray_sim_simulator_bench
-    # The linking suite's seeded property and ordering cases: 12 minutes in MSVC Debug on 32 hardware threads under
-    # load, and past its 20-minute timeout on the 4-processor CI runner (run 45129357124); a minute in Release there,
-    # 4.5 minutes in GCC Debug.
-    ray_cam_link_tests)
+    # On the 4-processor Windows CI runner in MSVC Debug (runs 45129357124 and 45454955286), against a minute or two
+    # in Release: the linking suite's seeded property and ordering cases (17 minutes, and once past its 20-minute
+    # timeout; 12 minutes here on 32 hardware threads under load), the adaptive2d operation's suite (past its
+    # 20-minute timeout) and adaptive2d's property tests on their quick seeds (24 minutes).
+    ray_cam_link_tests
+    ray_cam_adaptive2d_tests
+    ray_cam_invariants_adaptive2d)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
