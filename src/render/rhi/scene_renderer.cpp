@@ -12,6 +12,7 @@
 #include "../tier_internal.h"
 
 #include <QtCore/QByteArray>
+#include <QtCore/QtEnvironmentVariables>
 #include <QtGui/QColor>
 #include <QtGui/QVector3D>
 
@@ -45,6 +46,8 @@ struct FrameBlock {
     float draftVertical[4];
     // T-038: the toolpath tokens by detail::PathSlot
     float pathColor[8][4];
+    // T-073: the simulation tokens stock marks take, by detail::StockMarkSlot
+    float simColor[4][4];
 };
 struct ItemBlock {
     float model[16];
@@ -53,10 +56,13 @@ struct ItemBlock {
     float edgeColor[4];
     float line[4];
     float ids[4];
+    detail::StockUniforms stock; // T-073: zero for everything but a stock
 };
-static_assert(sizeof(FrameBlock) == 432);
+static_assert(sizeof(FrameBlock) == 496);
 static_assert(int(detail::PathSlot::Count) <= 8);
-static_assert(sizeof(ItemBlock) == 192);
+static_assert(int(detail::StockMarkSlot::Count) <= 4);
+static_assert(sizeof(detail::StockUniforms) == (3 + 2 * kMaxStockMarks) * 16);
+static_assert(sizeof(ItemBlock) == 192 + sizeof(detail::StockUniforms));
 
 constexpr quint32 kMeshStride = 28; // position, normal, face id
 constexpr quint32 kThinStride = 16; // position, edge id
@@ -151,6 +157,26 @@ const Shaders& shaders()
 
 } // namespace
 
+bool hasTriangles(const GpuItem& gpu)
+{
+    if (gpu.tiles)
+        return !gpu.tiles->empty();
+    return gpu.vertices && gpu.indices && gpu.indexCount > 0;
+}
+
+std::uint64_t drawTriangles(QRhiCommandBuffer* cb, const GpuItem& gpu, std::uint64_t& drawCalls)
+{
+    if (gpu.tiles)
+        return gpu.tiles->drawAll(cb, drawCalls);
+    if (!gpu.vertices || !gpu.indices || gpu.indexCount == 0)
+        return 0;
+    const QRhiCommandBuffer::VertexInput vin(gpu.vertices.get(), 0);
+    cb->setVertexInput(0, 1, &vin, gpu.indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
+    cb->drawIndexed(gpu.indexCount);
+    ++drawCalls;
+    return gpu.indexCount / 3;
+}
+
 QRhiVertexInputLayout capVertexLayout()
 {
     QRhiVertexInputLayout cap;
@@ -242,6 +268,9 @@ struct SceneRenderer::PipelineSet {
     Owned<QRhiGraphicsPipeline> highlightFaces;      // T-015: mesh shaders, blended, on the faces' own depth
     Owned<QRhiGraphicsPipeline> capStencil, capFill; // T-023: section caps (section.h); null: no caps
     Owned<QRhiGraphicsPipeline> path;                // T-038: backplots (path_lines.h); null: none drawn
+    // T-073: the stock, without pipeline depth bias (mesh.vert pushes it back instead; ../stock.h "DEPTH"): opaque,
+    // highlighted, and see-through by its front surface only (depth first with no colour, then blended on that depth).
+    Owned<QRhiGraphicsPipeline> stockOpaque, stockHighlight, stockDepth, stockBlendFront;
     bool ok = false;
 };
 
@@ -440,7 +469,7 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
     }
     const auto make = [&](const QShader& vs, const QShader& fs, const QRhiVertexInputLayout& layout,
                           QRhiGraphicsPipeline::Topology topology, bool depthTest, bool depthWrite,
-                          QRhiGraphicsPipeline::CompareOp depthOp, bool blend, bool bias) {
+                          QRhiGraphicsPipeline::CompareOp depthOp, bool blend, bool bias, bool colour = true) {
         Owned<QRhiGraphicsPipeline> p = own(counter_, rhi_->newGraphicsPipeline());
         p->setShaderStages({{QRhiShaderStage::Vertex, vs}, {QRhiShaderStage::Fragment, fs}});
         p->setVertexInputLayout(layout);
@@ -449,8 +478,13 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
         p->setDepthWrite(depthWrite);
         p->setDepthOp(depthOp);
         p->setCullMode(QRhiGraphicsPipeline::None);
-        if (blend)
+        if (!colour) {
+            QRhiGraphicsPipeline::TargetBlend none; // depth only (T-073)
+            none.colorWrite = {};
+            p->setTargetBlends({none});
+        } else if (blend) {
             p->setTargetBlends({alphaBlend()});
+        }
         if (bias) {
             p->setDepthBias(kFaceDepthBias);
             p->setSlopeScaledDepthBias(kFaceSlopeDepthBias);
@@ -481,6 +515,13 @@ SceneRenderer::PipelineSet* SceneRenderer::pipelinesFor(Target& target)
         set->lineWide = make(sh.wideVs, sh.wideFs, wide, P::Triangles, true, false, P::LessOrEqual, true, false);
     // Same shaders and depth bias as the faces, so a highlight lands on exactly their depth and passes LessOrEqual.
     set->highlightFaces = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, false, P::LessOrEqual, true, true);
+    // T-073: the stock, its depth pushed back by mesh.vert instead of a bias. Seen through, the depth pass keeps the
+    // nearest surface (no colour written) and the blended pass draws only that surface (LessOrEqual), so neither its
+    // back nor the walls between its tiles show through.
+    set->stockOpaque = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, true, P::Less, false, false);
+    set->stockHighlight = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, false, P::LessOrEqual, true, false);
+    set->stockDepth = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, true, P::Less, false, false, false);
+    set->stockBlendFront = make(sh.meshVs, sh.meshFs, mesh, P::Triangles, true, false, P::LessOrEqual, true, false);
     // T-038: backplots, blended (anti-aliased) and without depth writes, like the wide lines.
     if (sh.pathOk && rhi_->isFeatureSupported(QRhi::Instancing))
         set->path =
@@ -669,8 +710,8 @@ void SceneRenderer::uploadItem(const detail::SceneItem& item, GpuItem& gpu, bool
 
 void SceneRenderer::ensureWide(const detail::SceneItem& item, GpuItem& gpu, QRhiResourceUpdateBatch* u)
 {
-    if (gpu.wideEdges || item.kind == detail::ItemKind::Backplot)
-        return;
+    if (gpu.wideEdges || item.kind == detail::ItemKind::Backplot || (item.kind == detail::ItemKind::Mesh && !item.mesh))
+        return; // a tiled mesh (T-073) has no edge lines
     QByteArray data;
     std::uint32_t segments = 0;
     if (item.kind == detail::ItemKind::Lines) {
@@ -720,6 +761,23 @@ void SceneRenderer::syncItems(QRhiResourceUpdateBatch* u)
         if (!detail::itemNeeded(item))
             continue; // uploaded when it becomes visible (or pickable while hidden)
         GpuItem& gpu = gpu_[item.id];
+        if (item.kind == detail::ItemKind::Mesh && item.pieces) {
+            // T-073: a tiled mesh uploads only the face ranges its GPU copy does not hold yet (stock_pool.h).
+            if (!gpu.tiles) {
+                gpu = GpuItem{};
+                gpu.tiles = std::make_unique<TilePool>(counter_);
+            }
+            gpu.generation = item.geometryGeneration;
+            // The stock's own box sorts its outer walls from the walls inside it (stock.h PackedPiece).
+            const std::optional<Box3> outer = item.stock && item.stock->uncut ? item.stock->uncut : item.localBounds;
+            const TilePool::SyncStats s = gpu.tiles->sync(rhi_, item.pieces, outer, u);
+            if (s.pieces > 0)
+                ++uploads_;
+            stockUploadBytes_ += s.bytes;
+            stockTileUploads_ += s.pieces;
+            stockRepacks_ += s.repacked ? 1 : 0;
+            continue;
+        }
         const bool wantWide = item.kind != detail::ItemKind::Backplot &&
                               (item.kind == detail::ItemKind::Lines || (smoothEdges_ && item.style.showEdges) ||
                                std::binary_search(highlightWide_.begin(), highlightWide_.end(), item.id));
@@ -769,12 +827,16 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
         const double dz = bounds->max.z - bounds->min.z;
         const double radius = std::max(0.5 * std::sqrt(dx * dx + dy * dy + dz * dz), 1e-3) * 1.02;
         const double depth = QVector3D::dotProduct(centre - eye, forward);
+        // T-073: room behind for a stock's depth push (at most a fifth of the radius; ../stock.h "DEPTH").
+        const bool stock = std::any_of(snap_.items.begin(), snap_.items.end(),
+                                       [](const detail::SceneItem& i) { return i.visible && i.stock; });
+        const double behind = stock ? 0.25 * radius : 0.0;
         if (cam.perspective) {
-            farPlane = std::max(depth + radius, 1e-2);
+            farPlane = std::max(depth + radius + behind, 1e-2);
             nearPlane = std::max({depth - radius, farPlane / 10000.0, 1e-4});
         } else {
             nearPlane = depth - radius;
-            farPlane = depth + radius;
+            farPlane = depth + radius + behind;
         }
     }
     const float aspect = float(size.width()) / float(std::max(1, size.height()));
@@ -803,6 +865,12 @@ void SceneRenderer::writeFrameBlock(QRhiResourceUpdateBatch* u, quint32 offset, 
         block.misc[3] = float(metric(*theme, kMetricDash, kDefaultDashPx) * snap_.devicePixelRatio);
         for (int slot = 0; slot < int(detail::PathSlot::Count); ++slot)
             toFloat4(theme->colors[std::size_t(detail::pathToken(detail::PathSlot(slot)))], block.pathColor[slot]);
+        for (int slot = 0; slot < int(detail::StockMarkSlot::Count); ++slot) // T-073
+            toFloat4(theme->colors[std::size_t(detail::stockMarkToken(detail::StockMarkSlot(slot)))],
+                     block.simColor[slot]);
+        // T-073 test hook: RAY_RENDER_SHOW_STOCK_WALLS=1 paints the walls inside a stock (stock.h PackedPiece's third
+        // part) magenta, so a test can prove that none of them shows. Read per frame; costs nothing otherwise.
+        block.simColor[3][3] = qEnvironmentVariableIntValue("RAY_RENDER_SHOW_STOCK_WALLS") == 1 ? 1.0f : 0.0f;
     } else {
         block.misc[3] = float(kDefaultDashPx);
     }
@@ -879,8 +947,11 @@ void SceneRenderer::writeItemBlocks(QRhiResourceUpdateBatch* u, const Theme& the
         }
         block.line[2] = smooth ? 1.0f : 0.0f;
         block.ids[0] = float(d.item->id);
-        // T-023: draft analysis paints body faces (over their own colour too), never lines or highlights.
-        block.ids[1] = d.item->kind == detail::ItemKind::Mesh ? 1.0f : 0.0f;
+        // T-023: draft analysis paints body faces (over their own colour too), never lines or highlights. T-073: nor
+        // the stock, whose colours say cut, uncut and marked.
+        block.ids[1] = d.item->kind == detail::ItemKind::Mesh && !d.item->stock ? 1.0f : 0.0f;
+        if (d.item->stock)
+            block.stock = detail::stockUniforms(*d.item->stock, d.item->localBounds);
         u->updateDynamicBuffer(uniforms_.get(), d.itemUniformOffset + shift, sizeof(block), &block);
     }
 }
@@ -906,9 +977,16 @@ std::optional<Box3> SceneRenderer::visibleBounds() const
 
 void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
 {
-    // Caps only when the section asks for them AND the preset allows them (PLAN.md 6.2: Medium and High).
+    // Caps only when the section asks for them AND the preset allows them (PLAN.md 6.2: Medium and High). A stock
+    // (T-073) is always capped: it is a closed solid by IStockModel's contract, and uncapped the walls that close its
+    // tiles inside the material would show through the cut.
     capped_.clear();
-    if (!snap_.section || !snap_.section->cap || !snap_.preset.sectionCaps || !snap_.theme)
+    if (!snap_.section || !snap_.theme)
+        return;
+    const bool capBodies = snap_.section->cap && snap_.preset.sectionCaps;
+    const bool anyStock = std::any_of(draws_.begin(), draws_.end(),
+                                      [](const DrawItem& d) { return d.drawn && d.item->stock != nullptr; });
+    if (!capBodies && !anyStock)
         return;
     const std::optional<detail::PlaneEquation> plane = detail::planeEquation(*snap_.section);
     const std::optional<Box3> bounds = visibleBounds();
@@ -921,10 +999,12 @@ void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
     for (std::size_t i = 0; i < draws_.size(); ++i) {
         const detail::SceneItem& item = *draws_[i].item;
         const GpuItem& drawn = *draws_[i].gpu;
-        if (!draws_[i].drawn || item.kind != detail::ItemKind::Mesh || !item.mesh || !item.localBounds ||
-            !drawn.indices || drawn.indexCount == 0)
+        const bool stock = item.stock != nullptr;
+        if (!draws_[i].drawn || item.kind != detail::ItemKind::Mesh || !item.localBounds || !hasTriangles(drawn))
             continue;
-        if (transparency && item.style.opacity < 1.0f)
+        if (!stock && (!capBodies || !item.mesh))
+            continue;
+        if (transparency && item.style.opacity < 1.0f && !stock)
             continue; // see-through bodies get no cap
         // Only bodies the plane really cuts.
         const Box3 b = detail::transformBox(*item.localBounds, item.xform);
@@ -938,7 +1018,7 @@ void SceneRenderer::prepareCaps(QRhiResourceUpdateBatch* u)
         if (!below || !above)
             continue;
         // Worked out on a worker by the front (viewport_frontend.cpp); not known yet: no cap this frame.
-        if (item.closed && item.closed->state.load() == 1)
+        if (stock || (item.closed && item.closed->state.load() == 1))
             capped_.push_back(i);
     }
     if (capped_.empty())
@@ -988,15 +1068,18 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
     const auto isBlended = [&](const DrawItem& d) {
         return transparency && d.item->style.opacity < 1.0f;
     };
-    const auto drawFaces = [&](const DrawItem& d, QRhiGraphicsPipeline* pipeline) {
-        if (!d.gpu->indices || d.gpu->indexCount == 0)
+    std::uint64_t stockDraws = 0;
+    // `count`: whether the triangles count in the frame statistics (a stock's depth pass does not).
+    const auto drawFaces = [&](const DrawItem& d, QRhiGraphicsPipeline* pipeline, bool count = true) {
+        if (!pipeline || !hasTriangles(*d.gpu))
             return;
         use(pipeline, d.itemUniformOffset);
-        const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
-        cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
-        cb->drawIndexed(d.gpu->indexCount);
-        triangles += d.gpu->indexCount / 3;
-        ++drawCalls;
+        const std::uint64_t before = drawCalls;
+        const std::uint64_t drawnTriangles = drawTriangles(cb, *d.gpu, drawCalls);
+        if (d.gpu->tiles)
+            stockDraws += drawCalls - before;
+        if (count)
+            triangles += drawnTriangles;
     };
     const auto drawWide = [&](const DrawItem& d) {
         if (!set.lineWide || !d.gpu->wideEdges || d.gpu->segmentCount == 0)
@@ -1008,10 +1091,10 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
         ++drawCalls;
     };
 
-    // 1. opaque faces (hidden pickable items are listed for picks and highlights only)
+    // 1. opaque faces (hidden pickable items are listed for picks and highlights only); a stock without depth bias
     for (const DrawItem& d : draws_) {
         if (d.drawn && d.item->kind == detail::ItemKind::Mesh && !isBlended(d))
-            drawFaces(d, set.meshOpaque.get());
+            drawFaces(d, d.item->stock ? set.stockOpaque.get() : set.meshOpaque.get());
     }
     // 1b. section caps (T-023, section.h): per closed body, mark its inside in the stencil, then fill the cap quad
     // there. The stencil marking adds the body's triangles once more (no colour, no depth), the fill one quad.
@@ -1020,14 +1103,12 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
         for (const std::size_t index : capped_) {
             const DrawItem& d = draws_[index];
             use(set.capStencil.get(), d.itemUniformOffset);
-            const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
-            cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
-            cb->drawIndexed(d.gpu->indexCount);
+            drawTriangles(cb, *d.gpu, drawCalls);
             use(set.capFill.get(), d.itemUniformOffset);
             cb->setStencilRef(0);
             cb->setVertexInput(0, 1, &quadInput);
             cb->draw(kCapVertices);
-            drawCalls += 2;
+            ++drawCalls;
         }
     }
     // 2. edges, lines and backplots (T-038: the range of each, path_lines.h)
@@ -1057,16 +1138,24 @@ void SceneRenderer::drawScene(QRhiCommandBuffer* cb, PipelineSet& set, QSize siz
             }
         }
     }
-    // 3. transparent faces, far to near (draws_ is already in that order for them)
+    // 3. transparent faces, far to near (draws_ is already in that order for them). A see-through stock (T-073): its
+    //    front surface only, so neither its back nor the walls that close its tiles show through.
     for (const DrawItem& d : draws_) {
-        if (d.drawn && d.item->kind == detail::ItemKind::Mesh && isBlended(d))
+        if (!d.drawn || d.item->kind != detail::ItemKind::Mesh || !isBlended(d))
+            continue;
+        if (d.item->stock) {
+            drawFaces(d, set.stockDepth.get(), false);
+            drawFaces(d, set.stockBlendFront.get());
+        } else {
             drawFaces(d, set.meshBlend.get());
+        }
     }
     // 4. selection, then hover (T-015)
     if (highlights)
         drawHighlights(cb, set, viewport, frameOffset, drawCalls);
     stats_.triangles = triangles;
     stats_.drawCalls = drawCalls;
+    stockDrawCalls_ = stockDraws;
 }
 
 void SceneRenderer::collectHighlightItems()
@@ -1185,6 +1274,11 @@ void SceneRenderer::prepareHighlights(QRhiResourceUpdateBatch* u, const Theme& t
         block.line[0] = float(line * dpr);
         block.line[2] = 1.0f; // anti-aliased
         block.ids[0] = float(item.id);
+        if (item.stock) {
+            // T-073: the stock's depth push (so the highlight lands on its faces), not its colours or marks.
+            block.stock = detail::stockUniforms(StockShading{}, item.localBounds);
+            block.stock.stock[0] = 0.0f;
+        }
         u->updateDynamicBuffer(uniforms_.get(), g.blockOffset, sizeof(block), &block);
         block.line[0] = float(marker * dpr);
         u->updateDynamicBuffer(uniforms_.get(), g.markerBlockOffset, sizeof(block), &block);
@@ -1215,6 +1309,22 @@ void SceneRenderer::drawHighlights(QRhiCommandBuffer* cb, PipelineSet& set, cons
         }
         const detail::MeshIndex* index = gpu.index.get();
         const kernel::Mesh* mesh = d.item->kind == detail::ItemKind::Mesh ? d.item->mesh.get() : nullptr;
+
+        // T-073: a tiled mesh highlights the piece of a face number (a stock: the tile), or all of them for a body.
+        if (gpu.tiles) {
+            // A stock's highlight lands on its own depth: no pipeline bias, the depth push of mesh.vert.
+            QRhiGraphicsPipeline* faces = d.item->stock ? set.stockHighlight.get() : set.highlightFaces.get();
+            if (!faces)
+                continue;
+            use(faces, g.blockOffset);
+            for (const PickHit& h : g.hits) {
+                if (h.kind == kernel::SubKind::Solid)
+                    gpu.tiles->drawAll(cb, drawCalls);
+                else if (h.kind == kernel::SubKind::Face)
+                    gpu.tiles->drawFace(cb, h.subIndex, drawCalls);
+            }
+            continue;
+        }
 
         // Faces: the face's index range, or every triangle for a body.
         if (set.highlightFaces && gpu.indices && gpu.indexCount > 0) {
@@ -1483,6 +1593,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         cb->resourceUpdate(u);
     }
     const IViewport::FrameStats mainStats = stats_;
+    const std::uint64_t mainStockDraws = stockDrawCalls_;
 
     // Captures: the same scene at the requested size, then a read-back.
     for (Capture* capture : started) {
@@ -1495,6 +1606,7 @@ bool SceneRenderer::render(QRhiCommandBuffer* cb)
         cb->endPass(rb);
     }
     stats_ = mainStats;
+    stockDrawCalls_ = mainStockDraws;
 
     // Later passes (picking, backdrop, section caps).
     if (!passes_.empty()) {
@@ -1575,11 +1687,18 @@ void SceneRenderer::publishStats(double cpuMs)
         for (const PathChunk& chunk : chunks)
             info.pathGpuBytes += chunk.buffer ? chunk.buffer->size() : 0;
     };
+    info.stockGpuBytes = 0;
     for (const auto& entry : gpu_) {
         addBytes(entry.second.pathChunks);
         for (const std::vector<PathChunk>& level : entry.second.lodChunks)
             addBytes(level);
+        if (entry.second.tiles)
+            info.stockGpuBytes += entry.second.tiles->gpuBytes();
     }
+    info.stockUploadBytes = stockUploadBytes_;
+    info.stockTileUploads = stockTileUploads_;
+    info.stockRepacks = stockRepacks_;
+    info.stockDrawCalls = stockDrawCalls_;
     info.liveRhiResources = counter_.live.load();
     // The UI thread learns size, orientation and generation; the handle itself stays on this thread (render.h).
     status_->backdrop = backdrop();

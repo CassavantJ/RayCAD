@@ -103,6 +103,12 @@ public:
     std::optional<DraftAnalysis> draftAnalysis() const override { return front_->draftAnalysis(); }
     void setPickMode(ItemId id, PickMode m) override { front_->setPickMode(id, m); }
     PickMode pickMode(ItemId id) const override { return front_->pickMode(id); }
+    ItemId addStock(std::shared_ptr<const kernel::Mesh> m, const Xform& x, MeshStyle s, StockShading k) override
+    {
+        return front_->addStock(std::move(m), x, s, std::move(k));
+    }
+    void setStockShading(ItemId id, StockShading k) override { front_->setStockShading(id, std::move(k)); }
+    std::uint64_t triangleCount(ItemId id) const override { return front_->triangleCount(id); }
 
     // ----- IViewport -----
     ItemId addMesh(std::shared_ptr<const kernel::Mesh> m, const Xform& x, MeshStyle s) override

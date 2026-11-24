@@ -49,7 +49,74 @@ struct ViewportInfo {
     // Backplots whose levels of detail are still being built on a worker (task T-038); the full path is drawn until
     // then, and the viewport draws again by itself when they are ready.
     std::uint32_t pathLodsPending = 0;
+    // Tiled meshes (task T-073: simulation stock, and any mesh item updated with a dirty box; "Simulation stock"
+    // below). stockUploadBytes counts every byte handed to the GPU for their face ranges since the viewport was made
+    // (vertex and index data; nothing else is uploaded for them), stockTileUploads the face ranges uploaded, and
+    // stockRepacks the times the renderer uploaded every range again because its buffers held more than twice what
+    // is in use (a new graphics device uploads everything too, counted in the bytes but not here). stockGpuBytes is
+    // the size of the GPU buffers that hold them now, stockDrawCalls the indexed draws their triangles took in the
+    // last drawn frame (main pass only).
+    std::uint64_t stockUploadBytes = 0;
+    std::uint64_t stockTileUploads = 0;
+    std::uint64_t stockRepacks = 0;
+    std::uint64_t stockGpuBytes = 0;
+    std::uint64_t stockDrawCalls = 0;
 };
+
+// ---------- Simulation stock (task T-073) ----------
+// The in-process stock of the simulation is a TILED mesh: Mesh::faces holds one triangle range per tile (sim.h,
+// IStockModel::toMesh: SubId{Face, tile number}, each tile a closed surface of its own). The viewport keeps it per
+// face range, and IViewport::updateMesh(item, mesh, dirty) with a dirty box REPLACES BY FACE NUMBER: every face range
+// of `mesh` replaces the range with the same face number (an empty range removes it), ranges not in `mesh` stay as
+// they were, except ranges whose bounds lie entirely inside `dirty` (item coordinates), which are removed (a producer
+// may leave out a tile it has emptied; IStockModel lists them all). Triangles in no face range are not drawn. Only
+// the new ranges are uploaded to the GPU (ViewportInfo::stockUploadBytes); the rest stay where they are. Without a
+// dirty box updateMesh replaces every range (still per range, without re-creating the buffers). Any mesh item can be
+// updated this way; the first update with a dirty box moves it to the tiled storage (one full upload).
+// A face hit (pick, setHighlight) on a tiled mesh names the face number, here the tile.
+//
+// addStock adds a tiled mesh with the look of the stock: StockShading below, MeshStyle::face for its uncut faces and
+// MeshStyle::edge for the faces cutting made (stockStyle() gives the tokens StockFace and StockCutFace; showEdges is
+// ignored: a stock has no edge lines). It is treated as the closed solid IStockModel guarantees: a section always caps
+// it (on every preset, whatever SectionPlane::cap says), so the walls that close each tile inside the material never
+// show, and drawn see-through (opacity < 1 with a preset that allows transparency) only its front surface is drawn.
+// For T-074 (simulation panel):
+//   show      id = addStock(std::make_shared<const kernel::Mesh>(stock.toMesh(0, &box, budget)), Xform, stockStyle(),
+//                           StockShading{bounds of the stock at reset, {}});  shown = stock.version();
+//   update    mesh = stock.toMesh(shown, &dirty, budget); updateMesh(id, mesh, dirty); shown = stock.version();
+//             (nothing changed: an empty mesh and an empty box, and updateMesh does nothing)
+//   seek      the same as update: restore() marks the tiles it changes dirty
+//   hide      setVisible(id, false) (the tiles stay on the GPU; updates while hidden are uploaded when shown)
+//   recolour  setStyle(id, MeshStyle{uncut token, cut token, opacity}); setStockShading for marks
+//   budget    each toMesh call honours its own budget, so a dirty region asked for with the whole display's budget
+//             comes back finer than its neighbours (measured, 0.05 mm benchmark stock: one 20 mm move gave 887k
+//             triangles in 55 tiles, 60 MB to upload, where the whole display held 661k in 1536 tiles, 43 MB). To keep
+//             the display's level of detail, learn the box first (toMesh(shown, &box, 1) returns the coarsest mesh;
+//             its cost was not measured) and ask again with the budget times the box's share of the stock's area;
+//             that move then uploads about 3 % of the display's bytes. triangleCount(id) says what the item holds, to
+//             decide when to ask for toMesh(0, ...) at a coarser budget again. Tiles of different detail meet without
+//             gaps (each is closed); only their heights step at the seam where the coarser one merged its columns.
+// Marks colour the stock's surface inside up to kMaxStockMarks boxes (item coordinates) in a simulation token:
+// SimCollision (the default; where a holder or shank met material), SimGouge or SimLeftover; any other token draws
+// as SimCollision. Marks after the first kMaxStockMarks are ignored. Colours change per pixel in the shader, so
+// marks, the uncut box and the style change no buffer. (The uncut box also tells the stock's own sides from the walls
+// inside it when a tile is first uploaded; give it with addStock: a later change does not re-sort tiles already shown.)
+constexpr int kMaxStockMarks = 8;
+struct StockMark {
+    Box3 box;
+    Token colour = Token::SimCollision;
+};
+struct StockShading {
+    // Faces lying on this box's surface (the stock before any cut, in item coordinates) are uncut and drawn in
+    // MeshStyle::face; every other face in MeshStyle::edge. nullopt: every face in MeshStyle::face. Only a box stock is
+    // told apart exactly; for stock from a solid, faces on its bounding box count as uncut and all others as cut.
+    std::optional<Box3> uncut;
+    std::vector<StockMark> marks;
+};
+inline MeshStyle stockStyle()
+{
+    return MeshStyle{Token::StockFace, Token::StockCutFace, 1.0f, false, false, std::nullopt};
+}
 
 // ---------- Section view and draft analysis (task T-023) ----------
 // IViewport::setSection(SectionPlane{origin, normal, cap}): everything on the side the normal points to,
@@ -124,6 +191,12 @@ public:
     // See PickMode above. Unknown ids are ignored. Changes what the ID buffer holds (it is drawn again).
     virtual void setPickMode(ItemId, PickMode) = 0;
     virtual PickMode pickMode(ItemId) const = 0; // WhenVisible for an unknown id
+    // Task T-073 (see "Simulation stock" above). addStock returns 0 for a mesh that does not hold together;
+    // setStockShading on an item that is no stock is ignored. triangleCount: the triangles a mesh item holds (a tiled
+    // one: in all its face ranges), 0 for an unknown id or another kind of item.
+    virtual ItemId addStock(std::shared_ptr<const kernel::Mesh>, const Xform&, MeshStyle, StockShading) = 0;
+    virtual void setStockShading(ItemId, StockShading) = 0;
+    virtual std::uint64_t triangleCount(ItemId) const = 0;
 };
 
 // ---------- Camera helpers (pure math; the UI's navigation calls these, then setCamera) ----------

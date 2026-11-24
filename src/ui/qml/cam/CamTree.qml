@@ -64,7 +64,22 @@ Item {
                 text: qsTr("Setups")
                 secondaryText: String(CamTreeModel.setupCount)
                 font: Theme.strongFont
-                rightPadding: rightInset + Theme.spacingS + newSetup.width + Theme.spacingXs
+                rightPadding: rightInset + Theme.spacingS + newSetup.width + fixturesButton.width + 2 * Theme.spacingXs
+                // T-077: the fixtures panel (vise, parallels, your own STEP), left of New setup.
+                ToolButton {
+                    id: fixturesButton
+                    objectName: "camTreeFixtures"
+                    anchors.right: newSetup.left
+                    anchors.rightMargin: Theme.spacingXs
+                    anchors.verticalCenter: parent.verticalCenter
+                    compact: true
+                    iconName: "lock"
+                    checked: CamFixtures.shown
+                    toolTipText: qsTr("Fixtures") + (Shortcuts.revision >= 0 && Shortcuts.shortcutText("cam.fixtures.open") !== ""
+                                                     ? " (" + Shortcuts.shortcutText("cam.fixtures.open") + ")" : "")
+                    Accessible.name: qsTr("Fixtures")
+                    onClicked: CamFixtures.shown ? CamFixtures.close() : Commands.trigger("cam.fixtures.open")
+                }
                 ToolButton {
                     id: newSetup
                     objectName: "camTreeNewSetup"

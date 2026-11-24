@@ -7,6 +7,7 @@
 #include "frame_pass.h"
 #include "path_lines.h"
 #include "rhi_util.h"
+#include "stock_pool.h"
 
 #include "../pick.h"
 #include "../viewport_frontend.h"
@@ -37,7 +38,15 @@ struct GpuItem {
     std::uint64_t pathSegments = 0;
     std::vector<std::vector<PathChunk>> lodChunks; // per level of detail, once the worker has made them
     bool lodsUploaded = false;
+    // Tiled mesh items (T-073, stock_pool.h): their face ranges in pages; `vertices` and `indices` stay null.
+    std::unique_ptr<TilePool> tiles;
 };
+
+// The triangles of a mesh item's GPU copy, plain or tiled (T-073): whether it has any, and drawing them all with the
+// pipeline and shader resources already set (meshVertexLayout). drawTriangles returns the triangles drawn and adds
+// its draw calls.
+bool hasTriangles(const GpuItem&);
+std::uint64_t drawTriangles(QRhiCommandBuffer* cb, const GpuItem&, std::uint64_t& drawCalls);
 
 class PickPass;
 class BackdropPass;
@@ -148,6 +157,9 @@ private:
     std::vector<std::size_t> capped_; // indices into draws_
     std::uint32_t capsDrawn_ = 0;     // bodies capped in the last drawn frame
     std::uint64_t uploads_ = 0;
+    // T-073: tiled meshes (ViewportInfo::stock*).
+    std::uint64_t stockUploadBytes_ = 0, stockTileUploads_ = 0, stockRepacks_ = 0;
+    std::uint64_t stockDrawCalls_ = 0; // in the last drawScene
 
     bool smoothEdges_ = false;
     int samples_ = 1;

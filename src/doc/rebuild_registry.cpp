@@ -6,6 +6,7 @@
 #include "features/import_feature.h"
 #include "features/revolve_feature.h"
 #include "features/sketch_feature.h"
+#include "features/transform_body_feature.h"
 
 #include <ray/document.h>
 
@@ -70,7 +71,8 @@ Status registerBuiltinFeatureTypes(FeatureRegistry& registry)
         types.push_back(features::makeRevolveFeatureType());
         types.push_back(features::makeFilletFeatureType());
         types.push_back(features::makeChamferFeatureType());
-        types.push_back(features::makeHoleFeatureType()); // task T-097
+        types.push_back(features::makeHoleFeatureType());          // task T-097
+        types.push_back(features::makeTransformBodyFeatureType()); // task T-077
         for (const auto& type : types) {
             if (registry.find(type->typeName()) != nullptr) {
                 return tl::unexpected(

@@ -3,6 +3,7 @@
 
 #include "lines.h"
 #include "section.h"
+#include "stock.h"
 
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
@@ -244,14 +245,31 @@ ItemId ViewportFrontend::addMesh(std::shared_ptr<const kernel::Mesh> mesh, const
 
 void ViewportFrontend::updateMesh(ItemId id, std::shared_ptr<const kernel::Mesh> mesh, std::optional<Box3> dirty)
 {
-    // `dirty` would let the renderer patch only part of the buffers (simulation stock, T-07x). T-014 uploads the
-    // whole mesh again.
-    (void)dirty;
     SceneItem* item = find(id);
     if (!item || item->kind != ItemKind::Mesh || !mesh)
         return;
     if (Status ok = validateMesh(*mesh); !ok) {
         ray::log(LogLevel::Warn, "render", "updateMesh: " + ok.error().message);
+        return;
+    }
+    if (dirty || item->pieces) {
+        // T-073 (stock.h): replaced by face number; the renderer uploads only the ranges it has not seen. The first
+        // update with a dirty box moves an ordinary mesh item to the tiled storage.
+        std::shared_ptr<const PieceTable> base = item->pieces;
+        if (!base && item->mesh)
+            base = piecesOf(item->mesh);
+        std::shared_ptr<const PieceTable> next = dirty ? patchPieces(base, mesh, dirty) : piecesOf(mesh);
+        if (item->pieces && next->pieces == item->pieces->pieces)
+            return; // nothing changed (IStockModel::toMesh's empty mesh and empty box)
+        item->pieces = std::move(next);
+        item->mesh.reset();
+        item->localBounds = item->pieces->bounds;
+        item->geometryGeneration = nextGeometryGeneration_++;
+        // A tiled mesh is capped only as a stock (closed by IStockModel's contract); no check runs on it.
+        item->closed = std::make_shared<ClosedCheck>();
+        item->closed->state.store(item->stock ? 1 : 0);
+        item->closed->started.store(true);
+        changed(true, false);
         return;
     }
     item->localBounds = meshBounds(*mesh);
@@ -397,6 +415,60 @@ PickMode ViewportFrontend::pickMode(ItemId id) const
 {
     const auto it = items_.find(id);
     return it == items_.end() ? PickMode::WhenVisible : it->second.pickMode;
+}
+
+ItemId ViewportFrontend::addStock(std::shared_ptr<const kernel::Mesh> mesh, const Xform& xf, MeshStyle style,
+                                  StockShading shading)
+{
+    // T-073 (stock.h, ray_render/viewport.h "Simulation stock"): a tiled mesh item with the stock look.
+    if (!mesh) {
+        ray::log(LogLevel::Warn, "render", "addStock: null mesh ignored");
+        return 0;
+    }
+    if (Status ok = validateMesh(*mesh); !ok) {
+        ray::log(LogLevel::Warn, "render", "addStock: " + ok.error().message);
+        return 0;
+    }
+    if (style.face >= Token::Count || style.edge >= Token::Count)
+        style = stockStyle();
+    SceneItem item;
+    item.id = nextId_++;
+    item.kind = ItemKind::Mesh;
+    item.pieces = piecesOf(mesh);
+    item.localBounds = item.pieces->bounds;
+    item.xform = xf;
+    sanitize(style);
+    style.showEdges = false;
+    item.style = style;
+    item.stock = std::make_shared<const StockShading>(std::move(shading));
+    item.geometryGeneration = nextGeometryGeneration_++;
+    item.closed = std::make_shared<ClosedCheck>();
+    item.closed->state.store(1);
+    item.closed->started.store(true);
+    const ItemId id = item.id;
+    items_.emplace(id, std::move(item));
+    changed(true, false);
+    return id;
+}
+
+void ViewportFrontend::setStockShading(ItemId id, StockShading shading)
+{
+    // Colours only (uniforms): neither a buffer nor the picking ID buffer changes.
+    SceneItem* item = find(id);
+    if (!item || !item->stock)
+        return;
+    item->stock = std::make_shared<const StockShading>(std::move(shading));
+    changed(false, false);
+}
+
+std::uint64_t ViewportFrontend::triangleCount(ItemId id) const
+{
+    const auto it = items_.find(id);
+    if (it == items_.end() || it->second.kind != ItemKind::Mesh)
+        return 0;
+    if (it->second.pieces)
+        return it->second.pieces->triangles;
+    return it->second.mesh ? it->second.mesh->indices.size() / 3 : 0;
 }
 
 void ViewportFrontend::remove(ItemId id)

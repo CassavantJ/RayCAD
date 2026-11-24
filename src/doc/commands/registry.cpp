@@ -11,6 +11,7 @@
 #include "../features/revolve_feature.h"
 #include "../features/sketch_commands.h"
 #include "../features/sketch_feature.h"
+#include "../features/transform_body_feature.h"
 
 #include <string_view>
 #include <utility>
@@ -92,7 +93,8 @@ Status registerBuiltinCommands(CommandRegistry& registry)
             {features::kRevolveType, features::revolvePropsSchema()},
             {features::kFilletType, features::filletPropsSchema()},
             {features::kChamferType, features::chamferPropsSchema()},
-            {features::kHoleType, features::holePropsSchema()}, // task T-097
+            {features::kHoleType, features::holePropsSchema()},                   // task T-097
+            {features::kTransformBodyType, features::transformBodyPropsSchema()}, // task T-077
         };
         for (const auto& [type, schema] : typed) {
             for (auto& handler : features::makeTypedFeatureCommands(type, schema)) {

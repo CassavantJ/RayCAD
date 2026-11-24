@@ -12,7 +12,8 @@ add_executable(ray_render_tests
     backdrop_test.cpp
     body_color_test.cpp
     section_test.cpp
-    backplot_test.cpp)
+    backplot_test.cpp
+    stock_test.cpp)
 # Test meshes come from ray::kernel, including the builders in src/kernel/shape_testing.h; backplots from ray::sim
 # (task T-038: hand-made toolpaths through sim::buildBackplot).
 target_link_libraries(ray_render_tests PRIVATE ray_render ray_kernel ray_sim Catch2::Catch2WithMain)
@@ -29,9 +30,12 @@ set_property(TARGET ray_render_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_render_tests COMMAND ray_render_tests "~[stats]~[latency]~[cost]")
 add_test(NAME ray_render_frame_stats COMMAND ray_render_tests "[stats]")
 add_test(NAME ray_render_pick_latency COMMAND ray_render_tests "[latency]")
-add_test(NAME ray_render_cost COMMAND ray_render_tests "[cost]~[backplot]")
+add_test(NAME ray_render_cost COMMAND ray_render_tests "[cost]~[backplot]~[stock]")
 add_test(NAME ray_render_backplot_cost COMMAND ray_render_tests "[backplot][cost]")
-foreach(_t ray_render_tests ray_render_frame_stats ray_render_pick_latency ray_render_cost ray_render_backplot_cost)
+# T-073: the simulation stock at 0.05 mm under a 2 M-triangle budget (upload bytes of one move, frame time); run alone.
+add_test(NAME ray_render_stock_cost COMMAND ray_render_tests "[stock][cost]")
+foreach(_t ray_render_tests ray_render_frame_stats ray_render_pick_latency ray_render_cost ray_render_backplot_cost
+        ray_render_stock_cost)
     # About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s. Where no graphics API
     # can be created every viewport test skips, and Catch2 exits with 4 when all of a run's test cases did (the
     # three measurement tests on their own): CTest reports that as skipped, as for the Qt Quick tests.

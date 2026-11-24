@@ -21,6 +21,9 @@ layout(std140, binding = 0) uniform FrameBlock {
     // T-038: linear RGB of the toolpath tokens by colour slot (src/render/lines.h PathSlot): PathCut, PathRapid,
     // PathPlunge, PathRamp, PathLead, PathLink; 6 and 7 unused.
     vec4 pathColor[8];
+    // T-073: linear RGB of the simulation tokens a stock mark takes (src/render/stock.h StockMarkSlot): SimCollision,
+    // SimGouge, SimLeftover. simColor[3].w: 1 under the test hook RAY_RENDER_SHOW_STOCK_WALLS (mesh.frag).
+    vec4 simColor[4];
 } frame;
 
 // Per item: transform, colours from the theme tokens of its style, line parameters, and its id for T-015.
@@ -33,6 +36,15 @@ layout(std140, binding = 1) uniform ItemBlock {
                       // Backplots (T-038): x: width in pixels, y: 1 to draw every segment in edgeColor instead of
                       // by move type, w: width in the picking ID buffer in pixels; faceColor.a is the opacity
     vec4 ids;         // x: item id (T-015); y: 1 when draft analysis may paint these faces (T-023); zw reserved
+    // T-073, simulation stock (src/render/stock.h StockUniforms; all zero for every other item). Positions are the
+    // item's own (before `model`). stock: x 1 for the stock colours, y number of marks, z tolerance in mm, w 1 for a
+    // stock's surface (depth push in mesh.vert, section tolerance). uncutMin/Max: the uncut box, w of uncutMin 1 when
+    // there is one, w of uncutMax the largest depth push in mm. markMin/Max: boxes drawn in simColor[int(markMin.w)].
+    vec4 stock;
+    vec4 uncutMin;
+    vec4 uncutMax;
+    vec4 markMin[8];
+    vec4 markMax[8];
 } item;
 
 // Signed distance of a world point to the section plane (T-023), positive on the side that is cut away; -1 when
