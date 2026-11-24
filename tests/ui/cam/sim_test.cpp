@@ -761,6 +761,8 @@ TEST_CASE(
     w.clickGcodeLine(viewer, faceLine);
     w.simIdle();
     CHECK(g->currentLine() == faceLine);
+    // The line's move, without the CAM workspace's "its toolpath is not shown" (here the simulation draws it).
+    CHECK(g->lineInfo() == QStringLiteral("Line %1: Face, move %2").arg(faceLine + 1).arg(faceMove->move + 1));
     CHECK(s->currentEvent() == -1); // no problem chosen any more
     CHECK(s->position().opIndex == 1);
     CHECK(s->position().moveIndex == faceMove->move);

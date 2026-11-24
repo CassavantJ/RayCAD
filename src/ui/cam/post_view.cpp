@@ -380,7 +380,10 @@ void GcodeModel::applyHighlight()
             const QString opName =
                 move->section < program_->sectionNames.size() ? program_->sectionNames[move->section] : QString();
             const auto shown = shownFor(move->section);
-            if (!shown) {
+            if (!shown && context_ && context_->workspace() != kCamWorkspace) {
+                // Outside the CAM workspace (the Simulate workspace draws its own toolpaths): the move, no more.
+                lineInfo_ = trv("Line %1: %2, move %3").arg(number).arg(opName).arg(move->move + 1);
+            } else if (!shown) {
                 lineInfo_ =
                     trv("Line %1: %2, move %3 (its toolpath is not shown)").arg(number).arg(opName).arg(move->move + 1);
             } else if (!shown->linked) {
