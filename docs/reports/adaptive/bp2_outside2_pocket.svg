@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="740" height="804" font-family="system-ui, sans-serif">
+<rect width="100%" height="100%" fill="#fcfcfb"/>
+<text x="10" y="20" font-size="15" fill="#0b0b0b">BP2 outside, second setup (the remaining 0.75 in): plain pocketing</text>
+<text x="10" y="37" font-size="12" fill="#52514e">Top view of the path of the cutter's centre. 3 levels of cut, repeated levels drawn once (2 drawn).</text>
+<g transform="translate(10 44) scale(0.064309) translate(1788 9408)">
+<path d="M-318 318L7938 318L7938 -7938L-318 -7938Z" fill="#c9c8c2"/>
+<path d="M-318 318L7938 318L7938 -7938L-318 -7938ZM0 0L7620 0L7620 -7620L0 -7620Z" fill="#f3efe6" fill-rule="evenodd"/>
+<path d="M8255 -3457L8255 0A635 635 0 0 0 7620 635L0 635A635 635 0 0 0 -635 0" fill="none" stroke="#6250d6" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-635 0L-635 -7620A635 635 0 0 0 0 -8255L7620 -8255A635 635 0 0 0 8255 -7620L8255 0A635 635 0 0 0 7620 635L0 635A635 635 0 0 0 -635 0" fill="none" stroke="#2a78d6" stroke-width="1.1" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-635 0L-953 0" fill="none" stroke="#1baf7a" stroke-width="1.1" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M-953 0L-953 318A635 635 0 0 1 -318 953L7938 953A635 635 0 0 1 8573 318L8573 -7938A635 635 0 0 1 7938 -8573L-318 -8573A635 635 0 0 1 -953 -7938L-953 0L-953 318A635 635 0 0 1 -318 953L7938 953A635 635 0 0 1 8573 318L8573 -7938A635 635 0 0 1 7938 -8573L-318 -8573A635 635 0 0 1 -953 -7938L-953 0L-635 0L-635 -7620A635 635 0 0 0 0 -8255L7620 -8255A635 635 0 0 0 8255 -7620L8255 0A635 635 0 0 0 7620 635L0 635A635 635 0 0 0 -635 0" fill="none" stroke="#2a78d6" stroke-width="1.1" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<line x1="10" y1="784" x2="32" y2="784" stroke="#2a78d6" stroke-width="1.1"/>
+<text x="38" y="788" font-size="12" fill="#52514e">cutting</text>
+<line x1="92" y1="784" x2="114" y2="784" stroke="#6250d6" stroke-width="1.4"/>
+<text x="120" y="788" font-size="12" fill="#52514e">helix, ramp or plunge</text>
+<line x1="258" y1="784" x2="280" y2="784" stroke="#1baf7a" stroke-width="1.1"/>
+<text x="286" y="788" font-size="12" fill="#52514e">link at feed</text>
+<line x1="370" y1="784" x2="392" y2="784" stroke="#52514e" stroke-width="0.8" stroke-dasharray="4 3"/>
+<text x="398" y="788" font-size="12" fill="#52514e">rapid</text>
+</svg>

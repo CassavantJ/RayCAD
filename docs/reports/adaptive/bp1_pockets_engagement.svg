@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="740" height="300" font-family="system-ui, sans-serif">
+<rect width="100%" height="100%" fill="#fcfcfb"/>
+<text x="10" y="20" font-size="15" fill="#0b0b0b">BP1 two closed pockets (one operation): engagement, percent of cutting length</text>
+<rect x="10" y="30" width="12" height="12" rx="2" fill="#2a78d6"/><text x="27" y="40" font-size="12" fill="#52514e">adaptive (target 36.9°)</text>
+<rect x="190" y="30" width="12" height="12" rx="2" fill="#eb6834"/><text x="207" y="40" font-size="12" fill="#52514e">plain pocketing</text>
+<line x1="52" x2="724" y1="254.0" y2="254.0" stroke="#e4e3df" stroke-width="1"/><text x="46" y="258.0" font-size="11" fill="#52514e" text-anchor="end">0 %</text>
+<line x1="52" x2="724" y1="213.6" y2="213.6" stroke="#e4e3df" stroke-width="1"/><text x="46" y="217.6" font-size="11" fill="#52514e" text-anchor="end">20 %</text>
+<line x1="52" x2="724" y1="173.2" y2="173.2" stroke="#e4e3df" stroke-width="1"/><text x="46" y="177.2" font-size="11" fill="#52514e" text-anchor="end">40 %</text>
+<line x1="52" x2="724" y1="132.8" y2="132.8" stroke="#e4e3df" stroke-width="1"/><text x="46" y="136.8" font-size="11" fill="#52514e" text-anchor="end">60 %</text>
+<line x1="52" x2="724" y1="92.4" y2="92.4" stroke="#e4e3df" stroke-width="1"/><text x="46" y="96.4" font-size="11" fill="#52514e" text-anchor="end">80 %</text>
+<line x1="52" x2="724" y1="52.0" y2="52.0" stroke="#e4e3df" stroke-width="1"/><text x="46" y="56.0" font-size="11" fill="#52514e" text-anchor="end">100 %</text>
+<text x="52.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">0°</text>
+<text x="164.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">30°</text>
+<text x="276.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">60°</text>
+<text x="388.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">90°</text>
+<text x="500.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">120°</text>
+<text x="612.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">150°</text>
+<text x="724.0" y="270" font-size="11" fill="#52514e" text-anchor="middle">180°</text>
+<text x="388" y="292" font-size="12" fill="#52514e" text-anchor="middle">engagement angle (0° no cut, 180° full-width slot)</text>
+<rect x="54.0" y="229.8" width="15.7" height="24.2" rx="2" fill="#2a78d6"><title>0-10°: 12.0 %</title></rect>
+<rect x="71.7" y="225.1" width="15.7" height="28.9" rx="2" fill="#eb6834"><title>0-10°: 14.3 %</title></rect>
+<rect x="91.3" y="251.5" width="15.7" height="2.5" rx="2" fill="#2a78d6"><title>10-20°: 1.2 %</title></rect>
+<rect x="109.0" y="247.9" width="15.7" height="6.1" rx="2" fill="#eb6834"><title>10-20°: 3.0 %</title></rect>
+<rect x="128.7" y="250.2" width="15.7" height="3.8" rx="2" fill="#2a78d6"><title>20-30°: 1.9 %</title></rect>
+<rect x="146.3" y="249.2" width="15.7" height="4.8" rx="2" fill="#eb6834"><title>20-30°: 2.4 %</title></rect>
+<rect x="166.0" y="87.8" width="15.7" height="166.2" rx="2" fill="#2a78d6"><title>30-40°: 82.3 %</title></rect>
+<rect x="183.7" y="250.1" width="15.7" height="3.9" rx="2" fill="#eb6834"><title>30-40°: 1.9 %</title></rect>
+<rect x="203.3" y="249.2" width="15.7" height="4.8" rx="2" fill="#2a78d6"><title>40-50°: 2.4 %</title></rect>
+<rect x="221.0" y="250.4" width="15.7" height="3.6" rx="2" fill="#eb6834"><title>40-50°: 1.8 %</title></rect>
+<rect x="240.7" y="253.0" width="15.7" height="1.0" rx="2" fill="#2a78d6"><title>50-60°: 0.2 %</title></rect>
+<rect x="258.3" y="244.3" width="15.7" height="9.7" rx="2" fill="#eb6834"><title>50-60°: 4.8 %</title></rect>
+<rect x="278.0" y="253.0" width="15.7" height="1.0" rx="2" fill="#2a78d6"><title>60-70°: 0.0 %</title></rect>
+<rect x="295.7" y="248.8" width="15.7" height="5.2" rx="2" fill="#eb6834"><title>60-70°: 2.6 %</title></rect>
+<rect x="315.3" y="253.0" width="15.7" height="1.0" rx="2" fill="#2a78d6"><title>70-80°: 0.0 %</title></rect>
+<rect x="333.0" y="250.0" width="15.7" height="4.0" rx="2" fill="#eb6834"><title>70-80°: 2.0 %</title></rect>
+<rect x="352.7" y="253.0" width="15.7" height="1.0" rx="2" fill="#2a78d6"><title>80-90°: 0.0 %</title></rect>
+<rect x="370.3" y="183.8" width="15.7" height="70.2" rx="2" fill="#eb6834"><title>80-90°: 34.8 %</title></rect>
+<rect x="390.0" y="253.0" width="15.7" height="1.0" rx="2" fill="#2a78d6"><title>90-100°: 0.0 %</title></rect>
+<rect x="407.7" y="243.5" width="15.7" height="10.5" rx="2" fill="#eb6834"><title>90-100°: 5.2 %</title></rect>
+<rect x="445.0" y="246.1" width="15.7" height="7.9" rx="2" fill="#eb6834"><title>100-110°: 3.9 %</title></rect>
+<rect x="482.3" y="246.5" width="15.7" height="7.5" rx="2" fill="#eb6834"><title>110-120°: 3.7 %</title></rect>
+<rect x="519.7" y="246.5" width="15.7" height="7.5" rx="2" fill="#eb6834"><title>120-130°: 3.7 %</title></rect>
+<rect x="557.0" y="247.3" width="15.7" height="6.7" rx="2" fill="#eb6834"><title>130-140°: 3.3 %</title></rect>
+<rect x="594.3" y="246.0" width="15.7" height="8.0" rx="2" fill="#eb6834"><title>140-150°: 3.9 %</title></rect>
+<rect x="631.7" y="246.6" width="15.7" height="7.4" rx="2" fill="#eb6834"><title>150-160°: 3.6 %</title></rect>
+<rect x="669.0" y="247.7" width="15.7" height="6.3" rx="2" fill="#eb6834"><title>160-170°: 3.1 %</title></rect>
+<rect x="706.3" y="250.0" width="15.7" height="4.0" rx="2" fill="#eb6834"><title>170-180°: 2.0 %</title></rect>
+<line x1="189.6" x2="189.6" y1="52" y2="254" stroke="#0b0b0b" stroke-width="1" stroke-dasharray="3 3"/><text x="193.6" y="62" font-size="11" fill="#0b0b0b">adaptive target</text>
+<line x1="52" x2="724" y1="254" y2="254" stroke="#52514e" stroke-width="1"/>
+</svg>

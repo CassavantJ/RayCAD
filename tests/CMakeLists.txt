@@ -39,6 +39,7 @@ add_subdirectory(unit/lib)
 add_subdirectory(unit/api)
 add_subdirectory(unit/cam) # T-032
 add_subdirectory(tools/sweepcheck) # T-060: the S5 sweep checker, used by the adaptive engine's tests
+add_subdirectory(benchmarks/adaptive) # T-062: the adaptive review pack, docs/reports/adaptive.md
 add_subdirectory(unit/render)
 add_subdirectory(unit/core_jobs)
 add_subdirectory(unit/sim)
