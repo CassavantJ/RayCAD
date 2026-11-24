@@ -7,10 +7,9 @@
 // it runs alone, as its own test ray_sim_simulator_bench ("[simulator-bench]", hidden from the suite;
 // tests/tiers.cmake), apart from the stock model's benchmark in ray_sim_tests_wallclock so that neither takes much over
 // a minute. The limits are checked only in an optimised build without sanitizers, which also runs the full 112k-move
-// workload (other builds a thinned one). NOT MET, and so not checked: the seek budget at Medium and High on this
-// 112k-move program. With T-070's strips a keyframe pins 15 to 25 MB at 0.1 mm and 60 to 80 MB at 0.05 mm, so the
-// keyframe budgets (simulator.h) hold too few of them; the lines printed give the numbers, the T-072 report the
-// trade-off.
+// workload (other builds a thinned one). NOT MET, and so not checked: the seek budget at High on this 112k-move
+// program. With T-070's strips a keyframe pins 60 to 110 MB at 0.05 mm, so High's keyframe budget (simulator.h) holds
+// too few of them; the line printed gives the numbers, the T-072 report the trade-off.
 #include "simulator_test_util.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -374,10 +373,9 @@ TEST_CASE("Simulator benchmark: run and seek at every tier's resolution", "[.][s
         std::fflush(stdout);
     }
     runTier({"Low", 0.2, 4, 20.0, 250.0}, sp, moves);
-    // Medium and High: the run meets its row; the seeks do not within the keyframe budgets (see the top of this file;
-    // the hidden test "Simulator keyframe budget sweep at the High cell" measures the trade-off). Measured, not
-    // checked.
-    runTier({"Medium", 0.1, 4, 15.0, 150.0}, sp, moves, 0, true, false);
+    runTier({"Medium", 0.1, 4, 15.0, 150.0}, sp, moves);
+    // High: the run meets its row; the seeks do not within the keyframe budget (see the top of this file; the hidden
+    // test "Simulator keyframe budget sweep at the High cell" measures the trade-off). Measured, not checked.
     runTier({"High", 0.05, 8, 10.0, 100.0}, sp, moves, 0, true, false);
 }
 
@@ -402,10 +400,10 @@ TEST_CASE("Simulator keyframe budget sweep at the High cell", "[.][sim][simulato
         runTier({"Medium, 11k moves", 0.1, 4, 15.0, 150.0}, ssp, smallMoves, 0, false, false);
         runTier({"High, 11k moves", 0.05, 8, 10.0, 100.0}, ssp, smallMoves, 0, false, false);
     }
-    for (const std::uint64_t mb : {640u, 1280u, 2560u}) {
+    for (const std::uint64_t mb : {640u, 2560u}) {
         runTier({"Medium sweep", 0.1, 4, 15.0, 150.0}, sp, moves, mb * sim::detail::kMiB, false, false);
     }
-    for (const std::uint64_t mb : {512u, 1024u, 2048u, 3072u, 4096u}) {
+    for (const std::uint64_t mb : {512u, 1024u, 3072u, 4096u}) {
         runTier({"High sweep", 0.05, 8, 10.0, 100.0}, sp, moves, mb * sim::detail::kMiB, false, false);
     }
 }
