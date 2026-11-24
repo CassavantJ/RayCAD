@@ -76,7 +76,10 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_cam_adaptive2d_tests_wallclock
     # The geometry core's three 10,000-case arc-fitting sweeps (split from ray_cam_geom2d_tests by the tag [sweeps]):
     # most of that suite's 5 to 9 minutes in MSVC Debug, seconds in Release. The rest of the suite stays in Debug.
-    ray_cam_geom2d_sweeps)
+    ray_cam_geom2d_sweeps
+    # T-070: the stock model's PLAN.md section 9 benchmark, 112k moves at 0.2, 0.1 and 0.05 mm (about a minute in
+    # Release, far longer in MSVC Debug, where only its memory limits are checked).
+    ray_sim_tests_wallclock)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
