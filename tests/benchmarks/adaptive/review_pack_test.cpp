@@ -129,13 +129,11 @@ lib::MachineDef libMachine(const std::string& id)
 }
 const lib::ToolPreset& presetOf(const lib::Tool& t, const lib::Material& m, const std::string& opClass)
 {
-    for (const lib::ToolPreset& p : t.presets) {
-        if (p.material == m.id && p.opClass == opClass) {
-            return p;
-        }
-    }
-    FAIL("no " << opClass << " preset of " << t.name << " for " << m.name);
-    return t.presets.front();
+    const auto it = std::find_if(t.presets.begin(), t.presets.end(),
+                                 [&](const lib::ToolPreset& p) { return p.material == m.id && p.opClass == opClass; });
+    INFO("no " << opClass << " preset of " << t.name << " for " << m.name);
+    REQUIRE(it != t.presets.end());
+    return *it;
 }
 
 // ---------- The checker's outlines (mm), written from the dimensions, not from any generator ----------
