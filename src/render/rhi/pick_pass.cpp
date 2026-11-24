@@ -301,13 +301,12 @@ void PickPass::drawIds(const FrameContext& ctx)
         cb->setShaderResources(ctx.bindings, 2, offsets);
     };
     // Items that do not answer picks (PickMode::Never) are left out, so picks go through them.
+    std::uint64_t drawCalls = 0;
     for (const DrawItem& d : ctx.draws) {
-        if (!d.pickable || d.item->kind != detail::ItemKind::Mesh || !d.gpu->indices || d.gpu->indexCount == 0)
+        if (!d.pickable || d.item->kind != detail::ItemKind::Mesh || !hasTriangles(*d.gpu))
             continue;
         use(faces_.get(), d.itemUniformOffset);
-        const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
-        cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
-        cb->drawIndexed(d.gpu->indexCount);
+        drawTriangles(cb, *d.gpu, drawCalls); // plain or tiled (T-073)
     }
     // T-023: the caps of the capped bodies (IdKind::Cap).
     if (capStencil_ && capFill_ && ctx.capQuad) {
@@ -319,9 +318,7 @@ void PickPass::drawIds(const FrameContext& ctx)
             if (!d.pickable)
                 continue;
             use(capStencil_.get(), d.itemUniformOffset);
-            const QRhiCommandBuffer::VertexInput vin(d.gpu->vertices.get(), 0);
-            cb->setVertexInput(0, 1, &vin, d.gpu->indices.get(), 0, QRhiCommandBuffer::IndexUInt32);
-            cb->drawIndexed(d.gpu->indexCount);
+            drawTriangles(cb, *d.gpu, drawCalls);
             use(capFill_.get(), d.itemUniformOffset);
             cb->setStencilRef(0);
             cb->setVertexInput(0, 1, &quadInput);
@@ -336,7 +333,6 @@ void PickPass::drawIds(const FrameContext& ctx)
             if (!paths_ || !ctx.pathCorners)
                 continue;
             use(paths_.get(), d.itemUniformOffset);
-            std::uint64_t drawCalls = 0;
             const int level = pathLevelFor(*d.item, *d.gpu, ctx.snapshot->camera, size_.height());
             drawBackplot(cb, ctx.pathCorners, *d.item, *d.gpu, level, drawCalls);
         } else if (d.item->kind == detail::ItemKind::Lines) {

@@ -23,7 +23,8 @@ vec3 bytes24(float v)
 
 void main()
 {
-    if (v_section > 0.0)
+    // A stock (T-073) loses what lies within its tolerance of the plane too, as mesh.frag draws it.
+    if (v_section > (item.stock.w > 0.5 ? -item.stock.z : 0.0))
         discard;
     float kind = floor(v_depthKind.z + 0.5);
     outIds = vec4(v_id.rgb, kind / 255.0);

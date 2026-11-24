@@ -6,6 +6,7 @@
 // Hard rule: nothing in this module can influence geometry, toolpaths or G-code. src/cam, src/post and
 // src/kernel do not link src/render (enforced by a CMake dependency check in CI).
 // T-076: IViewport::captureImageInTheme (additive, with a default that captures as captureImage does).
+// T-073: the comment of IViewport::updateMesh says what a dirty box means (comment only; no signature changed).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -111,7 +112,11 @@ public:
     virtual ~IViewport() = default;
     // All calls on the UI thread. Uploads are queued and applied on the render thread at the next sync.
     virtual ItemId addMesh(std::shared_ptr<const kernel::Mesh>, const Xform&, MeshStyle) = 0;
-    virtual void updateMesh(ItemId, std::shared_ptr<const kernel::Mesh>, std::optional<Box3> dirty) = 0;   // incremental sim stock
+    // Incremental sim stock (T-073; details in src/render/include/ray_render/viewport.h, "Simulation stock"). Without
+    // `dirty` the mesh replaces the item's. With it, the mesh's face ranges replace the item's ranges of the same face
+    // number (IStockModel::toMesh: one per tile; an empty range removes one), ranges it does not name stay, except those
+    // lying wholly inside `dirty` (item coordinates), which go; only the new ranges are uploaded.
+    virtual void updateMesh(ItemId, std::shared_ptr<const kernel::Mesh>, std::optional<Box3> dirty) = 0;
     // Backplot (T-038): drawn by move type in the tokens PathCut, PathRapid (dashed), PathPlunge, PathRamp, PathLead
     // (LeadIn, LeadOut) and PathLink (Link, Retract, Approach); a rapid is PathRapid whatever its role. Width: theme
     // metric "line.path.px", else "line.thin.px", in device-independent pixels. The backplot is shared, never copied,

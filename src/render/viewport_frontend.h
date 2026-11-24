@@ -21,6 +21,7 @@ namespace ray::render::detail {
 // Backplot (T-038): a toolpath's line strip, drawn by move type (lines.h). A tool glyph is a Mesh item.
 enum class ItemKind : std::uint8_t { Mesh, Lines, Backplot };
 struct PathLodSet; // lines.h
+struct PieceTable; // stock.h (T-073)
 
 // Segments of an addLines item: xyz of both ends, segment after segment.
 struct LineSet {
@@ -54,6 +55,10 @@ struct SceneItem {
     std::uint64_t geometryGeneration = 0; // changes whenever mesh or lines are replaced
     std::optional<Box3> localBounds;
     std::shared_ptr<ClosedCheck> closed; // Mesh items, new with every geometry (T-023)
+    // T-073 (stock.h): a tiled mesh item keeps its triangles per face range here, and `mesh` is null. `stock` is set
+    // for addStock items: the stock look, a cap in every section, see-through by its front surface only.
+    std::shared_ptr<const PieceTable> pieces;
+    std::shared_ptr<const StockShading> stock;
 };
 
 struct CaptureRequest {
@@ -166,6 +171,9 @@ public:
     std::optional<DraftAnalysis> draftAnalysis() const override { return state_.draft; }
     void setPickMode(ItemId, PickMode) override;
     PickMode pickMode(ItemId) const override;
+    ItemId addStock(std::shared_ptr<const kernel::Mesh>, const Xform&, MeshStyle, StockShading) override;
+    void setStockShading(ItemId, StockShading) override;
+    std::uint64_t triangleCount(ItemId) const override;
 
     // For the hosts. takeSnapshot runs on the render thread while the UI thread is blocked (Qt Quick), or on the
     // UI thread (offscreen).

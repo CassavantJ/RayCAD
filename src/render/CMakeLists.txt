@@ -27,6 +27,10 @@ add_library(ray_render STATIC
     section.cpp
     lines.h
     lines.cpp
+    stock.h
+    stock.cpp
+    rhi/stock_pool.h
+    rhi/stock_pool.cpp
     rhi/path_lines.h
     rhi/path_lines.cpp
     rhi/pick_pass.h
