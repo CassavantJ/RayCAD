@@ -155,9 +155,12 @@ Result<std::shared_ptr<BusyGuard>> claimOnUi(AppImpl& app, std::string id, JobCo
 // ---------- cam.batch ----------
 
 constexpr std::string_view kBatch = "cam.batch";
-constexpr std::string_view kBatchable[] = {"cam.operation.add",     "cam.operation.edit",     "cam.operation.remove",
-                                           "cam.operation.reorder", "cam.operation.suppress", "cam.library.embed",
-                                           "cam.setup.edit"};
+// After T-077: body moves too, so a vise, its jaw and parallels placed on a setup's stock (ray_api/cam_fixtures.h) are
+// one undo step with the setup's fixture bodies.
+constexpr std::string_view kBatchable[] = {
+    "cam.operation.add",     "cam.operation.edit",         "cam.operation.remove",
+    "cam.operation.reorder", "cam.operation.suppress",     "cam.library.embed",
+    "cam.setup.edit",        "feature.transform_body.add", "feature.transform_body.edit"};
 
 class CamBatch final : public doc::ICommandHandler {
 public:

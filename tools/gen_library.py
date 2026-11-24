@@ -16,6 +16,11 @@ Sources. Every file has a "comment" naming the public source of its values:
     factors in MATERIALS below. They are not copied from any table. The Wikipedia article "Speeds and feeds"
     (table "Cutting speeds for various materials using a plain high-speed steel cutter") and Machinery's Handbook
     (Industrial Press), section "Speeds and Feeds", give the published ranges to compare them with.
+  - Centre cutting (after M3; libraries.h Tool::centreCutting), stated for every milling cutter: the generic solid
+    carbide end mills (flat, ball, corner radius) and the pointed chamfer mills cut at their centre, the indexable face
+    mill and the thread mills do not. A judgment of general shop practice (solid end mills are made centre-cutting
+    almost without exception; inserts on a face mill's rim and a thread mill's side teeth leave the centre uncut), the
+    same as the type defaults; check the real tool, as for its lengths.
   - Machines: the manufacturers' public specification pages named in each file; a value a page does not state is
     0 (unknown). Every machine is "verified": false until someone checks it against the real machine.
 
@@ -308,6 +313,13 @@ def base_tool(key, name, kind, flutes, d, shank, flute, overall, body, comment, 
     # rounded to 4 decimals made #8-32 0.7937 instead of 0.79375 mm.
     for k, v in extra.items():
         t[k] = r(v, 6 if k == "threadPitch" else 4) if isinstance(v, float) else v
+    # Centre cutting (after M3; see the module comment): stated for the milling cutters, whose value the library reads.
+    if kind in ("flatEndMill", "ballEndMill", "bullEndMill", "engraveCutter"):
+        t["centreCutting"] = True
+    elif kind == "chamferMill":
+        t["centreCutting"] = not t["tipDiameter"] > 0
+    elif kind in ("faceMill", "threadMill"):
+        t["centreCutting"] = False
     return t
 
 

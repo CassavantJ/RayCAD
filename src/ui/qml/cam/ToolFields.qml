@@ -187,8 +187,10 @@ Column {
                     wrapMode: fieldRow.longText ? Text.Wrap : Text.NoWrap
                     elide: fieldRow.longText ? Text.ElideNone : Text.ElideRight
                     font: fieldRow.longText ? Theme.smallFont : Theme.uiFont
-                    secondary: fieldRow.value === ""
-                    text: fieldRow.value === "" ? "—" : fieldRow.isChoice ? fieldRow.choiceText : fieldRow.value
+                    // A choice may name its empty value (centre cutting: "Type default (yes)").
+                    secondary: fieldRow.value === "" && fieldRow.choiceText === ""
+                    text: fieldRow.isChoice && fieldRow.choiceText !== "" ? fieldRow.choiceText
+                          : fieldRow.value === "" ? "—" : fieldRow.value
                 }
             }
             // The problem, beside the field it is about.

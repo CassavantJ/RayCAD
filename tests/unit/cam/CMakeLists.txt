@@ -331,6 +331,7 @@ add_executable(ray_cam_fixture_tests
     fixture_cam_test.cpp
     fixture_library_test.cpp
     fixture_models.h
+    fixture_place_test.cpp # after T-077: a library vise placed on a setup's stock (ray_api/cam_fixtures.h)
     fixture_verify_test.cpp
 )
 target_link_libraries(ray_cam_fixture_tests PRIVATE ray_api ray_store ray_doc ray_cam ray_sim ray_post ray_naming

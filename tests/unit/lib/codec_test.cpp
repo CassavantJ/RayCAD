@@ -146,6 +146,74 @@ TEST_CASE("a tool's neck is optional", "[lib][codec][neck]")
     CHECK(ray::lib::toJson(*aloneBack).find("neckLength") == std::string::npos);
 }
 
+// After M3: whether a tool cuts at its centre (libraries.h Tool::centreCutting) is optional; without it a tool takes
+// its type's default, and files, documents and hashes written before read and write back unchanged.
+TEST_CASE("a tool's centre cutting is optional and defaults by type", "[lib][codec][centreCutting]")
+{
+    using ray::lib::ToolType;
+    const auto plain = sampleTool(1);
+    const std::string text = ray::lib::toJson(plain);
+    CHECK(text.find("centreCutting") == std::string::npos);
+    auto back = ray::lib::toolFromJson(text);
+    REQUIRE(back);
+    CHECK_FALSE(back->centreCutting.has_value());
+    CHECK(back->cutsAtCentre()); // a flat end mill cuts at its centre by default
+    CHECK(ray::lib::toJson(*back) == text);
+    CHECK(back->geometryHash() == plain.geometryHash());
+
+    // Stated: written, read back, and the hash moves only when the answer is not the type's default.
+    for (const bool stated : {true, false}) {
+        auto t = plain;
+        t.centreCutting = stated;
+        const std::string json = ray::lib::toJson(t);
+        CHECK(json.find(stated ? "\"centreCutting\":true" : "\"centreCutting\":false") != std::string::npos);
+        auto read = ray::lib::toolFromJson(json);
+        REQUIRE(read);
+        REQUIRE(read->centreCutting.has_value());
+        CHECK(*read->centreCutting == stated);
+        CHECK(read->cutsAtCentre() == stated);
+        CHECK(ray::lib::toJson(*read) == json);
+        CHECK(read->contentHash() != plain.contentHash());
+        CHECK((read->geometryHash() == plain.geometryHash()) == stated);
+    }
+
+    // The defaults by type, and which types read a stated value.
+    struct Case {
+        ToolType type;
+        double tipDiameter;
+        bool byDefault, settable;
+    };
+    const Case cases[] = {
+        {ToolType::FlatEndMill, 0, true, true},  {ToolType::BallEndMill, 0, true, true},
+        {ToolType::BullEndMill, 0, true, true},  {ToolType::ChamferMill, 0, true, true},
+        {ToolType::ChamferMill, 1, false, true}, {ToolType::FaceMill, 0, false, true},
+        {ToolType::ThreadMill, 0, false, true},  {ToolType::EngraveCutter, 0, true, true},
+        {ToolType::SpotDrill, 0, true, false},   {ToolType::Drill, 0, true, false},
+        {ToolType::Tap, 0, false, false},        {ToolType::Reamer, 0, false, false},
+        {ToolType::BoringBar, 0, false, false},
+    };
+    for (const Case& c : cases) {
+        ray::lib::Tool t;
+        t.type = c.type;
+        t.tipDiameter = c.tipDiameter;
+        INFO(static_cast<int>(c.type) << " tip " << c.tipDiameter);
+        CHECK(ray::lib::centreCuttingByDefault(t) == c.byDefault);
+        CHECK(ray::lib::centreCuttingSettable(c.type) == c.settable);
+        CHECK(t.cutsAtCentre() == c.byDefault);
+        const auto h = t.geometryHash();
+        t.centreCutting = !c.byDefault;
+        CHECK(t.cutsAtCentre() == (c.settable ? !c.byDefault : c.byDefault));
+        CHECK((t.geometryHash() != h) == c.settable); // a value a drill ignores does not change its shape
+    }
+
+    // Not a boolean: the schema refuses it.
+    std::string bad = text;
+    bad.insert(1, "\"centreCutting\":\"yes\",");
+    auto refused = ray::lib::toolFromJson(bad);
+    REQUIRE_FALSE(refused);
+    CHECK(refused.error().message.find("centreCutting") != std::string::npos);
+}
+
 TEST_CASE("toJson is canonical JSON", "[lib][codec]")
 {
     const std::string text = ray::lib::toJson(sampleMaterial(3));

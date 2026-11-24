@@ -33,6 +33,9 @@ lib::Tool camEndMill(double diameter)
 {
     lib::Tool t = endMill(diameter, 25, 65);
     t.shoulderLength = 25;
+    // Stated not to cut at its centre (the operations plan as if it did not: pocket2d, slot, adaptive2d, ... link with
+    // centreCutting false), so a straight plunge into material by any of them would still be an event here.
+    t.centreCutting = false;
     return t;
 }
 // drill_test_util.h's drill.

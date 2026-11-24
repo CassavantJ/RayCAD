@@ -33,7 +33,10 @@ const std::string& schema()
             R"(,"angle":)" +
             angleSchema("Turn about the target face's normal through its centre (without a mate: about model Z "
                         "through the origin); default 0") +
-            R"(,"x":)" + lengthSchema("Move along model X, last; default 0") + R"(,"y":)" +
+            R"(,"tiltX":)" + angleSchema("Without a mate: turn about model X through the origin, first; default 0") +
+            R"(,"tiltY":)" +
+            angleSchema("Without a mate: turn about model Y through the origin, after tiltX; default 0") + R"(,"x":)" +
+            lengthSchema("Move along model X, last; default 0") + R"(,"y":)" +
             lengthSchema("Move along model Y, last; default 0") + R"(,"z":)" +
             lengthSchema("Move along model Z, last; default 0"));
     return text;
@@ -42,7 +45,7 @@ const std::string& schema()
 struct Props {
     BodyId body;
     std::optional<naming::TopoRef> face, target;
-    Value gap, angle, x, y, z;
+    Value gap, angle, tiltX, tiltY, x, y, z;
 };
 
 Result<Props> parse(const Feature& f, bool strict)
@@ -54,7 +57,7 @@ Result<Props> parse(const Feature& f, bool strict)
     }
     const PropsReader r(where, *root);
     if (strict) {
-        if (auto ok = r.onlyKeys({"angle", "body", "gap", "mate", "x", "y", "z"}); !ok) {
+        if (auto ok = r.onlyKeys({"angle", "body", "gap", "mate", "tiltX", "tiltY", "x", "y", "z"}); !ok) {
             return tl::unexpected(ok.error());
         }
     }
@@ -101,6 +104,7 @@ Result<Props> parse(const Feature& f, bool strict)
     }
     for (const auto& [key, slot] :
          {std::pair<const char*, Value*>{"gap", &out.gap}, std::pair<const char*, Value*>{"angle", &out.angle},
+          std::pair<const char*, Value*>{"tiltX", &out.tiltX}, std::pair<const char*, Value*>{"tiltY", &out.tiltY},
           std::pair<const char*, Value*>{"x", &out.x}, std::pair<const char*, Value*>{"y", &out.y},
           std::pair<const char*, Value*>{"z", &out.z}}) {
         auto v = r.numeric(key, key, Value::number(0.0));
@@ -111,6 +115,11 @@ Result<Props> parse(const Feature& f, bool strict)
     }
     if (!out.face && r.find("gap") != nullptr) {
         return r.error("gap", "needs a mate: it is the distance between the mated faces");
+    }
+    for (const char* key : {"tiltX", "tiltY"}) {
+        if (out.face && r.find(key) != nullptr) {
+            return r.error(key, "needs no mate: with a mate the faces set the orientation; turn it with 'angle'");
+        }
     }
     return out;
 }
@@ -257,6 +266,15 @@ Xform placementTransform(const Placement& p)
             r = multiply(ra, r);
             t = vadd(rotate(ra, vsub(t, p.target->centre)), p.target->centre);
         }
+    } else if (p.tiltX != 0.0 || p.tiltY != 0.0) {
+        // Without a mate, tilted: about model X, then model Y, then Z (the angle), all through the origin.
+        r = multiply(rotation(Vec3{0, 0, 1}, p.angle),
+                     multiply(rotation(Vec3{0, 1, 0}, p.tiltY), rotation(Vec3{1, 0, 0}, p.tiltX)));
+        for (auto& row : r) {
+            for (double& v : row) {
+                v = snapUnitEntry(v);
+            }
+        }
     } else if (p.angle != 0.0) {
         r = rotation(Vec3{0, 0, 1}, p.angle);
     }
@@ -370,6 +388,8 @@ public:
         for (const auto& [value, kind, field] :
              {std::tuple<const Value*, Parameter::Kind, const char*>{&props->gap, Parameter::Kind::Length, "gap"},
               std::tuple<const Value*, Parameter::Kind, const char*>{&props->angle, Parameter::Kind::Angle, "angle"},
+              std::tuple<const Value*, Parameter::Kind, const char*>{&props->tiltX, Parameter::Kind::Angle, "tiltX"},
+              std::tuple<const Value*, Parameter::Kind, const char*>{&props->tiltY, Parameter::Kind::Angle, "tiltY"},
               std::tuple<const Value*, Parameter::Kind, const char*>{&props->x, Parameter::Kind::Length, "x"},
               std::tuple<const Value*, Parameter::Kind, const char*>{&props->y, Parameter::Kind::Length, "y"},
               std::tuple<const Value*, Parameter::Kind, const char*>{&props->z, Parameter::Kind::Length, "z"}}) {
@@ -405,6 +425,10 @@ private:
                                                                               "gap", &placement.gap},
               std::tuple<const Value*, Parameter::Kind, const char*, double*>{&props->angle, Parameter::Kind::Angle,
                                                                               "angle", &placement.angle},
+              std::tuple<const Value*, Parameter::Kind, const char*, double*>{&props->tiltX, Parameter::Kind::Angle,
+                                                                              "tiltX", &placement.tiltX},
+              std::tuple<const Value*, Parameter::Kind, const char*, double*>{&props->tiltY, Parameter::Kind::Angle,
+                                                                              "tiltY", &placement.tiltY},
               std::tuple<const Value*, Parameter::Kind, const char*, double*>{&props->x, Parameter::Kind::Length, "x",
                                                                               &placement.offset.x},
               std::tuple<const Value*, Parameter::Kind, const char*, double*>{&props->y, Parameter::Kind::Length, "y",

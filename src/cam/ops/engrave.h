@@ -40,7 +40,8 @@
 //   lowered floor would have to catch. Decided after M3: no lower claim, the raise stays. It costs only feed time
 //   from the stock top down to the plane, and only when the stock's top is above the plane.
 // TOOL (refused otherwise, with the reason): an engraving cutter, a spot drill, a ball end mill, or a chamfer mill
-//   with a pointed tip (tipDiameter 0): tools that cut at their centre. A pointed tool (tip angle in (0, 180)) must
+//   with a pointed tip (tipDiameter 0): tools that cut at their centre (and not one whose library entry says it does
+//   not: Tool::cutsAtCentre). A pointed tool (tip angle in (0, 180)) must
 //   reach the depth within its point: D <= drill.h pointLengthNm(diameter, tip angle, tip diameter). D must fit the
 //   flutes; with a stick-out, the holder must stay kHolderClearanceMm above the plane. The cut width at the depth
 //   (pointed: tipDiameter + 2 D tan(a / 2); ball: 2 sqrt(D (diameter - D)) up to the diameter; else the diameter)

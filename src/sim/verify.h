@@ -37,11 +37,12 @@
 // meet nothing new: it is not checked (it is still cut into the cut-stock model). Every other motion is checked.
 //
 // PLUNGES. A feed sub-motion going down more steeply than kPlungeMinAngleDeg from horizontal (straight down included:
-// canned cycles' feeds). Tools that cut at their centre (cam invariants' convention, centreCuttingByDefault): Drill,
-// SpotDrill, BallEndMill, EngraveCutter, and ChamferMill without a flat at its tip. The others (FlatEndMill,
-// BullEndMill, FaceMill, Tap, Reamer, BoringBar, ThreadMill, a chamfer mill with a tip flat, and an operation whose
-// tool is not known) have a dead zone: a disc at the tip of radius kDeadZoneFraction of the cutting radius (at most the
-// flat of the tip). A plunge whose dead zone meets material is the event; a tap into a drilled hole is not one.
+// canned cycles' feeds). Whether the tool cuts at its centre is the tool's own answer (libraries.h Tool::cutsAtCentre:
+// what its library entry states, else its type's default, centreCuttingByDefault). A tool that does not (by default
+// FaceMill, Tap, Reamer, BoringBar, ThreadMill and a chamfer mill with a flat at its tip; any milling cutter whose
+// entry says so; and an operation whose tool is not known) has a dead zone: a disc at the tip of radius
+// kDeadZoneFraction of the cutting radius (at most the flat of the tip). A plunge whose dead zone meets material is the
+// event; a tap into a drilled hole is not one.
 //
 // TOOL TOO SHORT. Per operation, from its FEED motions (a rapid that hits is the rapid's fault, not the tool's length):
 //   - the holder zone met the part, a fixture or the stock: one ToolTooShort with amountMm the extra stick-out that
@@ -154,7 +155,7 @@ VerifyInput verifyInputFrom(const SimProgram&);
 // The cut-stock cell for a stock box: kCutStockCellMm, doubled until the three grids hold at most kCutStockMaxDexels.
 double cutStockCell(const Box3& stockBounds);
 
-// Whether a tool cuts at its centre (the cam invariant checker's default by type).
+// Whether a tool cuts at its centre: Tool::cutsAtCentre; false for an unknown tool (null).
 bool centreCutting(const lib::Tool* tool);
 
 } // namespace ray::sim::detail

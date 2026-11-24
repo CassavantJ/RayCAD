@@ -24,6 +24,7 @@ struct PlacementInput {
     QJsonObject face, target;
     QString gap, x, y, z, angle;
     QString unitLabel = QStringLiteral("mm"); // the display unit a plain length is in: "mm" or "in"
+    QString tiltX, tiltY;                     // degrees when plain numbers; only without a mate (after T-077)
 };
 
 // Checks an expression: nullopt and *error set when it does not evaluate to the kind asked (a length or an angle).
@@ -34,9 +35,9 @@ struct PlacementArgs {
     QString error;     // why there are none
     QString field;     // the field the error is about ("gap", "x", ...; "" for none)
 };
-// The props of feature.transform_body for `in`: {"body", "mate"?: {"face", "target"}, "gap"?, "angle"?, "x"?, "y"?,
-// "z"?}, each number as an expression with its unit ("12.7 mm", "0.5 in", "90 deg"); a field that is empty or 0 is left
-// out (gap also without a mate).
+// The props of feature.transform_body for `in`: {"body", "mate"?: {"face", "target"}, "gap"?, "angle"?, "tiltX"?,
+// "tiltY"?, "x"?, "y"?, "z"?}, each number as an expression with its unit ("12.7 mm", "0.5 in", "90 deg"); a field that
+// is empty or 0 is left out (gap also without a mate; a tilt with a mate is refused, naming it).
 PlacementArgs placementProps(const PlacementInput& in, const CheckFn& check);
 
 // The props patch of feature.transform_body.edit that makes the stored props `props`: every key of the feature, those

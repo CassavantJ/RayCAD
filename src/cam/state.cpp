@@ -630,6 +630,7 @@ lib::Tool generatorTool(const lib::Tool& t)
     out.threadPitch = t.threadPitch;
     out.neckDiameter = t.neckDiameter; // in geometryHash, so in the input hash (after M3)
     out.neckLength = t.neckLength;
+    out.centreCutting = t.centreCutting; // geometryHash covers cutsAtCentre() where it is not the type's default
     return out;
 }
 

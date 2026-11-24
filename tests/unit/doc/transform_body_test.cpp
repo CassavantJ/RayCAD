@@ -1,6 +1,7 @@
 // The "transform_body" feature type (task T-077): the mate arithmetic, a body mated to another body's face with a gap,
 // a turn and offsets, through the typed commands and the rebuilder; the mate following an edit of the part; names
-// kept through the move; the command's refusals; undo, redo, save and reload; documents from before the type.
+// kept through the move; the command's refusals; undo, redo, save and reload; documents from before the type; the tilts
+// about model X and Y of a move without a mate (after T-077, for a vise placed on a turned-over setup's stock).
 #include "parametric_test_util.h"
 
 #include "features/transform_body_feature.h"
@@ -202,6 +203,64 @@ TEST_CASE("the mate puts the face on the target face, opposed and centred, keepi
     CHECK(r.y == -1.0);
     CHECK(r.z == 0.0);
     CHECK(fx::roundedPoint({1.0000000004, 0, 0}).x == 1.0);
+}
+
+TEST_CASE("without a mate the body may be tilted about model X and Y before its turn about Z", "[doc][transform_body]")
+{
+    // Half a turn about X: turned over, exactly.
+    fx::Placement p;
+    p.tiltX = kPi;
+    Xform x = fx::placementTransform(p);
+    const double over[12] = {1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0};
+    for (int i = 0; i < 12; ++i) {
+        CHECK(x.m[i] == over[i]);
+    }
+    // A quarter tilt about Y (the body's +Z onto model +X), then a quarter turn about Z, then the offsets: Rz Ry Rx.
+    p.tiltX = 0;
+    p.tiltY = kPi / 2;
+    p.angle = kPi / 2;
+    p.offset = {1, 2, 3};
+    x = fx::placementTransform(p);
+    Vec3 c = applyX(x, {0, 0, 1}); // +Z: onto +X by the tilt, onto +Y by the turn
+    CHECK(c.x == 1.0);
+    CHECK(c.y == 3.0);
+    CHECK(c.z == 3.0);
+    c = applyX(x, {1, 0, 0}); // +X: onto -Z by the tilt, the turn leaves it
+    CHECK(c.x == 1.0);
+    CHECK(c.y == 2.0);
+    CHECK(c.z == 2.0);
+    // No tilt: the move is the one without them, bit for bit.
+    fx::Placement a, b;
+    a.angle = b.angle = 0.3;
+    a.offset = b.offset = {5, -7, 2};
+    b.tiltX = 0;
+    const Xform xa = fx::placementTransform(a), xb = fx::placementTransform(b);
+    for (int i = 0; i < 12; ++i) {
+        CHECK(xa.m[i] == xb.m[i]);
+    }
+
+    // Through the commands and the rebuild: the fixture body 'c' (x 100..130, y 100..110, z 0..15) turned over about X.
+    Model m;
+    twoBodies(m);
+    const std::string body = R"({"body":")" + uuid('c', 1) + "\"";
+    m.run(addFeature("transform_body", 6, body + R"(,"tiltX":"180 deg","z":"15 mm"})"));
+    BuildResultPtr built = m.build();
+    REQUIRE(report(*built, 6).status == FeatureStatus::Ok);
+    checkBox(*built, 'c', Box3{{100, -110, 0}, {130, -100, 15}});
+    // A quarter tilt about Y: z 0..15 goes to x 0..15, x 100..130 to z -130..-100.
+    m.run(editFeature("transform_body", 6, R"({"tiltX":null,"tiltY":"90 deg","z":null})"));
+    built = m.build();
+    REQUIRE(report(*built, 6).status == FeatureStatus::Ok);
+    checkBox(*built, 'c', Box3{{0, 100, -130}, {15, 110, -100}});
+    // A tilt with a mate is refused, naming it: the faces set the orientation.
+    Model n;
+    twoBodies(n);
+    const BuildResultPtr b0 = n.build();
+    const kernel::SubId jaw = planeFace(*b0, 'c', {0, -1, 0}, -100);
+    const kernel::SubId side = planeFace(*b0, 'b', {0, 1, 0}, 20);
+    const Error e = n.fails(
+        addFeature("transform_body", 6, body + R"(,"mate":)" + mateJson(*b0, jaw, side) + R"(,"tiltX":"90 deg"})"));
+    CHECK_THAT(e.message, ContainsSubstring("'tiltX'"));
 }
 
 TEST_CASE("kernel::transformed keeps every element's index, so a pick on the moved body names the same element",
