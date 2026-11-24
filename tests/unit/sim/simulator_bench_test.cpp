@@ -9,15 +9,22 @@
 // a minute. The limits are checked only in an optimised build without sanitizers, which also runs the full 112k-move
 // workload (other builds a thinned one). Every tier's seek budget is checked, High's too since the stock model copies
 // tiles rather than whole strips on write (tridexel.h, SNAPSHOTS): its keyframes all fit High's keyframe budget.
+// The same benchmark also runs the facing-heavy plate of the stress programs (below) at every tier, seeking into every
+// keyframe interval. The stress programs themselves (facing, finishing, a long program, a large stock) are hidden
+// tests "[stress]", for the report of what the keyframe policy holds and where it cannot (simulator.h, KEYFRAMES).
 #include "simulator_test_util.h"
+
+#include <ray/kernel.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <random>
+#include <string>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -551,4 +558,671 @@ TEST_CASE("Simulator keyframe budget sweep at the High cell", "[.][sim][simulato
     for (const std::uint64_t mb : {512u, 1024u, 1536u}) {
         runTier({"High sweep", 0.05, 8, 10.0, 100.0}, sp, moves, mb * sim::detail::kMiB, false, false);
     }
+}
+
+// ---------- Stress programs: what the S6 workload does not cover ----------
+// Programs made with the real operation types of src/cam where they exist (face, pocket2d, adaptive2d through
+// cam::registerBuiltinOperationTypes, as the engine runs them), and ball-end raster finishing written here (there is no
+// 3D finishing operation yet), on plates far larger than S6's stock:
+//   facing   a 300 x 200 x 30 plate faced 6 mm down in 0.5 mm steps with a 50.8 mm face mill: twelve passes over the
+//            whole plate, each rewriting every Z ray (at 0.05 mm one pass changes 24 M dexels, 460 MB);
+//   finish   the same plate: a 260 x 160 pocket roughed 6 mm deep in 0.5 mm steps (pocket2d, 16 mm end mill), then a
+//            wavy surface on its floor semi-finished and finished three times over (10 mm ball along X at +0.4 mm,
+//            6 mm ball along Y at +0.15, along X at 0): many light passes over the same area;
+//   long     a 300 x 200 x 40 block: faced, an adaptive2d pocket 6 mm deep, a pocket2d finish of it, and the finishing
+//            rasters at finer steps: over 300k moves;
+//   large    a 500 x 350 x 40 plate at High: faced twice, a 420 x 270 pocket in three steps and one surface raster
+//            (a Z grid of 10000 x 7000 rays).
+namespace {
+
+const cam::OperationRegistry& opRegistry()
+{
+    static const cam::OperationRegistry reg = [] {
+        cam::OperationRegistry r;
+        cam::registerBuiltinOperationTypes(r);
+        return r;
+    }();
+    return reg;
+}
+
+lib::MachineDef bigMachine()
+{
+    lib::MachineDef m;
+    m.kind = lib::MachineDef::Kind::Mill3Axis;
+    m.axes = {lib::AxisDef{'X', 0, 1600, 25400, 16500, 5000}, lib::AxisDef{'Y', 0, 1000, 25400, 16500, 5000},
+              lib::AxisDef{'Z', -600, 0, 25400, 16500, 5000}};
+    m.maxRpm = 15000;
+    return m;
+}
+
+lib::Tool cutter(lib::ToolType type, double diameter, double flute, double corner = 0)
+{
+    lib::Tool t;
+    t.type = type;
+    t.flutes = 4;
+    t.diameter = diameter;
+    t.shankDiameter = std::min(diameter, 25.0);
+    t.fluteLength = flute;
+    t.shoulderLength = flute;
+    t.overallLength = flute + 50;
+    t.cornerRadius = corner;
+    return t;
+}
+
+cam::Operation camOp(const char* type, const std::string& params, double rpm, double feed)
+{
+    cam::Operation op;
+    op.type = type;
+    op.name = type;
+    op.paramsJson = params;
+    op.cutting.spindleRpm = rpm;
+    op.cutting.feedCut = feed;
+    op.cutting.feedPlunge = feed / 2;
+    op.cutting.feedRamp = feed * 0.75;
+    op.cutting.feedLeadIn = feed;
+    op.cutting.feedLeadOut = feed;
+    op.heights.clearance = 15;
+    op.heights.retract = 5;
+    op.heights.feedPlane = 2;
+    op.heights.top = 0;
+    op.heights.bottom = 0;
+    op.tool.stickOut = 45;
+    return op;
+}
+
+kernel::Shape kbox(Vec3 a, Vec3 b)
+{
+    auto s = kernel::makeBox(a, b);
+    REQUIRE(s);
+    return *s;
+}
+
+// The plate x 0..sx, y 0..sy, z 0..sz with a pocket x0..x1, y0..y1 (corner radius r) down to floorZ.
+kernel::Shape pocketPlate(double sx, double sy, double sz, double x0, double y0, double x1, double y1, double r,
+                          double floorZ)
+{
+    const auto line = [](Vec2 a, Vec2 b) {
+        return kernel::ProfileCurve{kernel::ProfileCurve::Kind::Line, {a, b}, 0, false, 0};
+    };
+    const auto arc = [](Vec2 a, Vec2 b, Vec2 c, double rad) {
+        return kernel::ProfileCurve{kernel::ProfileCurve::Kind::Arc, {a, b, c}, rad, true, 0};
+    };
+    kernel::ProfileLoop l;
+    l.curves = {line({x0 + r, y0}, {x1 - r, y0}), arc({x1 - r, y0}, {x1, y0 + r}, {x1 - r, y0 + r}, r),
+                line({x1, y0 + r}, {x1, y1 - r}), arc({x1, y1 - r}, {x1 - r, y1}, {x1 - r, y1 - r}, r),
+                line({x1 - r, y1}, {x0 + r, y1}), arc({x0 + r, y1}, {x0, y1 - r}, {x0 + r, y1 - r}, r),
+                line({x0, y1 - r}, {x0, y0 + r}), arc({x0, y0 + r}, {x0 + r, y0}, {x0 + r, y0 + r}, r)};
+    const kernel::Profile p{kernel::Plane{Vec3{0, 0, floorZ}, Vec3{0, 0, 1}, Vec3{1, 0, 0}}, {l}};
+    JobContext ctx;
+    auto prism = kernel::extrude(p, sz + 1 - floorZ, 0, ctx);
+    INFO((prism ? std::string() : prism.error().message));
+    REQUIRE(prism);
+    auto cutResult = kernel::boolean(kernel::BoolOp::Cut, kbox({0, 0, 0}, {sx, sy, sz}), prism->op.shape, ctx);
+    REQUIRE(cutResult);
+    return cutResult->shape;
+}
+
+// The up-facing planar face at height z (the pocket's floor).
+kernel::SubId floorFace(const kernel::Shape& s, double z)
+{
+    std::vector<kernel::SubId> out;
+    const std::uint32_t n = s.count(kernel::SubKind::Face);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const kernel::SubId f{kernel::SubKind::Face, i};
+        const auto info = kernel::surfaceInfo(s, f);
+        const auto sample = kernel::faceSample(s, f);
+        if (info && sample && info->type == kernel::SurfaceType::Plane && sample->normal.z > 0.999 &&
+            std::abs(info->bounds.min.z - z) < 1e-6 && std::abs(info->bounds.max.z - z) < 1e-6) {
+            out.push_back(f);
+        }
+    }
+    REQUIRE(out.size() == 1);
+    return out.front();
+}
+
+// One operation of a registered type, generated as the engine would.
+std::shared_ptr<const cam::Toolpath> generated(const cam::Operation& op, const lib::Tool& tool,
+                                               const kernel::Shape& part, const Box3& stock,
+                                               std::vector<kernel::SubId> faces = {})
+{
+    cam::ResolvedGeometry g;
+    g.wcsFromModel = Xform::identity();
+    g.partShapes = {part};
+    g.stockBounds = stock;
+    for (const kernel::SubId& f : faces) {
+        g.selected.push_back(f);
+        g.selectedShapeIndex.push_back(0);
+    }
+    const lib::MachineDef machine = bigMachine();
+    const cam::IOperationType* type = opRegistry().find(op.type);
+    REQUIRE(type != nullptr);
+    JobContext ctx;
+    Result<cam::Toolpath> tp = type->generate(cam::GenerateInput{op, tool, nullptr, machine, g}, ctx);
+    INFO(op.type << ": " << (tp ? std::string() : tp.error().message));
+    REQUIRE(tp);
+    return std::make_shared<const cam::Toolpath>(std::move(*tp));
+}
+
+// Ball-end raster finishing of z = zf(x, y) + offset over [x0, x1] x [y0, y1]: lines along X (or Y) `stepover` apart
+// in moves of `seg` mm, zigzag, staying down between lines.
+std::shared_ptr<const cam::Toolpath> raster(double x0, double y0, double x1, double y1, bool alongX, double stepover,
+                                            double seg, double offset, double (*zf)(double, double))
+{
+    const double a0 = alongX ? x0 : y0, a1 = alongX ? x1 : y1; // along the lines
+    const double c0 = alongX ? y0 : x0, c1 = alongX ? y1 : x1; // across them
+    const auto pt = [&](double a, double c) {
+        const double x = alongX ? a : c, y = alongX ? c : a;
+        return Vec3{x, y, zf(x, y) + offset};
+    };
+    const Vec3 s = pt(a0, c0);
+    Path p(s.x, s.y, 60);
+    p.rapid(s.x, s.y, s.z + 2).feed(s.x, s.y, s.z);
+    const int lines = static_cast<int>(std::floor((c1 - c0) / stepover)) + 1;
+    const int segs = std::max(1, static_cast<int>(std::ceil((a1 - a0) / seg)));
+    for (int l = 0; l < lines; ++l) {
+        const double c = c0 + stepover * l;
+        const bool fwd = l % 2 == 0;
+        if (l > 0) {
+            const Vec3 q = pt(fwd ? a0 : a1, c);
+            p.feed(q.x, q.y, q.z);
+        }
+        for (int k = 1; k <= segs; ++k) {
+            const double a = fwd ? a0 + (a1 - a0) * k / segs : a1 - (a1 - a0) * k / segs;
+            const Vec3 q = pt(a, c);
+            p.feed(q.x, q.y, q.z);
+        }
+    }
+    const Vec3 e = pt(lines % 2 == 1 ? a1 : a0, c0 + stepover * (lines - 1));
+    p.rapid(e.x, e.y, 60);
+    return p.done();
+}
+
+double wavy(double x, double y)
+{
+    return 20.0 + 1.6 * dmath::sin(2 * kPi * x / 70.0) * dmath::cos(2 * kPi * y / 55.0) + 0.004 * (x - 150);
+}
+
+struct StressProgram {
+    const char* name;
+    SimFixture f;
+    std::uint64_t moves = 0;
+};
+
+void finish(StressProgram& p, const Box3& stock)
+{
+    p.f.prog.stock = boxSoup(stock);
+    p.f.prog.part = boxSoup(box(stock.min.x, stock.min.y, stock.min.z, stock.max.x, stock.max.y, 2.0));
+    const SimProgram& sp = p.f.build();
+    for (const auto& tp : sp.toolpaths) {
+        p.moves += tp->moves.size();
+    }
+}
+
+StressProgram facingProgram()
+{
+    StressProgram p{"facing", {}};
+    const Box3 stock = box(0, 0, 0, 300, 200, 30);
+    const lib::Tool mill = cutter(lib::ToolType::FaceMill, 50.8, 6);
+    p.f.prog.op(
+        generated(camOp("face", R"({"stepdown":0.5})", 1500, 900), mill, kbox({0, 0, 0}, {300, 200, 24}), stock), mill);
+    finish(p, stock);
+    return p;
+}
+
+StressProgram finishProgram(double scale = 1.0)
+{
+    StressProgram p{scale == 1.0 ? "finish" : "long", {}};
+    const double top = scale == 1.0 ? 30.0 : 40.0;
+    const Box3 stock = box(0, 0, 0, 300, 200, top);
+    const lib::Tool rougher = cutter(lib::ToolType::FlatEndMill, 16, 30);
+    const kernel::Shape part =
+        pocketPlate(300, 200, top - (scale == 1.0 ? 0.0 : 1.0), 20, 20, 280, 180, 10, top - (scale == 1.0 ? 6.0 : 7.0));
+    const double floorZ = top - (scale == 1.0 ? 6.0 : 7.0);
+    if (scale != 1.0) {
+        const lib::Tool mill = cutter(lib::ToolType::FaceMill, 50.8, 6);
+        p.f.prog.op(generated(camOp("face", R"({"stepdown":0.5})", 1500, 900), mill, part, stock), mill);
+        p.f.prog.op(generated(camOp("adaptive2d",
+                                    R"({"stepdown":3,"stepover":12,"stockToLeaveFloor":0.3,)"
+                                    R"("stockToLeaveWall":0.3})",
+                                    6000, 1500),
+                              rougher, part, stock, {floorFace(part, floorZ)}),
+                    rougher);
+        p.f.prog.op(generated(camOp("pocket2d", R"({"stepdown":3,"stepover":40,"finishWalls":true})", 6000, 900),
+                              rougher, part, stock, {floorFace(part, floorZ)}),
+                    rougher);
+    } else {
+        p.f.prog.op(generated(camOp("pocket2d", R"({"stepdown":0.5,"stepover":45})", 6000, 900), rougher, part, stock,
+                              {floorFace(part, floorZ)}),
+                    rougher);
+    }
+    const lib::Tool ball10 = cutter(lib::ToolType::BallEndMill, 10, 25);
+    const lib::Tool ball6 = cutter(lib::ToolType::BallEndMill, 6, 20);
+    // The surface lies 2 to 6 mm below the pocket's floor.
+    const double s = scale == 1.0 ? 1.0 : 0.75, base = scale == 1.0 ? 0.0 : 9.0;
+    p.f.prog.op(raster(40, 40, 260, 160, true, 1.0 * s, 1.0, base + 0.4, wavy), ball10);
+    p.f.prog.op(raster(40, 40, 260, 160, false, 0.4 * s, 1.0, base + 0.15, wavy), ball6);
+    p.f.prog.op(raster(40, 40, 260, 160, true, 0.3 * s, 1.0, base, wavy), ball6);
+    finish(p, stock);
+    return p;
+}
+
+StressProgram largeProgram()
+{
+    StressProgram p{"large", {}};
+    const Box3 stock = box(0, 0, 0, 500, 350, 40);
+    const kernel::Shape part = pocketPlate(500, 350, 39, 40, 40, 460, 310, 12, 33);
+    const lib::Tool mill = cutter(lib::ToolType::FaceMill, 63, 6);
+    p.f.prog.op(generated(camOp("face", R"({"stepdown":0.5})", 1200, 900), mill, part, stock), mill);
+    const lib::Tool rougher = cutter(lib::ToolType::FlatEndMill, 20, 30);
+    p.f.prog.op(generated(camOp("pocket2d", R"({"stepdown":2,"stepover":50})", 5000, 1200), rougher, part, stock,
+                          {floorFace(part, 33)}),
+                rougher);
+    const lib::Tool ball6 = cutter(lib::ToolType::BallEndMill, 6, 20);
+    p.f.prog.op(raster(150, 100, 350, 250, true, 0.5, 1.0, 12.0, wavy), ball6);
+    finish(p, stock);
+    return p;
+}
+
+struct StressResult {
+    double runS = 0;
+    std::size_t keyframes = 0;
+    int thinnings = 0;
+    double pinnedMb = 0, budgetMb = 0, spacingM = 0;
+    double worstMs = 0, medianMs = 0, p90Ms = 0;
+    std::uint64_t worstFrom = 0, worstTo = 0;
+    std::uint64_t endHash = 0, midHash = 0;
+};
+
+// Runs `sp` at the tier's cell and seeks into EVERY keyframe interval at its worst (just before the next keyframe,
+// coming from the end: a restore and the whole interval recut). Prints one line.
+StressResult stressTier(const char* program, const Tier& t, const SimProgram& sp, std::uint64_t moves,
+                        const sim::detail::SimTuning& tuning = {})
+{
+    jobs().setWorkerCount(t.workers);
+    StressResult res;
+    auto sim = makeSimulator(jobs(), makeTriDexelCpu(jobs()));
+    sim::detail::setSimTuning(*sim, tuning);
+    SimOptions o{};
+    o.resolution = StockResolution{t.cell};
+    o.safetyChecks = false;
+    o.gouges = false;
+    const Result<bool> done = jobs()
+                                  .submit<bool>(JobInfo{"bench", JobPriority::Normal, false},
+                                                [&](JobContext& ctx) -> Result<bool> {
+                                                    const auto t0 = std::chrono::steady_clock::now();
+                                                    const Status s = sim->run(sp, o, ctx);
+                                                    res.runS = seconds(t0);
+                                                    if (!s) {
+                                                        return tl::unexpected(s.error());
+                                                    }
+                                                    return true;
+                                                })
+                                  .wait();
+    REQUIRE(done);
+    const sim::detail::SimRunInfo info = sim::detail::simRunInfo(*sim);
+    res.endHash = sim::detail::triDexelHash(sim->stock());
+    const auto timedSeek = [&](TimelinePosition p) {
+        double ms = 0;
+        const Result<bool> r = jobs()
+                                   .submit<bool>(JobInfo{"seek", JobPriority::Interactive, false},
+                                                 [&](JobContext&) -> Result<bool> {
+                                                     const auto t0 = std::chrono::steady_clock::now();
+                                                     const Status s = sim->seek(p);
+                                                     ms = seconds(t0) * 1e3;
+                                                     return s ? Result<bool>(true) : tl::unexpected(s.error());
+                                                 })
+                                   .wait();
+        REQUIRE(r);
+        return ms;
+    };
+    const auto at = [&](std::uint64_t motion, double t01) {
+        motion = std::min<std::uint64_t>(motion, info.motions - 1);
+        return TimelinePosition{info.motionOp[motion], info.motionMove[motion], t01};
+    };
+    const std::vector<std::uint64_t>& keys = info.keyframeMotions;
+    // The work measure of every motion (as simulator.cpp counts it), to see what the slowest intervals cost per ray.
+    std::vector<double> rays;
+    {
+        const sim::detail::VerifyInput in = sim::detail::verifyInputFrom(sp);
+        const std::vector<sim::detail::Motion> motions = sim::detail::expandMotions(in);
+        const sim::detail::TriDexelInfo ti = sim::detail::triDexelInfo(sim->stock());
+        Box3 b{ti.origin, {ti.origin.x + ti.cx * ti.nx, ti.origin.y + ti.cy * ti.ny, ti.origin.z + ti.cz * ti.nz}};
+        for (const sim::detail::Motion& m : motions) {
+            const ToolShape& shape = sp.tools[m.op];
+            double radius = 0;
+            for (const Vec2& v : shape.cuttingProfile) {
+                radius = std::max(radius, v.x);
+            }
+            const double height = shape.cuttingProfile.empty() ? 0.0 : shape.cuttingProfile.back().y;
+            rays.push_back(sim::detail::rayCost(m, radius, height, b, {ti.cx, ti.cy, ti.cz}));
+        }
+    }
+    struct Interval {
+        std::uint64_t from, to;
+        double ms, rays, writes;
+    };
+    std::vector<Interval> ivs;
+    std::vector<double> seeks;
+    for (std::size_t k = 0; k + 1 < keys.size(); ++k) {
+        // Best of two: this machine's speed wanders under other load.
+        timedSeek(sim->runEnd());
+        const std::uint64_t w0 = sim::detail::triDexelWrites(sim->stock());
+        double ms = timedSeek(at(keys[k + 1] - 1, 0.9));
+        const double writes = static_cast<double>(sim::detail::triDexelWrites(sim->stock()) - w0);
+        timedSeek(sim->runEnd());
+        ms = std::min(ms, timedSeek(at(keys[k + 1] - 1, 0.9)));
+        if (ms > res.worstMs) {
+            res.worstMs = ms;
+            res.worstFrom = keys[k];
+            res.worstTo = keys[k + 1];
+        }
+        seeks.push_back(ms);
+        double r = 0;
+        for (std::uint64_t m = keys[k]; m < keys[k + 1] && m < rays.size(); ++m) {
+            r += rays[m];
+        }
+        ivs.push_back({keys[k], keys[k + 1], ms, r, writes});
+        std::printf("ivdata %s %s %u %.0f %.0f %.2f\n", program, t.name,
+                    info.motionOp[std::min<std::uint64_t>(keys[k], info.motions - 1)], r, writes, ms);
+    }
+    std::sort(ivs.begin(), ivs.end(), [](const Interval& a, const Interval& b) { return a.ms > b.ms; });
+    for (std::size_t k = 0; k < std::min<std::size_t>(4, ivs.size()); ++k) {
+        const Interval& iv = ivs[k];
+        std::printf(
+            "stress %s %s:   slow interval motions %llu-%llu (op %u): %.1f M rays, %.1f M writes, seek %.1f ms, "
+            "%.2f ns per ray\n",
+            program, t.name, static_cast<unsigned long long>(iv.from), static_cast<unsigned long long>(iv.to),
+            info.motionOp[std::min<std::uint64_t>(iv.from, info.motions - 1)], iv.rays / 1e6, iv.writes / 1e6, iv.ms,
+            iv.ms * 1e6 / std::max(1.0, iv.rays));
+    }
+    std::fflush(stdout);
+    timedSeek(at(info.motions / 2, 0.5));
+    res.midHash = sim::detail::triDexelHash(sim->stock());
+    res.keyframes = keys.size();
+    res.thinnings = info.thinnings;
+    res.pinnedMb = static_cast<double>(info.keyframeBytes) / (1024.0 * 1024.0);
+    res.budgetMb = static_cast<double>(info.keyframeBudgetBytes) / (1024.0 * 1024.0);
+    res.spacingM = info.keyframeRays / 1e6;
+    res.medianMs = percentile(seeks, 0.5);
+    res.p90Ms = percentile(seeks, 0.9);
+    const sim::detail::TriDexelInfo ti = sim::detail::triDexelInfo(sim->stock());
+    char line[1024];
+    std::snprintf(line, sizeof line,
+                  "stress %s %s: cell %.2f mm, %d workers, %llu moves, %llu motions, grid %d x %d x %d, model %.0f MB; "
+                  "run %.2f s; keyframes %zu (spacing %.0f M rays, %d thinnings) pinning %.0f MB of %.0f; seek into "
+                  "every interval: median %.1f p90 %.1f max %.1f ms (motions %llu-%llu, op %u); hash end %016llx "
+                  "mid %016llx; process peak %.0f MB",
+                  program, t.name, t.cell, t.workers, static_cast<unsigned long long>(moves),
+                  static_cast<unsigned long long>(info.motions), ti.nx, ti.ny, ti.nz,
+                  static_cast<double>(ti.bytes) / (1024.0 * 1024.0), res.runS, res.keyframes, res.spacingM,
+                  res.thinnings, res.pinnedMb, res.budgetMb, res.medianMs, res.p90Ms, res.worstMs,
+                  static_cast<unsigned long long>(res.worstFrom), static_cast<unsigned long long>(res.worstTo),
+                  info.motionOp[std::min<std::uint64_t>(res.worstFrom, info.motions - 1)],
+                  static_cast<unsigned long long>(res.endHash), static_cast<unsigned long long>(res.midHash),
+                  processPeakMb());
+    std::cout << line << std::endl;
+    CHECK(info.keyframeBytes <= info.keyframeBudgetBytes);
+    jobs().setWorkerCount(8);
+    return res;
+}
+
+const Tier kTiers[] = {{"Low", 0.2, 4, 20.0, 250.0}, {"Medium", 0.1, 4, 15.0, 150.0}, {"High", 0.05, 8, 10.0, 100.0}};
+
+} // namespace
+
+// Part of the section 9 benchmark (ray_sim_simulator_bench): the facing-heavy plate, the stress program that cost the
+// most keyframe memory per second of seek (every pass rewrites every Z ray), at every tier. Each tier must keep every
+// keyframe (no thinning: the equal tiles a pass leaves are shared, tridexel.h KEYFRAMES) and seek into every interval
+// within its budget. The seek times are the best of two tries per interval, so a moment of other load on this machine
+// does not fail it; measured with it quiet they are half the budget or less (High 49 ms, simulator.h). In other builds
+// only Low runs, unchecked.
+TEST_CASE("Simulator benchmark: a facing-heavy plate at every tier", "[.][sim][simulator][bench][simulator-bench]")
+{
+    StressProgram p = facingProgram();
+    for (const Tier& t : kTiers) {
+        if (!optimisedBuild() && t.cell < 0.2) {
+            continue;
+        }
+        const StressResult r = stressTier(p.name, t, p.f.sp, p.moves);
+        CHECK(r.thinnings == 0);
+        if (optimisedBuild()) {
+            CHECK(r.worstMs <= t.seekBudgetMs);
+        }
+    }
+}
+
+// Not run by default ([.]): each stress program at every tier (the large one at High only), measured over every
+// keyframe interval. What the keyframe policy was checked against beyond S6.
+TEST_CASE("Simulator stress: facing", "[.][sim][simulator][stress][stress-facing]")
+{
+    StressProgram p = facingProgram();
+    for (const Tier& t : kTiers) {
+        stressTier(p.name, t, p.f.sp, p.moves);
+    }
+}
+// Interning tiles at keyframes (tridexel.h, KEYFRAMES) and reusing dropped tiles change no result: the same stock,
+// removed volumes and seeks with it on and off, on one worker and on eight, with a keyframe every few motions (so
+// thousands of tiles are interned, shared across strips and copied again by the next cuts). Not a benchmark: it
+// lives here beside the stress programs it was written for, and runs in the suite.
+TEST_CASE("Interning keyframe tiles changes no result", "[sim][simulator][determinism]")
+{
+    SimFixture f = benchFixture(1, 2.0);
+    const SimProgram& sp = f.build();
+    struct Outcome {
+        std::uint64_t end = 0;
+        std::vector<double> removed;
+        std::vector<std::uint64_t> seeks;
+        std::uint64_t pinned = 0;
+    };
+    const auto outcome = [&](bool intern, int workers) {
+        jobs().setWorkerCount(workers);
+        auto sim = makeSimulator(jobs(), makeTriDexelCpu(jobs()));
+        sim::detail::SimTuning tu;
+        tu.internTiles = intern;
+        tu.keyframeMotions = 97;
+        sim::detail::setSimTuning(*sim, tu);
+        SimOptions o{};
+        o.resolution = StockResolution{0.2};
+        o.safetyChecks = false;
+        o.gouges = false;
+        JobContext ctx;
+        REQUIRE(sim->run(sp, o, ctx));
+        Outcome out;
+        out.end = sim::detail::triDexelHash(sim->stock());
+        const sim::detail::SimRunInfo info = sim::detail::simRunInfo(*sim);
+        out.removed = info.removedMm3;
+        out.pinned = info.keyframeBytes;
+        // Backward through the program, then forward, then back to the end.
+        std::vector<TimelinePosition> at;
+        for (std::uint64_t m = info.motions; m > 0; m -= std::min<std::uint64_t>(m, 733)) {
+            at.push_back({info.motionOp[m - 1], info.motionMove[m - 1], 0.4});
+        }
+        for (std::uint64_t m = 0; m < info.motions; m += 1201) {
+            at.push_back({info.motionOp[m], info.motionMove[m], 0.7});
+        }
+        at.push_back(sim->runEnd());
+        for (const TimelinePosition& p : at) {
+            REQUIRE(sim->seek(p));
+            out.seeks.push_back(sim::detail::triDexelHash(sim->stock()));
+        }
+        jobs().setWorkerCount(8);
+        return out;
+    };
+    const Outcome plain = outcome(false, 8);
+    CHECK(plain.seeks.back() == plain.end);
+    for (const int workers : {1, 8}) {
+        INFO("workers " << workers);
+        const Outcome o = outcome(true, workers);
+        CHECK(o.end == plain.end);
+        CHECK(o.removed == plain.removed);
+        CHECK(o.seeks == plain.seeks);
+        // The facing pass and the pocket's floors leave equal tiles: interned, the keyframes pin less.
+        CHECK(o.pinned < plain.pinned);
+    }
+}
+
+// Not run by default ([.]): what the work measure leaves out, on the stress programs: per chunk of up to 256 motions of
+// one operation, cut on ONE worker and timed by the process's CPU time (less disturbed by other load than the wall
+// clock), the rays (rayCost) and the writes (triDexelWrites) against the time. Lines "caldata cell op rays writes ns"
+// for a fit.
+TEST_CASE("Simulator work measure calibration on the stress programs", "[.][sim][simulator][calibrate-stress]")
+{
+    // The process's CPU cycles (all threads), not wall time: other load does not count.
+    const auto cpuNs = [] {
+#if defined(_WIN32)
+        ULONG64 cycles = 0;
+        QueryProcessCycleTime(GetCurrentProcess(), &cycles);
+        return static_cast<double>(cycles);
+#else
+        return 0.0;
+#endif
+    };
+    StressProgram programs[] = {facingProgram(), finishProgram()};
+    jobs().setWorkerCount(1);
+    for (StressProgram& p : programs) {
+        const SimProgram& sp = p.f.sp;
+        const sim::detail::VerifyInput in = sim::detail::verifyInputFrom(sp);
+        const std::vector<sim::detail::Motion> motions = sim::detail::expandMotions(in);
+        Box3 stock{{sp.stockSolid.positions[0], sp.stockSolid.positions[1], sp.stockSolid.positions[2]},
+                   {sp.stockSolid.positions[0], sp.stockSolid.positions[1], sp.stockSolid.positions[2]}};
+        for (std::size_t i = 0; i + 2 < sp.stockSolid.positions.size(); i += 3) {
+            stock.min = {std::min(stock.min.x, sp.stockSolid.positions[i]),
+                         std::min(stock.min.y, sp.stockSolid.positions[i + 1]),
+                         std::min(stock.min.z, sp.stockSolid.positions[i + 2])};
+            stock.max = {std::max(stock.max.x, sp.stockSolid.positions[i]),
+                         std::max(stock.max.y, sp.stockSolid.positions[i + 1]),
+                         std::max(stock.max.z, sp.stockSolid.positions[i + 2])};
+        }
+        for (const double cell : {0.2, 0.1, 0.05}) {
+            const Result<bool> done =
+                jobs()
+                    .submit<bool>(
+                        JobInfo{"cal", JobPriority::Normal, false},
+                        [&](JobContext&) -> Result<bool> {
+                            std::unique_ptr<IStockModel> m = makeTriDexelCpu(jobs());
+                            m->reset(sp.stockSolid, stock, StockResolution{cell});
+                            const sim::detail::TriDexelInfo ti = sim::detail::triDexelInfo(*m);
+                            const Vec3 c{ti.cx, ti.cy, ti.cz};
+                            std::shared_ptr<const IStockModel::Snapshot> keep = m->snapshot();
+                            double since = 0;
+                            std::size_t i = 0;
+                            while (i < motions.size()) {
+                                const std::uint32_t op = motions[i].op;
+                                const ToolShape& shape = sp.tools[op];
+                                double radius = 0;
+                                for (const Vec2& v : shape.cuttingProfile) {
+                                    radius = std::max(radius, v.x);
+                                }
+                                const double height = shape.cuttingProfile.back().y;
+                                std::vector<IStockModel::CutMove> moves;
+                                double rays = 0;
+                                while (i < motions.size() && motions[i].op == op && moves.size() < 256) {
+                                    moves.push_back({motions[i].a, motions[i].b, motions[i].rapid});
+                                    rays += sim::detail::rayCost(motions[i], radius, height, stock, c);
+                                    ++i;
+                                }
+                                // Shared with a snapshot as after a keyframe, about as often: copies are paid.
+                                since += rays;
+                                if (since > sim::detail::kKeyframeRays) {
+                                    keep = m->snapshot();
+                                    since = 0;
+                                }
+                                const std::uint64_t w0 = sim::detail::triDexelWrites(*m);
+                                const double t0 = cpuNs();
+                                m->cutBatch(shape, moves, {});
+                                const double ns = cpuNs() - t0;
+                                std::printf("caldata %s %.2f %u %.0f %llu %.0f\n", p.name, cell, op, rays,
+                                            static_cast<unsigned long long>(sim::detail::triDexelWrites(*m) - w0), ns);
+                            }
+                            std::fflush(stdout);
+                            return true;
+                        })
+                    .wait();
+            REQUIRE(done);
+        }
+    }
+    jobs().setWorkerCount(8);
+}
+
+// Not run by default ([.]): what interning costs and saves at High, on the facing plate and on S6, with the same
+// keyframes either way (no budget, so none is thinned), alternately twice.
+TEST_CASE("Simulator stress: interning off and on", "[.][sim][simulator][stress-ab]")
+{
+    StressProgram p = facingProgram();
+    SimFixture s6 = benchFixture(11, 0.25);
+    const SimProgram& s6p = s6.build();
+    for (int rep = 0; rep < 2; ++rep) {
+        for (const bool intern : {false, true}) {
+            sim::detail::SimTuning tu;
+            tu.internTiles = intern;
+            tu.keyframeBudgetBytes = 64 * sim::detail::kKeyframeBudgetHighBytes;
+            stressTier(intern ? "facing interned" : "facing plain", kTiers[2], p.f.sp, p.moves, tu);
+            stressTier(intern ? "s6 interned" : "s6 plain", kTiers[2], s6p, 112126, tu);
+        }
+    }
+}
+TEST_CASE("Simulator stress: finishing", "[.][sim][simulator][stress][stress-finish]")
+{
+    StressProgram p = finishProgram();
+    for (const Tier& t : kTiers) {
+        stressTier(p.name, t, p.f.sp, p.moves);
+    }
+}
+TEST_CASE("Simulator stress: long program", "[.][sim][simulator][stress][stress-long]")
+{
+    StressProgram p = finishProgram(2.0);
+    for (const Tier& t : kTiers) {
+        stressTier(p.name, t, p.f.sp, p.moves);
+    }
+}
+TEST_CASE("Simulator stress: the S6 workload over every interval", "[.][sim][simulator][stress][stress-s6]")
+{
+    SimFixture f = benchFixture(11, 0.25);
+    const SimProgram& sp = f.build();
+    std::uint64_t moves = 0;
+    for (const auto& tp : sp.toolpaths) {
+        moves += tp->moves.size();
+    }
+    for (const Tier& t : kTiers) {
+        stressTier("s6", t, sp, moves);
+    }
+}
+// Not run by default ([.]): the keyframe spacing (kKeyframeRays) on S6 and the facing program at High, for the report.
+TEST_CASE("Simulator stress: keyframe spacing sweep at High", "[.][sim][simulator][stress-sweep]")
+{
+    SimFixture s6 = benchFixture(11, 0.25);
+    const SimProgram& s6p = s6.build();
+    StressProgram facing = facingProgram();
+    for (const double spacing : {16.0e6, 24.0e6, 32.0e6}) {
+        sim::detail::SimTuning tu;
+        tu.keyframeRays = spacing;
+        char name[64];
+        std::snprintf(name, sizeof name, "%.0fM", spacing / 1e6);
+        stressTier((std::string("s6 ") + name).c_str(), kTiers[2], s6p, 112126, tu);
+        stressTier((std::string("facing ") + name).c_str(), kTiers[2], facing.f.sp, facing.moves, tu);
+    }
+}
+// Not run by default ([.]): what the programs thinned at High would pin with no budget (64 GB), and how they would
+// seek: the memory the policy would need to meet the seek budget. Needs that much memory free.
+TEST_CASE("Simulator stress: High without a keyframe budget", "[.][sim][simulator][stress-unbounded]")
+{
+    sim::detail::SimTuning tu;
+    tu.keyframeBudgetBytes = std::uint64_t{64} << 30;
+    {
+        StressProgram p = finishProgram();
+        stressTier("finish unbounded", kTiers[2], p.f.sp, p.moves, tu);
+    }
+    {
+        StressProgram p = largeProgram();
+        stressTier("large unbounded", kTiers[2], p.f.sp, p.moves, tu);
+    }
+    {
+        StressProgram p = finishProgram(2.0);
+        stressTier("long unbounded", kTiers[2], p.f.sp, p.moves, tu);
+    }
+}
+TEST_CASE("Simulator stress: large stock at High", "[.][sim][simulator][stress][stress-large]")
+{
+    StressProgram p = largeProgram();
+    stressTier(p.name, kTiers[2], p.f.sp, p.moves);
 }

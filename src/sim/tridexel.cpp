@@ -6,6 +6,8 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace ray::sim {
 
@@ -66,7 +68,54 @@ bool finite(const Vec3& p)
     return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
 }
 
+// A tile's contents as internTiles compares them (tridexel.h): its dexel count, each dexel's interval count and the
+// bits of its intervals (not their room in the pool, nor the unused inline floats), and its top table.
+std::uint64_t contentHash(const Tile& t)
+{
+    constexpr std::uint64_t kMul = 0x9E3779B97F4A7C15ull;
+    std::uint64_t h = (static_cast<std::uint64_t>(t.d.size()) + 1) * kMul;
+    for (const Dexel& x : t.d) {
+        h = (h ^ x.n) * kMul;
+        const float* p = t.data(x);
+        for (std::uint32_t k = 0; k < x.n; ++k) {
+            std::uint64_t w = 0;
+            std::memcpy(&w, p + 2 * k, 8);
+            h = (h ^ w ^ (h >> 29)) * kMul;
+        }
+    }
+    for (const float f : t.top) {
+        std::uint32_t w = 0;
+        std::memcpy(&w, &f, 4);
+        h = (h ^ w) * kMul;
+    }
+    return h ^ (h >> 31);
+}
+
+bool sameContents(const Tile& a, const Tile& b)
+{
+    if (a.d.size() != b.d.size() || a.top.size() != b.top.size()) {
+        return false;
+    }
+    if (!a.top.empty() && std::memcmp(a.top.data(), b.top.data(), sizeof(float) * a.top.size()) != 0) {
+        return false;
+    }
+    for (std::size_t k = 0; k < a.d.size(); ++k) {
+        const Dexel& x = a.d[k];
+        const Dexel& y = b.d[k];
+        if (x.n != y.n || (x.n > 0 && std::memcmp(a.data(x), b.data(y), sizeof(float) * 2u * x.n) != 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
+
+// internTiles' table (tridexel.h): per content hash, the tiles met with it, first met first (a later one is there only
+// when its contents differ from the earlier ones').
+struct InternTable {
+    std::unordered_map<std::uint64_t, std::vector<TileRef>> buckets;
+};
 
 class TriDexelCpu;
 
@@ -149,6 +198,8 @@ public:
     std::uint64_t hash() const;
     std::uint64_t privateBytes(const TriDexelSnapshot& s) const;
     SnapshotCost cost(const TriDexelSnapshot& s) const;
+    std::uint64_t intern(const TriDexelSnapshot* prev);
+    std::uint64_t writes() const { return writes_; }
     std::uint64_t meshTriangles(int step) const
     {
         return ready_ ? columnMeshTriangles(g_[kGz], MeshRegion{0, n_[0], 0, n_[1], step}, jobs_) : 0;
@@ -165,6 +216,7 @@ private:
         std::vector<std::int64_t> vol;
         std::vector<std::uint8_t> hit;
         std::vector<std::uint8_t> tiles; // Z tasks: dirty tiles of the strip's tile rows
+        std::uint64_t writes = 0;        // StripTiles::writes of the last batch
         int tileRow0 = 0;
     };
     bool sameGrid(const TriDexelSnapshot& s) const
@@ -205,10 +257,13 @@ private:
     int n_[3] = {0, 0, 0};
     double c_[3] = {0, 0, 0};
     std::uint32_t version_ = 0;
+    std::uint64_t writes_ = 0; // triDexelWrites
     std::vector<std::uint32_t> tileVersion_;
     int tilesX_ = 0, tilesY_ = 0;
     std::vector<Task> tasks_; // per grid and strip, reused between batches
     int taskBase_[3] = {0, 0, 0};
+    InternTable table_; // internTiles
+    TileBin bin_;       // tiles dropped by internTiles and restore, for the next copies
 };
 
 void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockResolution res)
@@ -216,6 +271,8 @@ void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockRe
     ++version_;
     ready_ = false;
     tasks_.clear();
+    table_.buckets.clear();
+    bin_.clear();
     for (Grid& g : g_) {
         g = Grid{};
     }
@@ -405,7 +462,7 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
         Grid& grid = g_[task.grid];
         // This task alone reads and writes the tiles of its strip (and its own entries of tasks_); a tile is copied
         // only when a cut is about to change it while a snapshot or clone shares it (StripTiles).
-        StripTiles strip(grid, task.strip);
+        StripTiles strip(grid, task.strip, &bin_);
         const int u0 = strip.u0, u1 = strip.u1;
         if (task.grid == kGz) {
             task.vol.assign(task.list.size(), 0);
@@ -435,6 +492,7 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
                 cutLateral(grid, task.grid, strip, cutting, segs[en.seg], scratch);
             }
         }
+        task.writes = strip.writes;
         // Tiles this task wrote are its own; a tile still shared was not written and is left as it is.
         for (int t = 0; t < grid.tilesPerStrip; ++t) {
             if (Tile* tile = strip.mine(t)) {
@@ -444,6 +502,9 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
         return Status{};
     });
 
+    for (const std::size_t t : live) {
+        writes_ += tasks_[t].writes;
+    }
     // Merge in integers, then scale.
     std::vector<std::int64_t> vol(moves.size(), 0);
     for (int s = 0; s < g_[kGz].stripCount(); ++s) {
@@ -566,7 +627,16 @@ void TriDexelCpu::restore(const Snapshot& snapBase)
         }
     }
     for (int g = 0; g < 3; ++g) {
-        g_[g].tiles = snap->tiles[g];
+        // A tile only the model held goes to the bin, for the copies of the next cuts.
+        std::vector<TileRef>& tiles = g_[g].tiles;
+        for (std::size_t k = 0; k < tiles.size() && k < snap->tiles[g].size(); ++k) {
+            if (tiles[k].get() != snap->tiles[g][k].get()) {
+                if (Tile* dropped = tiles[k].dropKeepingLast()) {
+                    bin_.put(dropped);
+                }
+            }
+        }
+        tiles = snap->tiles[g];
     }
 }
 
@@ -605,7 +675,7 @@ TriDexelInfo TriDexelCpu::info() const
     in.origin = origin_;
     in.tilesX = tilesX_;
     in.tilesY = tilesY_;
-    in.bytes = sizeof(*this) + tileVersion_.capacity() * sizeof(std::uint32_t);
+    in.bytes = sizeof(*this) + tileVersion_.capacity() * sizeof(std::uint32_t) + bin_.bytes();
     for (const Task& t : tasks_) {
         in.bytes += sizeof(Task) + t.list.capacity() * sizeof(Entry) + t.vol.capacity() * sizeof(std::int64_t) +
                     t.hit.capacity() + t.tiles.capacity();
@@ -700,6 +770,160 @@ SnapshotCost TriDexelCpu::cost(const TriDexelSnapshot& s) const
     return c;
 }
 
+std::uint64_t TriDexelCpu::intern(const TriDexelSnapshot* prev)
+{
+    if (!ready_) {
+        return 0;
+    }
+    // Tiles no one but the table holds any more go.
+    for (auto it = table_.buckets.begin(); it != table_.buckets.end();) {
+        std::vector<TileRef>& b = it->second;
+        b.erase(std::remove_if(b.begin(), b.end(), [](const TileRef& t) { return t.unique(); }), b.end());
+        it = b.empty() ? table_.buckets.erase(it) : std::next(it);
+    }
+    // The tiles changed since prev, in grid order.
+    struct Item {
+        int g;
+        std::size_t i;
+        std::uint64_t hash;
+        const TileRef* match; // the first tile met with this hash, to be compared; null when none or this one
+        bool same;
+    };
+    std::vector<Item> items;
+    const bool all = prev == nullptr || !sameGrid(*prev);
+    for (int g = 0; g < 3; ++g) {
+        const std::vector<TileRef>& tiles = g_[g].tiles;
+        for (std::size_t i = 0; i < tiles.size(); ++i) {
+            if (all || prev->tiles[g][i].get() != tiles[i].get()) {
+                items.push_back({g, i, 0, nullptr, false});
+            }
+        }
+    }
+    if (items.empty()) {
+        return 0;
+    }
+    constexpr std::size_t kGrain = 16;
+    JobContext ctx;
+    (void)jobs_.parallelChunks(items.size(), kGrain, ctx, [&](std::size_t, std::size_t b, std::size_t e) -> Status {
+        for (std::size_t k = b; k < e; ++k) {
+            items[k].hash = contentHash(*g_[items[k].g].tiles[items[k].i].get());
+        }
+        return Status{};
+    });
+    // In grid order: the first tile met with a hash is the one the later ones with it are compared with.
+    for (Item& it : items) {
+        const TileRef& own = g_[it.g].tiles[it.i];
+        std::vector<TileRef>& bucket = table_.buckets[it.hash];
+        if (bucket.empty()) {
+            bucket.push_back(own);
+        } else if (bucket.front().get() != own.get()) {
+            it.match = &bucket.front();
+        }
+    }
+    // Compared in parallel (the table is not changed meanwhile), then replaced in grid order. A tile dropped that no
+    // one else held goes to the bin, for the next copies.
+    (void)jobs_.parallelChunks(items.size(), kGrain, ctx, [&](std::size_t, std::size_t b, std::size_t e) -> Status {
+        for (std::size_t k = b; k < e; ++k) {
+            Item& it = items[k];
+            if (it.match != nullptr) {
+                it.same = sameContents(*g_[it.g].tiles[it.i].get(), *it.match->get());
+            }
+        }
+        return Status{};
+    });
+    std::uint64_t replaced = 0;
+    for (const Item& it : items) {
+        if (it.match != nullptr && it.same) {
+            TileRef& own = g_[it.g].tiles[it.i];
+            if (Tile* dropped = own.dropKeepingLast()) {
+                bin_.put(dropped);
+            }
+            own = *it.match;
+            ++replaced;
+        }
+    }
+    // The same hash, other contents (after the loop above: a bucket that grows may move the tile it compared with):
+    // kept as it is, and in the table, though never matched.
+    for (const Item& it : items) {
+        if (it.match != nullptr && !it.same) {
+            table_.buckets[it.hash].push_back(g_[it.g].tiles[it.i]);
+        }
+    }
+    return replaced;
+}
+
+struct KeyframeLedger::Impl {
+    // Per tile a keyframe holds: the places (grid, index) at which a run of keyframes holding it there starts.
+    std::unordered_map<const Tile*, std::uint64_t> held;
+    std::uint64_t heldBytes = 0;
+    // Per tile of the newest keyframe: the places where it holds it.
+    std::unordered_map<const Tile*, std::uint64_t> newest;
+    std::uint64_t newestBytes = 0;
+    std::vector<const Tile*> last[3]; // the newest keyframe's tiles
+};
+
+KeyframeLedger::KeyframeLedger() : impl_(std::make_unique<Impl>()) {}
+KeyframeLedger::~KeyframeLedger() = default;
+
+void KeyframeLedger::clear()
+{
+    impl_ = std::make_unique<Impl>();
+}
+
+void KeyframeLedger::add(const IStockModel::Snapshot& snapBase)
+{
+    const auto& snap = dynamic_cast<const TriDexelSnapshot&>(snapBase);
+    Impl& m = *impl_;
+    const auto leaveNewest = [&m](const Tile* q) {
+        const auto it = m.newest.find(q);
+        if (--it->second == 0) {
+            m.newestBytes -= q->bytes();
+            m.newest.erase(it);
+        }
+    };
+    for (int g = 0; g < 3; ++g) {
+        const std::vector<TileRef>& tiles = snap.tiles[g];
+        std::vector<const Tile*>& last = m.last[g];
+        if (last.size() != tiles.size()) { // the first keyframe (or one of another grid: its places counted afresh)
+            for (const Tile* q : last) {
+                leaveNewest(q);
+            }
+            last.assign(tiles.size(), nullptr);
+        }
+        for (std::size_t i = 0; i < tiles.size(); ++i) {
+            const Tile* p = tiles[i].get();
+            const Tile* q = last[i];
+            if (p == q) {
+                continue;
+            }
+            if (m.held[p]++ == 0) {
+                m.heldBytes += p->bytes();
+            }
+            if (q != nullptr) {
+                leaveNewest(q);
+            }
+            if (m.newest[p]++ == 0) {
+                m.newestBytes += p->bytes();
+            }
+            last[i] = p;
+        }
+    }
+}
+
+void KeyframeLedger::rebuild(const std::vector<const IStockModel::Snapshot*>& snaps)
+{
+    clear();
+    for (const IStockModel::Snapshot* s : snaps) {
+        add(*s);
+    }
+}
+
+std::uint64_t KeyframeLedger::pinnedBytes() const
+{
+    // Every tile of the newest keyframe is among those held.
+    return impl_->heldBytes - impl_->newestBytes;
+}
+
 namespace {
 const TriDexelCpu& asCpu(const IStockModel& m)
 {
@@ -730,6 +954,16 @@ SnapshotCost snapshotCost(const IStockModel& m, const IStockModel::Snapshot& sna
 std::uint64_t triDexelMeshTriangles(const IStockModel& m, int step)
 {
     return asCpu(m).meshTriangles(step);
+}
+
+std::uint64_t triDexelWrites(const IStockModel& m)
+{
+    return asCpu(m).writes();
+}
+
+std::uint64_t internTiles(IStockModel& m, const IStockModel::Snapshot* prev)
+{
+    return dynamic_cast<TriDexelCpu&>(m).intern(dynamic_cast<const TriDexelSnapshot*>(prev));
 }
 
 } // namespace detail
