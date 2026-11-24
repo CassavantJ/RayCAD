@@ -21,6 +21,8 @@ td.warning { font-style: italic; }
 table.notice { border-width: 2px; border-style: solid; border-color: black; }
 table.notice td { padding: 5pt; }
 table.picture { border-width: 1px; border-style: solid; border-color: dimgray; }
+table.picture td { padding: 0pt; }
+td.picture { padding-left: 0pt; padding-right: 6pt; }
 p.sub { font-size: 11pt; margin-bottom: 6pt; }
 p.small { font-size: 8pt; color: dimgray; }
 p.total { font-size: 12pt; font-weight: bold; }

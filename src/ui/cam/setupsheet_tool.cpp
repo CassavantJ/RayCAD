@@ -40,8 +40,8 @@ constexpr UiCommand kCamSheetCommands[] = {
 };
 // clang-format on
 
-constexpr int kPictureWidth = 960; // the picture's pixels: 3:2, twice the size it prints at (360 x 240 CSS px)
-constexpr int kPictureHeight = 640;
+constexpr int kPictureWidth = 1296; // the picture's pixels: 3:2, three times the size it prints at (432 x 288 CSS px)
+constexpr int kPictureHeight = 864;
 constexpr double kPreviewPpi = 144; // the preview's pages: 1.5 times the layout's 96 per inch
 constexpr int kPictureTimeoutMs = 10000;
 
@@ -113,6 +113,21 @@ render::Camera machineView(const cs::View& v, const render::Camera& current, dou
     cam.up = up;
     cam.orthoHeight = std::max(1.0, 1.3 * std::max(2.0 * halfUp, 2.0 * halfRight / aspect));
     return cam;
+}
+
+// The setup sheet picture's print palette, compiled in (src/ui/CMakeLists.txt); null when it does not load (the picture
+// is then taken in the app's theme).
+std::shared_ptr<const render::Theme> printTheme()
+{
+    static const std::shared_ptr<const render::Theme> theme = []() -> std::shared_ptr<const render::Theme> {
+        auto loaded = render::loadTheme(":/ray/print/setupsheet-print.json");
+        if (!loaded) {
+            ray::log(LogLevel::Warn, "ui", "setup sheet print theme: " + loaded.error().message);
+            return nullptr;
+        }
+        return std::make_shared<const render::Theme>(std::move(*loaded));
+    }();
+    return theme;
 }
 
 // The preview's pages for QML: image://setupsheet/<revision>/<page>.
@@ -814,16 +829,19 @@ void SetupSheetModel::nextPicture(std::uint64_t serial)
     pictureTimeout_.start(kPictureTimeoutMs);
     QPointer<SetupSheetModel> self(this);
     const SetupId id = v.setup;
-    viewport->captureImage(kPictureWidth, kPictureHeight, [self, serial, id](std::vector<std::byte> png) {
-        if (!self || serial != self->serial_ || self->pendingViews_.empty() ||
-            !(self->pendingViews_.front().setup == id))
-            return;
-        self->pictureTimeout_.stop();
-        if (!png.empty())
-            self->pictures_[id] = std::move(png);
-        self->pendingViews_.pop_front();
-        self->nextPicture(serial);
-    });
+    // In the print palette (resources/themes/print): white background, dark edges, whatever the app's theme; the view
+    // on screen keeps its own colours.
+    viewport->captureImageInTheme(kPictureWidth, kPictureHeight, printTheme(),
+                                  [self, serial, id](std::vector<std::byte> png) {
+                                      if (!self || serial != self->serial_ || self->pendingViews_.empty() ||
+                                          !(self->pendingViews_.front().setup == id))
+                                          return;
+                                      self->pictureTimeout_.stop();
+                                      if (!png.empty())
+                                          self->pictures_[id] = std::move(png);
+                                      self->pendingViews_.pop_front();
+                                      self->nextPicture(serial);
+                                  });
 }
 
 void SetupSheetModel::endPictures()

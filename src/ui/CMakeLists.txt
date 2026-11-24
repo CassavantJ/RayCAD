@@ -237,6 +237,12 @@ qt_add_resources(ray_ui "ray_ui_themes"
     PREFIX "/ray/themes"
     BASE "${CMAKE_SOURCE_DIR}/resources/themes"
     FILES ${RAY_UI_THEME_FILES})
+# T-076: the setup sheet picture's print palette (white background, dark edges), under :/ray/print/ so it is not one of
+# the themes the user picks (ThemeObject loads :/ray/themes/ only). Only IViewport::captureImageInTheme uses it.
+qt_add_resources(ray_ui "ray_ui_print_theme"
+    PREFIX "/ray/print"
+    BASE "${CMAKE_SOURCE_DIR}/resources/themes/print"
+    FILES "${CMAKE_SOURCE_DIR}/resources/themes/print/setupsheet-print.json")
 
 # ray_ui is a static library, so the QML module's resources and type registration live in the static plugin
 # ray_uiplugin that qt_add_qml_module generates. Whoever links ray_ui must link that plugin too, or the linker

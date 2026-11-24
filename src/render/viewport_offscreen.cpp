@@ -140,6 +140,11 @@ public:
     {
         front_->captureImage(w, h, std::move(cb));
     }
+    void captureImageInTheme(int w, int h, std::shared_ptr<const Theme> theme,
+                             std::function<void(std::vector<std::byte> png)> cb) override
+    {
+        front_->captureImageInTheme(w, h, std::move(theme), std::move(cb));
+    }
     FrameStats lastFrameStats() const override { return front_->lastFrameStats(); }
     // This viewport's UI thread is its render thread, so the handle itself is handed out (render.h).
     Backdrop blurredBackdropTexture() override { return renderer_->backdrop(); }

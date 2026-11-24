@@ -699,19 +699,38 @@ TEST_CASE("a setup sheet from the CAM tree: picture, preview, PDF and HTML, exis
     // The picture of the part on the machine, and the view turned back as it was.
     const SetupId setup{Uuid::fromString(ct::id('a', 1))};
     REQUIRE(s->pictures().count(setup) == 1);
-    const std::vector<std::byte>& png = s->pictures().at(setup);
-    QImage picture;
-    REQUIRE(picture.loadFromData(reinterpret_cast<const uchar*>(png.data()), static_cast<int>(png.size()), "PNG"));
-    CHECK(picture.size() == QSize(960, 640));
-    {
-        // Not one flat colour: the part, its stock outline and the axes are drawn.
+    // In the print palette whatever the app's theme: white paper at the corners, dark edges, the part, its stock
+    // outline and the axes drawn (not one flat colour). Taken in the dark theme, then again in the light one.
+    const auto checkPicture = [&](const char* theme) {
+        INFO("app theme " << theme);
+        const std::vector<std::byte>& png = s->pictures().at(setup);
+        QImage picture;
+        REQUIRE(picture.loadFromData(reinterpret_cast<const uchar*>(png.data()), static_cast<int>(png.size()), "PNG"));
+        CHECK(picture.size() == QSize(1296, 864));
+        for (const QPoint corner : {QPoint(0, 0), QPoint(picture.width() - 1, 0), QPoint(0, picture.height() - 1),
+                                    QPoint(picture.width() - 1, picture.height() - 1)}) {
+            const QColor c = picture.pixelColor(corner);
+            INFO("corner " << corner.x() << "," << corner.y() << ": " << c.name().toStdString());
+            CHECK(std::min({c.red(), c.green(), c.blue()}) >= 250);
+        }
         std::set<QRgb> colours;
-        for (int y = 0; y < picture.height(); y += 8) {
-            for (int x = 0; x < picture.width(); x += 8)
-                colours.insert(picture.pixel(x, y));
+        int dark = 0;
+        for (int y = 0; y < picture.height(); y += 4) {
+            for (int x = 0; x < picture.width(); x += 4) {
+                const QColor c = picture.pixelColor(x, y);
+                colours.insert(c.rgb());
+                dark += std::max({c.red(), c.green(), c.blue()}) < 90 ? 1 : 0;
+            }
         }
         CHECK(colours.size() > 20);
-    }
+        CHECK(dark > 50);
+    };
+    checkPicture("dark");
+    w.host->theme()->setProperty("mode", QStringLiteral("light"));
+    s->retakePictures();
+    w.sheetState("ready");
+    checkPicture("light");
+    w.host->theme()->setProperty("mode", QStringLiteral("dark"));
     CHECK(sameCamera(w.view()->camera(), before));
     // The sheet: this setup's program, embedded picture, the drill and its holes, as the post would write it.
     const std::string& html = s->html();

@@ -592,17 +592,19 @@ void writeSheet(Html& h, const SetupSheetInput& in, bool newPage, const std::vec
     const Box3& b = in.stock;
     h.line("<h2>Work offset and stock</h2>");
     h.line("<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\"><tr>");
-    h.raw("<td width=\"55%\">");
-    h.raw("<table class=\"picture\" width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"2\"><tr><td>");
+    // The picture as large as its column allows on both Letter and A4 (A4's text is about 698 CSS px wide), the facts
+    // beside it.
+    h.raw("<td class=\"picture\" width=\"440\">");
+    h.raw("<table class=\"picture\" border=\"1\" cellspacing=\"0\" cellpadding=\"0\"><tr><td>");
     if (!in.fixtureImagePng.empty()) {
         h.raw("<img src=\"data:image/png;base64,");
         h.raw(sheet::base64(in.fixtureImagePng));
-        h.raw("\" width=\"360\" height=\"240\" alt=\"The part in this setup\">");
+        h.raw("\" width=\"432\" height=\"288\" alt=\"The part in this setup\">");
     } else {
         h.raw("<p>No picture.</p>");
     }
     h.line("</td></tr></table></td>");
-    h.line("<td width=\"45%\">");
+    h.line("<td>");
     h.line("<table class=\"facts\" width=\"100%\" cellspacing=\"0\" cellpadding=\"2\" border=\"0\">");
     const auto fact = [&h](std::string_view label, const std::string& value) {
         h.raw("<tr><td class=\"label\">");

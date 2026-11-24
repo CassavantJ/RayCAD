@@ -5,6 +5,7 @@
 //
 // Hard rule: nothing in this module can influence geometry, toolpaths or G-code. src/cam, src/post and
 // src/kernel do not link src/render (enforced by a CMake dependency check in CI).
+// T-076: IViewport::captureImageInTheme (additive, with a default that captures as captureImage does).
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -148,6 +149,12 @@ public:
 
     virtual void requestFrame() = 0;                               // render on demand; no continuous redraw when idle
     virtual void captureImage(int w, int h, std::function<void(std::vector<std::byte> png)>) = 0;   // thumbnails, setup sheets
+    // Added by T-076: the same capture drawn in the given theme's colours instead of the viewport's (a setup sheet's picture
+    // prints on white whatever the app's theme), without selection or hover highlights. Only the capture changes: what
+    // is on screen and the frames after it are drawn as before. Null theme: as captureImage.
+    // The default, for an implementation without it, captures in the viewport's own theme.
+    virtual void captureImageInTheme(int w, int h, std::shared_ptr<const Theme> /*theme*/,
+                                     std::function<void(std::vector<std::byte> png)> done) { captureImage(w, h, std::move(done)); }
     struct FrameStats { double cpuMs, gpuMs; std::uint64_t triangles, drawCalls; };
     virtual FrameStats lastFrameStats() const = 0;
 

@@ -449,6 +449,45 @@ TEST_CASE("captureImage works at any size and rejects bad sizes", "[render][view
     CHECK(png->empty());
 }
 
+TEST_CASE("a capture in another theme changes only the capture (T-076 print palette)", "[render][viewport][capture]")
+{
+    auto vp = viewportOrSkip(120, 80);
+    auto print = theme("print/setupsheet-print");
+    vp->setTheme(theme("graphite-dark"));
+    buildScene("cylinder", *vp, 120.0 / 80.0);
+    for (const char* own : {"graphite-dark", "graphite-light"}) {
+        INFO("viewport theme " << own);
+        vp->setTheme(theme(own));
+        const Image before = capture(*vp, 120, 80);
+        std::optional<std::vector<std::byte>> png;
+        vp->captureImageInTheme(120, 80, print, [&png](std::vector<std::byte> bytes) { png = std::move(bytes); });
+        REQUIRE(processEventsUntil([&png] { return png.has_value(); }, 60000));
+        REQUIRE(!png->empty());
+        const Image printed = take(decodePng(*png));
+        REQUIRE(printed.width == 120);
+        // White paper at the corners, and the part drawn in it with dark edges.
+        for (const auto& [x, y] : {std::pair{0, 0}, std::pair{119, 0}, std::pair{0, 79}, std::pair{119, 79}}) {
+            const auto c = rgbAt(printed, x, y);
+            INFO("corner " << x << "," << y << ": " << c[0] << " " << c[1] << " " << c[2]);
+            CHECK(std::min({c[0], c[1], c[2]}) >= 250);
+        }
+        int dark = 0;
+        for (int y = 0; y < printed.height; ++y) {
+            for (int x = 0; x < printed.width; ++x) {
+                const auto c = rgbAt(printed, x, y);
+                dark += std::max({c[0], c[1], c[2]}) < 90 ? 1 : 0;
+            }
+        }
+        CHECK(dark > 20);
+        // The viewport's own picture is as it was: an ordinary capture after it is the one before it.
+        const Image after = capture(*vp, 120, 80);
+        const Comparison same = compare(before, after, before);
+        CHECK(same.worstBlockColour < 1.0);
+        if (std::string(own) == "graphite-dark")
+            CHECK(std::max({rgbAt(after, 0, 0)[0], rgbAt(after, 0, 0)[1], rgbAt(after, 0, 0)[2]}) < 120);
+    }
+}
+
 TEST_CASE("functions of later tasks are clear stubs", "[render][viewport][stubs]")
 {
     // (pick, pickRect and setHighlight are implemented by T-015: tests/unit/render/pick_test.cpp; the glass backdrop
