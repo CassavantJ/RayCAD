@@ -49,10 +49,10 @@ jobs:
             os: macos-latest
             triplet: arm64-osx-dynamic
             qt_arch: clang_64
-          # The test preset of each configuration on Linux and macOS (tests/tiers.cmake): Debug runs the quick tier,
-          # Release every test.
+          # The test preset of each configuration on Linux and macOS (tests/tiers.cmake): Debug runs the quick tier
+          # less the debug-heavy tests, Release every test.
           - config: debug
-            tests: debug-quick
+            tests: debug-ci
           - config: release
             tests: release
           # Windows also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself
@@ -166,10 +166,12 @@ jobs:
       # Debug runs the quick test tier, Release runs every test (tests/tiers.cmake). The slow tier is the long
       # randomised naming blocks: in Debug they re-run the code paths the quick tier's naming tests (S4, acceptance,
       # the smoke block) already run there, at many times the cost (an MSVC Debug build cannot finish them in this
-      # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. Windows Debug also
-      # leaves out the tests labelled debug-heavy (preset windows-msvc-debug-ci): the S4 suites and others that take
-      # 20 minutes or more each in an MSVC Debug build and would take this job past its limit; Linux and macOS Debug
-      # run them, as every Release does. ctest runs one job per processor of the runner; tests with threads of their own take several
+      # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. Debug also leaves
+      # out the tests labelled debug-heavy (presets <preset>-debug-ci): the S4 suites, the Release-scale benchmarks
+      # and the suites that take 20 minutes or more each in an MSVC Debug build. On the 4-processor runners they took
+      # the Debug tests past two hours on Windows and to almost three on Linux (run 45454955286), most of it in the
+      # S4 suites, which use more processors than the runner has and so run one at a time. Every Release job runs
+      # them. ctest runs one job per processor of the runner; tests with threads of their own take several
       # (PROCESSORS) and timed tests run alone.
       # Windows leaves out the tests that show a window (label desktop). The runner's one screen is smaller than
       # their windows (1440 x 900, and up to twice that at the 150 % and 200 % runs): a window cannot be sized as the

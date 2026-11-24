@@ -511,11 +511,14 @@ TEST_CASE("STEP, Save As .raycad, close, reopen from the recent list: same bodie
     w.grab();
     w.mouseClick(w.find("recent.0"));
     REQUIRE(QTest::qWaitFor([&] { return w.session()->hasDocument(); }, kOpenTimeoutMs));
+    // The scene gets the reopened body after the document: settled() counts an empty scene as settled, and on a
+    // slow machine (the CI runners, Debug) it was still empty when checked.
+    REQUIRE(QTest::qWaitFor([&] { return w.scene()->bodyCount() == bodies; }, kOpenTimeoutMs));
     w.waitSettled();
     CHECK(w.session()->documentPath() == raycad);
     CHECK_FALSE(w.session()->dirty());
     CHECK(w.stateHash() == hash);
-    CHECK(w.scene()->bodyCount() == bodies);
+    REQUIRE(w.scene()->bodyCount() == bodies);
     CHECK(w.bodyNames() == names);
     CHECK(w.scene()->body(0)->id == body);
     CHECK(w.context()->message().isEmpty());

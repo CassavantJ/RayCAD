@@ -58,9 +58,10 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
 # Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
 # against about a minute in Release): the S4 scenarios, at the naming level and as document features (and, below, the
 # Release-scale benchmarks and the geometry core's 10,000-case sweeps, minutes in Debug). They also get
-# the label debug-heavy, which the Windows Debug CI job leaves out (test preset windows-msvc-debug-ci) to fit its time
-# limit; Release on Windows, GCC and Clang Debug, and AddressSanitizer run them. The tests run there as anywhere else
-# when asked for.
+# the label debug-heavy, which the Debug CI jobs leave out (test presets <preset>-debug-ci) to fit their time limit:
+# on the 4-processor runners even GCC Debug took almost three hours with them (most of it in the S4 suites, which use
+# more processors than the runner has); every Release job and AddressSanitizer run them. The tests run there as
+# anywhere else when asked for.
 set(RAY_DEBUG_HEAVY_TESTS
     ray_naming_s4
     ray_doc_s4
