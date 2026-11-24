@@ -171,6 +171,7 @@ SimToolModel::SimToolModel(SceneController* scene, Session* session, AppContext*
     if (scene_) {
         // A new body set makes new viewport items: the workspace's hiding applies to them too.
         connect(scene_, &SceneController::bodiesChanged, this, [this] {
+            bodyItems_.clear(); // the scene set its items' visibility again
             if (inWorkspace())
                 applyBodies();
         });
@@ -255,9 +256,8 @@ void SimToolModel::setViewer(GcodeModel* viewer)
     if (viewer_) {
         connect(viewer_, &GcodeModel::programChanged, this, [this] {
             emit gcodeChanged();
-            // A program posted for this run: the event chosen goes to its line.
-            if (currentEvent_ >= 0 && gcodeState() == QLatin1String("current"))
-                followGcode();
+            // A program posted for this run: the viewer, when open, follows the stock again.
+            followGcode();
         });
     }
 }
@@ -875,6 +875,7 @@ void SimToolModel::removeItems()
     glyphs_.clear();
     itemsViewport_ = nullptr;
     stockVisible_ = toolVisible_ = holderVisible_ = false;
+    stockShownKnown_ = false;
     shownVersion_ = 0;
 }
 
@@ -887,6 +888,7 @@ void SimToolModel::ensureItems()
         // A new viewport (or none yet): the items are made there; the stock needs a whole mesh.
         stockItem_ = 0;
         glyphs_.clear();
+        stockShownKnown_ = false;
         itemsViewport_ = v;
         shownVersion_ = 0;
         needFull_ = true;
@@ -954,42 +956,57 @@ void SimToolModel::applyFrame(const cs::Frame& frame)
     lastFrame_.mesh.reset();
     mostFrameTriangles_ = std::max(mostFrameTriangles_, frame.triangles);
     worstSeekMs_ = std::max(worstSeekMs_, frame.seekMs);
-    applyVisibility();
+    applyVisibility(false);
     followGcode();
     emit positionChanged();
 }
 
-void SimToolModel::applyVisibility()
+// What the workspace shows of its own items, and (unless `bodies` is false: a frame changes none of them) which of the
+// scene's bodies it hides. Only what changed reaches the viewport.
+void SimToolModel::applyVisibility(bool bodies)
 {
     render::IRenderViewport* v = viewport();
     const bool here = inWorkspace() && result_ != nullptr && v != nullptr && v == itemsViewport_;
     const bool stock = here && showStock_ && stockItem_ != 0;
+    const bool stale = outOfDate();
     if (v != nullptr && v == itemsViewport_ && stockItem_ != 0) {
-        v->setVisible(stockItem_, stock);
-        render::MeshStyle style = render::stockStyle();
-        if (outOfDate()) {
-            // Not current: the stale colour, never the stock's own.
-            style.face = render::Token::PathStale;
-            style.edge = render::Token::PathStale;
+        if (stock != stockVisible_ || !stockShownKnown_)
+            v->setVisible(stockItem_, stock);
+        if (stale != stockStale_ || !stockShownKnown_) {
+            render::MeshStyle style = render::stockStyle();
+            if (stale) {
+                // Not current: the stale colour, never the stock's own.
+                style.face = render::Token::PathStale;
+                style.edge = render::Token::PathStale;
+            }
+            v->setStyle(stockItem_, style);
         }
-        v->setStyle(stockItem_, style);
+        stockShownKnown_ = true;
+        stockStale_ = stale;
     }
+    const bool bodiesChange = bodies || stock != stockVisible_;
     stockVisible_ = stock;
-    toolVisible_ = holderVisible_ = false;
+    bool toolShown = false, holderShown = false;
     for (std::size_t i = 0; i < glyphs_.size(); ++i) {
+        Glyph& g = glyphs_[i];
         const bool current = here && static_cast<int>(i) == shownOp_;
-        const bool tool = current && showTool_ && glyphs_[i].tool != 0;
-        const bool holder = current && showHolder_ && glyphs_[i].holder != 0;
+        const bool tool = current && showTool_ && g.tool != 0;
+        const bool holder = current && showHolder_ && g.holder != 0;
         if (v != nullptr && v == itemsViewport_) {
-            if (glyphs_[i].tool != 0)
-                v->setVisible(glyphs_[i].tool, tool);
-            if (glyphs_[i].holder != 0)
-                v->setVisible(glyphs_[i].holder, holder);
+            if (g.tool != 0 && tool != g.toolShown)
+                v->setVisible(g.tool, tool);
+            if (g.holder != 0 && holder != g.holderShown)
+                v->setVisible(g.holder, holder);
         }
-        toolVisible_ = toolVisible_ || tool;
-        holderVisible_ = holderVisible_ || holder;
+        g.toolShown = tool;
+        g.holderShown = holder;
+        toolShown = toolShown || tool;
+        holderShown = holderShown || holder;
     }
-    applyBodies();
+    toolVisible_ = toolShown;
+    holderVisible_ = holderShown;
+    if (bodiesChange)
+        applyBodies();
 }
 
 void SimToolModel::applyBodies()
@@ -1018,10 +1035,16 @@ void SimToolModel::applyBodies()
             continue;
         const bool fixture = body->fixture || fixtures.count(body->id) != 0;
         const bool hide = (fixture && !showFixtures_) || (parts.count(body->id) != 0 && stockVisible_);
-        v->setVisible(item, scene_->bodyVisible(i) && !hide);
-        v->setPickMode(item, hide ? render::PickMode::Never : render::PickMode::WhenVisible);
         if (hide)
             hidden.insert(i);
+        // Only what changes (a new body set makes new items: those get their state whatever it was).
+        const bool visible = scene_->bodyVisible(i);
+        const auto was = bodyItems_.find(i);
+        if (was != bodyItems_.end() && was->second == std::make_tuple(item, hide, visible))
+            continue;
+        bodyItems_[i] = std::make_tuple(item, hide, visible);
+        v->setVisible(item, visible && !hide);
+        v->setPickMode(item, hide ? render::PickMode::Never : render::PickMode::WhenVisible);
     }
     bodiesTouched_ = true;
     hidden_ = std::move(hidden);
@@ -1033,6 +1056,7 @@ void SimToolModel::restoreBodies()
         return;
     bodiesTouched_ = false;
     hidden_.clear();
+    bodyItems_.clear();
     render::IRenderViewport* v = viewport();
     if (v == nullptr || !scene_)
         return;
@@ -1406,8 +1430,8 @@ void SimToolModel::followGcode()
         op = pl.opIndex;
         move = pl.moveIndex;
     }
-    if (!viewer_->isOpen() && currentEvent_ < 0)
-        return;
+    if (!viewer_->isOpen())
+        return; // closed by the user: an event chosen opens it (selectEvent), a frame does not
     if (const auto section = sectionOf(op)) {
         viewer_->showMove(*section, move);
         gcodeLine_ = viewer_->currentLine();

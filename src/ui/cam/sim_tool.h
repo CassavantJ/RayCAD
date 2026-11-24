@@ -64,6 +64,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <vector>
 
 namespace ray::render {
@@ -270,6 +271,7 @@ signals:
 private:
     struct Glyph {
         render::ItemId tool = 0, holder = 0;
+        bool toolShown = false, holderShown = false;
     };
     api::IApp* app() const;
     doc::Document* liveDoc() const;
@@ -293,7 +295,7 @@ private:
     void requestSeek(const sim::TimelinePosition& to);
     void startNext();
     void onTick();
-    void applyVisibility();
+    void applyVisibility(bool bodies = true);
     void applyBodies();
     void restoreBodies();
     void applyMarks();
@@ -360,6 +362,9 @@ private:
     bool coarseShown_ = false;
     bool stockVisible_ = false, toolVisible_ = false, holderVisible_ = false;
     std::set<int> hidden_;
+    // By scene index: the item, whether the workspace hides it and whether the scene shows it, as last applied.
+    std::map<int, std::tuple<render::ItemId, bool, bool>> bodyItems_;
+    bool stockShownKnown_ = false, stockStale_ = false;
     bool bodiesTouched_ = false;
     bool showStock_ = true, showTool_ = true, showHolder_ = true, showFixtures_ = true;
 
