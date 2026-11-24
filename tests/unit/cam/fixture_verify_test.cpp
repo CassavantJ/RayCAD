@@ -104,7 +104,7 @@ struct Job {
                 return sub;
             }
         }
-        FAIL("no such face");
+        FAIL_CHECK("no such face");
         return {};
     }
 

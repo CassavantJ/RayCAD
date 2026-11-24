@@ -87,7 +87,7 @@ kernel::SubId planeFace(const BuildResult& build, char body, Vec3 n, double at)
             return sub;
         }
     }
-    FAIL("no such face on body " << body);
+    FAIL_CHECK("no such face on body " << body);
     return {};
 }
 

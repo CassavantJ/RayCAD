@@ -218,7 +218,7 @@ struct Window {
             if (b != nullptr && b->id == id)
                 return i;
         }
-        FAIL("the scene does not show body " << id.value.toString());
+        FAIL_CHECK("the scene does not show body " << id.value.toString());
         return -1;
     }
     BodyId bodyNamed(const std::string& name) const
@@ -227,7 +227,7 @@ struct Window {
             if (b.name == name)
                 return b.id;
         }
-        FAIL("no body " << name);
+        FAIL_CHECK("no body " << name);
         return {};
     }
     // The planar face of a shown body looking along `n` (an axis) whose centroid is at `along` on it.
@@ -247,7 +247,7 @@ struct Window {
                 (area == 0 || std::abs(info->area - area) < 1e-6))
                 return sub;
         }
-        FAIL("no such face");
+        FAIL_CHECK("no such face");
         return {};
     }
     // A click in the view on that face: the selection takes the hit as a click of the viewport would.
