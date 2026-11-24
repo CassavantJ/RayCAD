@@ -99,6 +99,13 @@ cam::CamSnapshot camSnapshot(const DocStatePtr& state, const BuildResultPtr& bui
     if (state) {
         out.cam = state->cam;
         out.holeThreads = holeThreadsOf(*state);
+        // T-077: the fixtures, which src/cam never machines whatever a setup lists.
+        for (const Body& b : state->bodies) {
+            if (b.role == Body::Role::Fixture) {
+                out.documentFixtures.push_back(b.id);
+            }
+        }
+        std::sort(out.documentFixtures.begin(), out.documentFixtures.end());
     }
     if (build) {
         out.built = true;
@@ -302,6 +309,12 @@ bool hasBody(const DocState& doc, const BodyId& id)
     return std::any_of(doc.bodies.begin(), doc.bodies.end(), [&](const Body& b) { return b.id == id; });
 }
 
+const Body* bodyOf(const DocState& doc, const BodyId& id)
+{
+    const auto it = std::find_if(doc.bodies.begin(), doc.bodies.end(), [&](const Body& b) { return b.id == id; });
+    return it == doc.bodies.end() ? nullptr : &*it;
+}
+
 // The checks every setup must pass after an edit (index: where it is in cam.setups).
 Status checkSetup(const Args& args, const DocState& doc, const cam::CamState& cam, std::size_t index)
 {
@@ -321,6 +334,14 @@ Status checkSetup(const Args& args, const DocState& doc, const cam::CamState& ca
     for (const BodyId& b : s.fixtureBodies) {
         if (std::find(s.partBodies.begin(), s.partBodies.end(), b) != s.partBodies.end()) {
             return args.error("fixtureBodies", "lists body " + b.value.toString() + ", which is a part body");
+        }
+    }
+    // T-077: a fixture is never machined.
+    for (const BodyId& b : s.partBodies) {
+        if (const Body* body = bodyOf(doc, b); body != nullptr && body->role == Body::Role::Fixture) {
+            return args.error("partBodies", "lists '" + body->name +
+                                                "', which is a fixture: fixtures are never machined; list it under "
+                                                "fixtureBodies");
         }
     }
     if (const auto* solid = std::get_if<cam::SolidStock>(&s.stock); solid && !hasBody(doc, solid->body)) {
@@ -376,7 +397,8 @@ Status checkStockChain(const Args& args, const cam::CamState& cam)
     return {};
 }
 
-Status checkOperation(const Args& args, const cam::CamState& cam, const cam::Operation& op, const cam::Setup& setup)
+Status checkOperation(const Args& args, const DocState& doc, const cam::CamState& cam, const cam::Operation& op,
+                      const cam::Setup& setup)
 {
     if (cam.tools.count(op.tool.tool) == 0) {
         return args.error("tool.tool", "names tool " + op.tool.tool.value.toString() +
@@ -387,6 +409,16 @@ Status checkOperation(const Args& args, const cam::CamState& cam, const cam::Ope
                                              ", which is not embedded: give it in 'library'");
     }
     for (std::size_t i = 0; i < op.geometry.size(); ++i) {
+        // T-077: a fixture is never machining geometry (the setup's fixture bodies and the document's fixtures).
+        const Body* body = bodyOf(doc, op.geometry[i].body);
+        if ((body != nullptr && body->role == Body::Role::Fixture) ||
+            std::find(setup.fixtureBodies.begin(), setup.fixtureBodies.end(), op.geometry[i].body) !=
+                setup.fixtureBodies.end()) {
+            return args.error("geometry[" + std::to_string(i) + "]",
+                              "is on the fixture '" +
+                                  (body != nullptr ? body->name : op.geometry[i].body.value.toString()) +
+                                  "': fixtures are never machining geometry; pick on the part");
+        }
         if (std::find(setup.partBodies.begin(), setup.partBodies.end(), op.geometry[i].body) ==
             setup.partBodies.end()) {
             return args.error("geometry[" + std::to_string(i) + "]",
@@ -635,7 +667,7 @@ Result<DocStatePtr> operationAdd(const DocState& before, std::string_view argsJs
     op.suppressed = suppressed->value_or(false);
     RAY_CAM_CHECK(readOperationMembers(*args, op, true, *e.cam));
     cam::Setup& s = e.cam->setups[*setup];
-    RAY_CAM_CHECK(checkOperation(*args, *e.cam, op, s));
+    RAY_CAM_CHECK(checkOperation(*args, *e.doc, *e.cam, op, s));
     const std::size_t at = index->value_or(s.operations.size());
     s.operations.insert(s.operations.begin() + static_cast<std::ptrdiff_t>(at), op.id);
     e.cam->operations.emplace(op.id, std::move(op));
@@ -661,7 +693,7 @@ Result<DocStatePtr> operationEdit(const DocState& before, std::string_view argsJ
     if (setup < 0) {
         return args->error("id", "names an operation that no setup lists");
     }
-    RAY_CAM_CHECK(checkOperation(*args, *e.cam, op, e.cam->setups[static_cast<std::size_t>(setup)]));
+    RAY_CAM_CHECK(checkOperation(*args, *e.doc, *e.cam, op, e.cam->setups[static_cast<std::size_t>(setup)]));
     return e.finish();
 }
 
@@ -701,7 +733,7 @@ Result<DocStatePtr> operationReorder(const DocState& before, std::string_view ar
     }
     list.insert(list.begin() + static_cast<std::ptrdiff_t>(**index), *id);
     if (target != static_cast<std::size_t>(from)) {
-        RAY_CAM_CHECK(checkOperation(*args, *e.cam, e.cam->operations.at(*id), e.cam->setups[target]));
+        RAY_CAM_CHECK(checkOperation(*args, *e.doc, *e.cam, e.cam->operations.at(*id), e.cam->setups[target]));
     }
     return e.finish();
 }

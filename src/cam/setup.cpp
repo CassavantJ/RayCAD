@@ -602,6 +602,27 @@ Result<ResolvedGeometry> resolveSetupGeometry(const GeometryRequest& request, Jo
         if (!resolved) {
             return tl::unexpected(resolved.error());
         }
+        // T-077: a fixture is never machined, whatever the setup lists.
+        const auto isFixture = [&](const BodyId& id) {
+            return std::binary_search(snapshot.documentFixtures.begin(), snapshot.documentFixtures.end(), id) ||
+                   std::find(setup.fixtureBodies.begin(), setup.fixtureBodies.end(), id) != setup.fixtureBodies.end();
+        };
+        for (std::size_t i = 0; i < setup.partBodies.size(); ++i) {
+            if (isFixture(setup.partBodies[i])) {
+                return failure(ErrorCode::InvalidArgument,
+                               "Part body " + std::to_string(i + 1) + " of setup " + label(setup) + " (body " +
+                                   setup.partBodies[i].value.toString() +
+                                   ") is a fixture: fixtures are never machined. Make it a fixture body of the setup.");
+            }
+        }
+        for (std::size_t i = 0; i < request.op.geometry.size(); ++i) {
+            if (isFixture(request.op.geometry[i].body)) {
+                return failure(ErrorCode::InvalidArgument,
+                               "Geometry " + std::to_string(i + 1) + " of " + label(request.op) +
+                                   " is on a fixture (body " + request.op.geometry[i].body.value.toString() +
+                                   "): fixtures are never machining geometry. Pick it on the part.");
+            }
+        }
         ResolvedGeometry geom;
         geom.wcsFromModel = resolved->wcsFromModel;
         geom.stockBounds = resolved->stockBounds;

@@ -46,6 +46,8 @@ render::MeshStyle modelStyle(const api::viewer::Body* body)
                           std::abs(c[2] - kImporterNoColourGrey) < kColourTolerance;
     if (finite && !noColour)
         style.faceColor = render::Color{srgbToLinear(c[0]), srgbToLinear(c[1]), srgbToLinear(c[2]), 1.0f};
+    else if (body->fixture)
+        style.face = render::Token::FixtureFace; // T-077: a fixture without a colour of its own reads as workholding
     return style;
 }
 
@@ -283,7 +285,8 @@ void SceneController::setBodies(std::vector<api::viewer::Body> bodies, const QSt
             if (slots_[j].mesh && !body.shape.isNull() && old.shape.impl == body.shape.impl) {
                 next[i] = slots_[j];
                 kept[j] = 1;
-                if (viewport_ != nullptr && next[i].item != 0 && old.color != body.color)
+                if (viewport_ != nullptr && next[i].item != 0 &&
+                    (old.color != body.color || old.fixture != body.fixture))
                     viewport_->setStyle(next[i].item, modelStyle(&body));
             }
         }

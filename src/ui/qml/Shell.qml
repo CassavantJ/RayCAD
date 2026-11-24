@@ -194,7 +194,8 @@ FocusScope {
                     objectName: "camWorkspace"
                     // What its panels cover of the view, from the left and the right edge: the view frames the model
                     // in the rest (Fit, frameRect below).
-                    readonly property real coverLeft: Math.max(setupPanelHost.coverLeft, operationPanelHost.coverLeft)
+                    readonly property real coverLeft: Math.max(setupPanelHost.coverLeft, operationPanelHost.coverLeft,
+                                                               fixturesPanelHost.coverLeft)
                     readonly property real coverRight: gcodeViewHost.coverRight
                     // T-044: cam/SetupPanel.qml (and its markers and labels over the view).
                     SetupPanel {
@@ -208,6 +209,11 @@ FocusScope {
                         id: operationPanelHost
                         anchors.fill: parent
                         view: viewport.view
+                    }
+                    // T-077: cam/Fixtures.qml, in the same place (one CAM panel at a time).
+                    Fixtures {
+                        id: fixturesPanelHost
+                        anchors.fill: parent
                     }
                     // T-045: the selected operation's toolpath in the view (CamToolpaths draws into the viewport).
                     readonly property int toolpathsShown: CamToolpaths.shownCount

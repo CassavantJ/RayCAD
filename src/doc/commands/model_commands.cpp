@@ -36,6 +36,8 @@
 #include "../features/sketch_feature.h"
 #include "../json_number.h"
 
+#include <ray/cam.h>
+
 #include <algorithm>
 #include <array>
 #include <exception>
@@ -399,6 +401,15 @@ Result<DocStatePtr> bodySet(const DocState& before, std::string_view argsJson, J
         return args->error("name", "is required to add a body");
     } else if (!*role) {
         return args->error("role", "is required to add a body");
+    }
+    // T-077: a fixture is never machined, so a body a setup machines cannot become one.
+    if (index >= 0 && *role && **role == Body::Role::Fixture && before.cam) {
+        for (const cam::Setup& setup : before.cam->setups) {
+            if (std::find(setup.partBodies.begin(), setup.partBodies.end(), BodyId{*id}) != setup.partBodies.end()) {
+                return args->error("role", "cannot be fixture: setup '" + setup.name +
+                                               "' machines this body; take it out of that setup's part bodies first");
+            }
+        }
     }
     auto next = copyOf(before);
     if (index < 0) {

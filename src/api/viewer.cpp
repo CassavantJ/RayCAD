@@ -113,6 +113,7 @@ std::vector<Body> bodiesFromDocument(const doc::DocState& state, const doc::Buil
             body.map = it->second.map;
         body.color = source.color;
         body.visible = source.visible;
+        body.fixture = source.role == doc::Body::Role::Fixture;
         out.push_back(std::move(body));
     }
     return out;
