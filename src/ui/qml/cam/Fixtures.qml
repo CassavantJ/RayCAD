@@ -268,8 +268,8 @@ Item {
                             objectName: "fixtureGrip"
                             width: root.fieldWidth
                             readonly property var keys: ["shorter", "x", "y"]
-                            model: [qsTr("The shorter side"), qsTr("X (the faces at X min and max)"),
-                                    qsTr("Y (the faces at Y min and max)")]
+                            // Read with the label: "Grip across X" closes the jaws on the faces at X min and max.
+                            model: [qsTr("The shorter side"), qsTr("X"), qsTr("Y")]
                             currentIndex: Math.max(0, gripCombo.keys.indexOf(CamFixtures.grip))
                             enabled: !CamFixtures.placingOnStock
                             Accessible.name: qsTr("The stock faces the jaws grip")

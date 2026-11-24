@@ -167,7 +167,7 @@ struct Shop {
                 return b.id;
             }
         }
-        FAIL("no body " << name);
+        FAIL_CHECK("no body " << name);
         return {};
     }
     naming::TopoRef ref(const BodyId& body, kernel::SubId sub) const
