@@ -97,7 +97,8 @@ jobs:
         run: cmake --preset linux-clang-asan
 
       - name: Build
-        run: cmake --build --preset linux-clang-asan
+        # -k 0: a failed compile does not stop the others, so one run reports every source that does not build.
+        run: cmake --build --preset linux-clang-asan -- -k 0
 
       # Leak detection is off for now: Qt, Fontconfig and OpenCASCADE keep process-lifetime allocations
       # that LeakSanitizer reports, and no suppression list has been built yet.

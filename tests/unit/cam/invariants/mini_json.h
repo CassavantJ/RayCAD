@@ -13,24 +13,37 @@
 
 namespace ray::cam::invariants::json {
 
+// An object member is a plain struct, not a std::pair<std::string, Value>: instantiating that pair while Value is
+// still incomplete fails to compile with libstdc++ 15 under Clang (the pair's default constructor asks whether Value
+// is implicitly default-constructible, which needs Value's destructor, which needs the pair). src/cam/json.h does
+// the same.
+struct Member;
+
 struct Value {
     enum class Type { Null, Bool, Number, String, Array, Object } type = Type::Null;
     bool boolean = false;
     double number = 0;
     std::string string;
     std::vector<Value> array;
-    std::vector<std::pair<std::string, Value>> object;
+    std::vector<Member> object;
 
-    const Value* find(std::string_view key) const
-    {
-        for (const auto& [k, v] : object) {
-            if (k == key) {
-                return &v;
-            }
-        }
-        return nullptr;
-    }
+    const Value* find(std::string_view key) const;
 };
+
+struct Member {
+    std::string key;
+    Value value;
+};
+
+inline const Value* Value::find(std::string_view key) const
+{
+    for (const auto& [k, v] : object) {
+        if (k == key) {
+            return &v;
+        }
+    }
+    return nullptr;
+}
 
 class Reader {
 public:
@@ -139,7 +152,7 @@ private:
                 if (!value(item)) {
                     return false;
                 }
-                v.object.emplace_back(std::move(key), std::move(item));
+                v.object.push_back(Member{std::move(key), std::move(item)});
                 space();
                 if (p_ < s_.size() && s_[p_] == ',') {
                     ++p_;

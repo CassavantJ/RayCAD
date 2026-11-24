@@ -86,7 +86,11 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_sim_tests_wallclock
     # T-072: the simulator's run and seek on the same workload at the three cells (about 45 s in Release; a thinned
     # workload in Debug, which checks no time).
-    ray_sim_simulator_bench)
+    ray_sim_simulator_bench
+    # The linking suite's seeded property and ordering cases: 12 minutes in MSVC Debug on 32 hardware threads under
+    # load, and past its 20-minute timeout on the 4-processor CI runner (run 45129357124); a minute in Release there,
+    # 4.5 minutes in GCC Debug.
+    ray_cam_link_tests)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers

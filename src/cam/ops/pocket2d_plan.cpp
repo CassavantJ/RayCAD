@@ -2,6 +2,7 @@
 // depth, the rings, the coverage check, the passes and the linking options. Every rule is stated in pocket2d.h; this
 // file follows them in its order. Deterministic: integer nanometres (geom2d), dmath for the one angle, std::map and
 // sorted vectors only.
+#include "../../core/from_chars_double.h"
 #include "area_depths.h"
 #include "op_params.h"
 #include "pocket2d.h"
@@ -1228,7 +1229,7 @@ Result<std::vector<Vec2>> parsePointList(std::string_view text)
         if (b < e && *b == '+') {
             ++b;
         }
-        const auto r = std::from_chars(b, e, v, std::chars_format::fixed);
+        const auto r = compat::fromChars(b, e, v, std::chars_format::fixed);
         if (r.ec != std::errc() || !std::isfinite(v) || std::abs(v) > 1e6) {
             return false;
         }

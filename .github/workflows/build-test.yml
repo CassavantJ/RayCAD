@@ -1,5 +1,5 @@
 # Configure, build and test on Windows, Linux and macOS (Apple Silicon): Debug with the quick test tier, Release
-# with every test.
+# with every test, each configuration in a job of its own.
 #
 # vcpkg binaries are cached with actions/cache on vcpkg's file-based binary cache folder (the old x-gha
 # backend is gone). No secret is needed. Qt comes from prebuilt binaries (tools/fetch_qt.py, cached).
@@ -25,25 +25,39 @@ env:
 
 jobs:
   build-test:
-    name: ${{ matrix.preset }}
+    # Debug and Release are separate jobs that run side by side. In one job, one after the other, they did not fit
+    # the time limit on the 4-processor Windows runner (run 45129357124: about 15 minutes of Debug build, over 100
+    # of Debug tests, then the Release build and every test still to come at 4 hours).
+    name: ${{ matrix.preset }}-${{ matrix.config }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
+        preset: [windows-msvc, linux-gcc, macos-arm64]
+        config: [debug, release]
         include:
-          - os: windows-latest
-            preset: windows-msvc
+          - preset: windows-msvc
+            os: windows-latest
             triplet: x64-windows
             qt_arch: win64_msvc2022_64
-          - os: ubuntu-latest
-            preset: linux-gcc
+          - preset: linux-gcc
+            os: ubuntu-latest
             triplet: x64-linux-dynamic
             qt_arch: linux_gcc_64
-          - os: macos-latest
-            preset: macos-arm64
+          - preset: macos-arm64
+            os: macos-latest
             triplet: arm64-osx-dynamic
             qt_arch: clang_64
+          # The test preset of each configuration (tests/tiers.cmake): Debug runs the quick tier (on Windows without
+          # the debug-heavy tests), Release every test.
+          - config: debug
+            tests: debug-quick
+          - config: release
+            tests: release
+          - preset: windows-msvc
+            config: debug
+            tests: debug-ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -135,27 +149,29 @@ jobs:
           call tools\win-env.cmd || exit /b 1
           cmake --preset ${{ matrix.preset }} || exit /b 1
 
+      # The first line shows whether the compiler's default target has FMA: with it, code built without
+      # -ffp-contract=off (OpenCASCADE) fuses multiply-adds and its geometry differs in the last bits.
       - name: Configure (Linux, macOS)
         if: runner.os != 'Windows'
-        run: cmake --preset ${{ matrix.preset }}
+        run: |
+          echo | c++ -dM -E -x c++ - | grep -E '__FMA__|__AVX2__|__x86_64__|__aarch64__' | tr '\n' ' '; echo
+          cmake --preset ${{ matrix.preset }}
 
       # Debug runs the quick test tier, Release runs every test (tests/tiers.cmake). The slow tier is the long
       # randomised naming blocks: in Debug they re-run the code paths the quick tier's naming tests (S4, acceptance,
       # the smoke block) already run there, at many times the cost (an MSVC Debug build cannot finish them in this
       # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. Windows Debug also
-      # leaves out the four S4 suites (label debug-heavy, preset windows-msvc-debug-ci): about 25 minutes each in an
-      # MSVC Debug build, they would take this job past its limit; Linux and macOS Debug run them, as every Release
-      # does. ctest runs one job per processor of the runner; tests with threads of their own take several
+      # leaves out the tests labelled debug-heavy (preset windows-msvc-debug-ci): the S4 suites and others that take
+      # 20 minutes or more each in an MSVC Debug build and would take this job past its limit; Linux and macOS Debug
+      # run them, as every Release does. ctest runs one job per processor of the runner; tests with threads of their own take several
       # (PROCESSORS) and timed tests run alone.
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
-          cmake --build --preset ${{ matrix.preset }}-debug || exit /b 1
-          ctest --preset ${{ matrix.preset }}-debug-ci --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
-          cmake --build --preset ${{ matrix.preset }}-release || exit /b 1
-          ctest --preset ${{ matrix.preset }}-release --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
+          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} || exit /b 1
+          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
       # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
       # the offscreen platform.
@@ -165,7 +181,5 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
         run: |
-          cmake --build --preset ${{ matrix.preset }}-debug
-          ctest --preset ${{ matrix.preset }}-debug-quick --parallel "$(getconf _NPROCESSORS_ONLN)"
-          cmake --build --preset ${{ matrix.preset }}-release
-          ctest --preset ${{ matrix.preset }}-release --parallel "$(getconf _NPROCESSORS_ONLN)"
+          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
+          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)"

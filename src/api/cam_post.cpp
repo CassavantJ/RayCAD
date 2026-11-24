@@ -1,5 +1,6 @@
 // Posting a setup (ray_api/cam_post.h, task T-047): the gate, the post run, the re-check before the file is put in
 // place, the file output (src/post/output.h) and the settings remembered per setup.
+#include "../core/from_chars_double.h"
 #include "../post/output.h"
 #include "files.h"
 #include "json.h"
@@ -83,7 +84,7 @@ std::string numberText(double d)
 std::optional<double> parseDouble(std::string_view text)
 {
     double d = 0;
-    const auto r = std::from_chars(text.data(), text.data() + text.size(), d);
+    const auto r = compat::fromChars(text.data(), text.data() + text.size(), d);
     if (r.ec != std::errc() || r.ptr != text.data() + text.size())
         return std::nullopt;
     return d;

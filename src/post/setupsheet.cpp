@@ -1,6 +1,7 @@
 // The setup sheet's HTML (task T-076; setupsheet.h says what a sheet holds and why).
 #include "setupsheet.h"
 
+#include "../core/from_chars_double.h"
 #include "format.h"
 
 #include <algorithm>
@@ -272,7 +273,7 @@ std::optional<double> numberOf(const std::map<std::string, std::string>& params,
     double d = 0;
     const char* first = it->second.data();
     const char* last = first + it->second.size();
-    const auto r = std::from_chars(first, last, d);
+    const auto r = compat::fromChars(first, last, d);
     if (r.ec != std::errc() || r.ptr != last || !std::isfinite(d))
         return std::nullopt;
     return d;

@@ -1,4 +1,5 @@
 #include "json.h"
+#include "../core/from_chars_double.h"
 
 #include <ray/document.h>
 
@@ -511,7 +512,7 @@ private:
         }
         const std::string text(s_.substr(start, pos_ - start));
         double d = 0;
-        const auto res = std::from_chars(text.data(), text.data() + text.size(), d);
+        const auto res = compat::fromChars(text.data(), text.data() + text.size(), d);
         if (res.ec != std::errc() || !std::isfinite(d)) {
             error_ = "number out of range";
             return false;

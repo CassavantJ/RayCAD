@@ -1,4 +1,5 @@
 // DXF import (task T-091). See dxf.h for what is read and what is left out.
+#include "../core/from_chars_double.h"
 #include "dxf.h"
 
 #include "loops_curves.h"
@@ -58,7 +59,7 @@ std::optional<double> toNumber(std::string_view v)
         v.remove_prefix(1);
     }
     double out = 0;
-    const auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), out);
+    const auto [ptr, ec] = compat::fromChars(v.data(), v.data() + v.size(), out);
     if (ec != std::errc() || ptr != v.data() + v.size() || !std::isfinite(out)) {
         return std::nullopt;
     }
