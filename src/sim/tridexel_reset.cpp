@@ -217,7 +217,9 @@ void fillFromSoup(Grid& grid, int gi, const kernel::TriSoup& soup, const Vec3& o
                         tile.grow(x);
                     }
                     const std::size_t keep = std::min<std::size_t>(n, x.cap);
-                    std::memcpy(tile.data(x), iv.data(), sizeof(float) * 2 * keep);
+                    if (keep > 0) { // memcpy from an empty vector's null data() is undefined even for 0 bytes
+                        std::memcpy(tile.data(x), iv.data(), sizeof(float) * 2 * keep);
+                    }
                     x.n = static_cast<std::uint16_t>(keep);
                 }
             }
