@@ -193,7 +193,8 @@ Every test has one of two CTest labels (`tests/tiers.cmake`):
   drag agreement sweep. Run every test (`tools\verify.cmd full`, `ctest --preset <config>`) **before a push**,
   and **after any change in `src/naming`, `src/kernel`, `ports/` or the naming oracle** (`tests/naming`).
 
-CI runs the quick tier in Debug and every test in Release and under AddressSanitizer. In an MSVC Debug build
+CI runs the quick tier in Debug and every test in Release and under AddressSanitizer (there all but the few labelled
+`sanitizer-heavy`, too slow under ASan for the runner). In an MSVC Debug build
 the randomised naming blocks are disabled (they would take hours there); ctest lists them as "Not Run
 (Disabled)". Debug CI also leaves out the tests labelled `debug-heavy` (the four S4 suites, the Release-scale
 benchmarks and others that take 20 minutes or more each in an MSVC Debug build; `tests/tiers.cmake` lists them):

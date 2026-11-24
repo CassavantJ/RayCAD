@@ -96,6 +96,13 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_cam_adaptive2d_tests
     ray_cam_invariants_adaptive2d)
 
+# Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
+# timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property
+# tests of every operation type on their large seed sets ran over 84 minutes single-threaded under ASan on 32 hardware
+# threads (2 hours allowed; 30 minutes in Release at most).
+set(RAY_SANITIZER_HEAVY_TESTS
+    ray_cam_invariants_slow)
+
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
 # (RAYCAD_NAMING_WORKERS); the document S4 suites rebuild on the job system. Every other test measured at about one
@@ -272,6 +279,9 @@ foreach(_test IN LISTS RAY_DEBUG_HEAVY_TESTS)
         message(FATAL_ERROR "tests/tiers.cmake: '${_test}' is slow; debug-heavy is for quick tests")
     endif()
     ray_tier_set(${_test} APPEND LABELS debug-heavy)
+endforeach()
+foreach(_test IN LISTS RAY_SANITIZER_HEAVY_TESTS)
+    ray_tier_set(${_test} APPEND LABELS sanitizer-heavy)
 endforeach()
 foreach(_entry IN LISTS RAY_TEST_PROCESSORS)
     string(REPLACE "=" ";" _pair "${_entry}")
