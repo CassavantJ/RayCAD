@@ -14,6 +14,13 @@
 //    holderProfile) never remove material, and whether they met material is found in the same ordered pass.
 //  - The comments of the stock model and of ToolShape now state the semantics T-070 implements (frame, flute length,
 //    rapids, the empty soup, toMesh tiles and budget, versions, snapshots, thread safety).
+//
+// Changed in T-071 (safety checks; each also in docs/interfaces/sim.h; src/sim/verify.h says what is checked and how):
+//  - EventKind::ShankHitsPart, added at the end: the shank meeting the part had no kind (HolderHitsPart did).
+//  - SimProgram::toolDefs (may be empty): the library tool of each operation, which the checks need and a ToolShape
+//    does not hold (whether it cuts at its centre; its overall length and shank for the stick-out it allows).
+//  - SimProgram's solids are in the setup WCS, the toolpaths' frame (it said nothing).
+//  - verifyFast: what it checks, against what, and its cut-stock check at a fixed cell (it said "no stock model").
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -157,7 +164,8 @@ enum class EventKind {
     Gouge,                     // tool cuts below the design surface by more than tolerance
     PlungeWithNonCentreCutting, ExcessEngagement, FeedIntoStockAtRapidHeight,
     TravelLimit,               // move exceeds machine axis travel
-    ToolTooShort               // required flute length or stick-out exceeds the tool; suggests minimum safe stick-out
+    ToolTooShort,              // required flute length or stick-out exceeds the tool; suggests minimum safe stick-out
+    ShankHitsPart              // Error, tier-independent (added by T-071)
 };
 struct SimEvent {
     EventKind kind; Severity severity;
@@ -172,10 +180,14 @@ struct SimProgram {                        // one setup
     std::vector<const cam::Operation*> ops;
     std::vector<std::shared_ptr<const cam::Toolpath>> toolpaths;   // parallel to ops
     std::vector<ToolShape> tools;                                  // parallel to ops
+    // Closed soups in the setup WCS (the toolpaths' frame), mm. stockSolid is the stock at the start of the setup.
     kernel::TriSoup partSolid, stockSolid;
     std::vector<kernel::TriSoup> fixtureSolids;
     Xform modelFromWcs;
     const lib::MachineDef* machine;
+    // Added by T-071: parallel to ops, the library tool (CamState's embedded copy); empty, shorter or null: not known
+    // (the checks then take the tool as not cutting at its centre and give no stick-out limit).
+    std::vector<const lib::Tool*> toolDefs = {};
 };
 struct SimOptions { StockResolution resolution; double gougeTolMm = 0.05; bool stopOnError = false; };
 
@@ -184,7 +196,12 @@ struct TimelinePosition { std::uint32_t opIndex; std::uint32_t moveIndex; double
 class ISimulator {
 public:
     virtual ~ISimulator() = default;
-    // Analytic safety checks only (no stock model). Fast enough to run after every toolpath generation.
+    // Safety checks (T-071, src/sim/verify.h): exact sweeps of the tool against the initial stock, part and fixture
+    // triangles (rapids, holder and shank, plunges of tools that do not cut at their centre, tool too short) and the
+    // machine's travel. A stock contact the exact test cannot settle, because earlier moves may have cut that
+    // material, is checked on the checker's own stock model at a FIXED cell, never the tier's, which its event's
+    // message states; that model runs only when there is such a contact. Results do not depend on the tier or the
+    // thread count. Fast enough to run after every toolpath generation.
     virtual Result<std::vector<SimEvent>> verifyFast(const SimProgram&, JobContext&) = 0;
     // Full material-removal run. Stores a stock keyframe every N moves so scrubbing backwards is fast.
     virtual Status run(const SimProgram&, const SimOptions&, JobContext&) = 0;
