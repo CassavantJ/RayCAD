@@ -136,9 +136,92 @@ Box3 boundsOf(const kernel::TriSoup& soup)
     return b;
 }
 
+// The profile of a cycle move `m` (its vertices in `bp`): each sub-motion's own time at its own rate, the cycle's dwell
+// where the tool first reaches the move's lowest point (the hole's bottom). Empty when the move has no length or no
+// time (time is then even along it, as for any other move).
+std::vector<std::pair<double, double>> cycleKnots(const sim::Backplot& bp, std::uint32_t m, const Rates& rates,
+                                                  double dwellSec)
+{
+    std::vector<std::pair<double, double>> knots;
+    const std::uint32_t first = std::max(bp.moveFirstVertex[m], 1u), last = bp.moveFirstVertex[m + 1];
+    if (first >= last)
+        return knots;
+    // The vertex where the dwell goes: the first at the lowest z.
+    std::uint32_t bottom = first;
+    for (std::uint32_t v = first; v < last; ++v) {
+        if (bp.lineVertices[v].z < bp.lineVertices[bottom].z)
+            bottom = v;
+    }
+    double totalLen = 0, totalSec = std::max(0.0, dwellSec);
+    for (std::uint32_t v = first; v < last; ++v) {
+        totalLen += length(bp.lineVertices[v - 1], bp.lineVertices[v]);
+        totalSec += segmentSec(bp.lineVertices[v - 1], bp.lineVertices[v], rates);
+    }
+    if (!(totalLen > 0) || !(totalSec > 0))
+        return knots;
+    knots.reserve(2 * (last - first) + 2);
+    knots.emplace_back(0.0, 0.0);
+    double len = 0, sec = 0;
+    for (std::uint32_t v = first; v < last; ++v) {
+        len += length(bp.lineVertices[v - 1], bp.lineVertices[v]);
+        sec += segmentSec(bp.lineVertices[v - 1], bp.lineVertices[v], rates);
+        knots.emplace_back(std::min(1.0, sec / totalSec), std::min(1.0, len / totalLen));
+        if (v == bottom && dwellSec > 0) {
+            sec += dwellSec;
+            knots.emplace_back(std::min(1.0, sec / totalSec), std::min(1.0, len / totalLen));
+        }
+    }
+    knots.back() = {1.0, 1.0};
+    return knots;
+}
+
 } // namespace
 
 // ---------- Timeline ----------
+double MoveProfile::lengthAt(double tf) const
+{
+    if (knots.size() < 2 || !(tf > 0))
+        return 0;
+    if (tf >= 1)
+        return 1;
+    // The first knot at or after tf.
+    const auto it = std::lower_bound(knots.begin(), knots.end(), tf,
+                                     [](const std::pair<double, double>& k, double t) { return k.first < t; });
+    if (it == knots.begin())
+        return it->second;
+    if (it == knots.end())
+        return 1;
+    const auto& [t1, l1] = *it;
+    const auto& [t0, l0] = *std::prev(it);
+    return t1 > t0 ? std::clamp(l0 + (tf - t0) / (t1 - t0) * (l1 - l0), 0.0, 1.0) : l1;
+}
+
+double MoveProfile::timeAt(double lf) const
+{
+    if (knots.size() < 2 || !(lf > 0))
+        return 0;
+    if (lf >= 1)
+        return 1;
+    // The first knot at or past lf (the length is non-decreasing): the tool first gets there in the segment ending
+    // there.
+    const auto it = std::lower_bound(knots.begin(), knots.end(), lf,
+                                     [](const std::pair<double, double>& k, double l) { return k.second < l; });
+    if (it == knots.begin())
+        return it->first;
+    if (it == knots.end())
+        return 1;
+    const auto& [t1, l1] = *it;
+    const auto& [t0, l0] = *std::prev(it);
+    return l1 > l0 ? std::clamp(t0 + (lf - l0) / (l1 - l0) * (t1 - t0), 0.0, 1.0) : t1;
+}
+
+const MoveProfile* TimelineOperation::profileOf(std::uint32_t move) const
+{
+    const auto it = std::lower_bound(profiles.begin(), profiles.end(), move,
+                                     [](const MoveProfile& p, std::uint32_t m) { return p.move < m; });
+    return it != profiles.end() && it->move == move ? &*it : nullptr;
+}
+
 sim::TimelinePosition Timeline::normalised(const sim::TimelinePosition& p) const
 {
     if (ops.empty())
@@ -180,7 +263,8 @@ double Timeline::secondsAt(const sim::TimelinePosition& pos) const
     const double s1 = op.moveEndSec[p.moveIndex];
     if (p.moveIndex == 0 && p.t01 <= 0)
         return op.startSec; // the start of an operation is the start of its tool change
-    return s0 + p.t01 * (s1 - s0);
+    const MoveProfile* profile = op.profileOf(p.moveIndex);
+    return s0 + (profile != nullptr ? profile->timeAt(p.t01) : p.t01) * (s1 - s0);
 }
 
 sim::TimelinePosition Timeline::positionAt(double sec) const
@@ -207,7 +291,11 @@ sim::TimelinePosition Timeline::positionAt(double sec) const
     const auto m = static_cast<std::uint32_t>(it - op.moveEndSec.begin());
     const double s0 = m == 0 ? op.firstMoveSec() : op.moveEndSec[m - 1];
     const double s1 = op.moveEndSec[m];
-    return {index, m, s1 > s0 ? std::clamp((sec - s0) / (s1 - s0), 0.0, 1.0) : 1.0};
+    if (!(s1 > s0))
+        return {index, m, 1.0};
+    const double share = std::clamp((sec - s0) / (s1 - s0), 0.0, 1.0);
+    const MoveProfile* profile = op.profileOf(m);
+    return {index, m, profile != nullptr ? profile->lengthAt(share) : share};
 }
 
 std::uint64_t Timeline::movesDone(const sim::TimelinePosition& pos) const
@@ -279,8 +367,17 @@ Timeline buildTimeline(const sim::SimProgram& program, const cam::CycleTime* est
                 for (std::uint32_t v = std::max(bp.moveFirstVertex[m], 1u); v < bp.moveFirstVertex[m + 1]; ++v)
                     s += segmentSec(bp.lineVertices[v - 1], bp.lineVertices[v], rates);
                 const cam::Move& mv = path->moves[m];
+                const double dwell = std::max(0, mv.cycleDwellMs) / 1000.0;
                 if (mv.kind == cam::MoveKind::Dwell || isCycle(mv.kind))
-                    s += std::max(0, mv.cycleDwellMs) / 1000.0;
+                    s += dwell;
+                if (isCycle(mv.kind)) {
+                    // Its rapids, feeds and dwell each at their own rate (a scale of the whole move keeps the shares).
+                    MoveProfile profile;
+                    profile.move = static_cast<std::uint32_t>(m);
+                    profile.knots = cycleKnots(bp, static_cast<std::uint32_t>(m), rates, dwell);
+                    if (!profile.knots.empty())
+                        op.profiles.push_back(std::move(profile));
+                }
                 own[m] = s;
                 sum += s;
             }
@@ -430,6 +527,22 @@ Result<std::shared_ptr<RunResult>> SimSession::run(const RunRequest& request, Jo
         timing.set(0, "Timeline");
         const auto events = impl_->simulator->events();
         out->events.assign(events.begin(), events.end());
+        if (!request.addedEvents.empty()) {
+            // Tests only: in with the simulator's, kept in its order (sim.h: by operation, then move).
+            out->events.insert(out->events.end(), request.addedEvents.begin(), request.addedEvents.end());
+            const auto opOf = [&](const sim::SimEvent& e) {
+                for (std::size_t i = 0; i < program.ops.size(); ++i) {
+                    if (program.ops[i] != nullptr && program.ops[i]->id == e.operation)
+                        return i;
+                }
+                return program.ops.size();
+            };
+            std::stable_sort(out->events.begin(), out->events.end(),
+                             [&](const sim::SimEvent& a, const sim::SimEvent& b) {
+                                 const std::size_t oa = opOf(a), ob = opOf(b);
+                                 return oa != ob ? oa < ob : a.moveIndex < b.moveIndex;
+                             });
+        }
         std::optional<cam::CycleTime> estimate;
         if (program.machine != nullptr) {
             std::vector<cam::CycleTimeOperation> ops;
@@ -455,6 +568,14 @@ Result<std::shared_ptr<RunResult>> SimSession::run(const RunRequest& request, Jo
         }
         out->tools = program.tools;
         out->modelFromWcs = program.modelFromWcs;
+        // The toolpaths to draw, as the CAM workspace draws them (cam_operation::backplot's parameters).
+        for (const auto& path : program.toolpaths) {
+            if (auto ok = ctx.cancel.check(); !ok)
+                return tl::unexpected(ok.error());
+            out->backplots.push_back(path ? std::make_shared<const sim::Backplot>(
+                                                sim::buildBackplot(*path, program.modelFromWcs, 0.01, program.machine))
+                                          : nullptr);
+        }
         out->stockBounds = boundsOf(program.stockSolid);
         impl_->stockBounds = out->stockBounds;
         impl_->ready = true;

@@ -32,13 +32,23 @@
 //   G-code     gcodeState: "current" (the viewer's program is this setup's, from exactly these toolpaths), "stale"
 //              (it is this setup's, from other toolpaths), "none" (no program of this setup). When it is not current
 //              the panel says so and offers Post..., which opens the post dialog (its gate applies); nothing is posted
-//              without the user.
+//              without the user. The other way (added after T-074): in the Simulate workspace, a line the user makes
+//              current in the viewer (a click, the arrow keys, a find; GcodeModel::lineChosen) seeks the stock and the
+//              tool to the end of the move that line writes (its first move when it writes several; PostOutput::
+//              lineMap); a line that writes no move (a comment, the header, a tool change) does nothing, and so does a
+//              line while the program is not current. The viewer keeps the line chosen (a frame does not move it to
+//              its move's first line). The CAM workspace's viewer is unchanged.
 //   Display    the stock (IRenderViewport::addStock, stockStyle, marks of the selected events), the tool glyph
 //              (cutting part and shank) and its holder (addToolGlyph, one pair per operation, the current one shown at
-//              ISimulator::toolPose), shown only in the Simulate workspace. Visibility toggles: stock, tool, holder,
-//              fixtures. In the Simulate workspace the setup's part bodies are hidden while the stock is shown (the
-//              stock is the part as cut), and fixture bodies while the fixture toggle is off; the model tree's own
-//              visibility is not touched, and leaving the workspace shows them as they were.
+//              ISimulator::toolPose), shown only in the Simulate workspace. The toolpaths of the run (added after
+//              T-074): RunResult::backplots drawn by the renderer's backplot item (IViewport::addBackplot) in
+//              ToolpathDisplay::pathStyle, as the CAM workspace draws them; two items share each backplot, the moves
+//              done (up to the playhead, the move under way included) at full strength, the moves still to come dimmed,
+//              split with setBackplotRange on every frame (no upload); the stale colour while the result is out of
+//              date. Visibility toggles: stock, tool, holder, fixtures, toolpath. In the Simulate workspace the setup's
+//              part bodies are hidden while the stock is shown (the stock is the part as cut), and fixture bodies while
+//              the fixture toggle is off; the model tree's own visibility is not touched, and leaving the workspace
+//              shows them as they were.
 //   Budget     the display triangle budget from the tier preset's cell (camui::stockTriangleBudget).
 #pragma once
 
@@ -131,6 +141,7 @@ class SimToolModel : public QObject {
     Q_PROPERTY(bool showTool READ showTool WRITE setShowTool NOTIFY visibilityChanged)
     Q_PROPERTY(bool showHolder READ showHolder WRITE setShowHolder NOTIFY visibilityChanged)
     Q_PROPERTY(bool showFixtures READ showFixtures WRITE setShowFixtures NOTIFY visibilityChanged)
+    Q_PROPERTY(bool showToolpath READ showToolpath WRITE setShowToolpath NOTIFY visibilityChanged)
     // The G-code link.
     Q_PROPERTY(QString gcodeState READ gcodeState NOTIFY gcodeChanged)
     Q_PROPERTY(QString gcodeText READ gcodeText NOTIFY gcodeChanged)
@@ -187,6 +198,8 @@ public:
     void setShowHolder(bool on);
     bool showFixtures() const { return showFixtures_; }
     void setShowFixtures(bool on);
+    bool showToolpath() const { return showToolpath_; }
+    void setShowToolpath(bool on);
     QString gcodeState() const;
     QString gcodeText() const;
 
@@ -235,6 +248,21 @@ public:
     bool stockVisible() const { return stockVisible_; }
     bool toolVisible() const { return toolVisible_; }
     bool holderVisible() const { return holderVisible_; }
+    // The toolpath items of operation `op`: the moves done, or (ahead) those still to come; and the moves each shows
+    // (first, last; first > last: none).
+    render::ItemId pathItem(std::size_t op, bool ahead) const
+    {
+        return op < paths_.size() ? (ahead ? paths_[op].ahead : paths_[op].done) : 0;
+    }
+    std::pair<std::uint32_t, std::uint32_t> pathRange(std::size_t op, bool ahead) const
+    {
+        if (op >= paths_.size())
+            return {1, 0};
+        return ahead ? paths_[op].aheadRange : paths_[op].doneRange;
+    }
+    bool toolpathVisible() const { return toolpathVisible_; }
+    // Tests only: events every later run adds to the simulator's (cam_sim::RunRequest::addedEvents).
+    void setAddedEvents(std::vector<sim::SimEvent> events) { addedEvents_ = std::move(events); }
     // Bodies the workspace hides now (by scene index).
     std::vector<int> hiddenBodies() const { return std::vector<int>(hidden_.begin(), hidden_.end()); }
     std::uint32_t triangleBudget() const { return budget_; }
@@ -273,6 +301,13 @@ private:
         render::ItemId tool = 0, holder = 0;
         bool toolShown = false, holderShown = false;
     };
+    // One operation's toolpath: two items on its backplot (moves done, moves ahead), the ranges last set, shown.
+    struct Path {
+        render::ItemId done = 0, ahead = 0;
+        std::uint32_t moves = 0;
+        std::pair<std::uint32_t, std::uint32_t> doneRange{0, ~0u}, aheadRange{0, ~0u}; // as addBackplot leaves them
+        bool shown = false;
+    };
     api::IApp* app() const;
     doc::Document* liveDoc() const;
     void subscribe();
@@ -299,7 +334,9 @@ private:
     void applyBodies();
     void restoreBodies();
     void applyMarks();
+    void applyPathRanges();
     void followGcode();
+    void seekToLine(int line);
     std::optional<std::uint32_t> sectionOf(std::uint32_t opIndex) const;
     std::vector<int> timeOrder() const;
 
@@ -356,6 +393,8 @@ private:
     render::IRenderViewport* itemsViewport_ = nullptr;
     render::ItemId stockItem_ = 0;
     std::vector<Glyph> glyphs_;
+    std::vector<Path> paths_;
+    bool toolpathVisible_ = false, pathStale_ = false;
     int shownOp_ = -1;
     std::uint32_t shownVersion_ = 0;
     bool needFull_ = false;
@@ -366,7 +405,8 @@ private:
     std::map<int, std::tuple<render::ItemId, bool, bool>> bodyItems_;
     bool stockShownKnown_ = false, stockStale_ = false;
     bool bodiesTouched_ = false;
-    bool showStock_ = true, showTool_ = true, showHolder_ = true, showFixtures_ = true;
+    bool showStock_ = true, showTool_ = true, showHolder_ = true, showFixtures_ = true, showToolpath_ = true;
+    std::vector<sim::SimEvent> addedEvents_; // tests only
 
     // Position, seeks and playback.
     sim::TimelinePosition position_{0, 0, 0};

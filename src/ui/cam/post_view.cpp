@@ -307,6 +307,8 @@ void GcodeModel::selectLine(int line, bool extend)
     line = std::clamp(line, 0, lineCount() - 1);
     pickedFirst_ = pickedLast_ = -1;
     setCurrent(line, extend && anchor_ >= 0 ? anchor_ : line);
+    if (!extend)
+        emit lineChosen(line);
 }
 
 void GcodeModel::moveCurrent(int delta, bool extend)

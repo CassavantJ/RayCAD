@@ -279,6 +279,84 @@ TEST_CASE("the simulation timeline: times and positions both ways, steps of one 
     same(t.afterMoves(99), 1, 1, 1);
 }
 
+TEST_CASE("inside a canned cycle the time follows the cycle's own motion: rapids, the feed, the dwell, the retract",
+          "[sim][timeline][cycle]")
+{
+    // From (0, 0, 20): a G82 at (10, 0), R 2, bottom -10, at 100 mm/min with a 0.5 s dwell, back to R (G99); then a
+    // plain feed of 10 mm along X at 100 mm/min. No machine: rapids at cam.h's 10,000 mm/min on every axis.
+    auto path = std::make_shared<cam::Toolpath>();
+    path->startZ = 20'000'000;
+    cam::Move drill{};
+    drill.kind = cam::MoveKind::CycleDrill;
+    drill.role = cam::MoveRole::Plunge;
+    drill.cycleReturn = cam::CycleReturn::RPlane;
+    drill.feedMicronPerMin = 100'000;
+    drill.cycleDwellMs = 500;
+    drill.x = 10'000'000;
+    drill.z = -10'000'000;
+    drill.cycleRetract = 2'000'000;
+    drill.cycleClearance = 20'000'000;
+    cam::Move feed{};
+    feed.kind = cam::MoveKind::Linear;
+    feed.role = cam::MoveRole::Cut;
+    feed.feedMicronPerMin = 100'000;
+    feed.x = 20'000'000;
+    feed.z = 2'000'000;
+    path->moves = {drill, feed};
+    sim::SimProgram program{};
+    program.ops = {nullptr};
+    program.toolpaths = {path};
+    program.modelFromWcs = Xform::identity();
+    const cs::Timeline t = cs::buildTimeline(program, nullptr);
+    REQUIRE(t.ops.size() == 1);
+    const cs::TimelineOperation& op = t.ops[0];
+    REQUIRE(op.moves() == 2);
+    // The cycle: 10 mm of rapid across (0.06 s), 18 mm of rapid down to R (0.108 s), 12 mm of feed (7.2 s), the dwell
+    // (0.5 s), 12 mm of rapid back to R (0.072 s): 52 mm in 7.94 s.
+    CHECK(op.moveEndSec[0] == Catch::Approx(7.94).epsilon(1e-9));
+    CHECK(op.moveEndSec[1] == Catch::Approx(13.94).epsilon(1e-9));
+    REQUIRE(op.profileOf(0) != nullptr);
+    CHECK(op.profileOf(1) == nullptr); // a plain feed: time even along it
+    const auto at = [&](double sec) {
+        return t.positionAt(sec);
+    };
+    // At R, after both rapids.
+    CHECK(at(0.168).moveIndex == 0);
+    CHECK(at(0.168).t01 == Catch::Approx(28.0 / 52).margin(1e-9));
+    // Half way through the feed: 6 mm down from R (an even spread would put it 9.6 s along the 52 mm instead).
+    CHECK(at(0.168 + 3.6).t01 == Catch::Approx(34.0 / 52).margin(1e-9));
+    CHECK(t.secondsAt({0, 0, 34.0 / 52}) == Catch::Approx(3.768).margin(1e-9));
+    // In the dwell: at the bottom all along it; the bottom's time is the dwell's start.
+    CHECK(at(7.368 + 0.1).t01 == Catch::Approx(40.0 / 52).margin(1e-9));
+    CHECK(at(7.368 + 0.4).t01 == Catch::Approx(40.0 / 52).margin(1e-9));
+    CHECK(t.secondsAt({0, 0, 40.0 / 52}) == Catch::Approx(7.368).margin(1e-9));
+    // Half way up the retract.
+    CHECK(at(7.94 - 0.036).t01 == Catch::Approx(46.0 / 52).margin(1e-9));
+    // Both ways, away from the dwell; the plain feed after it is even.
+    for (double s : {0.03, 0.1, 0.168, 1.0, 5.0, 7.3, 7.9, 7.94})
+        CHECK(t.secondsAt(t.positionAt(s)) == Catch::Approx(s).margin(1e-9));
+    CHECK(at(7.94 + 3).moveIndex == 1);
+    CHECK(at(7.94 + 3).t01 == Catch::Approx(0.5).margin(1e-9));
+    // A G83 with pecks: the knots rise in time and in length, from (0, 0) to (1, 1).
+    cam::Move peck = drill;
+    peck.kind = cam::MoveKind::CyclePeck;
+    peck.cyclePeck = 3'000'000;
+    peck.cycleDwellMs = 0;
+    path->moves = {peck};
+    const cs::Timeline p = cs::buildTimeline(program, nullptr);
+    const cs::MoveProfile* profile = p.ops[0].profileOf(0);
+    REQUIRE(profile != nullptr);
+    REQUIRE(profile->knots.size() > 6);
+    CHECK(profile->knots.front() == std::pair<double, double>{0.0, 0.0});
+    CHECK(profile->knots.back() == std::pair<double, double>{1.0, 1.0});
+    for (std::size_t i = 1; i < profile->knots.size(); ++i) {
+        CHECK(profile->knots[i].first >= profile->knots[i - 1].first);
+        CHECK(profile->knots[i].second > profile->knots[i - 1].second);
+    }
+    for (double s = 0; s <= p.totalSec; s += p.totalSec / 37)
+        CHECK(p.secondsAt(p.positionAt(s)) == Catch::Approx(s).margin(1e-9));
+}
+
 TEST_CASE("a seeded collision: the run finds it, places it on the timeline and shows the tool there; the twin is clean",
           "[sim][session][acceptance]")
 {
@@ -290,11 +368,43 @@ TEST_CASE("a seeded collision: the run finds it, places it on the timeline and s
 
     cs::SimSession session(*bad.env.jobs);
     JobContext ctx;
-    auto r = session.run(requestFor(bad, setup, {path}, 0.2), ctx);
+    cs::RunRequest request = requestFor(bad, setup, {path}, 0.2);
+    // A Warning no check raises today, added the tests' way: it goes where the simulator's events go. At the end of the
+    // first straight feed that moves.
+    std::uint32_t wm = 1;
+    while (wm + 1 < path->moves.size() &&
+           !(path->moves[wm].kind == cam::MoveKind::Linear &&
+             (path->moves[wm].x != path->moves[wm - 1].x || path->moves[wm].y != path->moves[wm - 1].y ||
+              path->moves[wm].z != path->moves[wm - 1].z)))
+        ++wm;
+    const cam::Move& warned = path->moves[wm];
+    const Vec3 warnedAt{warned.x / 1e6, warned.y / 1e6, warned.z / 1e6};
+    request.addedEvents.push_back(sim::SimEvent{sim::EventKind::ExcessEngagement, sim::Severity::Warning, ct::opId(1),
+                                                wm, warnedAt, 0, "Added by the test"});
+    auto r = session.run(request, ctx);
     if (!r) {
         FAIL("the run failed: " << r.error().message);
     }
     const cs::RunResult& res = **r;
+    // The toolpath to draw: the CAM workspace's backplot of it, in the model frame.
+    REQUIRE(res.backplots.size() == 1);
+    REQUIRE(res.backplots[0]);
+    CHECK(res.backplots[0]->moveFirstVertex.size() == path->moves.size() + 1);
+    // The added warning: among the events, in order, placed at the end of its move (its position is that move's end).
+    std::optional<std::size_t> warning;
+    for (std::size_t i = 0; i < res.events.size(); ++i) {
+        if (res.events[i].severity == sim::Severity::Warning)
+            warning = i;
+    }
+    REQUIRE(warning.has_value());
+    CHECK(res.events[*warning].kind == sim::EventKind::ExcessEngagement);
+    CHECK(res.events[*warning].message == "Added by the test");
+    REQUIRE(res.places.size() == res.events.size());
+    CHECK(res.places[*warning].moveIndex == wm);
+    CHECK(res.places[*warning].t01 == Catch::Approx(1).margin(1e-6));
+    CHECK(res.places[*warning].sec == Catch::Approx(res.timeline.secondsAt({0, wm, 1})));
+    for (std::size_t i = 1; i < res.events.size(); ++i)
+        CHECK(res.events[i].moveIndex >= res.events[i - 1].moveIndex);
     CHECK(res.setupName == "Setup 1");
     REQUIRE(res.ops.size() == 1);
     CHECK(res.ops[0] == ct::opId(1));
