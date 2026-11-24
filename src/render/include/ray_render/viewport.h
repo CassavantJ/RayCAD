@@ -91,15 +91,16 @@ struct ViewportInfo {
 //   budget    each toMesh call honours its own budget, so a dirty region asked for with the whole display's budget
 //             comes back finer than its neighbours (measured, 0.05 mm benchmark stock: one 20 mm move gave 887k
 //             triangles in 55 tiles, 60 MB to upload, where the whole display held 661k in 1536 tiles, 43 MB). To keep
-//             the display's level of detail, learn the box first (toMesh(shown, &box, 1) returns the coarsest mesh,
-//             cheaply) and ask again with the budget times the box's share of the stock's area (with some margin);
+//             the display's level of detail, learn the box first (toMesh(shown, &box, 1) returns the coarsest mesh;
+//             its cost was not measured) and ask again with the budget times the box's share of the stock's area;
 //             that move then uploads about 3 % of the display's bytes. triangleCount(id) says what the item holds, to
 //             decide when to ask for toMesh(0, ...) at a coarser budget again. Tiles of different detail meet without
 //             gaps (each is closed); only their heights step at the seam where the coarser one merged its columns.
 // Marks colour the stock's surface inside up to kMaxStockMarks boxes (item coordinates) in a simulation token:
 // SimCollision (the default; where a holder or shank met material), SimGouge or SimLeftover; any other token draws
 // as SimCollision. Marks after the first kMaxStockMarks are ignored. Colours change per pixel in the shader, so
-// marks, the uncut box and the style change no buffer.
+// marks, the uncut box and the style change no buffer. (The uncut box also tells the stock's own sides from the walls
+// inside it when a tile is first uploaded; give it with addStock: a later change does not re-sort tiles already shown.)
 constexpr int kMaxStockMarks = 8;
 struct StockMark {
     Box3 box;
