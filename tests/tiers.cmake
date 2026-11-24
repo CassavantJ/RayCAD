@@ -98,8 +98,8 @@ set(RAY_DEBUG_HEAVY_TESTS
 
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property
-# tests of every operation type on their large seed sets ran over 84 minutes single-threaded under ASan on 32 hardware
-# threads (2 hours allowed; 30 minutes in Release at most).
+# tests of every operation type on their large seed sets passed their 2-hour timeout under ASan even on 32 hardware
+# threads (30 minutes in Release at most).
 set(RAY_SANITIZER_HEAVY_TESTS
     ray_cam_invariants_slow)
 
