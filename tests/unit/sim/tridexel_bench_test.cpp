@@ -173,7 +173,10 @@ void runTier(const TierRun& t)
             soupMs);
         std::cout << line << std::endl;
         CHECK(budget.indices.size() / 3 <= 2'000'000);
-        CHECK(patch.indices.size() < budget.indices.size());
+        // The dirty region alone fits the budget at a finer column size than the whole stock does.
+        CHECK(patch.indices.size() / 3 <= 2'000'000);
+        CHECK(dirty.max.x - dirty.min.x < 152.4);
+        CHECK(dirty.max.y - dirty.min.y < 101.6);
         CHECK(sim::detail::triDexelInfo(*fromSoup).volume[0] > 0);
     }
     CHECK(restored);

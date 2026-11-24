@@ -1,11 +1,16 @@
 // Stock model volumes against analytic values (task T-070): every case within ONE CELL LAYER, i.e. the cell size times
-// the area of the cut's surface, measured on all three grids and on the removed volume cutBatch returns.
+// the area of the cut's surface, measured on all three grids and on the removed volume cutBatch returns. The cases run
+// at 0.2 and 0.1 mm; with RAY_SIM_TEST_FINE=1 also at 0.05 mm, and RAY_SIM_VOLUME_REPORT=1 prints one line per case.
 #include "tridexel_test_util.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
 #include <sstream>
 
 using namespace ray;
@@ -42,8 +47,32 @@ void check(const Case& c, double cell, const std::function<double(IStockModel&)>
     }
     INFO("returned " << returned);
     CHECK(std::abs(returned - c.exact) <= layer);
+    if (std::getenv("RAY_SIM_VOLUME_REPORT") != nullptr) {
+        char line[400];
+        std::snprintf(
+            line, sizeof line,
+            "T-070 volume: %-34s cell %.2f exact %10.2f mm3 | error Z %+.4f%% X %+.4f%% Y %+.4f%% returned "
+            "%+.4f%% | worst %.2f of one cell layer",
+            c.name.c_str(), cell, c.exact, 100 * (before.v[0] - after.v[0] - c.exact) / c.exact,
+            100 * (before.v[1] - after.v[1] - c.exact) / c.exact, 100 * (before.v[2] - after.v[2] - c.exact) / c.exact,
+            100 * (returned - c.exact) / c.exact,
+            std::max({std::abs(before.v[0] - after.v[0] - c.exact), std::abs(before.v[1] - after.v[1] - c.exact),
+                      std::abs(before.v[2] - after.v[2] - c.exact)}) /
+                layer);
+        std::cout << line << std::endl;
+    }
     // The returned volume is the Z grid's own loss.
     CHECK(std::abs(returned - (before.v[0] - after.v[0])) <= 1e-6 * c.exact + 1e-6);
+}
+
+// The resolutions the cases run at: Low and Medium, and High when RAY_SIM_TEST_FINE is set (seconds more).
+std::vector<double> testCells()
+{
+    std::vector<double> cells = {0.2, 0.1};
+    if (std::getenv("RAY_SIM_TEST_FINE") != nullptr) {
+        cells.push_back(0.05);
+    }
+    return cells;
 }
 
 double cutOne(IStockModel& m, const ToolShape& t, Vec3 a, Vec3 b)
@@ -76,7 +105,7 @@ double profileVolume(const std::vector<Vec2>& p, double depth, double& sideInteg
 
 TEST_CASE("Flat tools: plunge, straight and angled slots", "[sim][tridexel][volume]")
 {
-    const double cell = GENERATE(0.2, 0.1);
+    const double cell = GENERATE(from_range(testCells()));
     const ToolShape t = flat(10.0);
     const double R = 5.0;
     {
@@ -106,7 +135,7 @@ TEST_CASE("Flat tools: plunge, straight and angled slots", "[sim][tridexel][volu
 
 TEST_CASE("Arcs: XY slots, full circle, XZ and YZ semicircles", "[sim][tridexel][volume]")
 {
-    const double cell = GENERATE(0.2, 0.1);
+    const double cell = GENERATE(from_range(testCells()));
     const ToolShape t = flat(6.0);
     const double r = 3.0, Ra = 20.0, D = 5.0;
     const Vec3 c{40.0, 45.0, -D};
@@ -266,7 +295,7 @@ TEST_CASE("Helical arcs agree with an analytic reference and with fine lines", "
 
 TEST_CASE("Ball, bull-nose, chamfer, drill and general revolved profiles", "[sim][tridexel][volume]")
 {
-    const double cell = GENERATE(0.2, 0.1);
+    const double cell = GENERATE(from_range(testCells()));
     {
         const double R = 3.0, D = 10.0;
         const ToolShape t = ball(6.0);
@@ -352,7 +381,7 @@ TEST_CASE("Ball, bull-nose, chamfer, drill and general revolved profiles", "[sim
 
 TEST_CASE("Stepped and overlapping cuts count each piece of material once", "[sim][tridexel][volume]")
 {
-    const double cell = GENERATE(0.2, 0.1);
+    const double cell = GENERATE(from_range(testCells()));
     const ToolShape t = flat(8.0);
     const double R = 4.0, L = 40.0;
     const auto slot = [&](double d) {

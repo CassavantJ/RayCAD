@@ -35,16 +35,20 @@ struct Strip {
     std::vector<Dexel> d;
     std::vector<float> pool;
     std::size_t garbage = 0; // floats of the pool no dexel uses
+    // Z grid strips only: per row, per run of kTopRun rays, the highest material top in it (0 when empty). A cut whose
+    // lowest point is above it skips those rays. Derived from the dexels; kept up to date by every cut.
+    std::vector<float> top;
 
     Strip() = default;
-    Strip(const Strip& o) : d(o.d), pool(o.pool), garbage(o.garbage) {}
+    Strip(const Strip& o) : d(o.d), pool(o.pool), garbage(o.garbage), top(o.top) {}
     Strip& operator=(const Strip&) = delete;
 
     float* data(Dexel& x) { return x.cap <= 2 ? x.inl : pool.data() + x.off; }
     const float* data(const Dexel& x) const { return x.cap <= 2 ? x.inl : pool.data() + x.off; }
     std::uint64_t bytes() const
     {
-        return d.capacity() * sizeof(Dexel) + pool.capacity() * sizeof(float) + sizeof(Strip);
+        return d.capacity() * sizeof(Dexel) + pool.capacity() * sizeof(float) + top.capacity() * sizeof(float) +
+               sizeof(Strip);
     }
 
     // Room for one more interval in x (doubling its capacity in the pool). False at the limit.
@@ -75,6 +79,19 @@ struct Strip {
             std::memcpy(x.inl, tmp, sizeof(tmp));
         }
     }
+    // The highest material top of dexels [first, first + count).
+    float topOf(const Dexel* first, int count) const
+    {
+        float t = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            if (first[i].n > 0) {
+                t = std::max(t, data(first[i])[2 * first[i].n - 1]);
+            }
+        }
+        return t;
+    }
+    // Rebuilds `top` for rows of nv dexels.
+    void buildTop(int nv);
     // Rewrites the pool without the unused blocks, in dexel order, once at least half of it is unused.
     void compactIfWorthIt()
     {
@@ -262,6 +279,22 @@ inline bool overlaps(const Strip& s, const Dexel& x, double lo, double hi)
         }
     }
     return false;
+}
+
+inline constexpr int kTopRun = 32; // rays per entry of Strip::top
+
+inline void Strip::buildTop(int nv)
+{
+    const int runs = (nv + kTopRun - 1) / kTopRun;
+    const int rows = nv > 0 ? static_cast<int>(d.size() / static_cast<std::size_t>(nv)) : 0;
+    top.assign(static_cast<std::size_t>(rows) * runs, 0.0f);
+    for (int r = 0; r < rows; ++r) {
+        for (int b = 0; b < runs; ++b) {
+            const int i0 = b * kTopRun;
+            top[static_cast<std::size_t>(r) * runs + b] =
+                topOf(d.data() + static_cast<std::size_t>(r) * nv + i0, std::min(kTopRun, nv - i0));
+        }
+    }
 }
 
 inline int firstIdx(double lo, double cell)

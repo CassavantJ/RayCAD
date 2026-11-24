@@ -274,6 +274,11 @@ void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockRe
         if (!block) {
             fillFromSoup(g, gi, soup, origin_, jobs_);
         }
+        if (gi == kGz) {
+            for (StripRef& strip : g.strips) {
+                strip.mut().buildTop(g.nv);
+            }
+        }
     }
     buildTasks();
     tilesX_ = (nx + kTileCells - 1) / kTileCells;

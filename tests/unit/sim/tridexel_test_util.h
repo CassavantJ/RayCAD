@@ -86,7 +86,9 @@ inline Volumes volumes(const IStockModel& m)
 }
 
 // The S6 benchmark: a 6 x 4 x 1 in stock and a workload of facing, an adaptive-like pocket and ball-end scallops
-// (spike S6's description, rebuilt here), all linear moves. `scale` < 1 keeps every `1/scale`-th lane (quick tests).
+// (spike S6's description, rebuilt here), all linear moves: 112,092 of them with the defaults. Fewer pocket `lanes`
+// and a wider scallop `stepover` thin it out for quick tests. Trigonometry goes through ray::dmath, so the moves, and
+// the golden stock hash, are the same on every platform.
 struct Workload {
     struct Pass {
         int tool; // 0 flat 12.7, 1 ball 6.35
@@ -166,19 +168,19 @@ inline Workload benchmarkWorkload(int lanes = 11, double stepover = 0.25)
             while (done < helixLen) {
                 done = std::min(helixLen, done + seg());
                 th = done / rho;
-                to(cx + rho * std::cos(th), cy + rho * std::sin(th), z + 3.0 * (1 - done / helixLen));
+                to(cx + rho * dmath::cos(th), cy + rho * dmath::sin(th), z + 3.0 * (1 - done / helixLen));
             }
             for (std::size_t k = 0; k + 1 < spine.size(); ++k) {
                 const double ax = spine[k].first, ay = spine[k].second, bx = spine[k + 1].first,
                              by = spine[k + 1].second;
-                const double len = std::hypot(bx - ax, by - ay);
+                const double len = dmath::hypot(bx - ax, by - ay);
                 double sdone = 0;
                 while (sdone < len) {
                     const double sl = seg();
                     th += sl / rho;
                     sdone = std::min(len, sdone + adv * sl / (2 * kPi * rho));
                     const double f = sdone / len;
-                    to(ax + (bx - ax) * f + rho * std::cos(th), ay + (by - ay) * f + rho * std::sin(th), z);
+                    to(ax + (bx - ax) * f + rho * dmath::cos(th), ay + (by - ay) * f + rho * dmath::sin(th), z);
                 }
             }
         }
@@ -190,7 +192,7 @@ inline Workload benchmarkWorkload(int lanes = 11, double stepover = 0.25)
     {
         bool fwd = true;
         const auto zf = [](double x, double y) {
-            return 22.9 + 1.5 * std::sin(2 * kPi * x / 38.0) * std::cos(2 * kPi * y / 45.0);
+            return 22.9 + 1.5 * dmath::sin(2 * kPi * x / 38.0) * dmath::cos(2 * kPi * y / 45.0);
         };
         for (double x = 108.0; x <= 146.0; x += stepover) {
             double y = fwd ? 6.0 : 96.0;
@@ -214,7 +216,7 @@ inline Workload benchmarkWorkload(int lanes = 11, double stepover = 0.25)
     {
         bool fwd = true;
         const auto zf = [](double x, double y) {
-            return 5.6 + 0.6 * std::sin(2 * kPi * x / 30.0) * std::cos(2 * kPi * y / 25.0);
+            return 5.6 + 0.6 * dmath::sin(2 * kPi * x / 30.0) * dmath::cos(2 * kPi * y / 25.0);
         };
         const double xa = 13.4, xb = 96.6;
         for (double y = 13.4; y <= 86.6; y += stepover) {

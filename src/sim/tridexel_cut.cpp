@@ -123,6 +123,10 @@ std::int64_t cutZ(const Grid& grid, Strip& s, int u0, int u1, const CutterShape&
         const bool level = g.dz == 0.0 && pc.flatTop;
         const bool constant = level && pc.flatBottom;
         const float cLo = static_cast<float>(g.az + pc.h0), cHi = static_cast<float>(g.az + pc.h1);
+        // Runs of rays whose material lies below this: nothing to cut there. For the constant interval exactly its
+        // bottom; otherwise the lowest the sweep can reach, less a margin far above rounding.
+        const double skipBelow = constant ? static_cast<double>(cLo) : std::min(g.az, g.bz) + pc.h0 - 1e-6;
+        const int runs = (nv + kTopRun - 1) / kTopRun;
         const int j0 = std::max(u0, firstIdx(std::min(g.ay, g.by) - R, grid.cu));
         const int j1 = std::min(u1 - 1, lastIdx(std::max(g.ay, g.by) + R, grid.cu));
         for (int j = j0; j <= j1; ++j) {
@@ -135,7 +139,20 @@ std::int64_t cutZ(const Grid& grid, Strip& s, int u0, int u1, const CutterShape&
             Dexel* row = s.d.data() + static_cast<std::size_t>(j - u0) * nv;
             const std::size_t tileRow = static_cast<std::size_t>(j / kTileCells - tileRow0) * tilesX;
             const double wy = y - g.ay;
+            float* rowTop = s.top.data() + static_cast<std::size_t>(j - u0) * runs;
+            bool changed = false;
             for (int i = i0; i <= i1; ++i) {
+                if (i % kTopRun == 0 || i == i0) {
+                    if (changed) { // the run before: its top again
+                        const int b = (i - 1) / kTopRun;
+                        rowTop[b] = s.topOf(row + b * kTopRun, std::min(kTopRun, nv - b * kTopRun));
+                        changed = false;
+                    }
+                    if (static_cast<double>(rowTop[i / kTopRun]) <= skipBelow) {
+                        i = std::min(i1, (i / kTopRun + 1) * kTopRun - 1);
+                        continue;
+                    }
+                }
                 Dexel& x = row[i];
                 if (x.n == 0) {
                     continue;
@@ -181,7 +198,12 @@ std::int64_t cutZ(const Grid& grid, Strip& s, int u0, int u1, const CutterShape&
                 if (removed > 0) {
                     vol += static_cast<std::int64_t>(removed * kVolumeScale + 0.5);
                     tileBits[tileRow + static_cast<std::size_t>(i / kTileCells)] = 1;
+                    changed = true;
                 }
+            }
+            if (changed) {
+                const int b = i1 / kTopRun;
+                rowTop[b] = s.topOf(row + b * kTopRun, std::min(kTopRun, nv - b * kTopRun));
             }
         }
     }
