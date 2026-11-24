@@ -33,6 +33,7 @@
 #include "cam/setup_tree.h"
 #include "cam/sim_tool.h"
 #include "files.h"
+#include "palette_commands.h"
 #include "scene_controller.h"
 #include "selection_model.h"
 #include "session.h"
@@ -663,7 +664,12 @@ TEST_CASE("the clean twin: no marker; play, pause, speed, scrub, steps, the togg
 
     // ---- Scrub: the API and a press on the track ----
     s->scrubTo(0.5);
+    // While the seek runs on its worker: the place being sought is shown (the UI thread does not wait for it).
+    CHECK(s->seeking());
+    CHECK(s->targetSec() == Catch::Approx(total / 2).margin(total * 1e-9));
+    CHECK(w.find(QStringLiteral("simTarget"))->isVisible());
     w.simIdle();
+    CHECK_FALSE(s->seeking());
     CHECK(s->positionSec() == Catch::Approx(total / 2).margin(total * 1e-9));
     QQuickItem* scrub = w.shown(QStringLiteral("simScrub"));
     const QPointF at = scrub->mapToScene(QPointF(scrub->width() * 0.25, scrub->height() / 2));
@@ -717,6 +723,25 @@ TEST_CASE("the clean twin: no marker; play, pause, speed, scrub, steps, the togg
     INFO("frames applied " << s->framesApplied() << ", most triangles in a frame " << s->mostFrameTriangles()
                            << ", worst seek " << s->worstSeekMs() << " ms");
     CHECK(s->framesApplied() > 3);
+
+    // ---- The command palette: the simulation's commands in this workspace only; they run ----
+    ui::CommandCatalog* commands = w.singleton<ui::CommandCatalog>("Commands");
+    for (const char* cmd : {"cam.sim.run", "cam.sim.play", "cam.sim.stepForward", "cam.sim.nextEvent",
+                            "cam.sim.toggleStock", "cam.sim.toggleFixtures", "cam.sim.open"}) {
+        const auto c = commands->find(QString::fromLatin1(cmd));
+        INFO(cmd);
+        REQUIRE(c.has_value());
+        CHECK(commands->inPalette(*c));
+    }
+    REQUIRE(commands->trigger(QStringLiteral("cam.sim.toggleTool")));
+    CHECK_FALSE(s->showTool());
+    REQUIRE(commands->trigger(QStringLiteral("cam.sim.toggleTool")));
+    CHECK(s->showTool());
+    w.toWorkspace(ui::kCamWorkspace);
+    CHECK_FALSE(commands->inPalette(*commands->find(QStringLiteral("cam.sim.play"))));
+    CHECK(commands->inPalette(*commands->find(QStringLiteral("cam.sim.open")))); // shows the workspace from anywhere
+    REQUIRE(commands->trigger(QStringLiteral("cam.sim.open")));
+    REQUIRE(QTest::qWaitFor([&] { return w.host->context()->workspace() == ui::kSimWorkspace; }, 5000));
 
     // ---- The visibility toggles ----
     w.key(Qt::Key_End);
