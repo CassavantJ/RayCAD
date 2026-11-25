@@ -474,7 +474,7 @@ TEST_CASE("pocket2d finishing: roughing leaves the allowances, the floor is a de
     CHECK(p.stats.minZ == 7.0);
 }
 
-TEST_CASE("pocket2d entries: helix, ramp, pre-drilled holes; never a plunge with an end mill", "[cam][pocket2d]")
+TEST_CASE("pocket2d entries: helix, ramp, pre-drilled holes; no plunge where one of them fits", "[cam][pocket2d]")
 {
     SECTION("helix")
     {
@@ -690,17 +690,22 @@ TEST_CASE("pocket2d refusals name the cause", "[cam][pocket2d]")
     SECTION("no entry fits: refused by generation (and by check), naming why each kind did not fit")
     {
         // 7 x 7 with a 6 mm tool: the room is a 1 mm square; the smallest helix (1.8 mm) does not fit and the ring
-        // (4 mm round) is shorter than a ramp's run (the tool diameter).
-        const Case c = rectCase(10, 10, 17, 17, 9, R"({"stepdown":3})");
+        // (4 mm round) is shorter than a ramp's run (the tool diameter). The tool's entry says it does not cut at its
+        // centre, so it cannot plunge either (a centre-cutting one does: "pocket2d last resort" below).
+        Case c = rectCase(10, 10, 17, 17, 9, R"({"stepdown":3})");
+        c.tool.centreCutting = false;
         refused(c, ErrorCode::ToolpathFailed, "cannot be entered", false);
         auto g = c.generate();
         CHECK_THAT(g.error().message, ContainsSubstring("helix: a helix of 5.4 mm down to 1.8 mm does not fit"));
         CHECK_THAT(g.error().message, ContainsSubstring("ramp: the closed pass is 4 mm long"));
-        // Pre-drilled holes only, none near enough: refused the same way.
+        CHECK_THAT(g.error().message, ContainsSubstring("plunge: the tool does not cut at its centre"));
+        // Pre-drilled holes only, none near enough: refused the same way, even with a tool that cuts at its centre.
         Case drilled = rectCase(10, 10, 50, 30, 9,
                                 R"({"stepdown":3,"entry":"preDrill","preDrillPoints":"12 12",)"
                                 R"("preDrillDiameter":8})");
+        REQUIRE(drilled.tool.cutsAtCentre());
         refused(drilled, ErrorCode::ToolpathFailed, "no pre-drilled point", false);
+        CHECK_THAT(drilled.generate().error().message, !ContainsSubstring("plunge"));
     }
     SECTION("parameters")
     {
@@ -758,6 +763,64 @@ TEST_CASE("pocket2d generation is deterministic and can be cancelled", "[cam][po
     auto cancelled = ops::makePocket2dOperationType()->generate(c.input(), ctx);
     REQUIRE_FALSE(cancelled);
     CHECK(cancelled.error().code == ErrorCode::Cancelled);
+}
+
+TEST_CASE("pocket2d last resort: a pocket no helix or ramp fits is plunged into by a tool that cuts at its centre",
+          "[cam][pocket2d]")
+{
+    // 7 x 7 with a 6 mm tool (as "no entry fits" above), 6 mm deep in steps of 3: depths Z12 and Z9. The tool's entry
+    // says nothing, so it cuts at its centre by its type's default (libraries.h); stated so, the same.
+    for (const std::optional<bool> stated : {std::optional<bool>{}, std::optional<bool>{true}}) {
+        for (const char* params : {R"({"stepdown":3})", R"({"stepdown":3,"entry":"ramp"})"}) {
+            Case c = rectCase(10, 10, 17, 17, 9, params);
+            c.tool.centreCutting = stated;
+            INFO(params << (stated ? " stated" : " unstated"));
+            REQUIRE(c.tool.cutsAtCentre());
+            const Toolpath p = c.path(); // the checker (a plunge with a centre-cutting tool) and the floor's coverage
+            std::vector<const Move*> plunges;
+            for (std::size_t i = 0; i < p.moves.size(); ++i) {
+                const Move& m = p.moves[i];
+                if (m.role != MoveRole::Plunge) {
+                    continue;
+                }
+                plunges.push_back(&m);
+                // Straight down at the plunge feed, inside the room (the 1 mm square in the middle, so the whole tool
+                // is inside the pocket), each depth from 0.5 mm above the one before: its own step.
+                REQUIRE(i > 0);
+                const Move& before = p.moves[i - 1];
+                CHECK(m.kind == MoveKind::Linear);
+                CHECK(before.x == m.x);
+                CHECK(before.y == m.y);
+                CHECK(m.feedMicronPerMin == 450'000);
+                CHECK(std::llabs(m.x - toNm(13.5)) <= toNm(0.5));
+                CHECK(std::llabs(m.y - toNm(13.5)) <= toNm(0.5));
+                CHECK(before.z - m.z == toNm(3.5));
+            }
+            REQUIRE(plunges.size() == 2);
+            CHECK(plunges[0]->z == toNm(12));
+            CHECK(plunges[1]->z == toNm(9));
+            CHECK(std::count_if(p.moves.begin(), p.moves.end(), helical) == 0);
+            CHECK(countMoves(p, MoveRole::Ramp, MoveKind::Linear) == 0);
+            REQUIRE(p.warnings.size() == 1);
+            CHECK_THAT(p.warnings[0], ContainsSubstring("Plunges straight down at 2 places ("));
+            CHECK_THAT(p.warnings[0], ContainsSubstring(" to Z12 and Z9): no helix or ramp fits there. Check that the "
+                                                        "tool cuts at its centre and can plunge 3.5 mm at a time."));
+            // The panel's check sees it too; validate does not link, so it passes as before.
+            auto k = c.check();
+            REQUIRE(k);
+            CHECK(*k == p.warnings);
+            CHECK(c.validate());
+        }
+    }
+    // A pocket a helix fits: the same bytes whatever the tool says of its centre (the plunge is only a last resort).
+    Case big = rectCase(10, 10, 50, 30, 9, R"({"stepdown":3})");
+    const auto unstated = big.generate();
+    big.tool.centreCutting = false;
+    const auto no = big.generate();
+    REQUIRE(unstated);
+    REQUIRE(no);
+    CHECK(unstated->serialize() == no->serialize());
+    CHECK(unstated->warnings.empty());
 }
 
 TEST_CASE("pocket2d rings end where the room does: a small rounded room shrunk past its middle", "[cam][pocket2d]")

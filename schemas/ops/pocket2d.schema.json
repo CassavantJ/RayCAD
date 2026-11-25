@@ -90,7 +90,7 @@
     },
     "entry": {
       "title": "Entry",
-      "description": "How the tool gets down into the material. End mills do not cut at their centre, so there is never a straight plunge.",
+      "description": "How the tool gets down into the material. Where none of these fits and the tool cuts at its centre (its library entry), it plunges straight down there instead, with a warning; a tool that does not cut at its centre is refused there.",
       "enum": ["helix", "ramp", "preDrill"],
       "x-enumTitles": ["Helix", "Ramp", "Pre-drilled holes"],
       "x-enumDescriptions": ["A helix first, a ramp along the ring where it does not fit, then a pre-drilled hole",

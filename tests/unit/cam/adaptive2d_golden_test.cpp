@@ -155,6 +155,26 @@ TEST_CASE("golden: an open step entered from outside the stock, at two depths", 
     CHECK(countRole(p, MoveRole::Plunge) == 0);
 }
 
+TEST_CASE("golden: a round pocket no helix or ramp fits, plunged into at two depths (after M3)",
+          "[cam][adaptive2d][golden]")
+{
+    const AdaptiveCase c = plungeGoldenCase();
+    REQUIRE(c.tool.cutsAtCentre());
+    const Toolpath p = c.path();
+    matchesGolden("adaptive2d_plunge", p);
+    auto plan = c.plan();
+    REQUIRE(plan);
+    REQUIRE(plan->depths.size() == 2);
+    CHECK(plan->engineCalls == 1); // the second depth reuses the first's plan
+    for (const ops::Adaptive2dDepth& d : plan->depths) {
+        CHECK(d.entries == std::vector<adaptive2d::EntryMode>{adaptive2d::EntryMode::Plunge});
+    }
+    CHECK(countRole(p, MoveRole::Plunge) == 2);
+    CHECK(countRole(p, MoveRole::Ramp) == 0);
+    REQUIRE(p.warnings.size() == 2);
+    CHECK(p.warnings[1].find("Plunges straight down at 2 places") == 0);
+}
+
 TEST_CASE("the same adaptive operation gives the same bytes every time", "[cam][adaptive2d][golden]")
 {
     const auto first = islandsGoldenCase().generate();

@@ -121,6 +121,13 @@ inline kernel::Shape slotBlock()
     return s;
 }
 
+// A short slot (after M3, the slot's last-resort plunge): a block 40 x 30 x 12 (Z 0 to 12) with a straight slot 8 wide,
+// centre line (15, 15) -> (19, 15), floor Z 6. Its 4 mm centre line is shorter than a ramp's run (the tool diameter).
+inline kernel::Shape shortSlotBlock()
+{
+    return cut(box(Vec3{0, 0, 0}, Vec3{40, 30, 12}), prism({stadium({15, 15}, {19, 15}, 8)}, 6, 13));
+}
+
 // The chamfer block: 80 x 50 x 20 (Z 0 to 20) with
 //   a pocket (10, 10) .. (40, 40) with 4 mm corner radii, floor Z 12
 //   a 10 mm through hole at (60, 15)

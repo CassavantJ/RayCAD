@@ -59,7 +59,7 @@
     },
     "entry": {
       "title": "Entry",
-      "description": "How the tool gets down into the material of each area at each depth. End mills do not cut at their centre, so there is never a straight plunge. An area that opens to the outside of the stock, or that an earlier operation already cleared in part, is entered from there.",
+      "description": "How the tool gets down into the material of each area at each depth. Where none of these fits and the tool cuts at its centre (its library entry), it plunges straight down there instead and cuts that small area at full width, with a warning; a tool that does not cut at its centre is refused there. An area that opens to the outside of the stock, or that an earlier operation already cleared in part, is entered from there.",
       "enum": ["helix", "ramp", "preDrill"],
       "x-enumTitles": ["Helix", "Ramp", "Pre-drilled holes"],
       "x-enumDescriptions": ["A helix first, a ramp along the area's longest straight run where no helix fits, then a pre-drilled hole",

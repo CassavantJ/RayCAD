@@ -297,11 +297,108 @@ TEST_CASE("adaptive2d: the entry order of the setting, and the fall-back to a sm
     }
     SECTION("the smallest helix made larger than the room: refused, naming what each entry needs")
     {
-        const AdaptiveCase c = roundPocketCase(9, R"({"stepdown":4,"stepover":20,"helixMinDiameter":60})");
+        // With a tool whose entry says it does not cut at its centre; one that does is plunged in (after M3, below).
+        AdaptiveCase c = roundPocketCase(9, R"({"stepdown":4,"stepover":20,"helixMinDiameter":60})");
+        c.tool.centreCutting = false;
         const Error e = refusal(c, false);
         INFO(e.message);
         CHECK(contains(e.message, "a helix needs the area to be at least"));
         CHECK(contains(e.message, "a ramp needs a straight run of at least 6 mm"));
+        CHECK_FALSE(contains(e.message, "plunge"));
+        c.tool.centreCutting.reset();
+        auto plan = c.plan();
+        REQUIRE(plan);
+        REQUIRE(plan->depths.size() == 1);
+        CHECK(plan->depths[0].entries == std::vector<ad::EntryMode>{ad::EntryMode::Plunge});
+        const Toolpath p = c.path(); // the checker, with the floor's coverage
+        CHECK(countRole(p, MoveRole::Plunge) == 1);
+        CHECK(countRole(p, MoveRole::Ramp) == 0);
+    }
+}
+
+TEST_CASE("adaptive2d last resort: an area no helix or ramp fits is plunged into by a tool that cuts at its centre",
+          "[cam][adaptive2d]")
+{
+    // plungeGoldenCase: a round pocket 7.3 mm across, a 6 mm end mill, depths Z12 and Z9.
+    AdaptiveCase c = plungeGoldenCase();
+    SECTION("not centre cutting: refused for want of an entry, as before")
+    {
+        c.tool.centreCutting = false;
+        CHECK(c.validate());
+        const Error e = refusal(c, false);
+        CHECK(e.code == ErrorCode::ToolpathFailed);
+        INFO(e.message);
+        CHECK(e.message.rfind("At Z12 in the area with its floor at Z9", 0) == 0);
+        CHECK(contains(e.message, "no entry into the area around X19.999 Y14.999: a helix needs"));
+        CHECK_FALSE(contains(e.message, "plunge"));
+    }
+    SECTION("pre-drilled holes only: never a plunge, whatever the tool")
+    {
+        // A hole of 7 mm at the middle: at least the tool, under the tool and the smallest helix (7.8 mm).
+        const AdaptiveCase drilled =
+            withParams(c, R"({"stepdown":3,"stepover":20,"entry":"preDrill","preDrillPoints":"20 15",)"
+                          R"("preDrillDiameter":7})");
+        REQUIRE(drilled.tool.cutsAtCentre());
+        const Error e = refusal(drilled, false);
+        INFO(e.message);
+        CHECK(contains(e.message, "a pre-drilled hole needs to be at least 7.8"));
+        CHECK_FALSE(contains(e.message, "plunge"));
+    }
+    for (const std::optional<bool> stated : {std::optional<bool>{}, std::optional<bool>{true}}) {
+        for (const char* entry : {"helix", "ramp"}) {
+            DYNAMIC_SECTION("centre cutting (" << (stated ? "stated" : "the type's default") << "), entry " << entry)
+            {
+                c.tool.centreCutting = stated;
+                c.op.paramsJson = std::string(R"({"stepdown":3,"stepover":20,"entry":")") + entry + "\"}";
+                auto plan = c.plan();
+                REQUIRE(plan);
+                REQUIRE(plan->depths.size() == 2);
+                for (const ops::Adaptive2dDepth& d : plan->depths) {
+                    CHECK(d.entries == std::vector<ad::EntryMode>{ad::EntryMode::Plunge});
+                }
+                const Toolpath p = c.path(); // the checker: a centre-cutting plunge, the floor's coverage
+                std::vector<Nm> depths;
+                for (std::size_t i = 0; i < p.moves.size(); ++i) {
+                    const Move& m = p.moves[i];
+                    if (m.role != MoveRole::Plunge) {
+                        continue;
+                    }
+                    REQUIRE(i > 0);
+                    const Move& before = p.moves[i - 1];
+                    CHECK(m.kind == MoveKind::Linear);
+                    CHECK(before.x == m.x);
+                    CHECK(before.y == m.y);
+                    // At the middle of the area (on the engine's grid), at the plunge feed, each depth from 0.5 mm
+                    // above the one before.
+                    CHECK(std::llabs(m.x - 20'000'000) <= 5'000);
+                    CHECK(std::llabs(m.y - 15'000'000) <= 5'000);
+                    CHECK(m.feedMicronPerMin == 600'000);
+                    CHECK(before.z - m.z == 3'500'000);
+                    depths.push_back(m.z);
+                }
+                CHECK(depths == std::vector<Nm>{12'000'000, 9'000'000});
+                CHECK(countRole(p, MoveRole::Ramp) == 0);
+                // After the plunge, at depth: full-width cuts, all at the reduced feed (50 % of 1200 mm/min).
+                for (const Move& m : p.moves) {
+                    if (m.role == MoveRole::Cut) {
+                        CHECK(m.feedMicronPerMin == 600'000);
+                    }
+                }
+                CHECK(p.stats.maxEngagementDeg == 180.0);
+                // The warnings: the fall-back at both depths, then the plunges and what follows them.
+                REQUIRE(p.warnings.size() == 2);
+                INFO(p.warnings[0] << "\n" << p.warnings[1]);
+                CHECK(p.warnings[0].rfind("At Z12 and Z9: the area around X19.999 Y14.999 is entered by a plunge: a ",
+                                          0) == 0);
+                CHECK(p.warnings[0].ends_with(", a pre-drilled hole of 7.8 mm or a helix of 1.8 mm does not fit"));
+                CHECK(contains(p.warnings[0], "a helix of 4.5 mm"));
+                CHECK(contains(p.warnings[0], "a ramp of 6 mm"));
+                CHECK(p.warnings[1] == "Plunges straight down at 2 places (X20.002 Y15 to Z12 and Z9): no helix or "
+                                       "ramp fits there. Check that the tool cuts at its centre and can plunge 3.5 mm "
+                                       "at a time. There the area is cut at full width (a slot) along its walls, at "
+                                       "the reduced feed, instead of at the set load.");
+            }
+        }
     }
 }
 

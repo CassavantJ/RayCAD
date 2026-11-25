@@ -127,6 +127,19 @@ TEST_CASE("golden: a slot open at one end, run out past it", "[cam][slot][golden
     CHECK(lowest == 15'200'000); // the floor, plus the floor stock
 }
 
+TEST_CASE("golden: a slot too short for a ramp, plunged into at each depth (after M3)", "[cam][slot][golden]")
+{
+    // shortSlotBlock: a centre line of 4 mm, shorter than the ramp's run, with an 8 mm end mill that cuts at its centre
+    // (its type's default): a straight plunge at each of Z 10, 8 and 6 (plunge_entry.h), with a warning.
+    static const kernel::Shape part = shortSlotBlock();
+    const Toolpath p = slotCase(part, floorAt(part, 17, 15, 6), 8, R"({"stepDown":2.5})").path(kSlotClaims(3));
+    matchesGolden("slot_plunge", p);
+    CHECK(movesOf(p, MoveRole::Plunge).size() == 3);
+    CHECK(movesOf(p, MoveRole::Ramp).empty());
+    REQUIRE(p.warnings.size() == 1);
+    CHECK_THAT(p.warnings[0], ContainsSubstring("Plunges straight down at 3 places"));
+}
+
 TEST_CASE("golden: the keyway of a corpus shaft", "[cam][slot][golden][corpus]")
 {
     // keyway_tslot_1: a 25 mm shaft along X, 80 long, with a blind keyway 8 wide and 32 long at X 40, its floor at

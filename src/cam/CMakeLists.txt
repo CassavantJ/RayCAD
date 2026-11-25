@@ -79,6 +79,9 @@ add_library(ray_cam STATIC
     # the depths of the area above a floor face and the area at each, shared by pocket2d and adaptive2d
     ops/area_depths.cpp
     ops/area_depths.h
+    # after M3: the last-resort straight plunge of pocket2d, slot and adaptive2d with a centre-cutting tool
+    ops/plunge_entry.cpp
+    ops/plunge_entry.h
 )
 ray_module(ray_cam DETERMINISTIC)
 target_link_libraries(ray_cam PRIVATE ray_core ray_kernel ray_naming ray_lib)

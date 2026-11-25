@@ -40,6 +40,8 @@
 //             units clear of its edge. The first pass starts as after a helix, against the hole's side: the centre
 //             moved by (hole radius - tool radius) less a grid unit, the first of -y, +x, +y, -x that stays in the
 //             tool-centre area.
+//   Plunge    (added after M3; the operation asks for it only with a tool that cuts at its centre) always last,
+//             wherever the order names it, after a smaller helix too: PLUNGE below.
 // The engine runs first with the first kind (a full helix; with Ramp or PreDrill first, no helix, to learn the
 // regions), then once more for each further kind any region still needs, only on those regions (Input::regionsAt),
 // with the ramps' and holes' cleared areas in Input::cleared and their pass starts as Input::seeds. An attempt fails
@@ -55,6 +57,21 @@
 //     plans tool-down links to stay a stepover clear of material, its smoothing can bring them closer; none did on the
 //     S5 pockets, the sweep checker measures 0 mm2 removed by tool-down links there);
 //   - REDUCED FEED (below).
+//
+// PLUNGE (added after M3). A region every other kind failed to enter (its tool-centre area narrower than the smallest
+// helix and with no straight run for a ramp, no hole in it) is not run through the engine: the engine starts only
+// from a helix of at least an eighth of the tool or from cleared area, and from a hole hardly wider than the tool it
+// finds no first cut. Its paths are made here: entry Plunge at the point of the tool-centre area farthest from its
+// edges (on the grid), then at depth a straight cut from it to the nearest point of each loop of the area the tool
+// centre may reach (Input::regions shrunk by the tool radius: the walls themselves, so no light pass follows), round
+// that loop (counter-clockwise outside, clockwise round an island: climb with M3) and, when another loop follows, back
+// to the plunge point; nearest loop first. Each straight cut must stay inside that area (else no plunge fits). Every
+// segment is a full-width cut: Role::Pass, Motion::Cut, estimate 180 degrees, reduced feed whole. The loops leave
+// nothing uncut when no point of the area lies farther than the tool radius from them: so it is for a tool-centre area
+// with no ramp's run in it (none as long as the tool) and checked (the deepest point's distance from the edges plus
+// the finishing allowance under the tool radius), else no plunge fits (a long minimum ramp run, or a smallest helix
+// above the tool's diameter, can leave a wider region). The area they sweep is added to Output::cleared; the region's
+// warning is EntryFallback ("is entered by a plunge: ... does not fit").
 //
 // REDUCED FEED. reducedFeed[i] = 1 on a segment of a Cut path where the engine's engagement estimate
 // (Path::engagementDeg: the cut area per unit of travel of that segment against the engine's cleared area, as the
@@ -77,8 +94,8 @@
 //
 // RESULTS AND REFUSALS. planAdaptive returns runEngine's errors, and:
 //   InvalidArgument  Input::seeds, regionsAt or helixEntry set (they are planAdaptive's own); an entry kind other
-//                    than Helix, Ramp and PreDrill, or none; a pre-drilled hole of diameter <= 0 or off the coordinate
-//                    range; minRampRun or maxRampRun negative;
+//                    than Helix, Ramp, PreDrill and (after M3) Plunge, or none; a pre-drilled hole of diameter <= 0 or
+//                    off the coordinate range; minRampRun or maxRampRun negative;
 //   ToolpathFailed   a region that no kind in the order can enter (unless Input::allowUnentered: then a region with
 //                    entry None and a NotEntered warning with the same words): the message names what each kind
 //                    needs, the helix as the narrowest width (tool diameter + smallest helix + 2 x finishing
@@ -107,7 +124,8 @@ struct PreDrillHole {
 };
 
 struct EntryOptions {
-    // Tried in this order for each region (HOW); Plunge is not an adaptive entry. link.h's default order.
+    // Tried in this order for each region (HOW); Plunge (after M3) is always tried last (PLUNGE). link.h's default
+    // order.
     std::vector<EntryKind> order{EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill};
     std::vector<PreDrillHole> preDrills;
     Coord minRampRun = 0; // 0: the tool diameter

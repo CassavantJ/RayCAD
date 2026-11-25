@@ -287,15 +287,74 @@ TEST_CASE("slot refusals, each naming its cause", "[cam][slot]")
     }
     SECTION("a slot too short for the ramp")
     {
-        // The straight slot's centre line is 40 mm long; a shortest run of 50 mm cannot fit.
-        const Case c = slotCase({s1()}, endMill(8), R"({"minRampRun":50})");
+        // The straight slot's centre line is 40 mm long; a shortest run of 50 mm cannot fit. The tool's entry says it
+        // does not cut at its centre, so it cannot plunge either ("slot last resort" below: one that does, plunges).
+        lib::Tool t = endMill(8);
+        t.centreCutting = false;
+        const Case c = slotCase({s1()}, t, R"({"minRampRun":50})");
         REQUIRE(c.validate()); // linking decides the entry: generate refuses
         const auto gen = c.generate();
         REQUIRE_FALSE(gen);
         CHECK(gen.error().code == ErrorCode::ToolpathFailed);
         CHECK_THAT(gen.error().message,
                    ContainsSubstring("ramp: the cut offers 40 mm for the ramp, which needs a run of at least 50 mm"));
+        CHECK_THAT(gen.error().message, ContainsSubstring("plunge: the tool does not cut at its centre"));
     }
+}
+
+TEST_CASE("slot last resort: a slot too short for a ramp is plunged into by a tool that cuts at its centre",
+          "[cam][slot]")
+{
+    // shortSlotBlock: the 8 mm slot's centre line is 4 mm long, 6 mm deep in steps of 2.5: depths Z10, Z8 and Z6.
+    static const kernel::Shape part = shortSlotBlock();
+    Case c;
+    c.op = millOp("slot", R"({"stepDown":2.5})");
+    c.geom = geometryOn(part, {floorAt(part, 17, 15, 6)});
+    // Not centre cutting: refused for want of a ramp, as before.
+    c.tool = endMill(8);
+    c.tool.centreCutting = false;
+    REQUIRE(c.validate());
+    const auto refused = c.generate();
+    REQUIRE_FALSE(refused);
+    CHECK(refused.error().code == ErrorCode::ToolpathFailed);
+    CHECK_THAT(refused.error().message,
+               ContainsSubstring("ramp: the cut offers 4 mm for the ramp, which needs a run of at least 8 mm"));
+    // Centre cutting (its type's default, or stated): a plunge at the pass start, a closed end's centre, each depth.
+    for (const std::optional<bool> stated : {std::optional<bool>{}, std::optional<bool>{true}}) {
+        c.tool.centreCutting = stated;
+        const Toolpath p = c.path([](invariants::Claims& k) { k.maxRampAngleDeg = 3; });
+        std::vector<Nm> depths;
+        for (std::size_t i = 0; i < p.moves.size(); ++i) {
+            const Move& m = p.moves[i];
+            if (m.role != MoveRole::Plunge) {
+                continue;
+            }
+            REQUIRE(i > 0);
+            const Move& before = p.moves[i - 1];
+            CHECK(m.kind == MoveKind::Linear);
+            CHECK(before.x == m.x);
+            CHECK(before.y == m.y);
+            CHECK((m.x == 15'000'000 || m.x == 19'000'000)); // an end's centre: the tool is the slot's width
+            CHECK(m.y == 15'000'000);
+            CHECK(m.feedMicronPerMin == 300'000); // the plunge feed
+            CHECK(before.z - m.z == 2'500'000);   // its own step, from 0.5 mm above the depth before
+            depths.push_back(m.z);
+        }
+        CHECK(depths == std::vector<Nm>{10'000'000, 8'000'000, 6'000'000});
+        CHECK(movesOf(p, MoveRole::Ramp).empty());
+        REQUIRE(p.warnings.size() == 1);
+        CHECK_THAT(p.warnings[0], ContainsSubstring("Plunges straight down at 3 places ("));
+        CHECK_THAT(p.warnings[0], ContainsSubstring("no helix or ramp fits there. Check that the tool cuts at its "
+                                                    "centre and can plunge 2.5 mm at a time."));
+    }
+    // A slot a ramp fits: the same bytes whatever the tool says of its centre.
+    Case ramped = slotCase({s1()}, endMill(8), R"({"stepDown":2.5,"rampAngle":4})");
+    const auto unstated = ramped.generate();
+    ramped.tool.centreCutting = false;
+    const auto no = ramped.generate();
+    REQUIRE(unstated);
+    REQUIRE(no);
+    CHECK(unstated->serialize() == no->serialize());
 }
 
 TEST_CASE("slot: an overhang above the floor is refused (a T-slot's foot)", "[cam][slot]")

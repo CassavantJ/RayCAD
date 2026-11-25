@@ -601,13 +601,14 @@ public:
         const double longer = std::max(s.max.x - s.min.x, s.max.y - s.min.y);
         const double hs = o.stockCell > 0 ? o.stockCell : std::max(0.1, longer / 1500);
         stock_.init(s, hs, rCut_ + 4 * hs + 1, c_.initialStock, &pm, c_.allowedCuts);
-        // The claim, else what the tool's library entry states (after M3), else the checker's default by type (which
-        // stays more cautious than lib::centreCuttingByDefault: end mills are taken as not cutting at their centre).
-        const bool stated = in.tool.centreCutting.has_value() && lib::centreCuttingSettable(in.tool.type);
-        centreCutting_ = c_.centreCutting ? *c_.centreCutting
-                         : stated ? in.tool.cutsAtCentre()
-                                  : centreCuttingByDefault(in.tool.type) &&
-                                        !(in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0);
+        // The claim, else the tool's own answer, Tool::cutsAtCentre(): what its library entry states, else the type's
+        // default (lib::centreCuttingByDefault). Changed after M3, when pocket2d, slot and adaptive2d learnt to plunge
+        // as a last resort with a tool that cuts at its centre by that same rule (src/cam/ops/plunge_entry.h): the
+        // checker took every end mill whose entry says nothing as not cutting at its centre, more cautious than the
+        // library, and would have flagged those plunges. It differed from the library only there (flat and bull nose
+        // end mills); a tool stated not to cut at its centre, and every type that does not by default, is still held
+        // to no plunge into stock.
+        centreCutting_ = c_.centreCutting ? *c_.centreCutting : in.tool.cutsAtCentre();
         // T-055: a chamfer mill with a flat at its tip cuts everywhere on its cone beyond that flat, so only the flat
         // is its dead zone; other tools that do not cut at their centre have the fraction of the radius.
         deadRadius_ = in.tool.type == lib::ToolType::ChamferMill && in.tool.tipDiameter > 0 && !c_.centreCutting
@@ -1165,12 +1166,6 @@ double Region::boundaryDistance(double x, double y, const Box3& stock) const
         }
     }
     return d;
-}
-
-bool centreCuttingByDefault(lib::ToolType t)
-{
-    using T = lib::ToolType;
-    return t == T::Drill || t == T::SpotDrill || t == T::BallEndMill || t == T::ChamferMill || t == T::EngraveCutter;
 }
 
 Claims claimsFor(const Operation& op, const ResolvedGeometry& geom)

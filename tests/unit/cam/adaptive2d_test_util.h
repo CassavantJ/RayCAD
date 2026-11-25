@@ -168,6 +168,21 @@ inline AdaptiveCase openGoldenCase()
     return c;
 }
 
+// After M3 (the last-resort plunge): a block 40 x 30 x 15 with a round pocket 7.3 mm across at (20, 15) down to Z 9,
+// stepdown 3 (Z 12 and Z 9) at 20 % load with a 6 mm end mill whose entry says nothing of its centre (its type's
+// default: it cuts there). The area the tool centre may go is about 1 mm across: no helix of 1.8 mm, no ramp of 6 mm.
+inline AdaptiveCase plungeGoldenCase()
+{
+    static const kernel::Shape part =
+        cut(box(Vec3{0, 0, 0}, Vec3{40, 30, 15}), prism({circleLoop(20, 15, 3.65)}, 9, 16));
+    AdaptiveCase c;
+    c.op = adaptiveOp(R"({"stepdown":3,"stepover":20})");
+    c.tool = endMill(6);
+    c.geom = geometryOn(part, {upFace(part, 9)});
+    c.clears = {clearClaim({circlePoly(20, 15, 3.65)}, 9)};
+    return c;
+}
+
 // Feed moves at depth (XY moves at one Z: cuts and links in the passes) and their XY length, mm.
 struct MoveDensity {
     std::size_t moves = 0;

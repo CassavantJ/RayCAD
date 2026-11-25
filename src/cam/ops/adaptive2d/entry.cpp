@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <span>
@@ -69,7 +70,7 @@ std::string whereText(const Regions& r)
 }
 
 // ---------- the order of attempts ----------
-enum class Attempt : std::uint8_t { HelixFull, HelixAny, Ramp, PreDrill };
+enum class Attempt : std::uint8_t { HelixFull, HelixAny, Ramp, PreDrill, Plunge };
 
 bool isHelix(Attempt a)
 {
@@ -77,12 +78,13 @@ bool isHelix(Attempt a)
 }
 
 // The order's kinds as attempts: a helix followed by other kinds is tried at full size first and at any size (down
-// to the minimum) after the rest, when a smaller helix exists.
+// to the minimum) after the rest, when a smaller helix exists. A plunge (after M3) comes after everything else,
+// wherever the order names it: it is the last resort.
 std::vector<Attempt> attemptsFor(const std::vector<EntryKind>& order, bool smallerHelix)
 {
     std::vector<Attempt> out;
     std::optional<std::size_t> helixAt;
-    bool ramp = false, drill = false;
+    bool ramp = false, drill = false, plunge = false;
     for (EntryKind k : order) {
         if (k == EntryKind::Helix && !helixAt) {
             helixAt = out.size();
@@ -93,13 +95,18 @@ std::vector<Attempt> attemptsFor(const std::vector<EntryKind>& order, bool small
         } else if (k == EntryKind::PreDrill && !drill) {
             drill = true;
             out.push_back(Attempt::PreDrill);
+        } else if (k == EntryKind::Plunge) {
+            plunge = true;
         }
     }
-    if (helixAt && *helixAt + 1 < out.size()) {
+    if (helixAt && (*helixAt + 1 < out.size() || (plunge && smallerHelix))) {
         out[*helixAt] = Attempt::HelixFull;
         if (smallerHelix) {
             out.push_back(Attempt::HelixAny);
         }
+    }
+    if (plunge) {
+        out.push_back(Attempt::Plunge);
     }
     return out;
 }
@@ -289,6 +296,212 @@ std::optional<RampPlan> planRamp(const Regions& area, Coord minRun, Coord maxRun
     return RampPlan{a, b};
 }
 
+// ---------- the plunge (after M3; entry.h, PLUNGE) ----------
+// The point of an area farthest from its edges, to within a micrometre (inward offsets, halving the step), on the
+// engine's grid; nullopt when there is none inside it. `depth`: how far it lies from the edges (rounded down).
+Result<std::optional<Pt>> deepestPoint(const Regions& area, std::int64_t grid, Coord& depth, JobContext& ctx)
+{
+    depth = 0;
+    geom2d::Bounds b;
+    for (const geom2d::Region& r : area) {
+        const geom2d::Bounds rb = geom2d::bounds(r);
+        if (rb.empty) {
+            continue;
+        }
+        if (b.empty) {
+            b = rb;
+            continue;
+        }
+        b.min = Pt{std::min(b.min.x, rb.min.x), std::min(b.min.y, rb.min.y)};
+        b.max = Pt{std::max(b.max.x, rb.max.x), std::max(b.max.y, rb.max.y)};
+    }
+    if (b.empty) {
+        return std::optional<Pt>{};
+    }
+    Coord lo = 0, hi = std::min(b.max.x - b.min.x, b.max.y - b.min.y) / 2 + 1;
+    Regions deepest = area;
+    while (hi - lo > 1'000) {
+        if (auto s = ctx.cancel.check(); !s) {
+            return tl::unexpected(s.error());
+        }
+        const Coord mid = lo + (hi - lo) / 2;
+        auto in = geom2d::offset(area, -mid, ctx);
+        if (!in) {
+            return tl::unexpected(in.error());
+        }
+        if (in->empty()) {
+            hi = mid;
+        } else {
+            lo = mid;
+            deepest = std::move(*in);
+        }
+    }
+    depth = lo;
+    for (const geom2d::Region& r : deepest) {
+        if (const std::optional<Pt> p = geom2d::interiorPoint(r)) {
+            const Pt q = onGrid(*p, grid);
+            if (geom2d::locate(q, area) == geom2d::Where::Inside) {
+                return std::optional<Pt>{q};
+            }
+        }
+    }
+    return std::optional<Pt>{};
+}
+
+// The point of a closed polyline nearest to p, and the index of the segment it lies on (points[i] -> points[i + 1]).
+std::pair<Pt, std::size_t> nearestOnLoop(const std::vector<Pt>& loop, Pt p)
+{
+    double best = std::numeric_limits<double>::infinity();
+    std::pair<Pt, std::size_t> out{loop.front(), 0};
+    for (std::size_t i = 0; i + 1 < loop.size(); i++) {
+        const D2 a{double(loop[i].x), double(loop[i].y)}, b{double(loop[i + 1].x), double(loop[i + 1].y)};
+        const double dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+        double t = len2 > 0 ? ((double(p.x) - a.x) * dx + (double(p.y) - a.y) * dy) / len2 : 0;
+        t = std::clamp(t, 0.0, 1.0);
+        const Pt q{geom2d::roundNm(a.x + t * dx), geom2d::roundNm(a.y + t * dy)};
+        const double ex = double(q.x - p.x), ey = double(q.y - p.y);
+        const double d = ex * ex + ey * ey;
+        if (d < best) {
+            best = d;
+            out = {q, i};
+        }
+    }
+    return out;
+}
+
+// Whether the segment a-b, a inside the region and b on its loop `onLoop` (on that loop's segment `onSeg`), crosses no
+// loop of the region elsewhere: the tool centre stays in it. The segments next to b's are not tested (b is rounded to
+// the nanometre, so it may lie a hair outside the loop).
+bool segmentInside(Pt a, Pt b, const geom2d::Region& region, const std::vector<std::vector<Pt>>& loops,
+                   std::size_t onLoop, std::size_t onSeg)
+{
+    if (geom2d::locate(a, region) != geom2d::Where::Inside) {
+        return false;
+    }
+    const auto cross = [](D2 o, D2 u, D2 v) {
+        return (u.x - o.x) * (v.y - o.y) - (u.y - o.y) * (v.x - o.x);
+    };
+    const D2 p{double(a.x), double(a.y)}, q{double(b.x), double(b.y)};
+    for (std::size_t k = 0; k < loops.size(); k++) {
+        const std::vector<Pt>& loop = loops[k];
+        const std::size_t n = loop.size() - 1; // segments (the loop is closed: its last point is its first)
+        for (std::size_t i = 0; i < n; i++) {
+            if (k == onLoop && (i == onSeg || i == (onSeg + 1) % n || (i + 1) % n == onSeg)) {
+                continue;
+            }
+            const D2 u{double(loop[i].x), double(loop[i].y)}, v{double(loop[i + 1].x), double(loop[i + 1].y)};
+            const double d1 = cross(p, q, u), d2 = cross(p, q, v), d3 = cross(u, v, p), d4 = cross(u, v, q);
+            if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// A region no helix, ramp or pre-drilled hole enters, entered by a straight plunge (entry.h, PLUNGE): the plunge at the
+// deepest point of its tool-centre area, then at depth a straight cut to the nearest point of each loop of the area
+// the tool centre may reach (the engine's area shrunk by the tool radius: its walls less the stock to leave, so no
+// light pass is needed after it), once round the loop and back to the plunge point when another loop follows. Every
+// segment is a full-width cut (estimate 180 degrees). nullopt when there is nothing to plunge into or a straight cut
+// would leave that area.
+Result<std::optional<Region>> plungeRegion(const Region& unentered, const Input& in, Coord radius, Coord allowance,
+                                           std::int64_t grid, JobContext& ctx)
+{
+    Coord depth = 0;
+    auto at = deepestPoint(unentered.toolBounds, grid, depth, ctx);
+    if (!at) {
+        return tl::unexpected(at.error());
+    }
+    // The loops cut everything only when no point of the area lies farther than the tool radius from them (a region
+    // wider than that has a ramp's run in it unless a long run is asked for, or a smallest helix over the tool's size).
+    if (!*at || depth + allowance + Coord(kInputSag) >= radius) {
+        return std::optional<Region>{};
+    }
+    const Pt p = **at;
+    auto reach = geom2d::offset(in.regions, -radius, ctx);
+    if (!reach) {
+        return tl::unexpected(reach.error());
+    }
+    const geom2d::Region* area = nullptr;
+    for (const geom2d::Region& r : *reach) {
+        if (geom2d::locate(p, r) == geom2d::Where::Inside) {
+            area = &r;
+            break;
+        }
+    }
+    if (area == nullptr) {
+        return std::optional<Region>{};
+    }
+    // The loops as closed polylines (outer counter-clockwise, holes clockwise: the area on the left, climb with M3).
+    std::vector<std::vector<Pt>> loops;
+    for (const geom2d::Path* loop : {&area->outer}) {
+        loops.push_back(geom2d::polygonize(*loop, kInputSag));
+    }
+    for (const geom2d::Path& h : area->holes) {
+        loops.push_back(geom2d::polygonize(h, kInputSag));
+    }
+    for (std::vector<Pt>& l : loops) {
+        if (l.size() >= 2 && l.front() != l.back()) {
+            l.push_back(l.front());
+        }
+    }
+    // The loop nearest the plunge point first: the straight cut to it stays in the area.
+    std::vector<std::pair<double, std::size_t>> order;
+    std::vector<std::pair<Pt, std::size_t>> nearest;
+    for (std::size_t k = 0; k < loops.size(); k++) {
+        if (loops[k].size() < 4) {
+            return std::optional<Region>{};
+        }
+        nearest.push_back(nearestOnLoop(loops[k], p));
+        const double dx = double(nearest[k].first.x - p.x), dy = double(nearest[k].first.y - p.y);
+        order.emplace_back(dx * dx + dy * dy, k);
+    }
+    std::stable_sort(order.begin(), order.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
+    Region region;
+    region.entry = Entry{EntryMode::Plunge, p, 0, p};
+    region.toolBounds = unentered.toolBounds;
+    const auto add = [&region](std::vector<Pt> points) {
+        points.erase(std::unique(points.begin(), points.end()), points.end());
+        if (points.size() < 2) {
+            return;
+        }
+        Path path;
+        path.role = Role::Pass;
+        path.motion = Motion::Cut;
+        path.engagementDeg.assign(points.size(), 180.0);
+        path.engagementDeg[0] = -1.0;
+        path.points = std::move(points);
+        region.paths.push_back(std::move(path));
+    };
+    for (std::size_t n = 0; n < order.size(); n++) {
+        const std::size_t k = order[n].second;
+        const auto [q, seg] = nearest[k];
+        if (!segmentInside(p, q, *area, loops, k, seg)) {
+            return std::optional<Region>{};
+        }
+        add({p, q});
+        // Round the loop from q back to q.
+        const std::vector<Pt>& l = loops[k];
+        std::vector<Pt> round{q};
+        for (std::size_t i = seg + 1; i + 1 < l.size(); i++) {
+            round.push_back(l[i]);
+        }
+        for (std::size_t i = 0; i <= seg; i++) {
+            round.push_back(l[i]);
+        }
+        round.push_back(q);
+        add(std::move(round));
+        if (n + 1 < order.size()) {
+            add({q, p});
+        }
+    }
+    if (region.paths.empty()) {
+        return std::optional<Region>{};
+    }
+    return std::optional<Region>{std::move(region)};
+}
+
 // ---------- one region's plan ----------
 struct Pending {
     std::size_t index = 0;         // in the output's regions
@@ -297,7 +510,7 @@ struct Pending {
     std::size_t next = 0;          // the attempt to make
     std::optional<RampPlan> ramp;  // planned for the next run
     std::optional<std::size_t> hole;
-    bool helix = false;
+    bool helix = false; // the engine enters it: a helix, or (after M3) the bore of a plunge
     bool done = false;
     std::vector<std::string> notFitting; // what did not fit, for the fallback warning or the error
 };
@@ -337,6 +550,8 @@ const char* attemptName(Attempt a)
         return "ramp";
     case Attempt::PreDrill:
         return "pre-drilled hole";
+    case Attempt::Plunge:
+        return "plunge";
     }
     return "";
 }
@@ -409,9 +624,9 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
         return tl::unexpected(invalid("adaptive: no entry kind is allowed"));
     }
     for (EntryKind k : opt.order) {
-        if (k != EntryKind::Helix && k != EntryKind::Ramp && k != EntryKind::PreDrill) {
-            return tl::unexpected(invalid("adaptive: entry by plunge is not supported; use a helix, ramp or "
-                                          "pre-drilled hole"));
+        if (k != EntryKind::Helix && k != EntryKind::Ramp && k != EntryKind::PreDrill && k != EntryKind::Plunge) {
+            return tl::unexpected(invalid("adaptive: not a known kind of entry; use a helix, ramp, pre-drilled hole "
+                                          "or plunge"));
         }
     }
     for (const PreDrillHole& h : opt.preDrills) {
@@ -486,6 +701,19 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
         pending.push_back(std::move(p));
     }
 
+    // A region entered by a kind other than the order's first: what did not fit (EntryFallback).
+    const auto fallback = [&](const Pending& p) {
+        if (p.notFitting.empty()) {
+            return;
+        }
+        std::string list;
+        for (std::size_t i = 0; i < p.notFitting.size(); i++) {
+            list += (i == 0 ? "" : i + 1 == p.notFitting.size() ? " or " : ", ") + p.notFitting[i];
+        }
+        warnings.push_back({Warning::Code::EntryFallback,
+                            "adaptive: the region around " + whereText(out.regions[p.index].toolBounds) +
+                                " is entered by a " + attemptName(p.attempts[p.next]) + ": " + list + " does not fit"});
+    };
     // ---------- further runs, one per attempt still to make ----------
     // Every run ends at least one region's attempt, so there are at most (attempts x regions) runs.
     const int maxRuns = int(attempts.size() * pending.size()) + 1;
@@ -514,13 +742,45 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
             p.hole.reset();
             p.helix = false;
             const Region& r = out.regions[p.index];
+            bool plunged = false;
             while (p.next < p.attempts.size()) {
                 const Attempt a = p.attempts[p.next];
                 if (isHelix(a)) {
                     p.helix = true;
                     break;
                 }
-                if (a == Attempt::Ramp) {
+                if (a == Attempt::Plunge) {
+                    // After M3 (PLUNGE): every other kind failed; the region is planned here, without the engine.
+                    auto made = plungeRegion(r, in, radius, allowance, grid, ctx);
+                    if (!made) {
+                        return tl::unexpected(made.error());
+                    }
+                    if (*made) {
+                        std::vector<geom2d::Path> swept;
+                        for (const Path& path : (*made)->paths) {
+                            geom2d::Path g;
+                            g.start = path.points.front();
+                            for (std::size_t i = 1; i < path.points.size(); i++) {
+                                g.spans.push_back(geom2d::Span{geom2d::SpanKind::Line, path.points[i], {}, 0});
+                            }
+                            swept.push_back(std::move(g));
+                        }
+                        auto area = geom2d::sweptArea(swept, radius, ctx);
+                        if (!area) {
+                            return tl::unexpected(area.error());
+                        }
+                        (*made)->clearedAreaMm2 = geom2d::area(*area) / 1e12;
+                        auto allCleared = uniteAll(std::move(out.cleared), *area, ctx);
+                        if (!allCleared) {
+                            return tl::unexpected(allCleared.error());
+                        }
+                        out.cleared = std::move(*allCleared);
+                        out.regions[p.index] = std::move(**made);
+                        plunged = true;
+                        break;
+                    }
+                    p.notFitting.push_back("a plunge");
+                } else if (a == Attempt::Ramp) {
                     p.ramp = planRamp(r.toolBounds, minRun, opt.maxRampRun, margin);
                     if (p.ramp) {
                         p.ramp->a = onGrid(p.ramp->a, grid);
@@ -546,6 +806,11 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
                     p.notFitting.push_back("a pre-drilled hole of " + mmText(minHole) + " mm");
                 }
                 p.next++;
+            }
+            if (plunged) {
+                p.done = true;
+                fallback(p);
+                continue;
             }
             if (p.next >= p.attempts.size()) {
                 p.done = true; // nothing left to try
@@ -690,16 +955,7 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
                 }
                 out.regions[p.index] = std::move(region);
                 p.done = true;
-                if (!p.notFitting.empty()) {
-                    std::string list;
-                    for (std::size_t i = 0; i < p.notFitting.size(); i++) {
-                        list += (i == 0 ? "" : i + 1 == p.notFitting.size() ? " or " : ", ") + p.notFitting[i];
-                    }
-                    warnings.push_back({Warning::Code::EntryFallback,
-                                        "adaptive: the region around " + whereText(out.regions[p.index].toolBounds) +
-                                            " is entered by a " + attemptName(p.attempts[p.next]) + ": " + list +
-                                            " does not fit"});
-                }
+                fallback(p);
             } else {
                 if (isHelix(p.attempts[p.next])) {
                     p.notFitting.push_back("a helix of " +
@@ -721,7 +977,8 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
         }
         std::string needs;
         for (Attempt a : attempts) {
-            if (!needs.empty()) {
+            // (A plunge, after M3, adds no separator to the one a second helix left.)
+            if (!needs.empty() && !(a == Attempt::Plunge && needs.ends_with("; "))) {
                 needs += "; ";
             }
             switch (a) {
@@ -741,6 +998,9 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
                 needs += "a pre-drilled hole needs to be at least " + mmText(minHole) +
                          " mm wide (tool diameter and smallest helix) with its centre where the tool centre may go";
                 break;
+            case Attempt::Plunge:
+                needs += "a straight plunge needs a straight cut from the middle of the area to each of its walls";
+                break;
             }
         }
         std::string message =
@@ -756,6 +1016,10 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
         out.stats.linksMadeCuts += cutLinksThatCut(r.paths);
         for (Path& p : r.paths) {
             flagReducedFeed(p, target);
+            if (r.entry.kind == EntryMode::Plunge && p.motion == Motion::Cut && !p.reducedFeed.empty()) {
+                // After M3 (PLUNGE): a full-width cut whatever the load, as a ramp's line.
+                std::fill(p.reducedFeed.begin() + 1, p.reducedFeed.end(), std::uint8_t(1));
+            }
         }
     }
     out.warnings = std::move(warnings);
