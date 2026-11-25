@@ -83,6 +83,26 @@ struct ViseFit {
 // `parallels` null: none. Pure arithmetic (see the header).
 ViseFit fitVise(const Box3& stock, Grip grip, const ViseModel& vise, const ParallelsModel* parallels);
 
+// ---------- Taller parallels (after T-077) ----------
+// The least of the stock's height the jaws should hold (shop practice for a light cut: about 1/8 in), and how far
+// below the jaws' top a stock's top may be and still count as level with it.
+inline constexpr double kMinGripMm = 3.0;
+inline constexpr double kLevelTolMm = 0.0005;
+struct ParallelsSuggestion {
+    std::size_t index = 0;    // into `pairs`
+    double gripDepth = 0;     // how much of the stock the jaws would hold on it
+    double jawAboveStock = 0; // the jaws' top above the stock's top on it (<= kLevelTolMm: at or below the stock's top)
+    bool aboveJaws = false;   // the stock's top would be at or above the jaws' top
+};
+// For a fit (fitVise) whose stock's top is below the jaws' (jawAboveStock > kLevelTolMm), the pair of `pairs` (the
+// library's) to suggest instead of `current` (null: the stock on the vise's floor): of the pairs taller than it, under
+// a stock at least as wide as the two side by side, with which the jaws would still hold kMinGripMm of the stock, the
+// lowest that puts the stock's top at or above the jaws' (the most held), else the tallest (the top nearest the jaws'
+// a pair allows). nullopt when the top is not below the jaws or no pair qualifies. Suggests only: nothing is changed.
+std::optional<ParallelsSuggestion> tallerParallels(const ViseFit& fit, const ViseModel& vise,
+                                                   const ParallelsModel* current,
+                                                   const std::vector<ParallelsModel>& pairs);
+
 // The turn and offsets of a transform_body without a mate that make the rigid move `modelFromBody`: angles in radians
 // with Rz(angle) Ry(tiltY) Rx(tiltX) its rotation (tilts 0 whenever its Z is model +Z), and its translation. Angles
 // within 1e-9 degrees of a whole degree are that degree.

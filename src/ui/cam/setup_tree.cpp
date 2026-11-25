@@ -14,6 +14,7 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonObject>
+#include <QtCore/QStringList>
 
 #include <algorithm>
 #include <utility>
@@ -633,6 +634,17 @@ QVariant SetupTreeModel::data(const QModelIndex& index, int role) const
         return badge && (badge->status == cam::OpStatus::Failed || badge->status == cam::OpStatus::ReferenceBroken)
                    ? badge->message
                    : QString();
+    case WarningsRole: {
+        if (r->setup)
+            return QString();
+        const auto it = statuses_.ops.find(r->opId);
+        if (it == statuses_.ops.end() || it->second.status != cam::OpStatus::UpToDate || !it->second.toolpath)
+            return QString();
+        QStringList lines;
+        for (const std::string& w : it->second.toolpath->warnings)
+            lines << QString::fromStdString(w);
+        return lines.join(QLatin1Char('\n'));
+    }
     case ProgressRole:
         return progress;
     case SuppressedRole:
@@ -687,6 +699,7 @@ QHash<int, QByteArray> SetupTreeModel::roleNames() const
             {StatusRole, "status"},
             {StatusTextRole, "statusText"},
             {MessageRole, "message"},
+            {WarningsRole, "warnings"},
             {ProgressRole, "progress"},
             {SuppressedRole, "suppressed"},
             {DepthRole, "rowDepth"},

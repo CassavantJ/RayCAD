@@ -200,7 +200,8 @@ public:
     QString messageField() const { return messageField_; }
     QString previewStatus() const { return previewStatus_; }
     QStringList errors() const { return errors_; }
-    QStringList warnings() const { return warnings_; }
+    // The check's warnings, then those the preview's generation added (after M3).
+    QStringList warnings() const { return camui::mergedWarnings(warnings_, generatedWarnings_); }
     double progress() const { return progress_; }
     QString statusLine() const;
     bool committing() const { return committing_; }
@@ -391,6 +392,7 @@ private:
     // Status.
     QString message_, messageField_, previewStatus_;
     QStringList errors_, warnings_;
+    QStringList generatedWarnings_; // the preview toolpath's (Toolpath::warnings) for the values now
     double progress_ = -1;
     bool committing_ = false;
     bool rejected_ = false;

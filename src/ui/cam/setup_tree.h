@@ -13,8 +13,9 @@
 //              ICamEngine::statusAsync (a job of the engine's, so no worker holds a pointer to it), and its
 //              notifications (ICamEngine::subscribe: a generation started, progressed or ended anywhere, a preview was
 //              filed) start a run too, coalesced to one in kNoticeMs; the progress of any generation is in its status.
-//              Nothing polls.
-//   Actions    rename, remove, move up and down (cam.setup.* and cam.operation.*), suppress (operations), edit (a
+//              Nothing polls. After M3: an up-to-date operation's generator warnings (WarningsRole) are shown with
+//              the row, as the operation panel lists them.
+//   Actions   rename, remove, move up and down (cam.setup.* and cam.operation.*), suppress (operations), edit (a
 //              setup opens the setup panel, CamSetup.edit; an operation is announced for the operation panel of
 //              T-045, operationEditRequested) and generate (ICamEngine::generate of an operation, or of every stale
 //              operation of a setup), each one action and, where the document changes, one undo step. Every action
@@ -85,6 +86,9 @@ public:
         CycleTimeRole,
         CycleTimeTipRole,
         TemplateRole, // T-057: the name of the template the operation came from, "" when none
+        // After M3: an up-to-date operation's generator warnings (Toolpath::warnings: a last-resort plunge, an area
+        // left uncut, a lead made smaller), one per line; "" for a setup and for any other status.
+        WarningsRole,
     };
 
     SetupTreeModel(SceneController* scene, Session* session, AppContext* context, QObject* parent = nullptr);

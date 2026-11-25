@@ -479,4 +479,14 @@ int newToolNumber(const cam::CamState* cam, const ToolId& tool, int toolDefault)
     return highest + 1;
 }
 
+QStringList mergedWarnings(const QStringList& checked, const QStringList& generated)
+{
+    QStringList out = checked;
+    for (const QString& w : generated) {
+        if (!out.contains(w))
+            out << w;
+    }
+    return out;
+}
+
 } // namespace ray::ui::camui

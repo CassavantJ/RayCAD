@@ -166,4 +166,15 @@ std::vector<LibraryFixture> libraryFixtures(const std::vector<std::pair<std::str
     return out;
 }
 
+QString tallerParallelsText(const QString& pair, bool onParallels, bool aboveJaws, const QString& below)
+{
+    if (aboveJaws)
+        return (onParallels ? trs("Taller parallels (%1) would bring the stock top above the jaws.")
+                            : trs("Parallels (%1) would bring the stock top above the jaws."))
+            .arg(pair);
+    return (onParallels ? trs("Taller parallels (%1) would bring the stock top to %2 below the jaws' top.")
+                        : trs("Parallels (%1) would bring the stock top to %2 below the jaws' top."))
+        .arg(pair, below);
+}
+
 } // namespace ray::ui::camui

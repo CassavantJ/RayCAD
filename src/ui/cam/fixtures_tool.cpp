@@ -379,6 +379,7 @@ void FixturesToolModel::loadLibrary()
             roots.emplace_back(r.dir, r.name);
     }
     models_.clear();
+    modelTitles_.clear();
     for (const camui::LibraryFixture& f : camui::libraryFixtures(roots)) {
         library_.push_back(QVariantMap{
             {QStringLiteral("name"), f.name}, {QStringLiteral("path"), f.path}, {QStringLiteral("root"), f.root}});
@@ -386,8 +387,10 @@ void FixturesToolModel::loadLibrary()
         const QFileInfo model(f.path);
         QFile description(model.dir().filePath(model.completeBaseName() + QStringLiteral(".json")));
         if (description.open(QIODevice::ReadOnly)) {
-            if (auto parsed = api::cam_fixtures::parseFixtureModel(description.readAll().toStdString()))
+            if (auto parsed = api::cam_fixtures::parseFixtureModel(description.readAll().toStdString())) {
                 models_.push_back(std::move(*parsed));
+                modelTitles_ << f.name;
+            }
         }
     }
     emit libraryChanged();
@@ -1086,7 +1089,10 @@ std::optional<FixturesToolModel::ViseChoice> FixturesToolModel::chooseVise(const
     }
     if (!best || setup == nullptr)
         return best;
-    for (const api::cam_fixtures::FixtureModel& m : models_) {
+    // Any described pair (after T-077 the library has several heights): the first in the library's order whose two
+    // bodies are both fixtures of the setup.
+    for (std::size_t k = 0; k < models_.size(); ++k) {
+        const api::cam_fixtures::FixtureModel& m = models_[k];
         if (m.kind != api::cam_fixtures::FixtureModel::Kind::Parallels)
             continue;
         std::vector<BodyId> pair;
@@ -1104,6 +1110,8 @@ std::optional<FixturesToolModel::ViseChoice> FixturesToolModel::chooseVise(const
         if (pair.size() == 2) {
             best->parallelsModel = m.parallels;
             best->parallels = pair;
+            best->parallelsName =
+                k < static_cast<std::size_t>(modelTitles_.size()) ? modelTitles_[static_cast<qsizetype>(k)] : QString();
             break;
         }
     }
@@ -1270,9 +1278,14 @@ void FixturesToolModel::applyOnStock(const api::cam_fixtures::PlacePlan& plan, c
     lines << trs("%1 is on the stock of %2, gripping it across %3 (%4).")
                  .arg(choice.name, setupTitle, fit.acrossX ? QStringLiteral("X") : QStringLiteral("Y"),
                       len(fit.across));
-    lines << (choice.parallelsModel ? trs("The stock stands on the parallels; the jaws hold %1 of its %2 height.")
-                                    : trs("The stock stands on the vise's floor; the jaws hold %1 of its %2 height."))
-                 .arg(len(std::max(fit.gripDepth, 0.0)), len(fit.height));
+    if (choice.parallelsModel && !choice.parallelsName.isEmpty())
+        lines << trs("The stock stands on the parallels (%3); the jaws hold %1 of its %2 height.")
+                     .arg(len(std::max(fit.gripDepth, 0.0)), len(fit.height), choice.parallelsName);
+    else
+        lines << (choice.parallelsModel
+                      ? trs("The stock stands on the parallels; the jaws hold %1 of its %2 height.")
+                      : trs("The stock stands on the vise's floor; the jaws hold %1 of its %2 height."))
+                     .arg(len(std::max(fit.gripDepth, 0.0)), len(fit.height));
     bool warn = false;
     if (fit.tooWide) {
         lines << trs("The stock is %1 across the jaws, but %2 opens to %3: the moving jaw is shown fully open and does "
@@ -1286,6 +1299,22 @@ void FixturesToolModel::applyOnStock(const api::cam_fixtures::PlacePlan& plan, c
     } else if (fit.jawAboveStock > 0.0005) {
         lines << trs("The jaws stand %1 above the stock's top: the tools must clear them.").arg(len(fit.jawAboveStock));
         warn = true;
+        // After T-077: a library pair that would raise the stock (suggested only; no fixture changes).
+        std::vector<api::cam_fixtures::ParallelsModel> pairs;
+        QStringList titles;
+        for (std::size_t k = 0; k < models_.size(); ++k) {
+            if (models_[k].kind != api::cam_fixtures::FixtureModel::Kind::Parallels)
+                continue;
+            pairs.push_back(models_[k].parallels);
+            titles << (k < static_cast<std::size_t>(modelTitles_.size()) ? modelTitles_[static_cast<qsizetype>(k)]
+                                                                         : QString());
+        }
+        const auto taller = api::cam_fixtures::tallerParallels(
+            fit, choice.model, choice.parallelsModel ? &*choice.parallelsModel : nullptr, pairs);
+        if (taller && !titles[static_cast<qsizetype>(taller->index)].isEmpty())
+            lines << camui::tallerParallelsText(titles[static_cast<qsizetype>(taller->index)],
+                                                choice.parallelsModel.has_value(), taller->aboveJaws,
+                                                len(taller->jawAboveStock));
     }
     if (!plan.addedToSetup.empty())
         lines << trs("It is now a fixture of %1.").arg(setupTitle);
