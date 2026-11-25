@@ -1666,7 +1666,12 @@ TEST_CASE("evidence: one judged reference of one sequence, written out", "[.evid
         for (const std::uint32_t e : seen.answer)
             els += " " + std::to_string(e);
         static const char* const states[] = {"Exact", "Split", "Merged", "Repaired", "Broken"};
-        seen.resolver = std::string(states[static_cast<int>(res.state)]) + " {" + els + " }: " + res.reason;
+        seen.resolver = std::string(states[static_cast<int>(res.state)]) + " {" + els + " } because " +
+                        (!res.reason.empty() ? res.reason
+                         : res.state == naming::ResolveState::Exact
+                             ? std::string("a name the reference holds is found on that element, and no pick-time "
+                                           "evidence rule objects")
+                             : std::string("its names, followed through the build, lead there"));
         std::string ex;
         for (const std::uint32_t e : rr.expected)
             ex += " " + std::to_string(e);
