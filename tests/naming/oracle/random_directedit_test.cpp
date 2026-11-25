@@ -1031,11 +1031,10 @@ TEST_CASE("Smoke: the first 2 randomised sequences with direct edits of every pa
     checkGates(r, kSmokePerPart);
 }
 
-// The same 1,000 sequences' seeds with the generator choosing by geometry instead of by index (SequenceOptions::byIndex
-// false): other sequences, closer to the same on Windows and Linux (50 of 1,000 differ, against 94 by index, on the
-// T-081b run). Hidden: it was run once the blocks above passed, as an unseen check, and its findings are not all
-// resolved (T-081b report: 8 answers the oracle judges wrong, among them kernel history it does not yet correct and
-// oracle limits); run it with "[.random-directedit-sorted]".
+// The same seeds with the generator choosing by geometry instead of by index (SequenceOptions::byIndex false): other
+// sequences, closer to being the same on Windows and Linux (on the T-081b run 50 of 1,000 differed between the two,
+// against 94 by index). Hidden: it was run as an unseen check while the block above was being fixed, and not all of its
+// findings are resolved (see the T-081b report); run it with "[.random-directedit-sorted]".
 TEST_CASE("Unseen: 1,000 randomised sequences with direct edits, choices by geometry", "[.random-directedit-sorted]")
 {
     const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
