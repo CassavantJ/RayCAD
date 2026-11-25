@@ -42,7 +42,8 @@ set(RAY_SLOW_TESTS
     ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
     ray_bench_adaptive_review # docs/reports/adaptive.md rebuilt and compared (T-062)
     ray_render_backplot_cost  # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
-    ray_render_stock_cost)    # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
+    ray_render_stock_cost     # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
+    ray_kernel_directedit_corpus) # T-080: the direct-edit rates on the S9 set: 70 s alone, 112 s in a parallel ctest
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
@@ -53,7 +54,8 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout3
     ray_naming_random_holdout4
     ray_naming_random_holdout5
-    ray_naming_random_holdout6)
+    ray_naming_random_holdout6
+    ray_kernel_directedit_corpus) # T-080: 1,337 edits on unoptimised OpenCASCADE, many past their time limit
 
 # Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
 # against about a minute in Release): the S4 scenarios, at the naming level and as document features (and, below, the
@@ -94,10 +96,7 @@ set(RAY_DEBUG_HEAVY_TESTS
     # 20-minute timeout) and adaptive2d's property tests on their quick seeds (24 minutes).
     ray_cam_link_tests
     ray_cam_adaptive2d_tests
-    ray_cam_invariants_adaptive2d
-    # T-080: the direct edits on the 50 parts of the S9 set (1,337 cases, 8 workers): about 80 s in Release, its OCCT
-    # work many times slower in a Debug build.
-    ray_kernel_directedit_corpus)
+    ray_cam_invariants_adaptive2d)
 
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property

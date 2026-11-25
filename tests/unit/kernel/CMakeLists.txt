@@ -40,8 +40,8 @@ ray_test_runtime_path(ray_kernel_blend_stress)
 add_test(NAME ray_kernel_directedit_corpus COMMAND ray_kernel_tests "[directedit_corpus]")
 ray_test_runtime_path(ray_kernel_directedit_corpus)
 # Import, meshing and concurrency tests are slow under ThreadSanitizer and on a loaded machine.
-set_tests_properties(ray_kernel_tests ray_kernel_blend ray_kernel_blend_stress ray_kernel_directedit_corpus
-    PROPERTIES TIMEOUT 900)
+set_tests_properties(ray_kernel_tests ray_kernel_blend ray_kernel_blend_stress PROPERTIES TIMEOUT 900)
+set_tests_properties(ray_kernel_directedit_corpus PROPERTIES TIMEOUT 1800)
 
 # Imports one STEP or IGES file and prints what came out; tools/import_corpus.py runs it on every file of a
 # corpus folder, one child process per file, to count passes, failures, crashes and hangs.

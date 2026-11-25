@@ -3,7 +3,8 @@
 // them fetch-only: tests/corpus/cache, tools/corpus_fetch.py) and 39 synthetic parts. A part that is not present is
 // left out and named in the output; the rates are then on fewer parts.
 //
-// Every case runs with a time limit (kCaseLimit): a runaway Defeaturing call is cancelled, counted as a failure
+// Every case runs with a time limit (kCaseLimit: 20 s, 200 s in a Debug build): a runaway Defeaturing call is
+// cancelled, counted as a failure
 // ("timeout"), and abandoned to the kernel thread it runs on. The cases run on kWorkers threads.
 //
 // RAY_DIRECTEDIT_RESULTS=<file> writes one tab-separated line per case (part, kind, edit, k, note, outcome, ms,
@@ -46,7 +47,12 @@ constexpr int kWorkers = 8;
 std::chrono::seconds caseLimit()
 {
     const char* text = std::getenv("RAY_DIRECTEDIT_LIMIT_S");
-    return std::chrono::seconds(text != nullptr ? std::atoi(text) : 20);
+#if defined(NDEBUG)
+    constexpr int kDefault = 20;
+#else
+    constexpr int kDefault = 200; // unoptimised OpenCASCADE: ten times the Release limit
+#endif
+    return std::chrono::seconds(text != nullptr ? std::atoi(text) : kDefault);
 }
 const auto kCaseLimit = caseLimit();
 
