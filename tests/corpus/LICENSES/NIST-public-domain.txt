@@ -1,4 +1,4 @@
-NIST test files (sources nist-pmi and nist-d2mi in manifest.json)
+NIST test files (sources nist-pmi, nist-d2mi and nist-mtc in manifest.json)
 
 These STEP files were made by employees of the National Institute of Standards and Technology (NIST), an agency
 of the US Government, in the course of their official duties. Under 17 U.S.C. 105 they are not subject to
@@ -7,7 +7,12 @@ copyright protection in the United States and are in the public domain there.
 - PMI test cases (CTC, FTC, STC): the NIST MBE PMI Validation and Conformance Testing project page,
   https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0,
   states that the test cases, CAD models and STEP files can be used without any restrictions. NIST asks for
-  acknowledgement when they are used, and its logo may not be used in promotional material.
+  acknowledgement when they are used, and its logo may not be used in promotional material. The same statement covers
+  the copy of the STEP-file zip in NIST's own STEP File Analyzer repository, https://github.com/usnistgov/SFA.
+- NIST/MTC box assembly (box, cover, plate; fetch-only, not in this repository): modelled at NIST and listed among the
+  CAD models on the PMI project page above; the STEP files come from NIST's repository
+  https://github.com/usnistgov/AR-PMI, and the box assembly dataset (DOI 10.18434/T4/1503154) is published under
+  https://www.nist.gov/open/license.
 - D2MI models: the README in NIST-D2MI-Models.zip states the public-domain status above and that NIST makes no
   guarantees about the files.
 

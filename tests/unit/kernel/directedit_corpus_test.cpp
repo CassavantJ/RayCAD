@@ -1,7 +1,8 @@
 // Success rates of the direct edits on the S9 set (task T-080, PLAN.md T-080 acceptance), measured by the spike's
 // method (src/kernel/directedit_testing.h THE S9 METHOD) on tests/corpus/directedit/set.tsv: 11 NIST test parts (two of
 // them fetch-only: tests/corpus/cache, tools/corpus_fetch.py) and 39 synthetic parts. A part that is not present is
-// left out and named in the output; the rates are then on fewer parts.
+// left out and named in the output; the rates are then on fewer parts. The same measurement runs on the wider NIST set,
+// tests/corpus/directedit/set_nist.tsv (bottom of this file).
 //
 // Every case runs with a time limit (kCaseLimit: 20 s, 200 s in a Debug build): a runaway Defeaturing call is
 // cancelled, counted as a failure
@@ -67,10 +68,10 @@ struct Part {
     std::uintmax_t size = 0;
 };
 
-std::vector<Part> readSet(const std::filesystem::path& root)
+std::vector<Part> readSet(const std::filesystem::path& root, const char* file)
 {
     std::vector<Part> parts;
-    std::ifstream in(root / "directedit" / "set.tsv");
+    std::ifstream in(root / "directedit" / file);
     std::string line;
     while (std::getline(in, line)) {
         if (line.empty() || line[0] == '#')
@@ -255,13 +256,23 @@ struct Tally {
     double rate() const { return total == 0 ? 1.0 : static_cast<double>(ok) / total; }
 };
 
-} // namespace
+// Which set, and what a missing part means for it.
+struct SetSpec {
+    const char* file;  // under tests/corpus/directedit
+    const char* title; // for the output
+    std::size_t parts; // how many set.tsv lists
+    // false: the rates are judged on the parts present (the S9 set, whose two fetch-only parts are a small share);
+    // true: a part missing means the rates are printed but not judged, and with none present the test is skipped
+    // (the NIST set is mostly fetch-only, and a CI job without the cache would judge a different set).
+    bool ratesNeedEveryPart;
+};
+constexpr std::size_t kNistParts = 26; // the lines of set_nist.tsv
 
-TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][directedit_corpus]")
+void measureSet(const SetSpec& spec)
 {
     const std::filesystem::path root(RAY_CORPUS_ROOT_DIR);
-    const std::vector<Part> listed = readSet(root);
-    REQUIRE(listed.size() == 50);
+    const std::vector<Part> listed = readSet(root, spec.file);
+    REQUIRE(listed.size() == spec.parts);
     std::vector<Part> parts;
     std::vector<std::string> missing;
     const std::string only = onlyCase();
@@ -277,6 +288,11 @@ TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][d
             parts.push_back(p);
         }
     }
+    if (parts.empty() && spec.ratesNeedEveryPart)
+        SKIP("none of the " << listed.size() << " parts of directedit/" << spec.file
+                            << " is present: fetch them with python tools/corpus_fetch.py --source nist-pmi nist-d2mi "
+                               "nist-mtc");
+    const bool judgeRates = missing.empty() || !spec.ratesNeedEveryPart;
 
     Watchdog watchdog;
     std::mutex mutex;
@@ -368,10 +384,11 @@ TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][d
             return o.edit == "del_hole_stack" || o.note == "in_stack";
         return o.note == line.note;
     };
-    std::printf("\nDirect edits on the S9 set: %zu of %zu parts, %zu cases, %.1f s (%.1f s with abandoned edits)\n",
-                parts.size(), listed.size(), outcomes.size(), seconds, withAbandoned);
+    std::printf("\nDirect edits on the %s: %zu of %zu parts, %zu cases, %.1f s (%.1f s with abandoned edits)\n",
+                spec.title, parts.size(), listed.size(), outcomes.size(), seconds, withAbandoned);
     for (const std::string& m : missing)
-        std::printf("  NOT PRESENT (rates are without it): %s\n", m.c_str());
+        std::printf("  NOT PRESENT (%s): %s\n", judgeRates ? "rates are without it" : "rates printed, not judged",
+                    m.c_str());
     for (const std::string& f : loadFailures)
         std::printf("  NOT LOADED: %s\n", f.c_str());
     std::vector<std::pair<const Line*, Tally>> tallies;
@@ -418,6 +435,8 @@ TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][d
         return; // one case for profiling: nothing to judge
     // Rates.
     for (const auto& [line, t] : tallies) {
+        if (!judgeRates)
+            break;
         INFO(line->name << ": " << t.ok << " of " << t.total);
         CHECK(t.total > 0);
         CHECK(t.rate() >= line->required);
@@ -442,4 +461,19 @@ TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][d
     INFO("abandoned edits ran on for " << withAbandoned - seconds << " s after the last case");
     CHECK(withAbandoned - seconds < 10.0);
     CHECK(testing::structuredExceptions() == 0);
+}
+
+} // namespace
+
+TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][directedit_corpus]")
+{
+    measureSet({"set.tsv", "S9 set", 50, false});
+}
+
+// The same measurement on the wider set of NIST public test models (tests/corpus/directedit/README.md): other exports
+// of the CTC/FTC parts (AP242, AP203 with PMI), the STC parts, the D2MI parts and the NIST/MTC box assembly parts. Its
+// own ctest entry (ray_kernel_directedit_nist), so the S9 measurement keeps its run time.
+TEST_CASE("direct edits on the wider NIST set meet the T-080 success rates", "[kernel][directedit_nist]")
+{
+    measureSet({"set_nist.tsv", "wider NIST set", kNistParts, true});
 }

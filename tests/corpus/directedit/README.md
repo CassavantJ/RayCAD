@@ -19,3 +19,27 @@ These are test models and generated parts, not job-shop customer parts. The plan
 STEP files before M6" is still open: rates measured here are on this set only.
 
 If a fetch-only part is missing the test leaves it out, names it in its output, and measures the rest.
+
+## The wider NIST set
+
+`set_nist.tsv` (same columns) lists 26 more real parts, all NIST public test models from the corpus, measured the same
+way by the ctest `ray_kernel_directedit_nist` (slow tier, 8 processors, the same per-case time limit):
+
+| Parts | Corpus ids |
+|-|-|
+| 10 other exports of the CTC/FTC parts in the old set: AP242 CTC 01-05 and FTC 06-10 | `nist-pmi/nist_*_ap242-*` |
+| 5 AP203 files with PMI, CTC 01-05 | `nist-pmi/nist_ctc_0*_asme1_ap203` |
+| 6 STC 06-10 (AP242), STC 09 in two different exports | `nist-pmi/nist_stc_*`, `nist-pmi/sfa/nist_stc_09_asme1_ap242-e4` |
+| 3 D2MI parts (NX 8.5, and one CT CoreTechnologie translation) | `nist-d2mi/827-9999-904_rev_c`, `-905`, `-906` |
+| 2 NIST/MTC box assembly parts, cover and plate (SOLIDWORKS MBD 2018) | `nist-mtc/nist_mtc_crada_cover_rev-b`, `nist-mtc/nist_mtc_crada_plate_rev-a` |
+
+The CTC/FTC parts reappear on purpose: the same design written by other exporters and AP versions, which is where
+import and direct-edit quirks show. Files that differ from another listed file only in their header or PMI entities
+(the D2MI 907 and 908 files, four of the `sfa/` files) are left out so no geometry counts twice. Two NIST files are
+not in the set because they do not import as a valid solid: the FTC 08 `-tg` files (tessellated geometry, no B-rep
+solid) and the MTC box (one solid that fails the validity check, with or without healing).
+
+20 of the 26 are fetch-only: `python tools/corpus_fetch.py --source nist-pmi nist-d2mi nist-mtc`. CI fetches nothing,
+so there the test runs the 6 committed parts and checks every case (a valid solid or a KernelFailure with a message,
+the time limit kept) but not the rates, which it judges only when all 26 parts are present; with no part present it
+is skipped.
