@@ -161,6 +161,15 @@ constexpr CommandText kCommandTexts[] = {
      "offsets",
      "Model"},
     {"feature.transform_body.edit", "Edit Move Body", "Changes a body move's mate, gap, turn or offsets", "Model"},
+    // T-082: the direct edits, for imported bodies as for modelled ones.
+    {"feature.delete_face.add", "Delete Faces",
+     "Removes faces of a body and heals the gap: a hole (by any face of it), a pocket, a fillet or a whole blend run",
+     "Model"},
+    {"feature.delete_face.edit", "Edit Delete Faces", "Changes the faces a face deletion removes", "Model"},
+    {"feature.offset_face.add", "Push/Pull", "Moves planar faces of a body along their normals by a distance", "Model"},
+    {"feature.offset_face.edit", "Edit Push/Pull", "Changes a push/pull's faces or distance", "Model"},
+    {"feature.resize_hole.add", "Resize Hole", "Gives a hole a new diameter, by any face of its bore", "Model"},
+    {"feature.resize_hole.edit", "Edit Resize Hole", "Changes a hole resize's hole or diameter", "Model"},
     {"sketch.set", "Replace Sketch", "Replaces the whole model of a sketch (and optionally its plane)", "Sketch"},
     {"sketch.entity.add", "Add Sketch Entities", "Adds points, lines, arcs, circles, splines or slots to a sketch",
      "Sketch"},
@@ -627,6 +636,95 @@ Result<Value> topoRefJson(const naming::TopoRef& ref)
     return json::parse(naming::toJson(ref));
 }
 
+// The build the model actions read: the document's latest, or (args "before") the model as it was just before that
+// feature, built on the calling worker. NotFound when there is none yet or no such feature.
+Result<doc::BuildResultPtr> modelBuild(AppImpl& app, const OpenDocument& od, const Value& args, JobContext& ctx)
+{
+    doc::BuildResultPtr build;
+    if (const std::string beforeId = args.stringOr("before", ""); !beforeId.empty()) {
+        const doc::DocStatePtr state = od.document->state();
+        const doc::DocStatePtr snapshot = feature_edit::stateBefore(*state, FeatureId{Uuid::fromString(beforeId)});
+        if (!snapshot) {
+            return fail(ErrorCode::NotFound, "The document has no feature " + beforeId);
+        }
+        auto built = feature_edit::buildSnapshot(app, od.id, snapshot, ctx);
+        if (!built) {
+            return tl::unexpected<Error>(built.error());
+        }
+        build = std::move(*built);
+    } else {
+        build = od.document->build();
+    }
+    if (!build) {
+        return fail(ErrorCode::NotFound, "The document has not been built yet; try again when the rebuild ends");
+    }
+    return build;
+}
+
+// model.blendRun (T-082, for the direct-edit tools of T-083): the faces of the blend run a face belongs to
+// (kernel::blendRun: the fillets joined to it by tangent blends), as face indices of the same build, so "select the
+// whole blend run" can pick them and make a reference to each with model.reference. Sorted, with the face itself;
+// just [index] for a fillet that touches no other blend; [] for a face that is not a fillet (or a corner patch between
+// fillets). Same arguments as model.reference, for faces.
+Status addBlendRunAction(AppImpl& app)
+{
+    Value index = prop("integer", "A face's index in the body's build (as a viewport pick gives it)");
+    index.set("minimum", Value::integer(0));
+    Value body = prop("string", "The body id");
+    body.set("pattern", Value::string(kUuidPattern));
+    Value before = prop("string", "A feature id: the face is one of the model as it was just before that feature, not "
+                                  "of the latest build");
+    before.set("pattern", Value::string(kUuidPattern));
+    ActionInfo info{"model.blendRun",
+                    "Blend Run",
+                    "Model",
+                    "Returns the faces of the blend run a fillet face belongs to (the fillets joined to it by tangent "
+                    "blends), as face indices: what a delete_face feature needs to remove a fillet that joins others",
+                    schemaOf(Value::object({{"body", std::move(body)},
+                                            {"index", std::move(index)},
+                                            {"before", std::move(before)},
+                                            {"document", documentProp()}}),
+                             {"body", "index"}),
+                    "",
+                    false,
+                    false,
+                    false};
+    app.runOnWorker(info.id);
+    return app.actions().add(
+        std::move(info), [&app](std::string_view argsJson, Caller, JobContext& ctx) -> Result<ActionResult> {
+            auto args = parseArgs(argsJson);
+            if (!args) {
+                return tl::unexpected<Error>(args.error());
+            }
+            auto guard = claimOnUi(app, args->stringOr("document", ""), ctx);
+            if (!guard) {
+                return tl::unexpected<Error>(guard.error());
+            }
+            auto build = modelBuild(app, (*guard)->get()->od, *args, ctx);
+            if (!build) {
+                return tl::unexpected<Error>(build.error());
+            }
+            const BodyId bodyId{Uuid::fromString(args->stringOr("body", ""))};
+            const auto it = (*build)->bodies.find(bodyId);
+            if (it == (*build)->bodies.end() || it->second.shape.isNull()) {
+                return fail(ErrorCode::NotFound, "The build has no body " + bodyId.value.toString());
+            }
+            const double i = args->numberOr("index", -1);
+            const std::uint32_t faces = it->second.shape.count(kernel::SubKind::Face);
+            if (!(i >= 0) || i >= static_cast<double>(faces)) {
+                return fail(ErrorCode::InvalidArgument, "The body has no face " +
+                                                            std::to_string(static_cast<long long>(i)) + " (it has " +
+                                                            std::to_string(faces) + ")");
+            }
+            Value run = Value::array();
+            for (const kernel::SubId& face : kernel::blendRun(
+                     it->second.shape, kernel::SubId{kernel::SubKind::Face, static_cast<std::uint32_t>(i)})) {
+                run.push(Value::integer(static_cast<std::int64_t>(face.index)));
+            }
+            return result(Value::object({{"faces", std::move(run)}}));
+        });
+}
+
 // model.reference: a persistent reference to an element of the latest build of a document (T-096), or of the model
 // as it was just before a feature ("before": what the feature tools pick in while they edit that feature). It runs
 // on a worker: the model before a feature is built there (from the rebuilder's cache, so it is quick).
@@ -669,26 +767,11 @@ Status addModelActions(AppImpl& app)
                 return tl::unexpected<Error>(guard.error());
             }
             const OpenDocument& od = (*guard)->get()->od; // stays while claimed
-            doc::BuildResultPtr build;
-            if (const std::string beforeId = args->stringOr("before", ""); !beforeId.empty()) {
-                const doc::DocStatePtr state = od.document->state();
-                const doc::DocStatePtr snapshot =
-                    feature_edit::stateBefore(*state, FeatureId{Uuid::fromString(beforeId)});
-                if (!snapshot) {
-                    return fail(ErrorCode::NotFound, "The document has no feature " + beforeId);
-                }
-                auto built = feature_edit::buildSnapshot(app, od.id, snapshot, ctx);
-                if (!built) {
-                    return tl::unexpected<Error>(built.error());
-                }
-                build = std::move(*built);
-            } else {
-                build = od.document->build();
+            auto built = modelBuild(app, od, *args, ctx);
+            if (!built) {
+                return tl::unexpected<Error>(built.error());
             }
-            if (!build) {
-                return fail(ErrorCode::NotFound,
-                            "The document has not been built yet; try again when the rebuild ends");
-            }
+            const doc::BuildResultPtr build = std::move(*built);
             const BodyId bodyId{Uuid::fromString(args->stringOr("body", ""))};
             const auto it = build->bodies.find(bodyId);
             if (it == build->bodies.end() || it->second.shape.isNull()) {
@@ -1015,6 +1098,9 @@ Status registerBuiltinActions(AppImpl& app)
 
     // ---- model references (T-096) ----
     if (st = addModelActions(app); !st) {
+        return st;
+    }
+    if (st = addBlendRunAction(app); !st) { // T-082
         return st;
     }
 

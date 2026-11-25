@@ -75,6 +75,8 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.chamfer.edit",
                                                         "feature.datum_plane.add",
                                                         "feature.datum_plane.edit",
+                                                        "feature.delete_face.add", // T-082
+                                                        "feature.delete_face.edit",
                                                         "feature.edit",
                                                         "feature.extrude.add",
                                                         "feature.extrude.edit",
@@ -82,8 +84,12 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.fillet.edit",
                                                         "feature.hole.add",
                                                         "feature.hole.edit",
+                                                        "feature.offset_face.add", // T-082
+                                                        "feature.offset_face.edit",
                                                         "feature.remove",
                                                         "feature.reorder",
+                                                        "feature.resize_hole.add", // T-082
+                                                        "feature.resize_hole.edit",
                                                         "feature.revolve.add",
                                                         "feature.revolve.edit",
                                                         "feature.rollback",

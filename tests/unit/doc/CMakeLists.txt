@@ -4,6 +4,7 @@ add_executable(ray_doc_tests
     commands_document_test.cpp
     commands_handlers_test.cpp
     commands_random_test.cpp
+    direct_edit_test.cpp # T-082
     expr_test.cpp
     hole_test.cpp
     json_test.cpp
@@ -25,11 +26,21 @@ target_link_libraries(ray_doc_tests PRIVATE ray_doc ray_kernel ray_naming ray_sk
 # json.h, json_number.h, expr.h, document_impl.h, rebuild.h and features/ are private to src/doc; test_dispatcher.h
 # is the UI-thread double.
 target_include_directories(ray_doc_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs")
+# T-082: the direct-edit tests take the S9 cases of a corpus part from the kernel's test helpers (directedit_testing.h,
+# which includes no OCCT header), and read corpus parts.
+target_include_directories(ray_doc_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
+target_compile_definitions(ray_doc_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
+    RAY_CORPUS_ROOT_DIR="${CMAKE_SOURCE_DIR}/tests/corpus")
 # Golden snapshot files; tests/lint/check_doc_schema.py validates the same files against schemas/doc*.schema.json.
 # The import tests read the small STEP and IGES files of the kernel tests.
 target_compile_definitions(ray_doc_tests PRIVATE RAY_DOC_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
 ray_add_test(ray_doc_tests)
+# T-082: a rebuild cancelled in a slow face deletion (NIST CTC 05 fillets) is released within 100 ms. A hidden test
+# case of the suite, run here alone (tests/tiers.cmake: RAY_SERIAL_TESTS).
+add_test(NAME ray_doc_directedit_cancel COMMAND ray_doc_tests "[directedit-cancel]")
+ray_test_runtime_path(ray_doc_directedit_cancel)
+set_tests_properties(ray_doc_directedit_cancel PROPERTIES TIMEOUT 600)
 
 # The S4 part as document features judged by the T-081a naming oracle (task T-096). The oracle library and the
 # harness and scenario library of tests/naming/oracle (ray_naming_harness) are linked here unchanged (not copied).

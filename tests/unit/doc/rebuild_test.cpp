@@ -81,8 +81,9 @@ TEST_CASE("FeatureRegistry keeps the first type of a name and ignores null and u
 
     const auto builtin = ray::doc::builtinFeatureRegistry();
     REQUIRE(builtin);
-    CHECK(builtin->typeNames() == std::vector<std::string>{"chamfer", "datum_plane", "extrude", "fillet", "hole",
-                                                           "import", "revolve", "sketch", "transform_body"});
+    CHECK(builtin->typeNames() == std::vector<std::string>{"chamfer", "datum_plane", "delete_face", "extrude", "fillet",
+                                                           "hole", "import", "offset_face", "resize_hole", "revolve",
+                                                           "sketch", "transform_body"});
 }
 
 TEST_CASE("an empty document rebuilds to an empty result; a null state is rejected", "[doc][rebuild]")

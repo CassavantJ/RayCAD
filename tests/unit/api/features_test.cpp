@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -85,7 +86,8 @@ TEST_CASE("the parametric feature commands are actions with their props schemas"
     for (const auto& info : app->actions().all()) {
         byId[info.id] = info;
     }
-    for (const char* type : {"datum_plane", "sketch", "extrude", "revolve", "fillet", "chamfer"}) {
+    for (const char* type : {"datum_plane", "sketch", "extrude", "revolve", "fillet", "chamfer", "delete_face",
+                             "offset_face", "resize_hole"}) {
         for (const char* verb : {"add", "edit"}) {
             const std::string name = std::string("feature.") + type + "." + verb;
             INFO(name);
@@ -109,6 +111,9 @@ TEST_CASE("the parametric feature commands are actions with their props schemas"
     }
     REQUIRE(byId.count("model.reference") == 1);
     CHECK_FALSE(byId["model.reference"].changesDocument);
+    REQUIRE(byId.count("model.blendRun") == 1); // T-082
+    CHECK_FALSE(byId["model.blendRun"].changesDocument);
+    CHECK(byId["feature.offset_face.add"].title == "Push/Pull");
 }
 
 TEST_CASE("a part made through actions (sketch, extrude, fillet by model.reference) saves and reopens identically",
@@ -229,6 +234,106 @@ TEST_CASE("model.reference explains what it cannot reference", "[api][features]"
     REQUIRE_FALSE(none);
     CHECK(none.error().code == ErrorCode::NotFound);
     CHECK_THAT(none.error().message, ContainsSubstring("no body"));
+}
+
+TEST_CASE("model.blendRun gives the faces of a blend run, which one delete_face removes", "[api][features]")
+{
+    // T-082: a 30 x 20 x 10 block with its four top edges rounded (radius 2) by one fillet: the rounds are one run.
+    auto app = makeTestApp("");
+    invoke(*app, "file.new", "{}");
+    const std::string body = id('b', 1);
+    const std::string block =
+        R"({"entities":[{"id":")" + id('e', 1) + R"(","type":"point","x":0,"y":0},{"id":")" + id('e', 2) +
+        R"(","type":"point","x":30,"y":0},{"id":")" + id('e', 3) + R"(","type":"point","x":30,"y":20},{"id":")" +
+        id('e', 4) + R"(","type":"point","x":0,"y":20},{"id":")" + id('e', 5) + R"(","type":"line","a":")" +
+        id('e', 1) + R"(","b":")" + id('e', 2) + R"("},{"id":")" + id('e', 6) + R"(","type":"line","a":")" +
+        id('e', 2) + R"(","b":")" + id('e', 3) + R"("},{"id":")" + id('e', 7) + R"(","type":"line","a":")" +
+        id('e', 3) + R"(","b":")" + id('e', 4) + R"("},{"id":")" + id('e', 8) + R"(","type":"line","a":")" +
+        id('e', 4) + R"(","b":")" + id('e', 1) + R"("}],"constraints":[]})";
+    invoke(*app, "feature.sketch.add",
+           R"({"id":")" + id('f', 1) + R"(","props":{"plane":{"principal":"xy"},"sketch":)" + block + "}}");
+    invoke(*app, "feature.extrude.add",
+           R"({"id":")" + id('f', 2) + R"(","props":{"sketch":")" + id('f', 1) +
+               R"(","distance":"10 mm","operation":"new","target":")" + body + R"("}})");
+    OpenDocument* od = app->active();
+    REQUIRE(od != nullptr);
+    REQUIRE(app->waitForBuild(*od, kWait));
+    const auto refOf = [&](const char* kind, std::uint32_t index) {
+        auto made = json::parse(
+            invoke(*app, "model.reference",
+                   R"({"body":")" + body + R"(","kind":")" + kind + R"(","index":)" + std::to_string(index) + "}"));
+        REQUIRE(made);
+        const json::Value* ref = made->find("ref");
+        REQUIRE(ref != nullptr);
+        return json::write(*ref);
+    };
+    {
+        const auto& shape = od->document->build()->bodies.begin()->second.shape;
+        std::string edges;
+        for (std::uint32_t i = 0; i < shape.count(ray::kernel::SubKind::Edge); ++i) {
+            auto c = ray::kernel::curveInfo(shape, ray::kernel::SubId{ray::kernel::SubKind::Edge, i});
+            if (c && std::abs(c->start.z - 10) < 1e-9 && std::abs(c->end.z - 10) < 1e-9) {
+                edges += (edges.empty() ? "" : ",") + refOf("edge", i);
+            }
+        }
+        invoke(*app, "feature.fillet.add",
+               R"({"id":")" + id('f', 3) + R"(","props":{"edges":[)" + edges + R"(],"radius":"2 mm"}})");
+        REQUIRE(app->waitForBuild(*od, kWait));
+    }
+    const auto& rounded = od->document->build()->bodies.begin()->second.shape;
+    std::optional<std::uint32_t> round, flat;
+    for (std::uint32_t i = 0; i < rounded.count(ray::kernel::SubKind::Face); ++i) {
+        auto s = ray::kernel::surfaceInfo(rounded, ray::kernel::SubId{ray::kernel::SubKind::Face, i});
+        if (s && s->type == ray::kernel::SurfaceType::Cylinder && !round) {
+            round = i;
+        }
+        if (s && s->type == ray::kernel::SurfaceType::Plane && !flat) {
+            flat = i;
+        }
+    }
+    REQUIRE(round);
+    REQUIRE(flat);
+    const auto run = [&](std::uint32_t index) {
+        auto answer = json::parse(
+            invoke(*app, "model.blendRun", R"({"body":")" + body + R"(","index":)" + std::to_string(index) + "}"));
+        REQUIRE(answer);
+        const json::Value* faces = answer->find("faces");
+        REQUIRE(faces != nullptr);
+        REQUIRE(faces->isArray());
+        std::vector<std::uint32_t> out;
+        for (const json::Value& f : faces->asArray()) {
+            out.push_back(static_cast<std::uint32_t>(f.asNumber()));
+        }
+        return out;
+    };
+    const std::vector<std::uint32_t> faces = run(*round);
+    CHECK(faces.size() >= 4);
+    CHECK(std::find(faces.begin(), faces.end(), *round) != faces.end());
+    CHECK(std::is_sorted(faces.begin(), faces.end()));
+    CHECK(run(*flat).empty()); // not a blend
+    // The model before the fillet has no blend; a face it does not have is refused.
+    {
+        auto before = json::parse(
+            invoke(*app, "model.blendRun", R"({"body":")" + body + R"(","index":0,"before":")" + id('f', 3) + R"("})"));
+        REQUIRE(before);
+        CHECK(before->find("faces")->asArray().empty());
+        auto bad = app->wait(
+            app->actions().invoke("model.blendRun", R"({"body":")" + body + R"(","index":999})", Caller::User), kWait);
+        REQUIRE_FALSE(bad);
+        CHECK(bad.error().code == ErrorCode::InvalidArgument);
+    }
+    // The whole run, referenced face by face, comes out with one delete_face: the block is square again.
+    std::string refs;
+    for (const std::uint32_t f : faces) {
+        refs += (refs.empty() ? "" : ",") + refOf("face", f);
+    }
+    invoke(*app, "feature.delete_face.add", R"({"id":")" + id('f', 4) + R"(","props":{"faces":[)" + refs + "]}}");
+    REQUIRE(app->waitForBuild(*od, kWait));
+    for (const auto& r : od->document->build()->reports) {
+        INFO(r.message);
+        CHECK(r.status == ray::doc::FeatureStatus::Ok);
+    }
+    CHECK(std::abs(volumeOf(*od, body) - 6000.0) < 1e-6);
 }
 
 namespace {
