@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -91,6 +92,65 @@ double libmLastBits(double v)
     for (int i = 0; i < std::abs(steps); ++i)
         v = std::nextafter(v, steps > 0 ? 2.0 : -2.0);
     return v;
+}
+
+// The other diagnosis: RAYCAD_NAMING_LIBM_LOG=<file> appends every cos and sin the sequences take as a line
+// "<cos|sin> <argument bits> <result bits>" (hexadecimal), and RAYCAD_NAMING_LIBM_TABLE=<file> (lines in that form)
+// answers an argument listed there with the listed result instead of this platform's: a log written on one platform
+// replays that platform's inputs on another. Unset (the default), nothing changes.
+struct LibmTrace {
+    std::mutex mutex;
+    std::FILE* log = nullptr;
+    std::map<std::pair<char, std::uint64_t>, std::uint64_t> table;
+    LibmTrace()
+    {
+        if (const char* path = std::getenv("RAYCAD_NAMING_LIBM_LOG"))
+            log = std::fopen(path, "a");
+        if (const char* path = std::getenv("RAYCAD_NAMING_LIBM_TABLE")) {
+            if (std::FILE* in = std::fopen(path, "r")) {
+                char fn[8] = {};
+                unsigned long long arg = 0, res = 0;
+                while (std::fscanf(in, "%7s %llx %llx", fn, &arg, &res) == 3)
+                    table[{fn[0], static_cast<std::uint64_t>(arg)}] = static_cast<std::uint64_t>(res);
+                std::fclose(in);
+            }
+        }
+    }
+    ~LibmTrace()
+    {
+        if (log != nullptr)
+            std::fclose(log);
+    }
+    double operator()(char fn, double a, double platform)
+    {
+        const std::uint64_t bits = std::bit_cast<std::uint64_t>(a);
+        double v = platform;
+        if (auto it = table.find({fn, bits}); it != table.end())
+            v = std::bit_cast<double>(it->second);
+        if (log != nullptr) {
+            const std::lock_guard<std::mutex> lock(mutex);
+            std::fprintf(log, "%s %016llx %016llx\n", fn == 'c' ? "cos" : "sin", static_cast<unsigned long long>(bits),
+                         static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(v)));
+            std::fflush(log);
+        }
+        return libmLastBits(v);
+    }
+};
+
+LibmTrace& libmTrace()
+{
+    static LibmTrace trace;
+    return trace;
+}
+
+double oracleCos(double a)
+{
+    return libmTrace()('c', a, std::cos(a));
+}
+
+double oracleSin(double a)
+{
+    return libmTrace()('s', a, std::sin(a));
 }
 
 // splitmix64, with uniform doubles from the top 53 bits.
@@ -236,7 +296,7 @@ std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rn
     const double a = rng.uniform(0, kPi);
     Frame fr;
     fr.n = n;
-    fr.xd = add(mul(x0, libmLastBits(std::cos(a))), mul(y0, libmLastBits(std::sin(a))));
+    fr.xd = add(mul(x0, oracleCos(a)), mul(y0, oracleSin(a)));
     // The face plane through the sample point (samples of a planar face lie on it).
     fr.o = point;
     const double extent = norm(sub(f.boxMax, f.boxMin));
@@ -356,8 +416,7 @@ std::string randomEdit(Script& edited, const Part& part, Rng& rng, int& inserted
         }
         if (kind == 1) {
             const double a = rng.uniform(0, 2 * kPi), d = profileWidth(f.loops[0]) * rng.uniform(0.1, 1.2);
-            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * libmLastBits(std::cos(a))),
-                                           mul(f.frame.yd(), d * libmLastBits(std::sin(a)))));
+            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * oracleCos(a)), mul(f.frame.yd(), d * oracleSin(a))));
             return "move " + f.id;
         }
         if (kind == 2) {
@@ -1210,6 +1269,43 @@ TEST_CASE("Oracle (holdout3 17:0): where another picked piece's mapped place fal
     CHECK(looked[0].crossing.empty());
     CHECK_FALSE(looked[0].noAnchor.empty());
     CHECK(looked[0].judgement.verdict == Verdict::Unjudged);
+}
+
+// Diagnosis (hidden): RAYCAD_NAMING_PROBE="<block prefix or -> <part>:<seq> <seed base hex>|<reference id>" prints the
+// resolver's answer, the oracle's expected elements and its verdict for one reference; with RAYCAD_NAMING_PERTURB or
+// RAYCAD_NAMING_LIBM_TABLE it shows what last-bit differences change.
+TEST_CASE("probe one reference of one sequence", "[.naming-probe]")
+{
+    const char* spec = std::getenv("RAYCAD_NAMING_PROBE");
+    if (spec == nullptr)
+        SKIP("RAYCAD_NAMING_PROBE is not set");
+    char prefix[32] = {};
+    int part = 0, seq = 0;
+    unsigned long long base = 0;
+    REQUIRE(std::sscanf(spec, "%31s %d:%d %llx", prefix, &part, &seq, &base) == 4);
+    const char* bar = std::strchr(spec, '|');
+    REQUIRE(bar != nullptr);
+    const std::string pre =
+        std::string(prefix) == "-" ? std::string() : std::string(prefix) + " "; // "-": the main block
+    const std::string id = pre + (bar + 1);
+    std::string want;
+    const std::vector<Looked> looked =
+        replayAndLook(part, seq, base, pre, {id}, [&want](const Expectation& x, const std::vector<std::uint32_t>& got) {
+            for (std::uint32_t e : x.expected.elems)
+                want += " " + std::to_string(e);
+            if (x.expected.merged)
+                want += " (merged)";
+            return std::make_pair(Answer::Exact, got);
+        });
+    for (const Looked& l : looked) {
+        std::string got;
+        for (std::uint32_t e : l.elements)
+            got += " " + std::to_string(e);
+        std::printf("probe %s: answer %d {%s } (%s); expected {%s }; verdict %d; the expectation itself judged %d\n",
+                    l.id.c_str(), static_cast<int>(l.answer), got.c_str(), l.reason.c_str(), want.c_str(),
+                    static_cast<int>(l.judgement.verdict), static_cast<int>(l.own.verdict));
+    }
+    CHECK_FALSE(looked.empty());
 }
 
 // ---------------------------------------------------------------- holdout5: the completeness check, zero-measure
