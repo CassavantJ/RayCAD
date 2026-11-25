@@ -3479,12 +3479,16 @@ namespace {
 // person reviews every flagged answer before a toolpath can be posted, and sees an extra sliver of the same face.
 // Accepted when (a) the answer holds all the picked ground that survives (the mapped pick, or the pick in place when
 // its carriers did not move: Expectation::inPlace), and some of it; (b) every element of the answer that is not
-// expected is on the picked element's own carriers and on no ground another element held at pick time; (c) the
+// expected is on the picked element's own carriers and on no ground any element held at pick time (the picked one
+// included: an extra piece is new ground, not ground the pick had); (c) the
 // answer is flagged. Never for an Exact answer. Returns why, or nothing.
 std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Samples& smp, Answer answer,
                           const std::vector<std::uint32_t>& X)
 {
-    if ((answer != Answer::Split && answer != Answer::Merged) || X.empty() || !x.noAnchor.empty())
+    // Only where the picked element stayed (nothing it depends on moved, or only what bounds it): after a move, all its
+    // ground is new, and which piece continues which pick-time element is told by the map, not by being new.
+    if ((answer != Answer::Split && answer != Answer::Merged) || X.empty() || !x.noAnchor.empty() ||
+        (x.moved && !x.inPlace))
         return {};
     const SubKind kind = x.kind;
     const auto& N = smp.of(kind);
@@ -3516,7 +3520,7 @@ std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Sa
             return {};
         for (const Vec3& p : N[e].pts)
             for (std::uint32_t i = 0; i < B.size(); ++i)
-                if (i != pick.base.index && sameSheet(N[e], B[i], kind) && nearElement(p, B[i], kind, tol))
+                if (sameSheet(N[e], B[i], kind) && nearElement(p, B[i], kind, tol))
                     return {};
         ++extras;
     }
