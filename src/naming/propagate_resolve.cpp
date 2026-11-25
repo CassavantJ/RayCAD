@@ -888,7 +888,8 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 return make(ResolveState::Split, std::move(elements));
             }
             if (!wasAlone && members.size() == 1 && ref.kind != SubKind::Vertex &&
-                canContain(map, shape, elements.front(), ref.hint, ref.territory) && surroundedLikePick(elements.front()))
+                canContain(map, shape, elements.front(), ref.hint, ref.territory) &&
+                surroundedLikePick(elements.front()))
                 return make(ResolveState::Merged, std::move(elements));
         }
     }
