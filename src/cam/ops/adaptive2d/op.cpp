@@ -1,6 +1,7 @@
 // The "adaptive2d" operation type (op.h, task T-061): the IOperationType, and the toolpath of a plan (linking, stats).
 #include "op.h"
 #include "../op_params.h"
+#include "../plunge_entry.h"
 
 #include <algorithm>
 #include <exception>
@@ -67,6 +68,11 @@ Result<Toolpath> adaptive2dToolpath(const Adaptive2dPlan& plan, JobContext& ctx)
         if (!linked) {
             return tl::unexpected(linked.error());
         }
+        // After M3: last-resort plunges (plunge_entry.h; op.h AT EACH DEPTH) and what follows them, read from the
+        // linked moves before they are taken below.
+        std::optional<std::string> plunged =
+            plungeWarning(*linked, "There the area is cut at full width (a slot) along its walls, at the reduced feed, "
+                                   "instead of at the set load.");
         Toolpath path;
         path.startX = linked->start.x;
         path.startY = linked->start.y;
@@ -87,6 +93,9 @@ Result<Toolpath> adaptive2dToolpath(const Adaptive2dPlan& plan, JobContext& ctx)
         path.stats.airCutLengthMm = plan.airCutLengthMm;
         path.warnings = plan.warnings;
         path.warnings.insert(path.warnings.end(), linked->warnings.begin(), linked->warnings.end());
+        if (plunged) {
+            path.warnings.push_back(std::move(*plunged));
+        }
         return path;
     } catch (const std::bad_alloc&) {
         return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while linking the 2D adaptive roughing", {}});

@@ -14,22 +14,37 @@
 // failed run leaves the simulator EMPTY (as before the first run: totalMoves 0, no events, seek refused) and usable.
 //
 // KEYFRAMES. A snapshot (IStockModel::snapshot, copy-on-write tiles) is kept at motion 0, then at the end of the
-// first batch after every kKeyframeRays of work (tens of milliseconds on the reference machine at any cell, so a seek
-// recuts at most that), and at the end. A kept snapshot pins the tiles whose material later cuts change (tridexel.h,
-// SNAPSHOTS): on the benchmark a median keyframe pins about 1.3 MB at 0.2 mm, 2 MB at 0.1 mm and 4.5 MB at 0.05 mm (the
-// one before the facing pass a whole Z grid: 124 MB at 0.05 mm). With the CPU tri-dexel model the pinned bytes are
-// counted exactly as the run goes (detail::snapshotPrivateBytes against the next keyframe); when they pass the budget
+// first batch after every kKeyframeRays of work, and at the end. A batch ends at twice the spacing from the last
+// keyframe at the latest, so a seek recuts at most 2 kKeyframeRays (or one motion that is more): tens of milliseconds
+// on the reference machine at any cell. A kept snapshot pins the tiles whose material later cuts change (tridexel.h,
+// SNAPSHOTS). With the CPU tri-dexel model, before each keyframe the tiles cut since the last one are made one with any
+// equal tile met before (detail::internTiles): a facing pass, a pocket's floor, uncut stock and emptied layers hold
+// thousands of equal tiles, which then cost one, where each keyframe before a facing pass used to pin a whole Z grid
+// (124 MB on S6's stock at 0.05 mm, 460 MB on a 300 x 200 plate). The pinned bytes are counted exactly as the run goes,
+// every tile once however many keyframes and places hold it (detail::KeyframeLedger); when they pass the budget
 // (keyframeBudgetFor the cell) every other keyframe is dropped (the first and the last kept) and the spacing doubles,
 // so memory stays inside the budget and the seek time grows instead. Another stock model's memory is not known: its
-// keyframes are not thinned. Off the end of the timeline the end keyframe pins up to one more copy of the changed
-// tiles, and a partial move one more snapshot.
-//   Measured on the S6 benchmark (112k moves, ray_sim_simulator_bench and the hidden tests "Simulator keyframe cost
-//   diagnosis" and "... budget sweep", reference machine when quiet), none thinned: Low 0.2 mm, 4 workers: 51
-//   keyframes pinning 77 MB, seeks at most about 43 ms (budget 250). Medium 0.1 mm, 4 workers: 143 keyframes, 356 MB,
-//   seeks at most about 60 ms (budget 150). High 0.05 mm, 8 workers: 290 keyframes, 1524 MB, seeks at most about
-//   57 ms in the benchmark's samples and 69 ms over every interval (budget 100; the slowest are single batches of
-//   ball scallops, up to 64 M rays). With whole strips copied on first touch (before the tiles) High pinned 60 to
-//   110 MB per keyframe, was thinned to 19 keyframes in this budget and seeked in up to 0.8 s.
+// keyframes are neither interned nor thinned. Off the end of the timeline the end keyframe pins up to one more copy of
+// the changed tiles, and a partial move one more snapshot.
+//   Measured (simulator_bench_test.cpp: ray_sim_simulator_bench, and the hidden "[stress]" programs, seeking into EVERY
+//   interval, the best of two tries each; reference machine when quiet, two or three runs each, ranges over them).
+//   S6 (112k moves): High 375 keyframes pinning 812 MB (before interning: 290 and 1524 MB), worst seek 59 to 63 ms;
+//   Medium 151 MB, 60 ms; Low 30 MB, 43 ms. The stress programs: facing (a 300 x 200 plate faced in twelve 0.5 mm
+//   passes with a 50.8 mm face mill) pins at most 1 MB at every tier, worst seeks Low 34, Medium 58, High 49 ms
+//   (before: High thinned twice, 1874 MB, 250 to 370 ms); large (a 500 x 350 plate at High: faced, pocketed, one ball
+//   raster) 702 MB, not thinned, 52 to 66 ms (before: thinned five times, 1.0 to 1.5 s); a long program (263k moves:
+//   facing, adaptive and pocket finish of a 260 x 160 pocket, three ball rasters at 0.75 to 0.225 mm) at Medium
+//   967 MB, not thinned, 74 ms (before: thinned once, 145 to 184 ms, over Medium's budget).
+//   Where the budget is NOT met: ball-end finishing at 0.05 mm over a large area. Every raster line changes the band
+//   of tiles under the ball's width (a curved surface: no equal tiles to share), each tile over ten or more lines, so
+//   every keyframe pins most of a band and one pass over 220 x 120 mm pins gigabytes. Within High's 2 GB such a
+//   program is thinned and its seeks slow down: the finishing program (a 260 x 160 pocket roughed in twelve 0.5 mm
+//   levels, then three rasters over 220 x 120 mm; 183k moves) thinned twice, worst 312 to 316 ms (before: four times,
+//   0.75 s); the long program thinned three times, worst 0.6 s (before: seven, 4.3 to 5.6 s). Both meet Low's and
+//   Medium's budgets. With no budget (hidden test "... High without a keyframe budget") the finishing program would
+//   pin 4.1 GB and seek within 83 ms; the long program 7.6 GB and still up to 240 ms: its last raster (a 6 mm ball
+//   along X, about 11 mm below the stock top) takes 3 to 6 ns per ray on 8 workers (S6's scallops 1.3 to 1.9), so there
+//   even a keyframe at every spacing is too far apart for 100 ms.
 //
 // SEEK. A position (op, move, t01) is: every sub-motion of the moves before it, and of its move the path up to the
 // fraction t01 of its length (zero-length sub-motions at its start included). seek() continues from the current
@@ -104,21 +119,26 @@ inline constexpr double kGougeNeedleMm = 1e-3;
 // its sweep box clipped to the stock, plus kMotionRays for each motion. Measured on the S6 benchmark on the reference
 // machine (the hidden test "Simulator work measure calibration"), the stock model takes 0.5 to 1.0 ns per ray over the
 // whole run at every cell (4 or 8 workers), by part 0.4 to 0.8 (adaptive pocket, mostly re-sweeps), 1 to 3 (ball
-// scallops) and 2 to 4 (facing, where every ray loses material). Keyframe spacing and batch size never change a result
-// (tested); they only set seek time, memory and cancel latency.
+// scallops) and 2 to 4 (facing, where every ray loses material). On ONE worker, timed in CPU cycles (the hidden test
+// "Simulator work measure calibration on the stress programs"), a ray costs about the same in facing, pocketing and
+// ball rasters (within a factor 1.5 of each other), whether or not it loses material: the measure needs no term for
+// writes; what varies is how well a batch spreads over the workers and, on this machine, other load. Keyframe spacing,
+// batch size and interning never change a result (tested); they only set seek time, memory and cancel latency.
 inline constexpr double kMotionRays = 2048.0;
 // A batch: at most this many motions (S6: batches of 512 keep the workers busy; smaller ones cost up to 30 % more
 // time) and this much work (25 to 50 ms in a pocket, up to about 150 ms of facing at 0.05 mm on 8 workers).
 inline constexpr double kBatchRays = 64.0e6;
 inline constexpr std::size_t kMaxBatchMotions = 512;
-// A keyframe after this much work since the last one: a seek recuts at most that, 10 to 100 ms on the reference
-// machine depending on the moves (section 9: High 100 ms; Low 250 and Medium 150 on slower machines).
+// A keyframe at the end of the first batch after this much work since the last one, and batches end at twice it, so a
+// seek recuts between this and twice it: 10 to 70 ms on the reference machine when quiet depending on the moves
+// (section 9: High 100 ms; Low 250 and Medium 150 on slower machines). Before the bound a batch could add up to
+// kBatchRays more (S6's slowest seeks at High were single 64 M-ray batches of ball scallops).
 inline constexpr double kKeyframeRays = 24.0e6;
 // Memory the keyframes may pin (CPU tri-dexel model; see KEYFRAMES above): half of section 9's "memory, typical part
 // with full CAM program" for the tier whose cell this is (Low 1.5 GB at 0.2 mm, Medium 2.5 GB at 0.1, High 4 GB at
-// 0.05 and finer); the other half is the document, meshes, the stock and the checks' model. A cap: S6's 11k-move
-// program pins 22, 115 and 517 MB at the three cells, its 112k-move one 77, 356 and 1524 MB (none thinned). At 0.05 mm
-// 1 GB would thin that three times (46 keyframes, seeks up to about 0.25 s), so High's cap stays at 2 GB.
+// 0.05 and finer); the other half is the document, meshes, the stock and the checks' model. A cap: S6's 112k-move
+// program pins 30, 151 and 812 MB at the three cells with interned tiles (77, 356 and 1524 MB before; none thinned).
+// High's cap stays at 2 GB: the finishing programs above would need several times that (see KEYFRAMES).
 inline constexpr std::uint64_t kMiB = std::uint64_t{1} << 20;
 inline constexpr std::uint64_t kKeyframeBudgetLowBytes = 768 * kMiB;
 inline constexpr std::uint64_t kKeyframeBudgetMediumBytes = 1280 * kMiB;
@@ -138,6 +158,7 @@ struct SimTuning {
     std::uint32_t keyframeMotions = 0; // > 0: a keyframe every this many motions instead (at a batch end; batches are
                                        // cut there), the rays ignored
     std::uint64_t keyframeBudgetBytes = 0; // 0: keyframeBudgetFor(the run's cell)
+    bool internTiles = true;               // equal tiles made one at each keyframe (tridexel.h, KEYFRAMES)
 };
 // The simulator must come from makeSimulator. Takes effect at the next run.
 void setSimTuning(ISimulator& sim, const SimTuning& tuning);

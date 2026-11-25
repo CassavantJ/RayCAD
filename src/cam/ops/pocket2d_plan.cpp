@@ -5,6 +5,7 @@
 #include "../../core/from_chars_double.h"
 #include "area_depths.h"
 #include "op_params.h"
+#include "plunge_entry.h"
 #include "pocket2d.h"
 
 #include <algorithm>
@@ -1163,7 +1164,10 @@ private:
         o.retract = stockTop_ + toNm(h.retract);
         o.feedPlane = stockTop_ + toNm(h.feedPlane);
         o.toolRadius = r_;
-        o.centreCutting = false;
+        // After M3 (plunge_entry.h): a tool that cuts at its centre plunges where nothing else fits, never with the
+        // entry restricted to pre-drilled holes. With a tool that does not, the plunge is still asked for last, so a
+        // refusal says that it cannot plunge either.
+        o.centreCutting = mayPlunge(tool());
         o.feeds = feeds_;
         o.feeds.link = 0;
         o.maxStayDown = std::max<Nm>(4 * r_, 3 * s_);
@@ -1181,6 +1185,9 @@ private:
         case PocketEntry::PreDrill:
             o.entryOrder = {EntryKind::PreDrill};
             break;
+        }
+        if (p_.entry != PocketEntry::PreDrill) {
+            o.entryOrder.push_back(EntryKind::Plunge);
         }
         o.helixDiameter = geom2d::roundNm(static_cast<double>(2 * r_) * p_.helixPercent / 100.0);
         o.helixMinDiameter =

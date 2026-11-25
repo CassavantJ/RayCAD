@@ -1,6 +1,7 @@
 // The "pocket2d" operation type (pocket2d.h, task T-054): the IOperationType, and the toolpath of a plan (linking).
 #include "pocket2d.h"
 #include "op_params.h"
+#include "plunge_entry.h"
 
 #include <algorithm>
 #include <exception>
@@ -74,6 +75,8 @@ Result<Toolpath> pocket2dToolpath(const Pocket2dPlan& plan, JobContext& ctx)
         if (!linked) {
             return tl::unexpected(linked.error());
         }
+        // After M3: last-resort plunges (plunge_entry.h), read from the linked moves before they are taken below.
+        std::optional<std::string> plunged = plungeWarning(*linked);
         Toolpath path;
         path.startX = linked->start.x;
         path.startY = linked->start.y;
@@ -91,6 +94,9 @@ Result<Toolpath> pocket2dToolpath(const Pocket2dPlan& plan, JobContext& ctx)
         path.stats.maxZ = toMm(maxZ);
         path.warnings = plan.warnings;
         path.warnings.insert(path.warnings.end(), linked->warnings.begin(), linked->warnings.end());
+        if (plunged) {
+            path.warnings.push_back(std::move(*plunged));
+        }
         return path;
     } catch (const std::bad_alloc&) {
         return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while linking the 2D pocket", {}});

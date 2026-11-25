@@ -2,6 +2,7 @@
 // passes linking joins. Every rule is stated in slot.h; this file follows them in its order. Deterministic: integer
 // nanometres from the face boundary on, geom2d for every offset, sweep and boolean, dmath for trigonometry.
 #include "op_params.h"
+#include "plunge_entry.h"
 #include "slot.h"
 #include "slot_common.h"
 
@@ -606,10 +607,13 @@ private:
         o.retract = top + toNm(h.retract);
         o.feedPlane = top + toNm(h.feedPlane);
         o.toolRadius = toNm(tool().diameter / 2);
-        o.centreCutting = false;
+        // After M3 (plunge_entry.h): where no ramp fits, a tool that cuts at its centre plunges at the pass start (a
+        // closed end's centre or past an open end: the tool is the slot's width); one that does not is refused, the
+        // refusal saying it cannot plunge either.
+        o.centreCutting = mayPlunge(tool());
         o.maxStayDown = toNm(tool().diameter);
         o.stayDownEntry = true; // the next depth ramps in from the cut, without a retract (link.h)
-        o.entryOrder = {EntryKind::Ramp};
+        o.entryOrder = {EntryKind::Ramp, EntryKind::Plunge};
         o.helixDiameter = 0;
         o.helixMinDiameter = 0;
         o.rampAngleDeg = p_.rampAngle;

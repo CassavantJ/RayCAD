@@ -158,6 +158,42 @@ TEST_CASE("golden: entered at pre-drilled holes", "[cam][pocket2d][golden]")
     CHECK(countRole(p, MoveRole::Plunge) == 2);
 }
 
+TEST_CASE("golden: a pocket entered by helices and one too small for any, plunged into (after M3)",
+          "[cam][pocket2d][golden]")
+{
+    // pocketBlock's 60 x 40 x 15 block with a pocket x 8..38, y 8..32 (corner radius 3) and a 7 x 7 one x 44..51,
+    // y 16..23, both down to Z 9, in steps of 3 (Z 12 and Z 9), with a 6 mm end mill that cuts at its centre (its
+    // type's default). The large pocket is entered by helices as it always was; the small one has a 1 mm square room,
+    // no helix and no ramp fits it, and it is plunged into at each depth (plunge_entry.h).
+    static const kernel::Shape part = [] {
+        kernel::Shape s = box(Vec3{0, 0, 0}, Vec3{60, 40, 15});
+        s = cut(s, prism({roundedRect(8, 8, 38, 32, 3)}, 9, 16));
+        return cut(s, prism({roundedRect(44, 16, 51, 23, 0)}, 9, 16));
+    }();
+    Case c;
+    c.op = pocketOp(R"({"stepdown":3,"stepover":45})");
+    c.tool = endMill(6);
+    REQUIRE(c.tool.cutsAtCentre());
+    c.geom = geometryOn(part, {upFace(part, 9, 0, 0, 40, 40), upFace(part, 9, 40, 0, 60, 40)});
+    c.clears = {clearClaim({rectPoly(8, 8, 38, 32, 3)}, 9), clearClaim({rectPoly(44, 16, 51, 23)}, 9)};
+    const Toolpath p = c.path();
+    matchesGolden("pocket2d_plunge", p);
+    std::size_t plunges = 0;
+    for (const Move& m : p.moves) {
+        if (m.role == MoveRole::Plunge) {
+            ++plunges;
+            CHECK(m.x >= 47'000'000); // in the small pocket's room: the whole tool inside the pocket
+            CHECK(m.x <= 48'000'000);
+            CHECK(m.y >= 19'000'000);
+            CHECK(m.y <= 20'000'000);
+        }
+    }
+    CHECK(plunges == 2);
+    CHECK(helixMoves(p) > 0);
+    REQUIRE(p.warnings.size() == 1);
+    CHECK(p.warnings[0].find("Plunges straight down at 2 places") == 0);
+}
+
 TEST_CASE("golden: the pocket of a corpus part", "[cam][pocket2d][golden][corpus]")
 {
     // closed_pocket_1 (tools/corpus_gen): a block with a closed rectangular pocket with corner radii.

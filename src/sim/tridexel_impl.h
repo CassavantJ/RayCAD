@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace ray::sim::detail {
@@ -113,6 +115,79 @@ struct Tile {
     }
 };
 
+// Tiles a model dropped while no one else held them (internTiles, restore), kept to receive its next copies on write
+// instead of being freed and allocated again: on Windows freeing a block of tens of kilobytes gives its pages back
+// and the next allocation faults them in again, which made a keyframe that drops ten thousand tiles take 0.2 s. At
+// most kTileBinBytes are kept; a tile is taken only for a copy of exactly its dexel count, so its arrays are reused
+// as they are. Used between batches (put) and by a batch's tasks (take), under a lock.
+inline constexpr std::uint64_t kTileBinBytes = std::uint64_t{256} << 20;
+class TileBin {
+public:
+    TileBin() = default;
+    TileBin(const TileBin&) = delete;
+    TileBin& operator=(const TileBin&) = delete;
+    ~TileBin() { clear(); }
+    // `t`, which no one references any more, is kept or deleted.
+    void put(Tile* t);
+    // A kept tile whose dexel array holds exactly `dexels`, or null. Its contents are stale.
+    Tile* take(std::size_t dexels);
+    void clear();
+    std::uint64_t bytes() const
+    {
+        const std::lock_guard<std::mutex> lock(m_);
+        return bytes_;
+    }
+
+private:
+    mutable std::mutex m_;
+    std::unordered_map<std::size_t, std::vector<Tile*>> spare_; // by dexel array capacity
+    std::uint64_t bytes_ = 0;
+};
+
+inline void TileBin::put(Tile* t)
+{
+    if (t->pool.capacity() > 4096) { // a large pool is not kept: copies bring their own
+        std::vector<float>().swap(t->pool);
+    }
+    {
+        const std::lock_guard<std::mutex> lock(m_);
+        if (bytes_ + t->bytes() <= kTileBinBytes) {
+            bytes_ += t->bytes();
+            spare_[t->d.capacity()].push_back(t);
+            return;
+        }
+    }
+    delete t;
+}
+
+inline Tile* TileBin::take(std::size_t dexels)
+{
+    const std::lock_guard<std::mutex> lock(m_);
+    const auto it = spare_.find(dexels);
+    if (it == spare_.end() || it->second.empty()) {
+        return nullptr;
+    }
+    Tile* t = it->second.back();
+    it->second.pop_back();
+    bytes_ -= t->bytes();
+    return t;
+}
+
+inline void TileBin::clear()
+{
+    std::unordered_map<std::size_t, std::vector<Tile*>> spare;
+    {
+        const std::lock_guard<std::mutex> lock(m_);
+        spare.swap(spare_);
+        bytes_ = 0;
+    }
+    for (auto& [n, tiles] : spare) {
+        for (Tile* t : tiles) {
+            delete t;
+        }
+    }
+}
+
 // Intrusive copy-on-write owner of a Tile. Copying the reference shares the tile (one atomic increment); the tile is
 // deleted with its last reference.
 class TileRef {
@@ -147,15 +222,36 @@ public:
     // load pairs with the release in releasePtr, so another owner's last reads of the tile happen before our writes.
     // Once true it stays true while only the holder of this reference copies it (no one else can share it again).
     bool unique() const { return s_->refs.load(std::memory_order_acquire) == 1; }
-    // The tile for writing: copied first unless this is its only owner.
-    Tile& mut()
+    // The tile for writing: copied first unless this is its only owner (into a tile of `bin` when it has one of the
+    // size: the same contents either way).
+    Tile& mut(TileBin* bin = nullptr)
     {
         if (!unique()) {
-            Tile* copy = new Tile(*s_);
+            Tile* copy = bin != nullptr ? bin->take(s_->d.size()) : nullptr;
+            if (copy != nullptr) {
+                copy->d = s_->d;
+                copy->pool = s_->pool;
+                copy->garbage = s_->garbage;
+                copy->top = s_->top;
+                copy->refs.store(1, std::memory_order_relaxed);
+            } else {
+                copy = new Tile(*s_);
+            }
             releasePtr(s_);
             s_ = copy;
         }
         return *s_;
+    }
+    // Drops the reference. When it was the last, the tile is not deleted but returned (to the caller's care).
+    Tile* dropKeepingLast()
+    {
+        Tile* t = s_;
+        s_ = nullptr;
+        if (t != nullptr && t->refs.load(std::memory_order_acquire) == 1) {
+            return t;
+        }
+        releasePtr(t);
+        return nullptr;
     }
 
 private:
@@ -217,7 +313,9 @@ struct StripTiles {
     int u0 = 0, u1 = 0;          // the strip's rows
     std::vector<const Tile*> rd; // per tile: where to read it
     std::vector<Tile*> wr;       // per tile: where to write it once it is the task's own, else null
-    StripTiles(Grid& g, int s) : ref(g.stripTiles(s)), u0(g.row0(s)), u1(g.row1(s))
+    TileBin* bin = nullptr;      // where copies come from (TileRef::mut)
+    std::uint64_t writes = 0;    // intervals subtracted from a dexel that lost material (triDexelWrites)
+    StripTiles(Grid& g, int s, TileBin* b = nullptr) : ref(g.stripTiles(s)), u0(g.row0(s)), u1(g.row1(s)), bin(b)
     {
         rd.resize(static_cast<std::size_t>(g.tilesPerStrip));
         wr.resize(rd.size());
@@ -234,7 +332,7 @@ struct StripTiles {
     {
         Tile*& w = wr[static_cast<std::size_t>(t)];
         if (w == nullptr) {
-            w = &ref[t].mut();
+            w = &ref[t].mut(bin);
             rd[static_cast<std::size_t>(t)] = w;
         }
         return *w;

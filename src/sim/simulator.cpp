@@ -30,7 +30,6 @@ struct OpTable {
 struct Keyframe {
     std::uint64_t motion = 0; // sub-motions cut
     std::shared_ptr<const IStockModel::Snapshot> snap;
-    std::uint64_t bytes = 0; // pinned by it and not by the next keyframe (CPU model; the last: 0)
 };
 
 Box3 soupBox(const kernel::TriSoup& s)
@@ -139,11 +138,8 @@ public:
         in.ready = ready_;
         for (const Keyframe& k : keyframes_) {
             in.keyframeMotions.push_back(k.motion);
-            in.keyframeBytes += k.bytes;
         }
-        if (!cpu_) {
-            in.keyframeBytes = 0;
-        }
+        in.keyframeBytes = cpu_ ? ledger_.pinnedBytes() : 0;
         return in;
     }
 
@@ -162,8 +158,8 @@ private:
     Vec3 tipAt(const Target& t) const;
     // Cuts sub-motions [from, to) in batches (removed: run's per-motion output, or null).
     void cutRange(std::uint64_t from, std::uint64_t to, std::vector<double>* removed);
-    // The end of the batch that starts at `from`, before `limit`.
-    std::uint64_t batchEnd(std::uint64_t from, std::uint64_t limit, double* rays) const;
+    // The end of the batch that starts at `from`, before `limit`, of at most `maxRays` of work (one motion at least).
+    std::uint64_t batchEnd(std::uint64_t from, std::uint64_t limit, double maxRays, double* rays) const;
     void takeKeyframe(std::uint64_t motion);
 
     IJobSystem& jobs_;
@@ -179,6 +175,7 @@ private:
     std::vector<double> rays_; // per sub-motion
     std::vector<SimEvent> events_;
     std::vector<Keyframe> keyframes_;
+    KeyframeLedger ledger_;        // what keyframes_ pin (CPU model)
     std::uint64_t stopMotion_ = 0; // the run cut [0, stopMotion_)
     std::uint32_t endOp_ = 0;
     TimelinePosition endPos_{0, 0, 0.0};
@@ -206,6 +203,7 @@ void Simulator::clear()
     rays_.clear();
     events_.clear();
     keyframes_.clear();
+    ledger_.clear();
     stopMotion_ = 0;
     endOp_ = 0;
     endPos_ = {0, 0, 0.0};
@@ -219,14 +217,14 @@ void Simulator::clear()
     tip_ = {};
 }
 
-std::uint64_t Simulator::batchEnd(std::uint64_t from, std::uint64_t limit, double* raysOut) const
+std::uint64_t Simulator::batchEnd(std::uint64_t from, std::uint64_t limit, double maxRays, double* raysOut) const
 {
     const std::uint32_t op = motions_[from].op;
     const std::size_t maxMotions = std::max<std::size_t>(1, tuning_.maxBatchMotions);
     double rays = 0;
     std::uint64_t j = from;
     while (j < limit && motions_[j].op == op && j - from < maxMotions) {
-        if (j > from && rays + rays_[j] > tuning_.batchRays) {
+        if (j > from && rays + rays_[j] > maxRays) {
             break;
         }
         if (j > from && spacingMotions_ > 0 && j % spacingMotions_ == 0) {
@@ -245,7 +243,7 @@ void Simulator::cutRange(std::uint64_t from, std::uint64_t to, std::vector<doubl
 {
     std::vector<IStockModel::CutMove> moves;
     while (from < to) {
-        const std::uint64_t j = batchEnd(from, to, nullptr);
+        const std::uint64_t j = batchEnd(from, to, tuning_.batchRays, nullptr);
         const ToolShape& shape = tools_[motions_[from].op];
         if (!shape.cuttingProfile.empty()) {
             moves.clear();
@@ -264,35 +262,29 @@ void Simulator::cutRange(std::uint64_t from, std::uint64_t to, std::vector<doubl
 
 void Simulator::takeKeyframe(std::uint64_t motion)
 {
-    if (cpu_ && !keyframes_.empty()) {
-        keyframes_.back().bytes = snapshotPrivateBytes(*stock_, *keyframes_.back().snap);
+    if (cpu_ && tuning_.internTiles) {
+        // The tiles cut since the last keyframe, made one with any equal tile met before (tridexel.h, KEYFRAMES).
+        internTiles(*stock_, keyframes_.empty() ? nullptr : keyframes_.back().snap.get());
     }
-    keyframes_.push_back({motion, stock_->snapshot(), 0});
+    keyframes_.push_back({motion, stock_->snapshot()});
     if (!cpu_) {
         return;
     }
-    const auto total = [&] {
-        std::uint64_t b = 0;
-        for (const Keyframe& k : keyframes_) {
-            b += k.bytes;
-        }
-        return b;
-    };
-    // Over budget: drop every other keyframe (the first and the last stay) and the spacing doubles. During a run a
-    // strip that changed never comes back, so what the keyframes pin together is, exactly, the sum over each of the
-    // strips it does not share with the next one; recounted after a drop on a scratch copy put at the next keyframe.
-    while (total() > budget_ && keyframes_.size() > 2) {
+    ledger_.add(*keyframes_.back().snap);
+    // Over budget: drop every other keyframe (the first and the last stay) and the spacing doubles; the ledger is
+    // recounted from the ones kept.
+    while (ledger_.pinnedBytes() > budget_ && keyframes_.size() > 2) {
         std::vector<Keyframe> kept;
         for (std::size_t k = 0; k + 1 < keyframes_.size(); k += 2) {
             kept.push_back(keyframes_[k]);
         }
         kept.push_back(keyframes_.back());
-        const std::unique_ptr<IStockModel> scratch = stock_->clone();
-        for (std::size_t k = 0; k + 1 < kept.size(); ++k) {
-            scratch->restore(*kept[k + 1].snap);
-            kept[k].bytes = snapshotPrivateBytes(*scratch, *kept[k].snap);
-        }
         keyframes_ = std::move(kept);
+        std::vector<const IStockModel::Snapshot*> snaps;
+        for (const Keyframe& k : keyframes_) {
+            snaps.push_back(k.snap.get());
+        }
+        ledger_.rebuild(snaps);
         spacingRays_ *= 2.0;
         spacingMotions_ *= 2;
         ++info_.thinnings;
@@ -472,7 +464,10 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
         }
         cutProgress.set(static_cast<double>(i) / static_cast<double>(stopMotion_), "Simulating material removal");
         double rays = 0;
-        const std::uint64_t j = batchEnd(i, stopMotion_, &rays);
+        // A batch ends at twice the spacing from the last keyframe at the latest, so a seek recuts at most that (or
+        // one motion).
+        const double room = spacingMotions_ > 0 ? tuning_.batchRays : 2.0 * spacingRays_ - sinceKey;
+        const std::uint64_t j = batchEnd(i, stopMotion_, std::min(tuning_.batchRays, room), &rays);
         const ToolShape& shape = tools_[motions_[i].op];
         if (!shape.cuttingProfile.empty()) {
             moves.clear();

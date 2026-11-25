@@ -220,6 +220,7 @@ std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, con
                         top = wtop;
                     }
                     const double removed = subtractInterval(*wt, wrow[li], lo, hi);
+                    ++s.writes;
                     if (removed > 0) {
                         vol += static_cast<std::int64_t>(removed * kVolumeScale + 0.5);
                         tileBits[tileRow + static_cast<std::size_t>(i / kTileCells)] = 1;
@@ -430,6 +431,7 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
                         }
                         Dexel& x = wrow[j - c0];
                         subtractInterval(*wt, x, iv[2 * p], iv[2 * p + 1]);
+                        ++s.writes;
                         if (x.n == 0) {
                             break;
                         }

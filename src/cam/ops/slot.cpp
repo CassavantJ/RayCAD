@@ -1,6 +1,7 @@
 // The "slot" operation type (slot.h, task T-055): the IOperationType, and the toolpath of a plan through linking.
 #include "slot.h"
 #include "op_params.h"
+#include "plunge_entry.h"
 #include "slot_common.h"
 
 #include <exception>
@@ -69,6 +70,9 @@ Result<Toolpath> slotToolpath(const SlotPlan& plan, const lib::MachineDef& machi
         }
         path.warnings = plan.warnings;
         path.warnings.insert(path.warnings.end(), linked->warnings.begin(), linked->warnings.end());
+        if (auto w = plungeWarning(*linked)) { // after M3: last-resort plunges (plunge_entry.h)
+            path.warnings.push_back(std::move(*w));
+        }
         return path;
     } catch (const std::bad_alloc&) {
         return tl::unexpected(Error{ErrorCode::Internal, "Out of memory while making the slot toolpath", {}});

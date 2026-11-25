@@ -203,6 +203,80 @@ TEST_CASE("A slot too narrow for any entry returns a failed result naming the mi
     CHECK(unentered->warnings[0].message == out.error().message);
 }
 
+TEST_CASE("A region no helix, ramp or hole enters is plunged into, last, when the order asks for it (after M3)",
+          "[adaptive][entry]")
+{
+    // The 13.5 mm hole of the test above (its centre area 0.55 mm across), with a plunge at the end of the order.
+    sw::s5::Case hole{"hole", "circle 13.5", {sw::s5::circle(20, 20, 6.75)}, {sw::s5::rect(0, 0, 40, 40)}};
+    EntryOptions o;
+    o.order = {EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill, EntryKind::Plunge};
+    for (const double stepover : {0.1, 0.2}) {
+        INFO("load " << stepover);
+        JobContext ctx;
+        auto out = planAdaptive(inputFor(hole, stepover), o, ctx);
+        REQUIRE(out);
+        REQUIRE(out->regions.size() == 1);
+        const Region& r = out->regions[0];
+        CHECK(r.entry.kind == EntryMode::Plunge);
+        CHECK(r.entry.radius == 0);
+        CHECK(r.entry.start == r.entry.centre);
+        // At the middle of the area, on the engine's grid.
+        CHECK(std::llabs(r.entry.centre.x - toNm(20)) <= 5'000);
+        CHECK(std::llabs(r.entry.centre.y - toNm(20)) <= 5'000);
+        CHECK(geom2d::locate(r.entry.centre, r.toolBounds) == geom2d::Where::Inside);
+        // A straight cut to the wall and once round it: every segment full width, every one at the reduced feed.
+        REQUIRE(r.paths.size() == 2);
+        CHECK(r.paths[0].points.size() == 2);
+        CHECK(r.paths[0].points.front() == r.entry.centre);
+        CHECK(r.paths[1].points.front() == r.paths[0].points.back());
+        CHECK(r.paths[1].points.back() == r.paths[0].points.back());
+        for (const Path& p : r.paths) {
+            CHECK(p.role == Role::Pass);
+            CHECK(p.motion == Motion::Cut);
+            REQUIRE(p.reducedFeed.size() == p.points.size());
+            CHECK(std::count(p.reducedFeed.begin() + 1, p.reducedFeed.end(), std::uint8_t(1)) ==
+                  std::ptrdiff_t(p.points.size() - 1));
+            for (std::size_t i = 1; i < p.engagementDeg.size(); ++i) {
+                CHECK(p.engagementDeg[i] == 180.0);
+            }
+        }
+        // The wall loop is the area less the tool radius: radius 6.75 - 6.35 = 0.4 (within the input polygon's sag).
+        for (const Pt& q : r.paths[1].points) {
+            const double d = std::hypot(double(q.x) - 20e6, double(q.y) - 20e6);
+            CHECK(std::abs(d - 0.4e6) < 10'000);
+        }
+        REQUIRE(out->warnings.size() == 1);
+        CHECK(out->warnings[0].code == Warning::Code::EntryFallback);
+        CHECK(contains(out->warnings[0].message, "is entered by a plunge: a helix of 9.525 mm, a ramp of 12.7 mm, a "
+                                                 "pre-drilled hole of 14.288 mm or a helix of 1.588 mm does not fit"));
+        CHECK(out->cleared.size() == 1);
+        // The sweep checker: nothing the tool reaches is left, nothing gouged, at most a full-width cut.
+        const sw::Report rep = sw::check(checkInputFor(hole, *out, stepover));
+        INFO(sw::summary(rep));
+        CHECK(rep.uncutReachable < 0.005);
+        CHECK(rep.gougeAnalytic <= 0.010);
+        CHECK(rep.linkRemovedMm2 == 0.0);
+        CHECK(rep.max <= 182.0); // the checker's reading of a full-width cut (180) within its sampling
+    }
+    // Without the plunge in the order: refused as before ("A slot too narrow for any entry ...").
+    JobContext ctx;
+    CHECK_FALSE(planAdaptive(inputFor(hole, 0.2), {}, ctx));
+}
+
+TEST_CASE("A plunge at the end of the order changes nothing where another entry fits (after M3)", "[adaptive][entry]")
+{
+    EntryOptions plunge;
+    plunge.order = {EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill, EntryKind::Plunge};
+    for (const char* id : {"p2", "p4"}) { // a helix; a ramp after the helix does not fit
+        INFO(id);
+        auto without = planCase(id, 0.2);
+        JobContext ctx;
+        auto with = planAdaptive(inputFor(sw::s5::caseById(cases(), id), 0.2), plunge, ctx);
+        REQUIRE(without);
+        REQUIRE(with);
+        CHECK(toText(*with) == toText(*without));
+    }
+}
 TEST_CASE("Bad entry options are refused with InvalidArgument", "[adaptive][entry]")
 {
     const Input good = inputFor(sw::s5::caseById(cases(), "p2"), 0.2);
@@ -215,8 +289,8 @@ TEST_CASE("Bad entry options are refused with InvalidArgument", "[adaptive][entr
         CHECK(contains(out.error().message, part));
     };
     EntryOptions o;
-    o.order = {EntryKind::Plunge};
-    refused(good, o, "plunge");
+    o.order = {static_cast<EntryKind>(200)};
+    refused(good, o, "not a known kind of entry");
     o.order.clear();
     refused(good, o, "no entry kind");
     o = {};

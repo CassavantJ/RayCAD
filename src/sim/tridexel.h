@@ -9,12 +9,12 @@
 //
 // STRIPS, TILES AND THREADS. Each grid is split into strips of whole rows: kStripMm of y for the Z grid, kLayerStripMm
 // of z (layers) for the X and Y grids, so that each layer's slice of a move is worked out once. A strip is stored as
-// tiles of kTileCols columns (its rows by kTileCols rays; the unit of copy-on-write, below); every tile belongs to
-// exactly one strip. A batch first lists, per strip, the moves whose swept tool reaches it, in program order; then the
-// strips run in parallel (IJobSystem::parallelChunks, one chunk per strip), each applying its moves in order to the
-// dexels of its own tiles only. A dexel's contents therefore depend only on the moves in order: not on the thread
-// count, the batch size, the strip or tile width or how moves are split across calls. Per-move results are merged in
-// integers.
+// tiles of kTileCols columns (its rows by kTileCols rays; the unit of copy-on-write, below); every tile place belongs
+// to exactly one strip (the tile there may be shared with other places: SNAPSHOTS). A batch first lists, per strip, the
+// moves whose swept tool reaches it, in program order; then the strips run in parallel (IJobSystem::parallelChunks, one
+// chunk per strip), each applying its moves in order to the dexels of its own tiles only. A dexel's contents therefore
+// depend only on the moves in order: not on the thread count, the batch size, the strip or tile width or how moves are
+// split across calls. Per-move results are merged in integers.
 //
 // THE CUT. compileShape (toolshape.h) turns the cutting profile into convex pieces; every ray meets a piece swept along
 // a straight move in one interval, computed in closed form, which is subtracted from the dexel. Arcs are split into
@@ -43,14 +43,17 @@
 // keyframe cost diagnosis"), keyframes 24 M rays of work apart at 0.05 mm: whole strips copied on first touch pinned
 // 16.3 GB over the run, 17 times the 0.97 GB of dexels that actually changed; tiles of 64 columns copied on change pin
 // 1.52 GB (Z 0.78, X 0.31, Y 0.44).
-//   Why results cannot depend on the threads: during a batch only the task of a tile's strip reads or writes that
-// tile's dexels, and its reference (the TileRef in the grid's tile array) is replaced by that task alone (a copy, when
-// shared). Whether a tile is shared is read once when the task starts (StripTiles): no one can share it during a batch
-// (snapshot and clone are not called while a batch runs), and a release elsewhere can only make it unshared, which at
-// worst copies it needlessly. A copy holds the same bits, and a cut that takes nothing from a ray writes nothing, so
-// whether, when and on which thread a tile was copied never changes a dexel. Reference counts are atomic; the
-// acquire load that finds a tile unshared pairs with the release of every other owner's last reference, so their reads
-// of it happen before our writes.
+//   Why results cannot depend on the threads: during a batch a task reads only the tiles at its own strip's places
+// and replaces only their references (the TileRefs in the grid's tile array; a copy, when shared). A tile may sit at
+// places of several strips (internTiles, KEYFRAMES below), so several tasks may read it at once; a task writes to a
+// tile only once it holds the last reference to it, and every other task holding it dropped its reference only in
+// TileRef::mut, after copying it, and reads only its copy from then on. Whether a tile is shared is read once when the
+// task starts (StripTiles): no one can share it anew during a batch (snapshot, clone and internTiles are not called
+// while a batch runs), and a release elsewhere can only make it unshared, which at worst copies it needlessly. A copy
+// holds the same bits (whether made anew or into a tile the model dropped before: TileBin), and a cut that takes
+// nothing from a ray writes nothing, so whether, when and on which thread a tile was copied never changes a dexel.
+// Reference counts are atomic; the acquire load that finds a tile unshared pairs with the release of every other
+// owner's last reference, so their reads of it happen before our writes.
 //
 // DISPLAY MESH. Tiles are kTileCells x kTileCells Z rays, numbered row by row (tx + ty * tilesX). A tile is dirty when
 // a Z ray in it lost material; restore() marks the display tiles over every Z tile it replaces. toMesh meshes columns
@@ -69,6 +72,8 @@
 #include <ray/sim.h>
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace ray::sim::detail {
 
@@ -114,5 +119,52 @@ SnapshotCost snapshotCost(const IStockModel&, const IStockModel::Snapshot& snap)
 // Triangles of the whole stock's display mesh with columns of `step` x `step` cells (1: full resolution), counted
 // without building it.
 std::uint64_t triDexelMeshTriangles(const IStockModel&, int step);
+// Writes since the model was made: each time a cut took material from a dexel (one interval subtracted from it). The
+// same count whatever the threads, batches or snapshots, as every dexel's contents are. A diagnostic of the
+// benchmarks (simulator_bench_test.cpp): on one worker a write was measured to cost no more than reading a ray, so the
+// simulator's work measure leaves writes out (simulator.h).
+std::uint64_t triDexelWrites(const IStockModel&);
+
+// KEYFRAMES: two hooks for a caller that keeps snapshots of the model as it is cut (the simulator, simulator.h).
+//   internTiles makes tiles of equal contents one. Every tile of the model that `prev` (the caller's last keyframe;
+// null: none) does not share, i.e. every tile changed since prev, is looked up by its contents in the model's table of
+// tiles met before: when an equal tile is there, the model holds that one instead (and drops its own), else the tile
+// goes into the table. Equal contents: the same dexel count, and per dexel the same interval count and float bits of
+// its intervals, and the same top table. A facing pass, a pocket's floor, uncut stock and emptied layers leave
+// thousands of equal tiles (every ray holding the same intervals), which then cost one tile in every keyframe that
+// holds them. Called between batches only, like snapshot(); reset() empties the table, which holds its tiles until no
+// one else does (then it lets them go, at the next call). Returns the tiles replaced. A tile the model drops that no
+// one else holds (here and in restore) is kept, up to kTileBinBytes (tridexel_impl.h, TileBin; counted in
+// TriDexelInfo::bytes), to receive the next copies on write instead of being freed and allocated again.
+//   Why results cannot change: the tile taken holds the same intervals as the one it replaces (a dexel's room in the
+// pool may differ, which no cut's result depends on: subtractInterval grows a dexel only to make room, and fails only
+// at kMaxDexelIntervals intervals whatever its history), and its top table is the same. It is shared, so the first cut
+// that changes it copies it (SNAPSHOTS above), whichever place of the grid that cut is at. Such a tile may be shared by
+// tiles of several strips, so tasks of a batch may read it together; one writes to it in place only once it holds the
+// last reference (TileRef::unique, an acquire load), and every other holder dropped its reference only in
+// TileRef::mut after copying it, reading only its copy from then on: their reads happen before that write.
+std::uint64_t internTiles(IStockModel& m, const IStockModel::Snapshot* prev);
+// The memory a set of keyframes pins: the bytes of the tiles they hold that the newest one does not (the newest is a
+// snapshot of the model as it is, whose tiles the model holds anyway), every tile counted once however many keyframes
+// and places of the grid hold it. Kept as keyframes are added, in O(tiles) each, plus a hash lookup per tile that
+// differs from the keyframe before; rebuilt from the kept ones after some are dropped. Holds no references: the caller
+// keeps the snapshots alive while they are in it.
+class KeyframeLedger {
+public:
+    KeyframeLedger();
+    ~KeyframeLedger();
+    KeyframeLedger(const KeyframeLedger&) = delete;
+    KeyframeLedger& operator=(const KeyframeLedger&) = delete;
+    // A keyframe after the others: a snapshot of the model as it is now.
+    void add(const IStockModel::Snapshot& snap);
+    // Forgets all and adds `snaps`, oldest first.
+    void rebuild(const std::vector<const IStockModel::Snapshot*>& snaps);
+    void clear();
+    std::uint64_t pinnedBytes() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 } // namespace ray::sim::detail

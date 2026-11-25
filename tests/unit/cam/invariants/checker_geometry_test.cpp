@@ -249,14 +249,22 @@ TEST_CASE("invariants: no straight plunge into stock with a tool that does not c
         b.rapid(Vec3{30, 20, 20}, MoveRole::Retract);
         return b.take();
     };
-    onlyThis(k.run(plunge()), "plunge"); // a flat end mill
-    k.c.centreCutting = true;            // the same tool said to cut at its centre
+    k.tool.centreCutting = false; // a flat end mill whose library entry says it does not cut at its centre
+    onlyThis(k.run(plunge()), "plunge");
+    k.c.centreCutting = true; // the same tool, the operation claiming it does
     clean(k.run(plunge()));
     k.c.centreCutting.reset();
+    k.tool.centreCutting.reset(); // its entry says nothing: the type's default, which is centre cutting (after M3)
+    clean(k.run(plunge()));
+    k.tool.type = lib::ToolType::FaceMill; // not centre cutting by its type
+    onlyThis(k.run(plunge()), "plunge");
     k.tool = ballMill(6); // centre cutting by its type
     clean(k.run(plunge()));
+    k.tool.centreCutting = false; // unless its entry says otherwise
+    onlyThis(k.run(plunge()), "plunge");
     // Into a pre-drilled hole (the stock has a 4 mm hole there): the dead centre meets no stock.
     k.tool = flatMill(6);
+    k.tool.centreCutting = false;
     k.part = cut(k.part, cylinder(30, 20, -5, 2, 20));
     k.g = geometryOn(k.part, Box3{Vec3{0, 0, -10}, Vec3{60, 40, 0}});
     k.c = claims(k.g);
