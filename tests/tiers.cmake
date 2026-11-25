@@ -94,14 +94,18 @@ set(RAY_DEBUG_HEAVY_TESTS
     # 20-minute timeout) and adaptive2d's property tests on their quick seeds (24 minutes).
     ray_cam_link_tests
     ray_cam_adaptive2d_tests
-    ray_cam_invariants_adaptive2d)
+    ray_cam_invariants_adaptive2d
+    # T-080: the direct edits on the 50 parts of the S9 set (1,337 cases, 8 workers): about 80 s in Release, its OCCT
+    # work many times slower in a Debug build.
+    ray_kernel_directedit_corpus)
 
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property
 # tests of every operation type on their large seed sets passed their 2-hour timeout under ASan even on 32 hardware
 # threads (30 minutes in Release at most).
 set(RAY_SANITIZER_HEAVY_TESTS
-    ray_cam_invariants_slow)
+    ray_cam_invariants_slow
+    ray_kernel_directedit_corpus) # T-080: 1,337 Defeaturing and boolean edits, each with a 20 s limit
 
 # Tests whose pass or fail is a wall-clock budget, set for a developer's machine (PLAN.md section 9 rows, UI-thread
 # gaps, benchmarks): every <test>_wallclock split below (RAY_WALLCLOCK_SPLITS) and these. They get the label bench, which
@@ -132,7 +136,8 @@ set(RAY_TEST_PROCESSORS
     ray_doc_s4_revolve=7        # 6.8
     ray_doc_s4_hole=6           # 6.4
     ray_kernel_blend_stress=2   # 2.0 (8 threads that mostly wait on each other)
-    ray_cam_carried_tiers=4)    # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
+    ray_cam_carried_tiers=4     # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
+    ray_kernel_directedit_corpus=8) # T-080: 8 workers over the S9 set
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those
 # cases out ("~[wallclock]"); here a test <test>_wallclock runs just them ("[wallclock]"), alone, with the suite's

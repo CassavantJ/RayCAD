@@ -1,0 +1,53 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: BOPAlgo_RemoveFeatures (BRepAlgoAPI_Defeaturing), FillGap::TrimExtendedFaces passes each face's share of its
+progress range to FillGap::TrimFace, which passes it to the General Fuse that trims the extended face
+(aGFTrim.Perform). Before, that General Fuse ran without a progress range.
+
+Why: the trim can be the longest part of a feature removal (edge/face intersections of extended B-spline faces), and
+without a range its BOPAlgo_PaveFiller never sees the user break, so a cancel was honoured only when the trim of that
+face ended. RayCAD's direct-edit measurement (task T-080, tests/unit/kernel/directedit_corpus_test.cpp) removing a
+fillet of NIST CTC 05 (deleteFaces, the fillet k1 of the S9 set) took 237 s after a cancel; RayCAD requires 10 s.
+With the range the PaveFiller stops at its next edge/face job, and the feature removal returns
+BOPAlgo_AlertUserBreak as it already does when the break is seen elsewhere. A run that is not cancelled is unchanged
+(the range only reports progress).
+
+Upstream: not reported.
+
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx
+@@ -653,11 +653,12 @@ private: //! @name Private methods performing the operation
+     TopExp::MapShapes(myFeature, TopAbs_EDGE, aFeatureEdgesMap);
+ 
+     Message_ProgressScope aPS(aPSOuter.Next(), "Trimming faces", aNbF);
+-    for (int i = 1; i <= aNbF && aPS.More(); ++i, aPS.Next())
++    for (int i = 1; i <= aNbF && aPS.More(); ++i)
+     {
+       const TopoDS_Face& aFOriginal = TopoDS::Face(theFaceExtFaceMap.FindKey(i));
+       const TopoDS_Face& aFExt      = TopoDS::Face(theFaceExtFaceMap(i));
+-      TrimFace(aFExt, aFOriginal, aFeatureEdgesMap, anEFExtMap, aGFInter);
++      // RayCAD: the trim gets the face's share of the progress range, so a cancel stops it (patch 0011).
++      TrimFace(aFExt, aFOriginal, aFeatureEdgesMap, anEFExtMap, aGFInter, aPS.Next());
+     }
+   }
+ 
+@@ -670,7 +671,8 @@ private: //! @name Private methods performing the operation
+     const NCollection_IndexedDataMap<TopoDS_Shape,
+                                      NCollection_List<TopoDS_Shape>,
+                                      TopTools_ShapeMapHasher>&           theEFExtMap,
+-    BOPAlgo_Builder&                                                     theGFInter)
++    BOPAlgo_Builder&                                                     theGFInter,
++    const Message_ProgressRange&                                         theRange)
+   {
+     // Map all edges of the extended face, to filter the result of trim
+     // from the faces containing these edges
+@@ -729,7 +731,7 @@ private: //! @name Private methods performing the operation
+     aGFTrim.SetRunParallel(myRunParallel);
+     aGFTrim.SetNonDestructive(true);
+ 
+-    aGFTrim.Perform();
++    aGFTrim.Perform(theRange);
+     if (aGFTrim.HasErrors())
+     {
+       return;
