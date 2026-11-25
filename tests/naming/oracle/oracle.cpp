@@ -2381,8 +2381,15 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             if (sibling.pts.empty())
                 continue;
             const double tol = anchorTolerance(x.kind, unmovedMap(pick.baseline->of(x.kind)[s], sibling));
+            // A sibling that was a sliver at pick time has no interior for an overlap to share: an element not over
+            // the mapped pick that holds (on, not inside) nearly all of the mapped sliver continues it. (holdout5 15:0
+            // with RAYCAD_NAMING_PERTURB=1: a piece of an import face a hair wide at pick time, beside a boss, became a
+            // band 0.1 mm wide when the boss was resized; it continues that piece, not the picked one across the boss.)
+            const bool sliverThen = sliver(pick.baseline->of(x.kind)[s], x.kind);
             for (std::size_t i = 0; i < x.logical.size(); ++i)
-                if (x.claimed[i] == 0 && overlap(N[x.logical[i]], sibling, x.kind, tol))
+                if (x.claimed[i] == 0 &&
+                    (overlap(N[x.logical[i]], sibling, x.kind, tol) ||
+                     (sliverThen && x.anchored[i] == 0 && shareOn(sibling, N[x.logical[i]], x.kind) >= 0.9)))
                     x.claimed[i] = 1;
         }
     }
