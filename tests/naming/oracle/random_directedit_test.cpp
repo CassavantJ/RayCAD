@@ -39,6 +39,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <tuple>
 
 using namespace ray;
 using namespace ray::naming_oracle;
@@ -193,6 +194,23 @@ double profileWidth(const Loop& l)
     return hi - lo;
 }
 
+// With SequenceOptions::byIndex false, every choice among elements of a built shape is made from a list sorted by
+// geometry rounded to 1e-3 mm, not in the kernel's sub-shape order: that order (and the last bits of the geometry)
+// differs between platforms after some edits (a boolean listed two faces the other way round on Linux, a boss join gave
+// 17 faces on Windows and 16 on Linux), and a choice by index then gives another sequence there.
+// SequenceOptions::byIndex of the sequence the thread is running.
+thread_local bool tByIndex = true;
+
+std::array<std::int64_t, 3> roundedKey(const Vec3& p)
+{
+    return {std::llround(p.x * 1e3), std::llround(p.y * 1e3), std::llround(p.z * 1e3)};
+}
+std::array<std::int64_t, 6> boxKey(const ElemSamples& es)
+{
+    const auto lo = roundedKey(es.boxMin), hi = roundedKey(es.boxMax);
+    return {lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]};
+}
+
 std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rng, const std::string& id, bool cut)
 {
     std::vector<std::uint32_t> planar;
@@ -202,8 +220,15 @@ std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rn
             planar.push_back(i);
     if (planar.empty())
         return std::nullopt;
+    if (!tByIndex)
+        std::stable_sort(planar.begin(), planar.end(),
+                         [&](std::uint32_t a, std::uint32_t b) { return boxKey(faces[a]) < boxKey(faces[b]); });
     const ElemSamples& f = faces[planar[rng.below(planar.size())]];
-    const Vec3 point = f.pts[rng.below(f.pts.size())];
+    std::vector<Vec3> pts = f.pts;
+    if (!tByIndex)
+        std::stable_sort(pts.begin(), pts.end(),
+                         [](const Vec3& a, const Vec3& b) { return roundedKey(a) < roundedKey(b); });
+    const Vec3 point = pts[rng.below(pts.size())];
     const Vec3 n = unit(f.nrm);
     const Vec3 e = std::abs(n.x) <= std::abs(n.y) && std::abs(n.x) <= std::abs(n.z) ? Vec3{1, 0, 0}
                    : std::abs(n.y) <= std::abs(n.z)                                 ? Vec3{0, 1, 0}
@@ -281,6 +306,17 @@ std::optional<Feature> proposeBlend(const Script& built, const Samples& smp, Rng
         const Target t{da.cons[0].alts[0], db.cons[0].alts[0], *convex, true};
         if (canBlend(owners, t, fillet))
             candidates.push_back({e, t});
+    }
+    if (!tByIndex)
+        std::stable_sort(candidates.begin(), candidates.end(), [&](const auto& x, const auto& y) {
+            return std::make_tuple(boxKey(edges[x.first]), x.second.a, x.second.b) <
+                   std::make_tuple(boxKey(edges[y.first]), y.second.a, y.second.b);
+        });
+    if (std::getenv("RAYCAD_NAMING_STEPS") != nullptr) {
+        std::string list;
+        for (const auto& [e, t] : candidates)
+            list += " " + std::to_string(e) + ":" + t.a + "/" + t.b + (t.convex ? "+" : "-");
+        std::printf("  blend candidates (%zu):%s\n", candidates.size(), list.c_str());
     }
     if (candidates.empty())
         return std::nullopt;
@@ -399,6 +435,11 @@ std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& sha
             if (ok && !keys2.empty())
                 runs.push_back(std::vector<std::string>(keys2.begin(), keys2.end()));
         }
+        // (In the owners' order, not in the order of the faces they were found from.)
+        if (!tByIndex) {
+            std::sort(runs.begin(), runs.end());
+            runs.erase(std::unique(runs.begin(), runs.end()), runs.end());
+        }
         if (runs.empty())
             return std::nullopt;
         f.edit.targets = runs[rng.below(runs.size())];
@@ -468,6 +509,9 @@ struct SequenceResult {
 struct SequenceOptions {
     std::uint64_t seedBase = 0xD1EC7000ull;
     std::string keyPrefix = "directedit ";
+    // Choose among the elements of a built shape in the kernel's order (true: the blocks below, on which the oracle was
+    // tuned), or sorted by geometry (the hidden block [.random-directedit-sorted], see there).
+    bool byIndex = true;
 };
 
 // One random edit of `edited` (the import, at 0, is never edited), as in T-081a, or a direct edit appended. Returns it
@@ -558,6 +602,7 @@ void addCounts(std::map<std::string, int>& into, const Builder& b)
 SequenceResult runSequence(const Part& part, int partIndex, int seq, const SequenceOptions& opt)
 {
     SequenceResult out;
+    tByIndex = opt.byIndex;
     Rng rng{opt.seedBase + static_cast<std::uint64_t>(partIndex) * 1000003ull + static_cast<std::uint64_t>(seq)};
     for (int i = 0; i < 4; ++i)
         rng.next();
@@ -578,6 +623,19 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
         if (!smp)
             break;
         const std::string id = "R" + std::to_string(out.ops + 1);
+        // RAYCAD_NAMING_STEPS=2: also every face's description before each step.
+        if (const char* steps = std::getenv("RAYCAD_NAMING_STEPS"); steps != nullptr && steps[0] == '2') {
+            const Owners ow = buildOwners(b.builtScript());
+            const TruthBuilder tb(ow, **smp);
+            for (std::uint32_t i = 0; i < (*smp)->of(SubKind::Face).size(); ++i) {
+                const TruthDesc& d = tb.faceDescriptions()[i];
+                std::string alts;
+                if (d.ok)
+                    for (const std::string& a : d.cons[0].alts)
+                        alts += " " + a;
+                std::printf("    face %u %s%s\n", i, d.ok ? "ok" : d.why.c_str(), alts.c_str());
+            }
+        }
         const std::size_t roll = rng.below(100);
         std::optional<Feature> f;
         if (roll < 27)
@@ -973,6 +1031,27 @@ TEST_CASE("Smoke: the first 2 randomised sequences with direct edits of every pa
     checkGates(r, kSmokePerPart);
 }
 
+// The same 1,000 sequences' seeds with the generator choosing by geometry instead of by index (SequenceOptions::byIndex
+// false): other sequences, closer to the same on Windows and Linux (50 of 1,000 differ, against 94 by index, on the
+// T-081b run). Hidden: it was run once the blocks above passed, as an unseen check, and its findings are not all
+// resolved (T-081b report: 8 answers the oracle judges wrong, among them kernel history it does not yet correct and
+// oracle limits); run it with "[.random-directedit-sorted]".
+TEST_CASE("Unseen: 1,000 randomised sequences with direct edits, choices by geometry", "[.random-directedit-sorted]")
+{
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions sorted;
+    sorted.byIndex = false;
+    sorted.keyPrefix = "directedit-sorted ";
+    const BlockResult r =
+        runBlock("Randomised with direct edits, choices by geometry", parts, kSequencesPerPart, sorted);
+    checkNoFault(guardBefore);
+    checkGates(r, kSequencesPerPart);
+}
 // ---------------------------------------------------------------- oracle refinements on the sequences that showed them
 namespace {
 
@@ -986,11 +1065,13 @@ struct Looked {
 
 // Replays sequence `seq` of part `partIndex` of the block and looks at the references `ids`: the resolver's answer and
 // its verdict, and the verdict on an Exact answer of another element of the same kind.
-std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids)
+std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids, bool byIndex = true)
 {
     const Part part = loadPart(kParts[partIndex]);
     REQUIRE(part.base != nullptr);
     std::vector<Looked> out;
+    SequenceOptions legacy;
+    legacy.byIndex = byIndex;
     setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
                      const Owners& now, const Samples& samples) {
         if (std::find(ids.begin(), ids.end(), id) == ids.end())
@@ -1006,7 +1087,7 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
         l.other = judgeAnswer(x, ref.record, now, samples, Answer::Exact, {got == 0 ? 1u : got - 1});
         out.push_back(std::move(l));
     });
-    const SequenceResult r = runSequence(part, partIndex, seq, SequenceOptions{});
+    const SequenceResult r = runSequence(part, partIndex, seq, legacy);
     setInspector({});
     CHECK_FALSE(r.skipped);
     CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
@@ -1027,6 +1108,7 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         Answer answer;
         Verdict verdict;
         const char* about;
+        bool byIndex = true; // found with the generator's first version (SequenceOptions::byIndex)
     };
     const std::string k = "directedit raycad-synthetic/";
     const std::vector<Case> cases{
@@ -1034,6 +1116,10 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         // looking down; that cap was the floor's Modified image, and the floor resolved Exact to it (a ghost).
         {5, 43, k + "fixture_plate_1.stp #43|face 23", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
         {9, 13, k + "manifold_block_1.stp #13|face 19", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
+        // Kernel (liesApart): a fillet along a removed pocket's edge, its surface run on elsewhere; that face was the
+        // fillet's Modified image, and the fillet resolved Exact to it, away from where it was picked.
+        {9, 43, k + "manifold_block_1.stp #43|face 2", Answer::Broken, Verdict::BrokenGone, "image apart: kernel",
+         false},
         // A vertex where two pieces of a blend met a face, the pieces joined by a later push/pull's boolean.
         {7, 0, k + "keyway_tslot_1.stp #0|vertex 0", Answer::Exact, Verdict::Correct, "joined blend pieces"},
         {4, 1, k + "fillet_block_1.stp #1|vertex 15", Answer::Exact, Verdict::Correct, "joined blend pieces"},
@@ -1058,7 +1144,7 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
          "owner gone, ground held"},
     };
     for (const Case& c : cases) {
-        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id});
+        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex);
         INFO(c.id << " (" << c.about << ")");
         REQUIRE(looked.size() == 1);
         INFO("verdict " << verdictName(looked[0].judgement.verdict));
@@ -1078,7 +1164,9 @@ TEST_CASE("Oracle (directedit 7:12, 15:46): a removal that leaves part of a remo
     for (const auto& [part, seq] : std::vector<std::pair<int, int>>{{7, 12}, {15, 46}}) {
         const Part pt = loadPart(kParts[part]);
         REQUIRE(pt.base != nullptr);
-        const SequenceResult r = runSequence(pt, part, seq, SequenceOptions{});
+        SequenceOptions legacy;
+        legacy.byIndex = true;
+        const SequenceResult r = runSequence(pt, part, seq, legacy);
         INFO(kParts[part] << " #" << seq);
         CHECK_FALSE(r.skipped);
         const auto it = r.editCounts.find("delete_hole: not modelled (a removed face is still there in part)");

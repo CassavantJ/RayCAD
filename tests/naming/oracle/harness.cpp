@@ -472,6 +472,8 @@ bool Builder::edit(Feature& f)
         std::string text = f.id + " " + f.role + " on faces";
         for (const SubId& s : picked)
             text += " " + std::to_string(s.index);
+        text += "\n  input " + input.contentHash().hex().substr(0, 16) + " result " +
+                op->shape.contentHash().hex().substr(0, 16);
         for (const std::string& w : op->warnings)
             text += "\n  warning: " + w;
         auto face = [](const Samples& smp, SubId s) {

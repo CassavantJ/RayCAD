@@ -45,8 +45,11 @@
 // in the result (the normalisation every kernel history follows; SubIds are not kept across shapes). A face that
 // Defeaturing lists as an old face's Modified image but that lies on the old face's surface looking the other way (the
 // cap it puts on what is left of a hole, on the plane of a counterbore floor that is now inside the material) is not
-// that face: it is Generated from it, and the old face Deleted if nothing else is its image (T-081b; naming would
-// otherwise resolve a reference to the floor to a face on the other side of the material).
+// that face, nor is an image that lies apart from the old face altogether: either is Generated from it, and the old
+// face Deleted if nothing else is its image. The same holds for the faces a push/pull or a resize does not move (a
+// small face that a push/pull's boolean listed as Modified into a face 4 mm away). T-081b: naming would otherwise
+// resolve a reference to the floor to a face on the other side of the material, or a reference to a fillet to a face
+// somewhere else.
 //
 // CANCEL AND ABANDON. Defeaturing can run for minutes on some fillets (S9: over 150 s) and polls OCCT's progress hook
 // rarely (S9: up to 9.4 s from cancel to return). So every direct edit runs its OCCT work on a kernel-owned thread
@@ -63,6 +66,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -75,6 +79,7 @@
 #include <BRepTools_History.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <GeomLProp_SLProps.hxx>
@@ -402,24 +407,44 @@ bool looksTheOtherWay(const TopoDS_Face& source, const TopoDS_Face& image)
     return own.Dot(normal) < 0.0;
 }
 
+// Does face `image` lie apart from face `source`, their boxes (with the tolerance) not even meeting? May throw.
+bool liesApart(const TopoDS_Face& source, const TopoDS_Face& image)
+{
+    Bnd_Box a, b;
+    BRepBndLib::AddOptimal(source, a, false, false);
+    BRepBndLib::AddOptimal(image, b, false, false);
+    a.Enlarge(kOnTolerance);
+    b.Enlarge(kOnTolerance);
+    return !a.IsVoid() && !b.IsVoid() && a.IsOut(b);
+}
+
 // See "HISTORY": Defeaturing may close what is left of a cavity with the surface of a face that is no longer on the
 // body, the new face looking the other way (removing a counterbore's wall caps the bore with the plane of the
 // counterbore floor, looking down; the floor, which looked up, is inside the material now), and its history then
-// lists that face as the old face's Modified image. It is not the old face: such an image is reported Generated from
-// it, and the old face Deleted when nothing else is its image. `history` holds the caller's SubIds of `input`.
-void demoteReversedImages(ShapeHistory& history, const Shape& input, const Shape& result)
+// lists that face as the old face's Modified image. It may also list as an old face's image a face on its surface
+// that lies apart from it altogether (a fillet along a removed pocket's edge, gone, and its surface run on elsewhere).
+// Neither is the old face (a removal does not move faces: an image keeps some of its ground): such an image is
+// reported Generated from it, and the old face Deleted when nothing else is its image. `history` holds the caller's
+// SubIds of `input`.
+void demoteReversedImages(ShapeHistory& history, const Shape& input, const Shape& result,
+                          std::span<const int> moved = {})
 {
     const detail::ShapeIndex& inFaces = input.impl->subs[detail::kindSlot(SubKind::Face)];
     const detail::ShapeIndex& outFaces = result.impl->subs[detail::kindSlot(SubKind::Face)];
     std::vector<HistoryEntry> generated;
     for (HistoryEntry& e : history.entries) {
-        if (e.inputIndex != 0 || e.source.kind != SubKind::Face || e.relation != HistoryEntry::Relation::Modified)
+        if (e.inputIndex != 0 || e.source.kind != SubKind::Face || e.relation != HistoryEntry::Relation::Modified ||
+            std::find(moved.begin(), moved.end(), static_cast<int>(e.source.index)) != moved.end())
             continue;
         const TopoDS_Face source = TopoDS::Face(inFaces.FindKey(static_cast<int>(e.source.index) + 1));
         std::vector<SubId> kept, reversed;
         for (const SubId& r : e.results) {
-            const bool other = r.kind == SubKind::Face &&
-                               looksTheOtherWay(source, TopoDS::Face(outFaces.FindKey(static_cast<int>(r.index) + 1)));
+            if (r.kind != SubKind::Face) {
+                kept.push_back(r);
+                continue;
+            }
+            const TopoDS_Face image = TopoDS::Face(outFaces.FindKey(static_cast<int>(r.index) + 1));
+            const bool other = looksTheOtherWay(source, image) || liesApart(source, image);
             (other ? reversed : kept).push_back(r);
         }
         if (reversed.empty())
@@ -1071,6 +1096,8 @@ Result<OpResult> offsetWork(const Shape& shape, const std::vector<int>& picked, 
     out.shape = op->shape;
     out.history = rewriteToolHistory(entriesOf(op->history, 0), op->history, edited, origins,
                                      SubId{SubKind::Face, static_cast<std::uint32_t>(picked.front())});
+    // (The moved faces' images lie apart from them by design; any other face keeps its place.)
+    demoteReversedImages(out.history, shape, out.shape, picked);
     for (const int f : picked) {
         bool square = true;
         for (const detail::FaceLink& link : model.links(f))
@@ -1182,6 +1209,7 @@ Result<OpResult> finishResize(FaceModel& model, const std::vector<int>& bore, co
     out.shape = op.shape;
     out.history = rewriteToolHistory(std::move(body), op.history, edited, {},
                                      SubId{SubKind::Face, static_cast<std::uint32_t>(bore.front())});
+    demoteReversedImages(out.history, input, out.shape, bore);
     keepBooleanWarnings(op, out);
     addOrphanWarning(out);
     return out;

@@ -2735,7 +2735,11 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     // vertex congruent in place with it lies on every logical face of its description: it is still where those faces
     // meet, and continues the pick. (Each face of a description needs a face of its own, so the description itself no
     // longer fits it: the two pieces are one face now. A point holds nothing more than it did: not merged.)
-    if (x.kind == SubKind::Vertex && !x.moved && x.congruentIndex >= 0 &&
+    // The same for an edge between two pieces of one logical face, the pieces joined: the edge is now that face's seam
+    // (T-081b directedit, a holdout of the generator sorted by geometry: 827-9999-905 #41). Every face of the element
+    // must lie on an owner of the description (an edge where another face now meets the logical face is another
+    // element, though it lies where the picked one did).
+    if (x.kind != SubKind::Face && !x.moved && x.congruentIndex >= 0 &&
         !x.inLogical(static_cast<std::uint32_t>(x.congruentIndex))) {
         TruthDesc joined = withoutSeparators(d);
         std::vector<Constraint> distinct;
@@ -2748,7 +2752,18 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             if (!seen)
                 distinct.push_back(Constraint{alts, {}});
         }
-        if (distinct.size() < joined.cons.size()) {
+        bool ownFaces = true;
+        for (const std::uint32_t f :
+             smp.facesOf[x.kind == SubKind::Edge ? 1 : 0][static_cast<std::size_t>(x.congruentIndex)]) {
+            bool on = false;
+            for (const Constraint& c : distinct)
+                for (const std::string& alt : c.alts)
+                    if (const Owner* o = now.get(alt))
+                        on = on || (typeMatches(o->c, smp.of(SubKind::Face)[f]) &&
+                                    nodesOn(o->c, smp.of(SubKind::Face)[f].nodes, tolFor(SubKind::Face).node));
+            ownFaces = ownFaces && on;
+        }
+        if (distinct.size() < joined.cons.size() && ownFaces) {
             joined.cons = distinct;
             const TruthEval fits = evalTruth(joined, now, smp);
             if (std::binary_search(fits.elems.begin(), fits.elems.end(),
@@ -2775,11 +2790,12 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         kept.merged = !kept.partial.empty();
         te = kept;
     };
-    // A piece of the logical element that lies on no element of the baseline (ground nobody held when the reference was
-    // made) and not on the mapped pick, beside a piece that continues the pick, when nothing moved: a new face next to
-    // the picked one on its surface (the side of a push/pull slab flush with it, left a face of its own where the
-    // boolean could not merge the two; T-081b directedit 0:19, 17:10). It is new territory, not the picked element's
-    // continuation; an answer that has it too is judged by the new-territory rule (judgeAnswer).
+    // A piece of the logical element that overlaps no element of the baseline (ground nobody held when the reference
+    // was made; overlap as for anchoring: 10 % of either one on the other, away from its boundary) and not the mapped
+    // pick, beside a piece that continues the pick, when nothing moved: a new face next to the picked one on its
+    // surface (the side of a push/pull slab flush with it, left a face of its own where the boolean could not merge the
+    // two; T-081b directedit 0:19, 17:10). It is new territory, not the picked element's continuation; an answer that
+    // has it too is judged by the new-territory rule (judgeAnswer).
     auto withoutNewPieces = [&](TruthEval& te) {
         if (x.moved || te.elems.size() < 2)
             return;
@@ -2797,7 +2813,7 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                     !(N[e].boxMax.x + 0.05 < B[i].boxMin.x || B[i].boxMax.x + 0.05 < N[e].boxMin.x ||
                       N[e].boxMax.y + 0.05 < B[i].boxMin.y || B[i].boxMax.y + 0.05 < N[e].boxMin.y ||
                       N[e].boxMax.z + 0.05 < B[i].boxMin.z || B[i].boxMax.z + 0.05 < N[e].boxMin.z))
-                    fresh = shareOn(N[e], B[i], x.kind) < 0.02;
+                    fresh = !overlap(N[e], B[i], x.kind);
             if (!fresh)
                 kept.elems.push_back(e);
         }
