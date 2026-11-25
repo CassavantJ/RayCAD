@@ -52,6 +52,8 @@ namespace ray::ui {
 
 class AppContext;
 class CommandCatalog;
+class DirectEditModel;
+class FeatureToolModel;
 class SceneController;
 class SelectionModel;
 class Session;
@@ -90,6 +92,9 @@ public:
     ~ReferenceReviewModel() override;
     static ReferenceReviewModel* create(QQmlEngine* qml, QJSEngine* js);
     void setCommands(CommandCatalog* commands);
+    // The tools that pick in the view: while one of them is open the review shows nothing in the view (they pick in
+    // the document's build, not in a model before a feature) and a re-pick ends; a re-pick closes them.
+    void setTools(FeatureToolModel* featureTool, DirectEditModel* directEdit);
 
     bool shown() const { return shown_; }
     void setShown(bool shown);
@@ -166,6 +171,8 @@ private:
     QPointer<Session> session_;
     QPointer<AppContext> context_;
     QPointer<CommandCatalog> commands_;
+    QPointer<FeatureToolModel> featureTool_;
+    QPointer<DirectEditModel> directEdit_;
     std::unique_ptr<LineOverlay> lines_;
 
     std::string docId_;

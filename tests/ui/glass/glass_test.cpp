@@ -264,7 +264,16 @@ TEST_CASE("glass panels show the blurred model behind them, aligned", "[glass][a
         REQUIRE(right != nullptr);
         const QRectF l = left->mapRectToScene(QRectF(0, 0, left->width(), left->height()));
         const QRectF r = right->mapRectToScene(QRectF(0, 0, right->width(), right->height()));
-        const double edgeY = l.top() + l.height() * 0.72;
+        // The model's edge crosses the left panel's edge where the view shows beside it: below the model tools column,
+        // which stands right of the panel (T-083 made it taller: the direct-edit tools).
+        double edgeY = l.top() + l.height() * 0.72;
+        if (QQuickItem* tools = w.find("modelTools"); tools != nullptr && tools->isVisible()) {
+            const QRectF t = tools->mapRectToScene(QRectF(0, 0, tools->width(), tools->height()));
+            // Clear of its bottom edge by more than the edge search reaches (continuity(): 48 px each way).
+            if (edgeY > t.top() - 70 && edgeY < t.bottom() + 70)
+                edgeY = t.bottom() + 70;
+            REQUIRE(edgeY < l.bottom() - 60);
+        }
         w.placeModel(l.right() - 160, r.left() + 160, edgeY);
         w.grab();
         CHECK(w.view()->backdropUsers() > 0);

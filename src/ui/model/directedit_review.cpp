@@ -6,6 +6,9 @@
 #include "../selection_model.h"
 #include "../session.h"
 #include "../ui_commands.h"
+#include "directedit_tool.h"
+#include "feature_tools.h"
+#include "feature_tree.h" // feature_tools.h holds a QPointer to it
 #include "model_util.h"
 
 #include <ray_api/feature_edit.h>
@@ -225,6 +228,11 @@ ReferenceReviewModel* ReferenceReviewModel::create(QQmlEngine* qml, QJSEngine*)
     }
     auto* model = new ReferenceReviewModel(scene, selection, session, context);
     model->setCommands(commands);
+    if (qml != nullptr) {
+        const QString uri = QStringLiteral("RayCad.Ui");
+        model->setTools(qml->singletonInstance<FeatureToolModel*>(uri, QStringLiteral("FeatureTool")),
+                        qml->singletonInstance<DirectEditModel*>(uri, QStringLiteral("DirectEdit")));
+    }
     model->subscribe();
     model->scheduleRefresh();
     return model; // owned by the engine
@@ -243,6 +251,28 @@ void ReferenceReviewModel::setCommands(CommandCatalog* commands)
                                             [self](const QString& id) { return self && self->runCommand(id); }};
     commands_->setUiHandler(QStringLiteral("references."), handler);
     commands_->setUiHandler(QStringLiteral("toolpaths."), handler);
+}
+
+void ReferenceReviewModel::setTools(FeatureToolModel* featureTool, DirectEditModel* directEdit)
+{
+    if (featureTool_)
+        disconnect(featureTool_, nullptr, this, nullptr);
+    if (directEdit_)
+        disconnect(directEdit_, nullptr, this, nullptr);
+    featureTool_ = featureTool;
+    directEdit_ = directEdit;
+    const auto toolOpened = [this] {
+        const bool open = (featureTool_ && featureTool_->active()) || (directEdit_ && directEdit_->active());
+        if (!open)
+            return;
+        if (picking())
+            cancelPick();
+        setCurrent(-1);
+    };
+    if (featureTool_)
+        connect(featureTool_, &FeatureToolModel::activeChanged, this, toolOpened);
+    if (directEdit_)
+        connect(directEdit_, &DirectEditModel::activeChanged, this, toolOpened);
 }
 
 // ---------- document ----------
@@ -724,6 +754,11 @@ bool ReferenceReviewModel::repick(int row)
     }
     if (picking())
         cancelPick();
+    // The tools pick in the view too: one at a time.
+    if (directEdit_ && directEdit_->active())
+        directEdit_->cancel();
+    if (featureTool_ && featureTool_->active())
+        featureTool_->cancel();
     setCurrent(row);
     picking_ = row;
     savedFilter_ = selection_->filterMask();

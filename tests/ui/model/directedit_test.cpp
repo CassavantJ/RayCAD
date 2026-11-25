@@ -691,6 +691,7 @@ TEST_CASE("push/pull on an imported block: by number, by the arrow, the step war
           w.host->theme()->property("error").value<QColor>());
     CHECK_FALSE(w.tool()->commit());
     CHECK(w.tool()->overlay().itemCount() == 0); // the view shows the part as it is
+    CHECK(w.tool()->handles().isEmpty());        // no arrow on a curved face
     w.shotsBothThemes("t083_pushpull_refused");
     w.key(Qt::Key_Escape);
     CHECK_FALSE(w.tool()->active());
@@ -1003,6 +1004,40 @@ TEST_CASE("the reference review after edits that break CAM references; one actio
     CHECK(reviewRow(w, op1, naming::ResolveState::Broken) >= 0);
     w.undo(true);
     CHECK(reviewRow(w, op1) < 0);
+
+    // 4b. A likely match: a datum plane on the top face whose stored names are of no element any more (as a reference
+    //     written before a rename would be), found by its evidence alone: Repaired, which builds nothing until the
+    //     user confirms it; Confirm records that (one undo step) and the row goes.
+    {
+        QJsonObject changed =
+            QJsonDocument::fromJson(QByteArray::fromStdString(refJson(w, topFace(w.faces()).index))).object();
+        QJsonArray fake;
+        for (int i = 0; i < changed.value(QStringLiteral("names")).toArray().size(); ++i)
+            fake.append(QStringLiteral("0102030405060708091011121314151617181920212223242526272829303132"));
+        changed.insert(QStringLiteral("names"), fake);
+        changed.insert(QStringLiteral("families"), fake);
+        const std::string datum = "f0000000-0000-4000-8000-0000000000c1";
+        w.invoke("feature.datum_plane.add", R"({"id":")" + datum + R"(","props":{"base":{"face":)" +
+                                                QJsonDocument(changed).toJson(QJsonDocument::Compact).toStdString() +
+                                                R"(},"offset":"5 mm"}})");
+        w.settle();
+        const int repaired = reviewRow(w, datum, naming::ResolveState::Repaired);
+        REQUIRE(repaired >= 0);
+        const QVariantMap row = w.review()->rows().at(repaired).toMap();
+        CHECK(row.value(QStringLiteral("stateLabel")).toString() == QStringLiteral("Check match"));
+        CHECK(row.value(QStringLiteral("canConfirm")).toBool());
+        w.click(QStringLiteral("referenceRow.%1").arg(repaired).toLatin1().constData());
+        REQUIRE(QTest::qWaitFor([&] { return !w.review()->highlightPending() && !w.host->scene()->meshing(); },
+                                kTimeoutMs));
+        CHECK(w.review()->highlighted().size() == 1); // the likely match, in the model before the datum plane
+        w.shotsBothThemes("t083_review_repaired");
+        const std::size_t undo4 = w.undoCount();
+        w.click(QStringLiteral("referenceConfirm.%1").arg(repaired).toLatin1().constData());
+        REQUIRE(QTest::qWaitFor([&] { return w.undoCount() == undo4 + 1; }, kTimeoutMs));
+        w.settle();
+        CHECK(reviewRow(w, datum) < 0);
+        CHECK(w.document()->build()->reports.back().status != doc::FeatureStatus::Failed);
+    }
 
     // 5. The CAM tree shows the stale operations (amber) and regenerates them all in one action.
     w.host->context()->setWorkspace(ui::kCamWorkspace);

@@ -99,7 +99,18 @@ std::optional<std::pair<Vec3, Vec3>> faceFrame(const kernel::Mesh& mesh, std::ui
         }
         if (area <= 0 || length(normal) < 1e-12)
             return std::nullopt;
-        return std::pair<Vec3, Vec3>{mul(centre, 1.0 / area), unit(normal)};
+        // Flat faces only (push/pull's): every shading normal of the face along the mean. A curved face gets no
+        // arrow; the kernel says why it cannot be pushed.
+        const Vec3 mean = unit(normal);
+        for (std::uint32_t k = r.firstIndex; k < r.firstIndex + r.indexCount && k < mesh.indices.size(); ++k) {
+            const std::uint32_t i = mesh.indices[k];
+            if (3 * i + 2 >= mesh.normals.size())
+                continue;
+            const Vec3 n = unit(Vec3{mesh.normals[3 * i], mesh.normals[3 * i + 1], mesh.normals[3 * i + 2]});
+            if (dot(n, mean) < 0.9999)
+                return std::nullopt;
+        }
+        return std::pair<Vec3, Vec3>{mul(centre, 1.0 / area), mean};
     }
     return std::nullopt;
 }
@@ -314,6 +325,12 @@ void DirectEditModel::onDocumentChanged()
         return;
     doc::Document* d = liveDoc();
     if (d == nullptr) {
+        close();
+        return;
+    }
+    // An edited feature that is gone (undone): the tool closes.
+    if (editId_ && std::none_of(d->state()->features.begin(), d->state()->features.end(),
+                                [&](const doc::Feature& f) { return f.id == *editId_; })) {
         close();
         return;
     }

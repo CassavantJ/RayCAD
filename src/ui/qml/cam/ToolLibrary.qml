@@ -458,6 +458,10 @@ Item {
                                 popup.selectRow(Math.min(count - 1, currentIndex + 1))
                                 event.accepted = true
                             }
+                            // T-083: Delete is a shortcut in the Design workspace (Delete Faces); the list keeps it.
+                            Keys.onShortcutOverride: event => {
+                                event.accepted = event.key === Qt.Key_Delete && !CamTools.readOnly
+                            }
                             Keys.onPressed: event => {
                                 if (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp) {
                                     const page = Math.max(1, Math.floor(height / (Theme.rowHeight * 1.6)))

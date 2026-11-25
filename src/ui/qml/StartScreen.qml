@@ -138,6 +138,9 @@ FocusScope {
 
                 delegate: Item {
                     id: tile
+                    // T-083: Delete is a shortcut of the Design workspace (Delete Faces); the current tile, which has
+                    // the focus, keeps it for the list (Keys.onDeletePressed above).
+                    Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Delete
                     required property int index
                     required property string filePath
                     required property string fileName
