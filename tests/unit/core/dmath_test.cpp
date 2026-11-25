@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -184,6 +185,8 @@ TEST_CASE("dmath is within 1 ulp of the platform libm", "[dmath]")
     std::size_t compared = 0;
     std::size_t over = 0;
     std::uint64_t worst = 0;
+    std::map<std::string, std::size_t> overBy; // function name: values more than 1 ulp off
+    std::string examples;                      // the first 40, reported with the check
     for (const Record& r : records) {
         const double ours = dmathCall(r.function, r.a, r.b);
         const double theirs = platformCall(r.function, r.a, r.b);
@@ -195,14 +198,19 @@ TEST_CASE("dmath is within 1 ulp of the platform libm", "[dmath]")
         const std::uint64_t distance = ulpDistance(ours, theirs);
         worst = distance > worst ? distance : worst;
         if (distance > 1) {
-            if (over < 20) {
-                UNSCOPED_INFO(describe(r, theirs) << " (platform), " << distance << " ulp");
+            if (over < 40) {
+                examples += "\n  " + describe(r, theirs) + " (platform; ours " + describe(r, ours) + "), " +
+                            std::to_string(distance) + " ulp";
             }
+            ++overBy[kNames[r.function]];
             ++over;
         }
     }
-    INFO("compared " << compared << ", worst " << worst << " ulp");
-    CHECK(over == 0); // first: the UNSCOPED_INFO lines above (which values) are reported with the next assertion
+    std::string byFunction;
+    for (const auto& [name, n] : overBy)
+        byFunction += " " + name + " " + std::to_string(n);
+    INFO("compared " << compared << ", worst " << worst << " ulp; over 1 ulp by function:" << byFunction << examples);
+    CHECK(over == 0);
     CHECK(compared > 90000);
 }
 
