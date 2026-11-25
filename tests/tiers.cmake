@@ -94,7 +94,10 @@ set(RAY_DEBUG_HEAVY_TESTS
     # 20-minute timeout) and adaptive2d's property tests on their quick seeds (24 minutes).
     ray_cam_link_tests
     ray_cam_adaptive2d_tests
-    ray_cam_invariants_adaptive2d)
+    ray_cam_invariants_adaptive2d
+    # The 2D pocket suite: past its 20-minute timeout in MSVC Debug on the runner (run 45528384530); 4.4 minutes in GCC
+    # Debug there.
+    ray_cam_pocket2d_tests)
 
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property
