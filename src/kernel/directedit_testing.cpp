@@ -4,22 +4,39 @@
 #include "directedit_internal.h"
 #include "io_internal.h"
 
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BRepCheck.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepCheck_Result.hxx>
+#include <BRepGProp.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
+#include <Message_ProgressIndicator.hxx>
+#include <Message_ProgressScope.hxx>
+#include <NCollection_List.hxx>
 #include <ShapeAnalysis_Shell.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp_Ax2.hxx>
 #include <gp_Vec.hxx>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 
 namespace ray::kernel::testing {
@@ -226,6 +243,55 @@ double boxVolume(FaceModel& m, const std::vector<int>& faces)
     return (x1 - x0) * (y1 - y0) * (z1 - z0);
 }
 
+// Asks OCCT to stop once a time limit has passed.
+class Deadline final : public Message_ProgressIndicator {
+public:
+    explicit Deadline(std::chrono::seconds limit) : until_(std::chrono::steady_clock::now() + limit) {}
+    bool UserBreak() override { return std::chrono::steady_clock::now() > until_; }
+    void Show(const Message_ProgressScope&, const bool) override {}
+
+private:
+    std::chrono::steady_clock::time_point until_;
+};
+
+bool isDelete(DirectEdit edit)
+{
+    return edit == DirectEdit::DeleteFillet || edit == DirectEdit::DeleteBlendRun || edit == DirectEdit::DeleteHole ||
+           edit == DirectEdit::DeleteHoleStack || edit == DirectEdit::DeletePocket;
+}
+
+Bnd_Box boxOf(FaceModel& m, const std::vector<SubId>& faces, const std::vector<PointCheck>& points)
+{
+    Bnd_Box box;
+    for (const SubId& f : faces)
+        BRepBndLib::Add(m.face(static_cast<int>(f.index)), box, false);
+    for (const PointCheck& p : points)
+        box.Add(gp_Pnt(p.point.x, p.point.y, p.point.z));
+    return box;
+}
+
+Box3 toBox3(const Bnd_Box& box)
+{
+    double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    return Box3{Vec3{x0, y0, z0}, Vec3{x1, y1, z1}};
+}
+
+// vol(shape inside box), by BRepAlgoAPI_Common on a copy (the oracle's own, not the kernel's helper). Empty on failure.
+std::optional<double> volumeInside(const TopoDS_Shape& shape, const Box3& b)
+{
+    const TopoDS_Shape box =
+        BRepPrimAPI_MakeBox(gp_Pnt(b.min.x, b.min.y, b.min.z), gp_Pnt(b.max.x, b.max.y, b.max.z)).Shape();
+    BRepBuilderAPI_Copy copier(shape, false, false);
+    BRepAlgoAPI_Common common(copier.Shape(), box);
+    common.SetRunParallel(false);
+    common.SetNonDestructive(true);
+    common.Build();
+    if (!common.IsDone() || common.HasErrors())
+        return std::nullopt;
+    return detail::solidVolume(common.Shape());
+}
+
 Result<std::vector<DirectEditCase>> casesOf(const Shape& solid)
 {
     FaceModel m(solid);
@@ -238,6 +304,13 @@ Result<std::vector<DirectEditCase>> casesOf(const Shape& solid)
             c.k = k;
             c.available = available;
             fill(c, pick(available, k));
+            if (isDelete(edit)) {
+                // A removal changes the body near the removed faces (a removed convex round leaves a corner outside
+                // its own box): their box with the check points, enlarged by its diagonal.
+                Bnd_Box box = boxOf(m, c.faces, c.checks);
+                box.Enlarge(std::sqrt(box.SquareExtent()) + 1e-3);
+                c.region = toBox3(box);
+            }
             out.push_back(std::move(c));
         }
     };
@@ -301,6 +374,11 @@ Result<std::vector<DirectEditCase>> casesOf(const Shape& solid)
                 const gp_Vec radial = gp_Vec(foot, h.wall).Normalized();
                 c.checks.push_back({vec(h.wall), grow ? PointWant::Out : PointWant::In});
                 c.checks.push_back({vec(foot.Translated(radial * r)), PointWant::On});
+                // The new and old wall: the whole bore, out to the larger radius and past its ends.
+                std::vector<SubId> all = toSubIds(bore);
+                Bnd_Box box = boxOf(m, all, c.checks);
+                box.Enlarge(std::max(r, h.radius) + 1e-3);
+                c.region = toBox3(box);
             });
     for (const bool outward : {true, false})
         add(outward ? DirectEdit::PushOut : DirectEdit::PushIn, static_cast<int>(t.planars.size()),
@@ -317,6 +395,10 @@ Result<std::vector<DirectEditCase>> casesOf(const Shape& solid)
                 const gp_Vec n(x.normal);
                 c.checks.push_back({vec(x.point), outward ? PointWant::In : PointWant::Out});
                 c.checks.push_back({vec(x.point.Translated(n * c.distance)), PointWant::On});
+                // The face swept by the distance.
+                Bnd_Box box = boxOf(m, c.faces, c.checks);
+                box.Enlarge(d + 1e-3);
+                c.region = toBox3(box);
                 bool square = true;
                 for (const detail::FaceLink& link : m.links(f))
                     if (link.smooth || std::abs(link.normalDot) > 0.0175)
@@ -358,8 +440,23 @@ DirectEditVerdict judge(const Shape& input, const DirectEditCase& c, const Shape
     const double v1 = detail::solidVolume(r);
     if (!(v1 > 0.0))
         return {"invalid", "non-positive volume"};
-    const double dv = v1 - v0;
-    if (std::abs(dv) < 1e-9 * std::abs(v0))
+    double dv = v1 - v0;
+    double noOpScale = std::abs(v0);
+    if (std::abs(dv) < 1e-4 * std::abs(v0)) {
+        // Small next to the body: measure inside the edit's region (whole-body integration noise), and require the
+        // whole-body change to agree with it within that noise.
+        const std::optional<double> a = volumeInside(detail::occt(input), c.region);
+        const std::optional<double> b = a ? volumeInside(r, c.region) : std::nullopt;
+        if (!a || !b)
+            return {"wrong", "the volume inside the edit's region could not be measured"};
+        if (std::abs(dv - (*b - *a)) > 2e-5 * std::abs(v0))
+            return {"wrong", "the body changed away from the edit (whole " + std::to_string(dv) + ", near the edit " +
+                                 std::to_string(*b - *a) + ")"};
+        dv = *b - *a;
+        const Box3& g = c.region;
+        noOpScale = std::max(1.0, (g.max.x - g.min.x) * (g.max.y - g.min.y) * (g.max.z - g.min.z));
+    }
+    if (std::abs(dv) < 1e-9 * noOpScale)
         return {"no_op", "volume unchanged"};
     if (c.sign != 0 && dv * c.sign < 0.0)
         return {"wrong", "volume changed in the wrong direction"};
@@ -440,6 +537,115 @@ DirectEditFault::DirectEditFault(int count)
 DirectEditFault::~DirectEditFault()
 {
     detail::directEditFaultRequests().store(0, std::memory_order_relaxed);
+}
+
+std::string infeasibleRequest(const Shape& input, const DirectEditCase& c)
+{
+    auto reason = detail::guarded("testing::infeasibleRequest", [&]() -> Result<std::string> {
+        const TopoDS_Shape& body = detail::occt(input);
+        const std::vector<TopoDS_Shape> solids = detail::solidsOf(body);
+        if (solids.size() != 1)
+            return std::string();
+        const auto state = [&](const Vec3& p) {
+            return detail::classifyPoint(solids.front(), gp_Pnt(p.x, p.y, p.z), 1e-5);
+        };
+        const auto fallsApart = [&](const TopoDS_Shape& tool) {
+            BRepBuilderAPI_Copy copier(body, false, false);
+            BRepAlgoAPI_Cut cut;
+            NCollection_List<TopoDS_Shape> arguments, tools;
+            arguments.Append(copier.Shape());
+            tools.Append(tool);
+            cut.SetArguments(arguments);
+            cut.SetTools(tools);
+            cut.SetRunParallel(false);
+            cut.SetNonDestructive(true);
+            // At most 30 s: the cut can be as slow as the edit (minutes on NIST CTC 02); undecided counts as feasible.
+            occ::handle<Deadline> deadline = new Deadline(std::chrono::seconds(30));
+            cut.Build(deadline->Start());
+            return cut.IsDone() && !cut.HasErrors() && detail::solidsOf(cut.Shape()).size() > 1;
+        };
+        if (c.edit == DirectEdit::PushOut || c.edit == DirectEdit::PushIn) {
+            // checks: [0] the face's sample point, [1] that point moved by the distance.
+            const detail::PointState moved = state(c.checks[1].point);
+            if (c.edit == DirectEdit::PushOut && moved == detail::PointState::In)
+                return std::string("the moved face would lie inside the part's material");
+            if (c.edit == DirectEdit::PushIn) {
+                if (moved == detail::PointState::Out)
+                    return std::string("the moved face would lie outside the part");
+                const detail::ShapeIndex& faces = input.impl->subs[detail::kindSlot(SubKind::Face)];
+                const TopoDS_Face face = TopoDS::Face(faces.FindKey(static_cast<int>(c.faces.front().index) + 1));
+                const gp_Pnt p0(c.checks[0].point.x, c.checks[0].point.y, c.checks[0].point.z);
+                const gp_Pnt p1(c.checks[1].point.x, c.checks[1].point.y, c.checks[1].point.z);
+                BRepBuilderAPI_Copy copier(face, true, false);
+                const TopoDS_Shape prism = BRepPrimAPI_MakePrism(copier.Shape(), gp_Vec(p0, p1)).Shape();
+                if (fallsApart(prism))
+                    return std::string("pulling the face in that far cuts the part in two");
+            }
+            return std::string();
+        }
+        if (c.edit == DirectEdit::ResizeLarger) {
+            // checks: [0] the old wall point, [1] the new wall point beside it.
+            FaceModel m(input);
+            const std::vector<int>* bore = m.bore(static_cast<int>(c.faces.front().index));
+            if (bore == nullptr)
+                return std::string();
+            const detail::HoleGeometry h = m.holeGeometry(*bore);
+            const double r = 0.5 * c.newDiameter;
+            const double t0 = h.tMin - (h.openMin ? r + 1.0 : 0.0);
+            const double t1 = h.tMax + (h.openMax ? r + 1.0 : 0.0);
+            const gp_Pnt base = h.axis.Location().Translated(gp_Vec(h.axis.Direction()) * t0);
+            const TopoDS_Shape cylinder =
+                BRepPrimAPI_MakeCylinder(gp_Ax2(base, h.axis.Direction()), r, t1 - t0).Shape();
+            if (fallsApart(cylinder))
+                return std::string("a hole that large cuts the part in two");
+        }
+        return std::string();
+    });
+    return reason ? *reason : std::string();
+}
+
+std::vector<std::string> validityFaults(const Shape& shape, int limit)
+{
+    auto lines = detail::guarded("testing::validityFaults", [&]() -> Result<std::vector<std::string>> {
+        std::vector<std::string> out;
+        if (shape.isNull())
+            return out;
+        BRepCheck_Analyzer analyzer(detail::occt(shape));
+        if (analyzer.IsValid())
+            return out;
+        static const char* const kNames[] = {"vertex", "edge", "face", "solid"};
+        for (const SubKind kind : {SubKind::Solid, SubKind::Face, SubKind::Edge, SubKind::Vertex}) {
+            const detail::ShapeIndex& index = shape.impl->subs[detail::kindSlot(kind)];
+            for (int i = 1; i <= index.Extent() && static_cast<int>(out.size()) < limit; ++i) {
+                const occ::handle<BRepCheck_Result> result = analyzer.Result(index.FindKey(i));
+                if (result.IsNull())
+                    continue;
+                std::set<std::string> found;
+                const auto collect = [&](const NCollection_List<BRepCheck_Status>& statuses) {
+                    for (NCollection_List<BRepCheck_Status>::Iterator it(statuses); it.More(); it.Next())
+                        if (it.Value() != BRepCheck_NoError) {
+                            std::ostringstream text;
+                            BRepCheck::Print(it.Value(), text);
+                            std::string s = text.str();
+                            while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
+                                s.pop_back();
+                            found.insert(s);
+                        }
+                };
+                collect(result->Status());
+                for (result->InitContextIterator(); result->MoreShapeInContext(); result->NextShapeInContext())
+                    collect(result->StatusOnShape());
+                if (found.empty())
+                    continue;
+                std::string line = std::string(kNames[detail::kindSlot(kind)]) + " " + std::to_string(i - 1) + ":";
+                for (const std::string& s : found)
+                    line += " " + s;
+                out.push_back(line);
+            }
+        }
+        return out;
+    });
+    return lines ? *lines : std::vector<std::string>{"(the check failed: " + lines.error().message + ")"};
 }
 
 void waitForAbandonedEdits()

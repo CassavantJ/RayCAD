@@ -43,6 +43,7 @@
 #include <Interface_ReportEntity.hxx>
 #include <NCollection_DataMap.hxx>
 #include <NCollection_Sequence.hxx>
+#include <Poly_Triangulation.hxx>
 #include <Quantity_Color.hxx>
 #include <Quantity_ColorRGBA.hxx>
 #include <STEPCAFControl_Reader.hxx>
@@ -259,6 +260,7 @@ struct PartBody {
     std::optional<Rgba> faceColor; // colour of its first coloured face
     int faceCount = 0;
     bool valid = true;
+    bool tessellated = false; // some faces are triangles only, without a surface (AP242 tessellated geometry)
 };
 
 struct Part {
@@ -935,6 +937,14 @@ Result<ImportResult> runImport(Transferred transferred, std::vector<std::string>
             }
             task.report(healed, stage);
             body.valid = detail::checkedValid(body.shape);
+            // T-080 round 2: AP242 files may carry tessellated geometry only (NIST FTC 08 "-tg"), which the reader
+            // turns into faces with triangles and no surface; say so rather than only "not valid".
+            for (TopExp_Explorer face(body.shape, TopAbs_FACE); face.More() && !body.tessellated; face.Next()) {
+                TopLoc_Location location;
+                const TopoDS_Face& f = TopoDS::Face(face.Current());
+                body.tessellated =
+                    BRep_Tool::Surface(f, location).IsNull() && !BRep_Tool::Triangulation(f, location).IsNull();
+            }
             doneFaces += weight;
             task.report(to, stage);
         }
@@ -977,7 +987,11 @@ Result<ImportResult> runImport(Transferred transferred, std::vector<std::string>
                 imported.name = baseName;
             imported.color = body.ownColor.value_or(
                 instanceColor.value_or(part.color.value_or(body.faceColor.value_or(kDefaultColor))));
-            if (!body.valid)
+            if (body.tessellated)
+                result.warnings.push_back("Body '" + imported.name +
+                                          "' is a triangle mesh only (the file holds tessellated geometry, not exact "
+                                          "surfaces): it can be shown, but not edited, measured exactly or machined.");
+            else if (!body.valid)
                 result.warnings.push_back("Body '" + imported.name +
                                           "' is not valid geometry after import; operations on it may fail.");
             result.bodies.push_back(std::move(imported));

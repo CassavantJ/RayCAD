@@ -55,6 +55,7 @@ struct DirectEditCase {
     // DeleteFillet: "isolated" (touches no other blend face) or "chain_member"; DeleteHole: "plain" or "in_stack";
     // push/pull: "square" (every neighbour square to the face) or "angled".
     std::string note;
+    Box3 region{};             // where the edit may change the body (the volume change is measured there)
     int sign = 0;              // expected sign of the volume change (0: either)
     double lo = 0.0, hi = 0.0; // plausible |volume change|
     std::vector<PointCheck> checks;
@@ -64,12 +65,24 @@ struct DirectEditCase {
 Result<std::vector<DirectEditCase>> directEditCases(const Shape& solid);
 
 // category: "ok", "invalid" (not one valid closed solid), "no_op", or "wrong" (not the intended change); detail says
-// why.
+// why. The volume change is measured inside 'region' when the whole-body change is under 1e-4 of the body (whole-body
+// integration is off by tens of mm3 on large imported bodies), and then must agree with the whole-body change within
+// 2e-5 of the body (else "wrong": the body changed away from the edit).
 struct DirectEditVerdict {
     std::string category;
     std::string detail;
 };
 DirectEditVerdict judgeDirectEdit(const Shape& input, const DirectEditCase& edit, const Shape& result);
+
+// Why the request of a push/pull or a hole enlargement cannot be met by any body, decided from the input alone by a
+// geometric test independent of the kernel's edit (empty if it can): pushed out, the moved face's sample point lies
+// inside the body's material; pulled in, it lies outside the body, or the body minus the swept face falls apart;
+// enlarged, the body minus the new hole's cylinder falls apart. For reporting rates both ways (T-080 round 2).
+std::string infeasibleRequest(const Shape& input, const DirectEditCase& edit);
+
+// What BRepCheck_Analyzer finds wrong with 'shape', one line per faulty sub-shape (kind, SubId index, statuses), at
+// most 'limit' lines; empty if it is valid. For diagnosing imported files.
+std::vector<std::string> validityFaults(const Shape& shape, int limit);
 
 // While one lives, the next `count` direct edits fault inside their guarded OCCT work (directedit_internal.h): on
 // Windows a structured exception, which the guard must turn into KernelFailure with the process still healthy.

@@ -505,6 +505,44 @@ bool orientedAndClosed(const TopoDS_Shape& shape)
     return !shells.HasFreeEdges() && !shells.HasBadEdges();
 }
 
+// The volume change of an edit that can change the body only inside `region`: the whole-body change, or, when that is
+// small next to the body, the change measured inside `region` (boolean_internal.h LOCAL VOLUME CHANGE). `elsewhere` is
+// set when the whole-body change disagrees with the local one beyond integration noise: the body changed outside the
+// region. `scale` is what a no-op is judged against. May throw.
+struct MeasuredChange {
+    double change = 0.0;
+    double scale = 1.0;
+    bool elsewhere = false;
+};
+MeasuredChange measureChange(const TopoDS_Shape& before, const TopoDS_Shape& after, double beforeVolume,
+                             double afterVolume, Bnd_Box region)
+{
+    MeasuredChange m;
+    m.change = afterVolume - beforeVolume;
+    m.scale = std::max(1.0, std::abs(beforeVolume));
+    if (std::abs(m.change) >= detail::kLocalVolumeRelative * std::abs(beforeVolume) || region.IsVoid())
+        return m;
+    region.Enlarge(1e-3);
+    if (const std::optional<double> local = detail::localVolumeChange(before, after, region)) {
+        m.elsewhere = std::abs(m.change - *local) > detail::kVolumeNoiseRelative * std::abs(beforeVolume);
+        m.change = *local;
+        m.scale = 1.0;
+    }
+    return m;
+}
+
+// The box of `faces` of `shape`, enlarged by its own diagonal: what removing them can change (the corner a removed
+// convex round leaves lies outside the round's own box).
+Bnd_Box removalRegion(const Shape& shape, const std::vector<int>& faces)
+{
+    Bnd_Box box;
+    const detail::ShapeIndex& index = shape.impl->subs[detail::kindSlot(SubKind::Face)];
+    for (const int k : faces)
+        BRepBndLib::Add(index.FindKey(k + 1), box, false);
+    if (!box.IsVoid())
+        box.Enlarge(std::sqrt(box.SquareExtent()));
+    return box;
+}
 void addOrphanWarning(OpResult& out)
 {
     const std::vector<SubId> orphans = detail::orphanFaces(out.history, out.shape);
@@ -686,9 +724,13 @@ DeleteOutcome defeature(const Shape& input, const std::vector<int>& faces, const
         return fail(Why::Invalid, mapped.error().message);
     demoteReversedImages(out.history, input, out.shape);
 
-    const double change = after - before;
-    if (std::abs(change) <= kNoOpRelative * std::max(1.0, std::abs(before)))
+    const MeasuredChange measured =
+        measureChange(detail::occt(input), solids, before, after, removalRegion(input, faces));
+    const double change = measured.change;
+    if (std::abs(change) <= kNoOpRelative * measured.scale)
         return fail(Why::NotRemoved, "volume unchanged");
+    if (measured.elsewhere)
+        return fail(Why::Wrong, "the body changed away from the removed faces");
     for (const int k : faces)
         if (primaryRelation(out.history, SubId{SubKind::Face, static_cast<std::uint32_t>(k)}) !=
             HistoryEntry::Relation::Deleted)
@@ -845,6 +887,9 @@ Result<OpResult> deleteWork(const Shape& shape, const std::vector<int>& picked, 
             return wedged;
         if (wedged)
             return wedged;
+        firstDetail += "; rebuilding the corner: " + wedged.error().message;
+        for (const std::string& c : wedged.error().context)
+            firstDetail += "; " + c;
     }
     return tl::unexpected(failure(deleteMessage(firstWhy, runHint), where, firstDetail));
 }
@@ -860,7 +905,10 @@ Result<OpResult> booleanWithTool(BoolOp op, const Shape& body, const Shape& tool
         out = tl::unexpected(failure("free or badly oriented edges", where));
     if (out || out.error().code == ErrorCode::Cancelled)
         return out;
+    // The boolean's own message and context (OCCT's alerts, the failed check) go to the log.
     std::string context = out.error().message;
+    for (const std::string& c : out.error().context)
+        context += "; " + c;
     if (out.error().code == ErrorCode::InvalidArgument)
         return tl::unexpected(failure(subject + " could not be built." + kNothingChanged, where, context));
     return tl::unexpected(failure(subject +
@@ -998,9 +1046,13 @@ Result<OpResult> removeByWedges(const Shape& shape, FaceModel& model, const std:
             HistoryEntry::Relation::Deleted)
             return tl::unexpected(failure("the round is still there", where));
     const Expectation expect = expectationFor(model, fillets, {});
-    const double change = detail::volumeOf(op->shape) - detail::volumeOf(shape);
-    if ((expect.sign != 0 && change * expect.sign < 0.0) ||
-        (expect.bounded && (std::abs(change) < expect.lo || std::abs(change) > expect.hi)))
+    // kernel::boolean checked the direction, and a change below kLocalVolumeRelative of the body inside the wedges'
+    // box; a larger change is checked here against the blend's plausible size.
+    const double before = detail::volumeOf(shape);
+    const double change = detail::volumeOf(op->shape) - before;
+    const bool large = std::abs(change) >= detail::kLocalVolumeRelative * before;
+    if (large && ((expect.sign != 0 && change * expect.sign < 0.0) ||
+                  (expect.bounded && (std::abs(change) < expect.lo || std::abs(change) > expect.hi))))
         return tl::unexpected(failure("unexpected volume", where));
     for (const auto& [point, want] : expect.points)
         if (detail::classifyPointFast(detail::occt(op->shape), point, kOnTolerance) != want)
@@ -1078,10 +1130,28 @@ Result<OpResult> offsetWork(const Shape& shape, const std::vector<int>& picked, 
     ctx.progress.set(0.1, kStage);
 
     auto op = booleanWithTool(outward ? BoolOp::Union : BoolOp::Cut, shape, tool, ctx, subject, where);
+
     if (!op)
         return tl::unexpected(op.error());
     if (op->shape.count(SubKind::Solid) != shape.count(SubKind::Solid))
         return tl::unexpected(failure(subject + " would cut the part in two." + kNothingChanged, where));
+    {
+        // The change lies inside the prisms: a cut removes at most them, a union adds at most them. kernel::boolean
+        // checks a change below kLocalVolumeRelative of the body inside the prisms' box itself; a larger one is checked
+        // here on the whole body, with its integration noise.
+        const double prisms = detail::solidVolume(toolShape);
+        const double before = detail::volumeOf(shape);
+        const double whole = detail::volumeOf(op->shape) - before;
+        const double moved = outward ? whole : -whole;
+        const bool large = std::abs(whole) >= detail::kLocalVolumeRelative * before;
+        if (large && (!(moved > 0.0) || moved > prisms * (1.0 + 1e-3) + detail::kVolumeNoiseRelative * before))
+            return tl::unexpected(
+                failure(subject +
+                            " gives an invalid body, usually because the new face would land exactly "
+                            "on another face or edge of the part. Try a slightly different size." +
+                            kNothingChanged,
+                        where, "volume change " + std::to_string(whole) + " for prisms of " + std::to_string(prisms)));
+    }
 
     std::vector<EditedFace> edited;
     std::vector<ToolOrigin> origins;
@@ -1313,9 +1383,11 @@ Result<OpResult> resizeWork(const Shape& shape, int picked, double newDiameter, 
     auto op = booleanWithTool(BoolOp::Cut, mid, tool, ctx, subject, where);
     if (!op)
         return tl::unexpected(op.error());
+    // Filling the bore and cutting it again were each checked; the two together must add material, which the whole
+    // body shows when the change is large next to it (a small one is within its integration noise).
     const double before = detail::volumeOf(shape);
-    const double after = detail::volumeOf(op->shape);
-    if (!(after > before))
+    const double change = detail::volumeOf(op->shape) - before;
+    if (std::abs(change) >= detail::kLocalVolumeRelative * before && !(change > 0.0))
         return tl::unexpected(failure(subject + " did not add material to the hole wall." + kNothingChanged, where));
     return finishResize(model, boreFaces, hole, newRadius, shape, tool, *op,
                         compose(filled.result->history, entriesOf(op->history, 0)), subject, where);

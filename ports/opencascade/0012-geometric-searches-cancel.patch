@@ -1,0 +1,214 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: a cancel reaches two more geometric searches that a boolean or a feature removal can spend minutes in.
+  - Message_ProgressIndicator gets a per-thread "current range" (ThreadRange, SetThreadRange, ThreadUserBreak and the
+    scope helper ThreadRangeScope), for searches deep in TKGeomAlgo whose interfaces take no progress range.
+  - BOPAlgo_EdgeFace and BOPAlgo_FaceFace (the edge/face and face/face jobs of BOPAlgo_PaveFiller) set their job's
+    range as the thread's range while they run.
+  - IntCurveSurface_InterUtils (the curve/surface intersection under IntTools_BeanFaceIntersector) checks it between
+    the passes of its start-point sort and between start points; IntWalk_PWalking (the surface/surface walk under
+    IntTools_FaceFace) checks it in its marching loop and while extending a line through a tangent zone. On a break
+    they stop: the sort and the search return, the walk returns not done.
+
+Why: RayCAD runs direct edits on a kernel thread it abandons on cancel and requires the abandoned OCCT work to stop
+within 10 s (task T-080). On the NIST test models (tests/corpus/directedit/set_nist.tsv) edits ran on long after a
+cancel: resizing a hole of NIST CTC 02 (AP203 with PMI) 161 and 167 s, removing a blend run of it 80 s (inside the
+PaveFiller of BOPAlgo_MakerVolume), removing a hole stack of NIST D2MI 827-9999-904 40 s on Linux. gdb stack samples
+taken while the abandoned thread ran showed one edge/face job inside IntCurveSurface_HInter::Perform
+(IntCurveSurface_InterUtils::SortStartPoints, a bubble sort, and ProcessSortedPoints) and one face/face job inside
+IntWalk_PWalking::Perform / ExtendLineInCommonZone, each for minutes; patch 0011 made jobs stop only between such
+calls. A broken job's partial result is never used: BOPAlgo_PaveFiller checks the break after its jobs and the
+operation ends with BOPAlgo_AlertUserBreak. A run that is not cancelled is unchanged (nothing but the break is read).
+
+Upstream: not reported.
+
+diff --git a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx
+--- a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx
++++ b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx
+@@ -15,6 +15,36 @@
+ 
+ IMPLEMENT_STANDARD_RTTIEXT(Message_ProgressIndicator, Standard_Transient)
+ 
++namespace
++{
++// RayCAD (patch 0012): see Message_ProgressIndicator::ThreadRange().
++thread_local const Message_ProgressRange* THE_THREAD_RANGE = nullptr;
++} // namespace
++
++//=================================================================================================
++
++const Message_ProgressRange* Message_ProgressIndicator::ThreadRange()
++{
++  return THE_THREAD_RANGE;
++}
++
++//=================================================================================================
++
++const Message_ProgressRange* Message_ProgressIndicator::SetThreadRange(
++  const Message_ProgressRange* theRange)
++{
++  const Message_ProgressRange* aPrevious = THE_THREAD_RANGE;
++  THE_THREAD_RANGE                       = theRange;
++  return aPrevious;
++}
++
++//=================================================================================================
++
++bool Message_ProgressIndicator::ThreadUserBreak()
++{
++  return THE_THREAD_RANGE != nullptr && THE_THREAD_RANGE->UserBreak();
++}
++
+ //=================================================================================================
+ 
+ Message_ProgressIndicator::Message_ProgressIndicator()
+diff --git a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx
+--- a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx
++++ b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx
+@@ -74,6 +74,31 @@ public:
+   Standard_EXPORT static Message_ProgressRange Start(
+     const occ::handle<Message_ProgressIndicator>& theProgress);
+ 
++  //!@name RayCAD (patch 0012): a user break for long geometric searches that take no progress range
++  //! The range whose user break the calling thread's long geometric searches poll (the start points of a
++  //! curve/surface intersection, a surface/surface walk), or null. Set by the jobs of a boolean that own a range.
++  Standard_EXPORT static const Message_ProgressRange* ThreadRange();
++  //! Sets the calling thread's range (null: none) and returns the previous one, to be restored.
++  Standard_EXPORT static const Message_ProgressRange* SetThreadRange(const Message_ProgressRange* theRange);
++  //! True if the calling thread has a range and its indicator signals a user break.
++  Standard_EXPORT static bool ThreadUserBreak();
++
++  //! Sets the calling thread's range for its lifetime and restores the previous one after.
++  class ThreadRangeScope
++  {
++  public:
++    explicit ThreadRangeScope(const Message_ProgressRange& theRange)
++        : myPrevious(SetThreadRange(&theRange))
++    {
++    }
++    ~ThreadRangeScope() { SetThreadRange(myPrevious); }
++    ThreadRangeScope(const ThreadRangeScope&)            = delete;
++    ThreadRangeScope& operator=(const ThreadRangeScope&) = delete;
++
++  private:
++    const Message_ProgressRange* myPrevious;
++  };
++
+ protected:
+   //!@name Virtual methods to be defined by descendant.
+ 
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
+@@ -15,6 +15,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Bnd_Box.hxx>
+ #include <Bnd_Tools.hxx>
+ #include <BOPAlgo_PaveFiller.hxx>
+@@ -128,7 +129,10 @@ public:
+       }
+ 
+       // RayCAD (patch 0011): the edge/face search polls the job's range, so a cancel stops a long one.
+-      IntTools_EdgeFace::Perform(aPS.Next());
++      const Message_ProgressRange aRange = aPS.Next();
++      // RayCAD (patch 0012): the curve/surface searches under it poll the same range.
++      const Message_ProgressIndicator::ThreadRangeScope aThreadRange(aRange);
++      IntTools_EdgeFace::Perform(aRange);
+     }
+     catch (Standard_Failure const&)
+     {
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx
+@@ -15,6 +15,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <BOPAlgo_PaveFiller.hxx>
+ #include <Bnd_Box.hxx>
+ #include <BOPAlgo_Alerts.hxx>
+@@ -232,6 +233,9 @@ public:
+         myTrsf = aTrsf.Inverted();
+       }
+ 
++      // RayCAD (patch 0012): the surface/surface walks under it poll the job's range.
++      const Message_ProgressRange                         aRange = aPS.Next();
++      const Message_ProgressIndicator::ThreadRangeScope aThreadRange(aRange);
+       IntTools_FaceFace::Perform(aF1, aF2, myRunParallel);
+     }
+     catch (Standard_Failure const&)
+diff --git a/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx b/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx
+--- a/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx
++++ b/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx
+@@ -15,6 +15,7 @@
+ #ifndef IntCurveSurface_InterUtils_HeaderFile
+ #define IntCurveSurface_InterUtils_HeaderFile
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Adaptor3d_Curve.hxx>
+ #include <Adaptor3d_Surface.hxx>
+ #include <Bnd_Box.hxx>
+@@ -1391,6 +1392,11 @@ inline void SortStartPoints(SortedStartPoints& thePoints)
+   bool Triok;
+   do
+   {
++    // RayCAD (patch 0012): a user break stops the sort (the points are then not used).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return;
++    }
+     Triok = true;
+     for (int i = 1; i < NbStartPoints; i++)
+     {
+@@ -1483,6 +1489,11 @@ void ProcessSortedPoints(ExactInterType&
+ 
+   for (int i = 0; i < NbStartPoints; i++)
+   {
++    // RayCAD (patch 0012): a user break stops the search (the result is then not used).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return;
++    }
+     double u = thePoints.TabU(i);
+     double v = thePoints.TabV(i);
+     double w = thePoints.TabW(i);
+diff --git a/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx b/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx
+--- a/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx
++++ b/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx
+@@ -12,6 +12,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Adaptor3d_Surface.hxx>
+ #include <Adaptor3d_HSurfaceTool.hxx>
+ #include <Extrema_GenLocateExtPS.hxx>
+@@ -880,6 +881,12 @@ void IntWalk_PWalking::Perform(const NCollection_Array1<double>& ParDep,
+   Arrive = false;
+   while (!Arrive) // 010
+   {
++    // RayCAD (patch 0012): a user break stops the walk, not done (the line is then not used).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      done = false;
++      return;
++    }
+     aPrevStatus = aStatus;
+ 
+     LevelOfIterWithoutAppend++;
+@@ -1894,6 +1901,11 @@ bool IntWalk_PWalking::ExtendLineInCommonZone(const IntImp_ConstIsoparametric th
+ 
+   while (!bStop)
+   {
++    // RayCAD (patch 0012): a user break stops extending the line.
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return bOutOfTangentZone;
++    }
+     nbIterWithoutAppend++;
+ 
+     if ((nbIterWithoutAppend > 20) || (nbEqualPoints > 20))

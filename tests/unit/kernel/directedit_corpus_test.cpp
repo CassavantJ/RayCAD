@@ -155,6 +155,7 @@ struct Outcome {
     double cancelMs = -1.0;   // timeout: from the cancel to the call's return
     bool wrongCode = false;   // a failure that is not KernelFailure
     std::string historyFault; // a success whose history breaks the kernel.h normalisation (empty: none)
+    std::string infeasible;   // a failed push/pull or enlargement that no body could meet (testing::infeasibleRequest)
 };
 
 // kernel.h ShapeHistory for a direct edit: only input 0, every input element exactly one Modified or Deleted entry,
@@ -240,6 +241,10 @@ Outcome runCase(const Part& part, const Shape& solid, const testing::DirectEditC
         o.wrongCode = result.error().code != ErrorCode::KernelFailure;
         o.message = result.error().message;
     }
+    // Refused requests that are impossible by geometry, told by the oracle's own test (rates are given both ways).
+    if (o.result == "refused" && (c.edit == testing::DirectEdit::PushOut || c.edit == testing::DirectEdit::PushIn ||
+                                  c.edit == testing::DirectEdit::ResizeLarger))
+        o.infeasible = testing::infeasibleRequest(solid, c);
     return o;
 }
 
@@ -347,7 +352,8 @@ void measureSet(const SetSpec& spec)
         std::ofstream out(file);
         for (const Outcome& o : outcomes)
             out << o.part << '\t' << o.kind << '\t' << o.edit << '\t' << o.k << '\t' << o.note << '\t' << o.result
-                << '\t' << static_cast<long long>(o.ms) << '\t' << clean(o.message) << '\n';
+                << '\t' << static_cast<long long>(o.ms) << '\t' << clean(o.message) << '\t' << clean(o.infeasible)
+                << '\n';
     }
 
     // The acceptance lines of PLAN.md T-080.
@@ -393,15 +399,23 @@ void measureSet(const SetSpec& spec)
         std::printf("  NOT LOADED: %s\n", f.c_str());
     std::vector<std::pair<const Line*, Tally>> tallies;
     for (const Line& line : lines) {
-        Tally t;
+        Tally t, feasible;
         for (const Outcome& o : outcomes)
             if (inLine(line, o)) {
                 ++t.total;
                 t.ok += o.result == "ok" ? 1 : 0;
+                if (o.infeasible.empty()) {
+                    ++feasible.total;
+                    feasible.ok += o.result == "ok" ? 1 : 0;
+                }
             }
         tallies.emplace_back(&line, t);
-        std::printf("  %-58s %4d of %4d  %5.1f%%  (at least %.0f%%)\n", line.name, t.ok, t.total, 100.0 * t.rate(),
+        std::printf("  %-58s %4d of %4d  %5.1f%%  (at least %.0f%%)", line.name, t.ok, t.total, 100.0 * t.rate(),
                     100.0 * line.required);
+        if (feasible.total != t.total)
+            std::printf("; without %d infeasible requests %d of %d  %5.1f%%", t.total - feasible.total, feasible.ok,
+                        feasible.total, 100.0 * feasible.rate());
+        std::printf("\n");
     }
     // All edits, real and synthetic, for the record.
     std::map<std::string, std::map<std::string, Tally>> byEdit;
@@ -423,8 +437,10 @@ void measureSet(const SetSpec& spec)
             cancel = std::max(cancel, o.cancelMs);
         if (o.result != "ok") {
             ++failures;
-            std::printf("  FAIL %-14s %-17s k%d %-12s %-10s %7.0f ms  %s\n", o.part.c_str(), o.edit.c_str(), o.k,
-                        o.note.c_str(), o.result.c_str(), o.ms, o.message.c_str());
+            std::printf("  FAIL %-14s %-17s k%d %-12s %-10s %7.0f ms  %s%s%s\n", o.part.c_str(), o.edit.c_str(), o.k,
+                        o.note.c_str(), o.result.c_str(), o.ms, o.message.c_str(),
+                        o.infeasible.empty() ? "" : "  [INFEASIBLE: ",
+                        o.infeasible.empty() ? "" : (o.infeasible + "]").c_str());
         }
     }
     for (const auto& [edit, t] : times)

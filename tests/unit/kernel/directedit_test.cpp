@@ -14,6 +14,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <thread>
@@ -549,4 +553,64 @@ TEST_CASE("a fault inside a direct edit is contained and the next edit works", "
     }
     const OpResult fine = take(deleting(plate, {wall.front()}));
     CHECK(close(volumeOf(fine.shape), 500.0, 1e-7));
+}
+
+namespace {
+
+// A body written by kernel::serialize() into tests/unit/kernel/data.
+Shape loadSavedBody(const char* name)
+{
+    const std::filesystem::path file = std::filesystem::path(RAY_KERNEL_TEST_DATA_DIR) / name;
+    std::ifstream in(file, std::ios::binary);
+    INFO(file.string());
+    REQUIRE(in.good());
+    const std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<std::byte> bytes(raw.size());
+    std::memcpy(bytes.data(), raw.data(), raw.size());
+    return take(deserialize(bytes));
+}
+
+// vol(shape inside the box around `centre` with half-size `half`), through the public kernel.
+double volumeNear(const Shape& shape, Vec3 centre, double half)
+{
+    JobContext ctx;
+    const Shape box = take(makeBox({centre.x - half, centre.y - half, centre.z - half},
+                                   {centre.x + half, centre.y + half, centre.z + half}));
+    return volumeOf(take(boolean(BoolOp::Intersect, shape, box, ctx)).shape);
+}
+
+} // namespace
+
+TEST_CASE("a small push/pull on a large imported body is judged by the volume near the face", "[kernel][directedit]")
+{
+    // NIST CTC 02, AP203 with PMI (47,098,068 mm3, 487 faces), as imported: its whole-body volume, integrated face by
+    // face, is off by tens of mm3, so a correct 12.41 mm3 push and pull measured +2.2 and -36.1 mm3 and the S9 checker
+    // called them wrong (T-080 round 2). The edit is right: inside a box around the face it moved exactly the prism.
+    const Shape body = loadSavedBody("nist_ctc_02_ap203pmi_body.rbrep");
+    REQUIRE(body.count(SubKind::Face) == 487);
+    std::optional<SubId> face;
+    for (std::uint32_t i = 0; i < body.count(SubKind::Face) && !face; ++i) {
+        const SurfaceInfo info = take(surfaceInfo(body, SubId{SubKind::Face, i}));
+        if (info.type == SurfaceType::Plane && close(info.area, 6.204985, 1e-6) &&
+            close(info.centroid, Vec3{-151.5512, 1.5229, -14.9560}, 1e-5))
+            face = SubId{SubKind::Face, i};
+    }
+    REQUIRE(face.has_value());
+    const SurfaceInfo info = take(surfaceInfo(body, *face));
+    const double prism = info.area * 2.0;
+    const double before = volumeNear(body, info.centroid, 6.0);
+    for (const double d : {2.0, -2.0}) {
+        INFO("distance " << d);
+        const OpResult out = take(pushing(body, {*face}, d));
+        checkValidResult(out, body);
+        const double change = volumeNear(out.shape, info.centroid, 6.0) - before;
+        CHECK(close(change, d > 0 ? prism : -prism, 1e-6));
+        // The moved face is the image of the old one, 2 mm along its outward normal.
+        const std::vector<SubId> moved = modifiedTo(out, 0, *face);
+        REQUIRE(moved.size() == 1);
+        const FaceSample was = take(faceSample(body, *face));
+        const Vec3 shifted{info.centroid.x + was.normal.x * d, info.centroid.y + was.normal.y * d,
+                           info.centroid.z + was.normal.z * d};
+        CHECK(close(take(surfaceInfo(out.shape, moved.front())).centroid, shifted, 1e-6));
+    }
 }
