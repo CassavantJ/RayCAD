@@ -1178,7 +1178,7 @@ void skipUnlessScenario(const std::vector<Looked>& looked, bool holds, const std
         got += " " + l.id + ": " + name(l.answer) + " " + list(l.elements) + ", expected " + list(l.expected) +
                (l.expectedMerged ? " merged" : "") + ", " + verdictName(l.judgement.verdict) + ";";
     SKIP("this platform's kernel does not build the scenario (" << scenario << "):" << got
-                                                                 << " no wrong answer in the sequence");
+                                                                << " no wrong answer in the sequence");
 }
 
 } // namespace
