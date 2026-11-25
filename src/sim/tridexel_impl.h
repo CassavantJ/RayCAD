@@ -31,8 +31,8 @@ static_assert(sizeof(Dexel) == 20, "a dexel is 20 bytes");
 inline constexpr std::uint16_t kMaxDexelIntervals = 32768;
 
 // One tile of a grid: the rows of one strip by kTileCols columns (fewer in the last), its dexels row by row, owned
-// copy-on-write (TileRef). Only the task that holds the tile's strip writes to it, and only after making sure it is
-// the tile's only owner (StripTiles::own, TileRef::mut).
+// copy-on-write (TileRef). Only the task that holds the tile's part of its strip writes to it, and only after making
+// sure it is the tile's only owner (StripTiles::own, TileRef::mut).
 struct Tile {
     std::atomic<std::int32_t> refs{1};
     std::vector<Dexel> d;
@@ -41,9 +41,15 @@ struct Tile {
     // Z grid tiles only: per row, per run of kTopRun rays, the highest material top in it (0 when empty). A cut whose
     // lowest point is above it skips those rays. Derived from the dexels; kept up to date by every cut.
     std::vector<float> top;
+    // X and Y grid tiles only: per row, per run of kTopRun rays, a bit per bin of depth along the rays (occBits; the
+    // same bins in both grids), set where some ray of the run holds material. A cut whose interval on every ray of a
+    // run lies in bins with no bit set takes nothing from them: it skips the run. Derived from the dexels and kept up
+    // to date by every cut; it only ever needs to be a superset of where the material is (one that skipped too little
+    // would only take longer), so a tile of equal dexels may stand in for another (internTiles).
+    std::vector<std::uint64_t> occ;
 
     Tile() = default;
-    Tile(const Tile& o) : d(o.d), pool(o.pool), garbage(o.garbage), top(o.top) {}
+    Tile(const Tile& o) : d(o.d), pool(o.pool), garbage(o.garbage), top(o.top), occ(o.occ) {}
     Tile& operator=(const Tile&) = delete;
 
     float* data(Dexel& x) { return x.cap <= 2 ? x.inl : pool.data() + x.off; }
@@ -51,7 +57,7 @@ struct Tile {
     std::uint64_t bytes() const
     {
         return d.capacity() * sizeof(Dexel) + pool.capacity() * sizeof(float) + top.capacity() * sizeof(float) +
-               sizeof(Tile);
+               occ.capacity() * sizeof(std::uint64_t) + sizeof(Tile);
     }
 
     // Room for one more interval in x (doubling its capacity in the pool). False at the limit.
@@ -95,6 +101,10 @@ struct Tile {
     }
     // Rebuilds `top` for rows of `cols` dexels.
     void buildTop(int cols);
+    // The occupancy bits of dexels [first, first + count) at `scale` bins per mm (occBits).
+    std::uint64_t occOf(const Dexel* first, int count, double scale) const;
+    // Rebuilds `occ` for rows of `cols` dexels.
+    void buildOcc(int cols, double scale);
     // Rewrites the pool without the unused blocks, in dexel order, once at least half of it is unused.
     void compactIfWorthIt()
     {
@@ -233,6 +243,7 @@ public:
                 copy->pool = s_->pool;
                 copy->garbage = s_->garbage;
                 copy->top = s_->top;
+                copy->occ = s_->occ;
                 copy->refs.store(1, std::memory_order_relaxed);
             } else {
                 copy = new Tile(*s_);
@@ -278,6 +289,7 @@ struct Grid {
     int nu = 0, nv = 0;
     double cu = 0, cv = 0;
     double len = 0;
+    double occScale = 0; // X and Y grids: occupancy bins per mm (Tile::occ)
     int rowsPerStrip = 1;
     int strips = 0;
     int tilesPerStrip = 1;
@@ -302,24 +314,32 @@ struct Grid {
     const float* data(int u, int v) const { return tileOf(u, v).data(at(u, v)); }
 };
 
-// The tiles of one strip as the task that holds the strip sees them (the only one that writes to them during a batch):
-// it reads any tile through get() and writes to one only through own(), which copies it first when a snapshot, a
-// clone or a keyframe still shares it. A tile is therefore copied only when a cut is about to change it.
-// Whether a tile is the task's own is looked up once, when the task starts (no one else can share a tile of the strip
-// while the task runs: snapshot and clone are not called during a batch); a tile that becomes its own later is so
-// through own().
+// The tiles [t0, t1) of one strip (a PART of it, or all of it: tridexel.h, STRIPS) as the task that holds them sees
+// them (the only one that writes to them during a batch): it reads any of them through get() and writes to one only
+// through own(), which copies it first when a snapshot, a clone or a keyframe still shares it. A tile is therefore
+// copied only when a cut is about to change it. Whether a tile is the task's own is looked up once, when the task
+// starts (no one else can share a tile anew while the task runs: snapshot and clone are not called during a batch); a
+// tile that becomes its own later is so through own(). The kernels work on the rays of the part's columns [v0, v1) only
+// and touch no other tile.
 struct StripTiles {
     TileRef* ref = nullptr;
     int u0 = 0, u1 = 0;          // the strip's rows
+    int t0 = 0, t1 = 0;          // the tiles held
+    int v0 = 0, v1 = 0;          // their columns
     std::vector<const Tile*> rd; // per tile: where to read it
     std::vector<Tile*> wr;       // per tile: where to write it once it is the task's own, else null
     TileBin* bin = nullptr;      // where copies come from (TileRef::mut)
     std::uint64_t writes = 0;    // intervals subtracted from a dexel that lost material (triDexelWrites)
-    StripTiles(Grid& g, int s, TileBin* b = nullptr) : ref(g.stripTiles(s)), u0(g.row0(s)), u1(g.row1(s)), bin(b)
+    std::uint64_t reached = 0;   // rays the kernels reached (CutProbe; a sum per row, not per ray)
+    std::uint64_t copies = 0;    // tiles copied on write (CutProbe)
+    StripTiles(Grid& g, int s, TileBin* b = nullptr) : StripTiles(g, s, 0, g.tilesPerStrip, b) {}
+    StripTiles(Grid& g, int s, int tile0, int tile1, TileBin* b)
+        : ref(g.stripTiles(s)), u0(g.row0(s)), u1(g.row1(s)), t0(tile0), t1(tile1), v0(Grid::col0(tile0)),
+          v1(g.col1(tile1 - 1)), bin(b)
     {
-        rd.resize(static_cast<std::size_t>(g.tilesPerStrip));
-        wr.resize(rd.size());
-        for (std::size_t t = 0; t < rd.size(); ++t) {
+        rd.assign(static_cast<std::size_t>(g.tilesPerStrip), nullptr);
+        wr.assign(rd.size(), nullptr);
+        for (int t = t0; t < t1; ++t) {
             wr[t] = ref[t].unique() ? &ref[t].mut() : nullptr; // mut() does not copy a tile it owns alone
             rd[t] = ref[t].get();
         }
@@ -332,6 +352,7 @@ struct StripTiles {
     {
         Tile*& w = wr[static_cast<std::size_t>(t)];
         if (w == nullptr) {
+            copies += ref[t].unique() ? 0u : 1u;
             w = &ref[t].mut(bin);
             rd[static_cast<std::size_t>(t)] = w;
         }
@@ -474,6 +495,48 @@ inline void Tile::buildTop(int cols)
     }
 }
 
+// The occupancy bins of the lateral rays (Tile::occ): at `scale` bins per mm (Grid::occScale, the same for the X and
+// the Y grid, so that kOccBins of them span the longer ray), bin b holds depths [b, b + 1) / scale (the last one and
+// beyond: kOccBins - 1; below 0: 0). The bits of the bins over [lo, hi] (lo <= hi): every depth in it falls in one of
+// them, as the bin of a depth does not decrease with it.
+inline constexpr int kOccBins = 64;
+inline int occBin(double r, double scale)
+{
+    const double b = std::floor(r * scale);
+    return b < 0 ? 0 : b > kOccBins - 1 ? kOccBins - 1 : static_cast<int>(b);
+}
+inline std::uint64_t occBits(double lo, double hi, double scale)
+{
+    const int b0 = occBin(lo, scale), b1 = occBin(hi, scale);
+    return (~std::uint64_t{0} >> (kOccBins - 1 - b1)) & (~std::uint64_t{0} << b0);
+}
+
+inline std::uint64_t Tile::occOf(const Dexel* first, int count, double scale) const
+{
+    std::uint64_t bits = 0;
+    for (int i = 0; i < count; ++i) {
+        const float* p = data(first[i]);
+        for (std::uint32_t k = 0; k < first[i].n; ++k) {
+            bits |= occBits(static_cast<double>(p[2 * k]), static_cast<double>(p[2 * k + 1]), scale);
+        }
+    }
+    return bits;
+}
+
+inline void Tile::buildOcc(int cols, double scale)
+{
+    const int runs = topRuns(cols);
+    const int rows = cols > 0 ? static_cast<int>(d.size() / static_cast<std::size_t>(cols)) : 0;
+    occ.assign(static_cast<std::size_t>(rows) * runs, 0);
+    for (int r = 0; r < rows; ++r) {
+        for (int b = 0; b < runs; ++b) {
+            const int i0 = b * kTopRun;
+            occ[static_cast<std::size_t>(r) * runs + b] =
+                occOf(d.data() + static_cast<std::size_t>(r) * cols + i0, std::min(kTopRun, cols - i0), scale);
+        }
+    }
+}
+
 inline int firstIdx(double lo, double cell)
 {
     return static_cast<int>(std::ceil(lo / cell - 0.5));
@@ -526,9 +589,9 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
 std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, const Seg& g, const double* tables,
                   const ShapeTables& layout, std::vector<std::uint8_t>& tileBits, int tilesX, int tileRow0);
 // Whether the swept `shape` (the non-cutting part) meets material on the Z rays of one strip (its tiles, rows [u0,
-// u1)).
-bool touchesZ(const Grid& grid, const TileRef* t, int u0, int u1, const CutterShape& shape, const Seg& g,
-              const double* tables, const ShapeTables& layout);
+// u1)), columns [v0, v1).
+bool touchesZ(const Grid& grid, const TileRef* t, int u0, int u1, int v0, int v1, const CutterShape& shape,
+              const Seg& g, const double* tables, const ShapeTables& layout);
 
 // Fills every dexel of `grid` (index gi) with the material of `soup` (tridexel_reset.cpp), strips in parallel.
 void fillFromSoup(Grid& grid, int gi, const kernel::TriSoup& soup, const Vec3& origin, IJobSystem& jobs);

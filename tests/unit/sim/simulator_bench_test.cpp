@@ -10,8 +10,9 @@
 // workload (other builds a thinned one). Every tier's seek budget is checked, High's too since the stock model copies
 // tiles rather than whole strips on write (tridexel.h, SNAPSHOTS): its keyframes all fit High's keyframe budget.
 // The same benchmark also runs the facing-heavy plate of the stress programs (below) at every tier, seeking into every
-// keyframe interval. The stress programs themselves (facing, finishing, a long program, a large stock) are hidden
-// tests "[stress]", for the report of what the keyframe policy holds and where it cannot (simulator.h, KEYFRAMES).
+// keyframe interval, and times the finishing program's run at High. The stress programs themselves (facing, finishing,
+// a long program, a large stock) are hidden tests "[stress]", for the report of what the keyframe policy holds and
+// where it cannot (simulator.h, KEYFRAMES).
 #include "simulator_test_util.h"
 
 #include <ray/kernel.h>
@@ -991,6 +992,23 @@ TEST_CASE("Simulator benchmark: a facing-heavy plate at every tier", "[.][sim][s
     }
 }
 
+// Part of the section 9 benchmark (ray_sim_simulator_bench): the finishing program (a pocket roughed in twelve levels,
+// then three ball rasters over it: the work S6 does not have, a batch's moves within a few strips) at High on 8
+// workers, its run within High's 10 s per 100k moves. Measured as this test counts it (removal and gouges, per 100k
+// motions): 4.8 to 5.0 s with the machine quiet, 7.4 with other load arriving; the removal alone (hidden test
+// "[stress-finish]") 5.3 to 5.4 s per 100k moves quiet (before strips were split into parts, the lateral and Z skips
+// and the parallel look through the intern table: 11.7 to 12.1). Its seeks are not checked: it is thinned at High and
+// its worst seek is over 100 ms (simulator.h, KEYFRAMES). Not run in other builds.
+TEST_CASE("Simulator benchmark: the finishing program at High",
+          "[.][sim][simulator][bench][simulator-bench][bench-finish]")
+{
+    if (!optimisedBuild()) {
+        SKIP("timed only in an optimised build");
+    }
+    StressProgram p = finishProgram();
+    runTier(kTiers[2], p.f.sp, p.moves, 0, true, false);
+}
+
 // Not run by default ([.]): each stress program at every tier (the large one at High only), measured over every
 // keyframe interval. What the keyframe policy was checked against beyond S6.
 TEST_CASE("Simulator stress: facing", "[.][sim][simulator][stress][stress-facing]")
@@ -1221,6 +1239,174 @@ TEST_CASE("Simulator stress: High without a keyframe budget", "[.][sim][simulato
         stressTier("long unbounded", kTiers[2], p.f.sp, p.moves, tu);
     }
 }
+// Not run by default ([.]): where the removal's time goes, per operation (detail::CutProbe): the batches, how their
+// tasks (one per strip) spread over the workers, the kernels' time per ray reached in each grid, tiles copied on write,
+// and the time outside the batches (keyframes, of which interning). Lines "profile ..." for the report.
+namespace {
+
+struct ProfileProbe final : sim::detail::CutProbe {
+    std::vector<sim::detail::CutBatchRecord> batches;
+    std::uint64_t now() override
+    {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+    void batch(sim::detail::CutBatchRecord&& r) override { batches.push_back(std::move(r)); }
+    std::vector<sim::detail::InternRecord> interns;
+    void intern(const sim::detail::InternRecord& r) override { interns.push_back(r); }
+};
+
+void profileRun(const char* program, const Tier& t, const SimProgram& sp, std::uint64_t moves, int partTiles = 0)
+{
+    jobs().setWorkerCount(t.workers);
+    std::unique_ptr<IStockModel> model = makeTriDexelCpu(jobs());
+    ProfileProbe probe;
+    sim::detail::setCutProbe(*model, &probe);
+    sim::detail::setTriDexelPartTiles(*model, partTiles);
+    auto sim = makeSimulator(jobs(), std::move(model));
+    SimOptions o{};
+    o.resolution = StockResolution{t.cell};
+    o.safetyChecks = false;
+    o.gouges = false;
+    double runS = 0;
+    const Result<bool> done = jobs()
+                                  .submit<bool>(JobInfo{"profile", JobPriority::Normal, false},
+                                                [&](JobContext& ctx) -> Result<bool> {
+                                                    const auto t0 = std::chrono::steady_clock::now();
+                                                    const Status s = sim->run(sp, o, ctx);
+                                                    runS = seconds(t0);
+                                                    return s ? Result<bool>(true) : tl::unexpected(s.error());
+                                                })
+                                  .wait();
+    REQUIRE(done);
+    const sim::detail::SimRunInfo info = sim::detail::simRunInfo(*sim);
+    const std::uint64_t hash = sim::detail::triDexelHash(sim->stock());
+    // Per operation (batches are in program order and cover the motions in turn).
+    struct Acc {
+        std::uint64_t motions = 0, batches = 0, tasks = 0, copies = 0;
+        double wall = 0, pre = 0, post = 0, par = 0, taskSum = 0, maxTaskSum = 0, lowerBound = 0;
+        double gridNs[3] = {0, 0, 0}, gridReached[3] = {0, 0, 0}, gridWrites[3] = {0, 0, 0};
+        double gridTasks[3] = {0, 0, 0}, gridMax[3] = {0, 0, 0};
+        std::vector<double> topShare; // per batch: its largest task over the batch's tasks' sum
+    };
+    std::vector<Acc> acc(sp.ops.size());
+    std::uint64_t cursor = 0;
+    const double w = static_cast<double>(t.workers);
+    for (const sim::detail::CutBatchRecord& b : probe.batches) {
+        const std::uint32_t op = info.motionOp[std::min<std::uint64_t>(cursor, info.motions - 1)];
+        cursor += b.moves;
+        Acc& a = acc[op];
+        a.motions += b.moves;
+        ++a.batches;
+        a.wall += static_cast<double>(b.end - b.begin);
+        a.pre += static_cast<double>(b.parallelBegin - b.begin);
+        a.post += static_cast<double>(b.end - b.parallelEnd);
+        const double par = static_cast<double>(b.parallelEnd - b.parallelBegin);
+        a.par += par;
+        double sum = 0, mx = 0, gmax[3] = {0, 0, 0};
+        for (const sim::detail::CutTaskRecord& k : b.tasks) {
+            const double ns = static_cast<double>(k.end - k.start);
+            sum += ns;
+            mx = std::max(mx, ns);
+            a.gridNs[k.grid] += ns;
+            a.gridReached[k.grid] += static_cast<double>(k.reached);
+            a.gridWrites[k.grid] += static_cast<double>(k.writes);
+            a.gridTasks[k.grid] += 1;
+            gmax[k.grid] = std::max(gmax[k.grid], ns);
+            a.copies += k.copies;
+        }
+        for (int g = 0; g < 3; ++g) {
+            a.gridMax[g] += gmax[g];
+        }
+        a.tasks += b.tasks.size();
+        a.taskSum += sum;
+        a.maxTaskSum += mx;
+        a.lowerBound += std::max(mx, sum / w);
+        a.topShare.push_back(sum > 0 ? mx / sum : 0);
+    }
+    std::printf("profile %s %s: %d workers, parts of %d tiles, %llu moves, run %.2f s (%.2f s per 100k moves): batches "
+                "%.2f s, keyframes "
+                "%.2f s (interning %.2f), other %.2f s; %llu batches, %zu keyframes, %d thinnings; hash %016llx\n",
+                program, t.name, t.workers, partTiles > 0 ? partTiles : sim::detail::kPartTiles,
+                static_cast<unsigned long long>(moves), runS, runS * 1e5 / static_cast<double>(moves), info.cutSeconds,
+                info.keyframeSeconds, info.internSeconds, runS - info.cutSeconds - info.keyframeSeconds,
+                static_cast<unsigned long long>(info.batches), info.keyframeMotions.size(), info.thinnings,
+                static_cast<unsigned long long>(hash));
+    {
+        double st[7] = {0, 0, 0, 0, 0, 0, 0}, buckets = 0, freed = 0, items = 0, replaced = 0;
+        for (const sim::detail::InternRecord& r : probe.interns) {
+            const std::uint64_t at[8] = {r.begin,  r.purgedScan, r.purged,   r.listed,
+                                         r.hashed, r.looked,     r.compared, r.end};
+            for (int k = 0; k < 7; ++k) {
+                st[k] += static_cast<double>(at[k + 1] - at[k]) * 1e-9;
+            }
+            buckets += static_cast<double>(r.buckets);
+            freed += static_cast<double>(r.freed);
+            items += static_cast<double>(r.items);
+            replaced += static_cast<double>(r.replaced);
+        }
+        const double n = std::max<double>(1.0, static_cast<double>(probe.interns.size()));
+        std::printf("profile %s %s interning: %zu calls: finding the table's own tiles %.2f s, letting them go %.2f s, "
+                    "listing %.2f s, hashing %.2f s, looking up %.2f s, comparing %.2f s, replacing %.2f s; per call "
+                    "%.0f buckets, %.0f tiles let go, %.0f tiles changed, %.0f replaced\n",
+                    program, t.name, probe.interns.size(), st[0], st[1], st[2], st[3], st[4], st[5], st[6], buckets / n,
+                    freed / n, items / n, replaced / n);
+    }
+    for (std::size_t op = 0; op < acc.size(); ++op) {
+        const Acc& a = acc[op];
+        if (a.batches == 0) {
+            continue;
+        }
+        const double s = 1e-9;
+        std::printf(
+            "profile %s %s op %zu: %llu motions in %llu batches (%.0f per batch, %.1f tasks per batch); wall "
+            "%.2f s = before the tasks %.3f + tasks %.2f + after %.3f; tasks' sum %.2f s, efficiency %.0f %% "
+            "(sum / workers / wall), bound max(largest task, sum / workers) %.2f s, largest tasks' sum %.2f s, "
+            "largest task's share of a batch median %.2f p90 %.2f; copies %llu\n",
+            program, t.name, op, static_cast<unsigned long long>(a.motions), static_cast<unsigned long long>(a.batches),
+            static_cast<double>(a.motions) / a.batches, static_cast<double>(a.tasks) / a.batches, a.wall * s, a.pre * s,
+            a.par * s, a.post * s, a.taskSum * s, 100.0 * a.taskSum / (w * a.par), a.lowerBound * s, a.maxTaskSum * s,
+            percentile(a.topShare, 0.5), percentile(a.topShare, 0.9), static_cast<unsigned long long>(a.copies));
+        static const char* const kGrid[3] = {"Z", "X", "Y"};
+        for (int g = 0; g < 3; ++g) {
+            if (a.gridTasks[g] == 0) {
+                continue;
+            }
+            std::printf("profile %s %s op %zu grid %s: %.1f tasks per batch, tasks' time %.2f s (largest per batch "
+                        "summed %.2f s), %.0f M rays reached, %.2f ns per ray reached (one thread's time), %.1f M "
+                        "writes\n",
+                        program, t.name, op, kGrid[g], a.gridTasks[g] / a.batches, a.gridNs[g] * s, a.gridMax[g] * s,
+                        a.gridReached[g] / 1e6, a.gridNs[g] / std::max(1.0, a.gridReached[g]), a.gridWrites[g] / 1e6);
+        }
+    }
+    std::fflush(stdout);
+    jobs().setWorkerCount(8);
+}
+
+} // namespace
+
+TEST_CASE("Simulator stress: profile of the removal", "[.][sim][simulator][stress-profile]")
+{
+    {
+        StressProgram p = finishProgram();
+        // Whole strips as tasks (as before parts), then parts of 2, 4 (the default) and 8 tiles.
+        for (const int parts : {1 << 20, 2, 0, 8}) {
+            profileRun(p.name, kTiers[2], p.f.sp, p.moves, parts);
+        }
+        profileRun(p.name, Tier{"High 4w", 0.05, 4, 15.0, 100.0}, p.f.sp, p.moves);
+    }
+    {
+        StressProgram p = finishProgram(2.0);
+        profileRun(p.name, kTiers[2], p.f.sp, p.moves);
+    }
+    {
+        SimFixture s6 = benchFixture(11, 0.25);
+        const SimProgram& sp = s6.build();
+        profileRun("s6", kTiers[2], sp, 112126);
+    }
+}
+
 TEST_CASE("Simulator stress: large stock at High", "[.][sim][simulator][stress][stress-large]")
 {
     StressProgram p = largeProgram();

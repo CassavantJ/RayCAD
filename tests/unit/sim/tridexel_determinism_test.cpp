@@ -56,10 +56,11 @@ const ToolShape& toolOf(int i)
     return i < 2 ? benchmarkTool(i) : shortFlutes;
 }
 
-Run runAll(int workers, std::size_t batch, double cell, bool keyframes)
+Run runAll(int workers, std::size_t batch, double cell, bool keyframes, int partTiles = 0)
 {
     jobs().setWorkerCount(workers);
     auto m = makeTriDexelCpu(jobs());
+    sim::detail::setTriDexelPartTiles(*m, partTiles);
     m->reset({}, benchmarkStock(), StockResolution{cell});
     Run r;
     std::vector<std::shared_ptr<const IStockModel::Snapshot>> snaps;
@@ -109,6 +110,22 @@ TEST_CASE("Identical stock, volumes and hits for 1, 4 and 16 workers and any bat
             }
             const Run r = runAll(workers, batch, cell, batch == 64);
             INFO(workers << " workers, batch " << batch);
+            CHECK(same(r, ref));
+        }
+    }
+}
+
+// A batch's tasks are parts of strips (tridexel.h, STRIPS): parts of one tile, of two, the default, or whole strips (as
+// before parts existed) give the same stock, volumes and hits, with snapshots and clones sharing tiles on the way. At
+// 0.5 mm a Z strip has 5 tiles, an X strip 4 and a Y strip 5.
+TEST_CASE("Identical stock, volumes and hits whatever the parts of a strip", "[sim][tridexel][determinism]")
+{
+    const double cell = 0.5;
+    const Run ref = runAll(4, 512, cell, false);
+    for (const int parts : {1, 2, 1 << 20}) {
+        for (const int workers : {1, 16}) {
+            const Run r = runAll(workers, 512, cell, true, parts);
+            INFO(parts << " tiles per part, " << workers << " workers");
             CHECK(same(r, ref));
         }
     }

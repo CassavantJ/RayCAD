@@ -113,8 +113,46 @@ bool sameContents(const Tile& a, const Tile& b)
 
 // internTiles' table (tridexel.h): per content hash, the tiles met with it, first met first (a later one is there only
 // when its contents differ from the earlier ones').
+// The buckets sit in one array (in no particular order), found by hash through `index`, so that dropping the table's
+// own tiles at every keyframe can run over them in parallel instead of walking a hash map's nodes (which took a
+// tenth of the finishing program's run at 0.05 mm: 3.3 s for 286 keyframes of 54,000 buckets).
 struct InternTable {
-    std::unordered_map<std::uint64_t, std::vector<TileRef>> buckets;
+    struct Bucket {
+        std::uint64_t hash = 0;
+        std::vector<TileRef> refs;
+    };
+    std::unordered_map<std::uint64_t, std::uint32_t> index; // hash -> its bucket
+    std::vector<Bucket> buckets;
+    void clear()
+    {
+        index.clear();
+        buckets.clear();
+    }
+    // The tiles met with `hash` (empty when none yet).
+    std::vector<TileRef>& operator[](std::uint64_t hash)
+    {
+        const auto [it, added] = index.try_emplace(hash, static_cast<std::uint32_t>(buckets.size()));
+        if (added) {
+            buckets.push_back({hash, {}});
+        }
+        return buckets[it->second].refs;
+    }
+    // Drops the empty buckets (moving the last into each one's place).
+    void dropEmpty()
+    {
+        for (std::size_t k = 0; k < buckets.size();) {
+            if (!buckets[k].refs.empty()) {
+                ++k;
+                continue;
+            }
+            index.erase(buckets[k].hash);
+            if (k + 1 != buckets.size()) {
+                buckets[k] = std::move(buckets.back());
+                index[buckets[k].hash] = static_cast<std::uint32_t>(k);
+            }
+            buckets.pop_back();
+        }
+    }
 };
 
 class TriDexelCpu;
@@ -176,6 +214,7 @@ public:
         copy->tileVersion_ = tileVersion_;
         copy->tilesX_ = tilesX_;
         copy->tilesY_ = tilesY_;
+        copy->partTiles_ = partTiles_;
         copy->buildTasks();
         return copy;
     }
@@ -200,6 +239,8 @@ public:
     SnapshotCost cost(const TriDexelSnapshot& s) const;
     std::uint64_t intern(const TriDexelSnapshot* prev);
     std::uint64_t writes() const { return writes_; }
+    void setProbe(CutProbe* p) { probe_ = p; }
+    void setPartTiles(int n) { partTiles_ = std::max(0, n); }
     std::uint64_t meshTriangles(int step) const
     {
         return ready_ ? columnMeshTriangles(g_[kGz], MeshRegion{0, n_[0], 0, n_[1], step}, jobs_) : 0;
@@ -209,33 +250,42 @@ private:
     struct Entry {
         std::uint32_t seg;
         std::uint8_t cut, check;
+        int v0, v1; // the columns the move can reach in this grid (cut or check), padded by one
     };
-    struct Task {
+    // A strip's moves of the batch.
+    struct Strip {
         int grid = 0, strip = 0;
         std::vector<Entry> list;
-        std::vector<std::int64_t> vol;
-        std::vector<std::uint8_t> hit;
+        int tileRow0 = 0;
+    };
+    // A task of the batch: the strip's tiles [t0, t1) (one part), which only it reads and writes.
+    struct Task {
+        std::size_t strip = 0; // in strips_
+        int t0 = 0, t1 = 0;
+        std::vector<std::int64_t> vol;   // Z tasks: per entry of the strip's list
+        std::vector<std::uint8_t> hit;   // likewise
         std::vector<std::uint8_t> tiles; // Z tasks: dirty tiles of the strip's tile rows
         std::uint64_t writes = 0;        // StripTiles::writes of the last batch
-        int tileRow0 = 0;
+        CutTaskRecord rec;               // for the probe (CutProbe)
     };
     bool sameGrid(const TriDexelSnapshot& s) const
     {
         return ready_ && s.n[0] == n_[0] && s.n[1] == n_[1] && s.n[2] == n_[2] && s.c[0] == c_[0] && s.c[1] == c_[1] &&
                s.c[2] == c_[2] && s.origin.x == origin_.x && s.origin.y == origin_.y && s.origin.z == origin_.z;
     }
-    // One task per grid strip, kept between batches.
+    // One list per grid strip, kept between batches.
     void buildTasks()
     {
+        strips_.clear();
         tasks_.clear();
         for (int gi = 0; gi < 3; ++gi) {
-            taskBase_[gi] = static_cast<int>(tasks_.size());
+            stripBase_[gi] = static_cast<int>(strips_.size());
             for (int s = 0; s < g_[gi].stripCount(); ++s) {
-                Task t;
+                Strip t;
                 t.grid = gi;
                 t.strip = s;
                 t.tileRow0 = g_[gi].row0(s) / kTileCells;
-                tasks_.push_back(std::move(t));
+                strips_.push_back(std::move(t));
             }
         }
     }
@@ -260,10 +310,14 @@ private:
     std::uint64_t writes_ = 0; // triDexelWrites
     std::vector<std::uint32_t> tileVersion_;
     int tilesX_ = 0, tilesY_ = 0;
-    std::vector<Task> tasks_; // per grid and strip, reused between batches
-    int taskBase_[3] = {0, 0, 0};
+    std::vector<Strip> strips_; // per grid and strip, reused between batches
+    int stripBase_[3] = {0, 0, 0};
+    std::vector<Task> tasks_; // the last batch's (the first `taskCount_`), reused
+    std::size_t taskCount_ = 0;
+    int partTiles_ = 0; // tiles per part; 0: kPartTiles (setTriDexelPartTiles)
     InternTable table_; // internTiles
     TileBin bin_;       // tiles dropped by internTiles and restore, for the next copies
+    CutProbe* probe_ = nullptr;
 };
 
 void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockResolution res)
@@ -271,7 +325,7 @@ void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockRe
     ++version_;
     ready_ = false;
     tasks_.clear();
-    table_.buckets.clear();
+    table_.clear();
     bin_.clear();
     for (Grid& g : g_) {
         g = Grid{};
@@ -319,6 +373,7 @@ void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockRe
         g.cu = dims[gi].cu;
         g.cv = dims[gi].cv;
         g.len = dims[gi].len;
+        g.occScale = kOccBins / std::max(ext[0], ext[1]);
         g.rowsPerStrip = std::max(1, static_cast<int>(std::lround((gi == kGz ? kStripMm : kLayerStripMm) / g.cu)));
         g.strips = (g.nu + g.rowsPerStrip - 1) / g.rowsPerStrip;
         g.tilesPerStrip = (g.nv + kTileCols - 1) / kTileCols;
@@ -337,9 +392,12 @@ void TriDexelCpu::reset(const kernel::TriSoup& soup, const Box3& bounds, StockRe
         if (!block) {
             fillFromSoup(g, gi, soup, origin_, jobs_);
         }
-        if (gi == kGz) {
-            for (std::size_t k = 0; k < g.tiles.size(); ++k) {
-                g.tiles[k].mut().buildTop(g.cols(static_cast<int>(k % static_cast<std::size_t>(g.tilesPerStrip))));
+        for (std::size_t k = 0; k < g.tiles.size(); ++k) {
+            const int cols = g.cols(static_cast<int>(k % static_cast<std::size_t>(g.tilesPerStrip)));
+            if (gi == kGz) {
+                g.tiles[k].mut().buildTop(cols);
+            } else {
+                g.tiles[k].mut().buildOcc(cols, g.occScale);
             }
         }
     }
@@ -364,6 +422,12 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
     }
     if (!ready_ || moves.empty()) {
         return;
+    }
+    CutProbe* const probe = probe_;
+    CutBatchRecord rec;
+    if (probe != nullptr) {
+        rec.begin = probe->now();
+        rec.moves = static_cast<std::uint32_t>(moves.size());
     }
     const CutterShape cutting = compileProfile(shape.cuttingProfile, false);
     CutterShape nonCutting;
@@ -409,23 +473,29 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
         nonLayout.fill(nonCutting, segs[s].m, tables.data() + s * perSeg + cutLayout.perSeg);
     }
 
-    // Lists per strip, in program order.
-    for (Task& t : tasks_) {
+    // Lists per strip, in program order, each entry with the columns its move can reach.
+    for (Strip& t : strips_) {
         t.list.clear();
     }
-    const auto add = [&](int gi, double lo, double hi, std::uint32_t seg, bool cut, bool check) {
+    const auto add = [&](int gi, double lo, double hi, double clo, double chi, std::uint32_t seg, bool cut,
+                         bool check) {
         const Grid& g = g_[gi];
         const int j0 = std::max(0, firstIdx(lo, g.cu)), j1 = std::min(g.nu - 1, lastIdx(hi, g.cu));
-        if (j0 > j1) {
+        // Padded by a cell: the kernels find their columns by other arithmetic (stadiumCross), which may round past
+        // these bounds; a move listed for columns it does not reach changes nothing there.
+        const int v0 = std::max(0, firstIdx(clo, g.cv) - 1), v1 = std::min(g.nv - 1, lastIdx(chi, g.cv) + 1);
+        if (j0 > j1 || v0 > v1) {
             return;
         }
         for (int s = j0 / g.rowsPerStrip; s <= j1 / g.rowsPerStrip; ++s) {
-            std::vector<Entry>& list = tasks_[static_cast<std::size_t>(taskBase_[gi] + s)].list;
+            std::vector<Entry>& list = strips_[static_cast<std::size_t>(stripBase_[gi] + s)].list;
             if (!list.empty() && list.back().seg == seg) {
                 list.back().cut |= static_cast<std::uint8_t>(cut);
                 list.back().check |= static_cast<std::uint8_t>(check);
+                list.back().v0 = std::min(list.back().v0, v0);
+                list.back().v1 = std::max(list.back().v1, v1);
             } else {
-                list.push_back({seg, static_cast<std::uint8_t>(cut), static_cast<std::uint8_t>(check)});
+                list.push_back({seg, static_cast<std::uint8_t>(cut), static_cast<std::uint8_t>(check), v0, v1});
             }
         }
     };
@@ -441,79 +511,139 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
         };
         const bool cut = reaches(cutting);
         const bool check = wantHits && reaches(nonCutting);
+        // The columns: x on the Z grid and the Y grid, y on the X grid.
         if (cut) {
-            add(kGx, zlo + cutting.hmin, zhi + cutting.hmax, s, true, false);
-            add(kGy, zlo + cutting.hmin, zhi + cutting.hmax, s, true, false);
-            add(kGz, ylo - cutting.rmax, yhi + cutting.rmax, s, true, false);
+            const double r = cutting.rmax;
+            add(kGx, zlo + cutting.hmin, zhi + cutting.hmax, ylo - r, yhi + r, s, true, false);
+            add(kGy, zlo + cutting.hmin, zhi + cutting.hmax, xlo - r, xhi + r, s, true, false);
+            add(kGz, ylo - r, yhi + r, xlo - r, xhi + r, s, true, false);
         }
         if (check) {
-            add(kGz, ylo - nonCutting.rmax, yhi + nonCutting.rmax, s, false, true);
+            const double r = nonCutting.rmax;
+            add(kGz, ylo - r, yhi + r, xlo - r, xhi + r, s, false, true);
         }
     }
-    std::vector<std::size_t> live;
-    for (std::size_t t = 0; t < tasks_.size(); ++t) {
-        if (!tasks_[t].list.empty()) {
-            live.push_back(t);
+    // The tasks: each strip with moves, in parts of partTiles tiles that its moves reach (STRIPS, tridexel.h).
+    const int partTiles = partTiles_ > 0 ? partTiles_ : kPartTiles;
+    taskCount_ = 0;
+    for (std::size_t si = 0; si < strips_.size(); ++si) {
+        const Strip& st = strips_[si];
+        if (st.list.empty()) {
+            continue;
         }
+        const Grid& grid = g_[st.grid];
+        int v0 = grid.nv, v1 = -1;
+        for (const Entry& en : st.list) {
+            v0 = std::min(v0, en.v0);
+            v1 = std::max(v1, en.v1);
+        }
+        for (int p = v0 / kTileCols / partTiles; p <= v1 / kTileCols / partTiles; ++p) {
+            if (taskCount_ == tasks_.size()) {
+                tasks_.emplace_back();
+            }
+            Task& task = tasks_[taskCount_++];
+            task.strip = si;
+            task.t0 = p * partTiles;
+            task.t1 = std::min(grid.tilesPerStrip, (p + 1) * partTiles);
+        }
+    }
+    if (probe != nullptr) {
+        rec.segs = static_cast<std::uint32_t>(segs.size());
+        rec.parallelBegin = probe->now();
     }
     JobContext ctx;
-    (void)jobs_.parallelChunks(live.size(), 1, ctx, [&](std::size_t chunk, std::size_t, std::size_t) -> Status {
-        Task& task = tasks_[live[chunk]];
-        Grid& grid = g_[task.grid];
-        // This task alone reads and writes the tiles of its strip (and its own entries of tasks_); a tile is copied
-        // only when a cut is about to change it while a snapshot or clone shares it (StripTiles).
-        StripTiles strip(grid, task.strip, &bin_);
+    (void)jobs_.parallelChunks(taskCount_, 1, ctx, [&](std::size_t chunk, std::size_t, std::size_t) -> Status {
+        Task& task = tasks_[chunk];
+        const Strip& st = strips_[task.strip];
+        Grid& grid = g_[st.grid];
+        if (probe != nullptr) {
+            task.rec = CutTaskRecord{};
+            task.rec.start = probe->now();
+        }
+        // This task alone reads and writes the tiles of its part of the strip (and its own entries of tasks_); a tile
+        // is copied only when a cut is about to change it while a snapshot or clone shares it (StripTiles).
+        StripTiles strip(grid, st.strip, task.t0, task.t1, &bin_);
         const int u0 = strip.u0, u1 = strip.u1;
-        if (task.grid == kGz) {
-            task.vol.assign(task.list.size(), 0);
-            task.hit.assign(task.list.size(), 0);
-            const int tileRows = (u1 - 1) / kTileCells - task.tileRow0 + 1;
+        // The moves that can reach the part's columns, in order (the others leave its rays as they are).
+        const auto reachesPart = [&](const Entry& en) {
+            return en.v1 >= strip.v0 && en.v0 < strip.v1;
+        };
+        std::uint32_t entries = 0;
+        if (st.grid == kGz) {
+            task.vol.assign(st.list.size(), 0);
+            task.hit.assign(st.list.size(), 0);
+            const int tileRows = (u1 - 1) / kTileCells - st.tileRow0 + 1;
             task.tiles.assign(static_cast<std::size_t>(tileRows) * tilesX_, 0);
-            for (std::size_t e = 0; e < task.list.size(); ++e) {
-                const Entry& en = task.list[e];
+            for (std::size_t e = 0; e < st.list.size(); ++e) {
+                const Entry& en = st.list[e];
+                if (!reachesPart(en)) {
+                    continue;
+                }
+                ++entries;
                 const Seg& g = segs[en.seg];
                 const double* tab = tables.data() + g.slopes;
                 const bool down = g.bz < g.az;
                 bool hit = false;
                 if (en.check && !down) {
-                    hit = touchesZ(grid, strip.ref, u0, u1, nonCutting, g, tab + cutLayout.perSeg, nonLayout);
+                    hit = touchesZ(grid, strip.ref, u0, u1, strip.v0, strip.v1, nonCutting, g, tab + cutLayout.perSeg,
+                                   nonLayout);
                 }
                 if (en.cut) {
-                    task.vol[e] = cutZ(grid, strip, cutting, g, tab, cutLayout, task.tiles, tilesX_, task.tileRow0);
+                    task.vol[e] = cutZ(grid, strip, cutting, g, tab, cutLayout, task.tiles, tilesX_, st.tileRow0);
                 }
                 if (en.check && down) {
-                    hit = touchesZ(grid, strip.ref, u0, u1, nonCutting, g, tab + cutLayout.perSeg, nonLayout);
+                    hit = touchesZ(grid, strip.ref, u0, u1, strip.v0, strip.v1, nonCutting, g, tab + cutLayout.perSeg,
+                                   nonLayout);
                 }
                 task.hit[e] = hit ? 1 : 0;
             }
         } else {
             thread_local LateralScratch scratch;
-            for (const Entry& en : task.list) {
-                cutLateral(grid, task.grid, strip, cutting, segs[en.seg], scratch);
+            for (const Entry& en : st.list) {
+                if (reachesPart(en)) {
+                    ++entries;
+                    cutLateral(grid, st.grid, strip, cutting, segs[en.seg], scratch);
+                }
             }
         }
         task.writes = strip.writes;
         // Tiles this task wrote are its own; a tile still shared was not written and is left as it is.
-        for (int t = 0; t < grid.tilesPerStrip; ++t) {
+        for (int t = task.t0; t < task.t1; ++t) {
             if (Tile* tile = strip.mine(t)) {
                 tile->compactIfWorthIt();
             }
         }
+        if (probe != nullptr) {
+            task.rec.grid = st.grid;
+            task.rec.strip = st.strip;
+            task.rec.tile0 = task.t0;
+            task.rec.tile1 = task.t1;
+            task.rec.entries = entries;
+            task.rec.reached = strip.reached;
+            task.rec.writes = strip.writes;
+            task.rec.copies = strip.copies;
+            task.rec.end = probe->now();
+        }
         return Status{};
     });
-
-    for (const std::size_t t : live) {
-        writes_ += tasks_[t].writes;
+    if (probe != nullptr) {
+        rec.parallelEnd = probe->now();
+        for (std::size_t t = 0; t < taskCount_; ++t) {
+            rec.tasks.push_back(tasks_[t].rec);
+        }
     }
-    // Merge in integers, then scale.
+
+    // Merge in integers (a sum, so in any order), then scale.
     std::vector<std::int64_t> vol(moves.size(), 0);
-    for (int s = 0; s < g_[kGz].stripCount(); ++s) {
-        const Task& task = tasks_[static_cast<std::size_t>(taskBase_[kGz] + s)];
-        if (task.list.empty()) {
+    for (std::size_t t = 0; t < taskCount_; ++t) {
+        const Task& task = tasks_[t];
+        writes_ += task.writes;
+        const Strip& st = strips_[task.strip];
+        if (st.grid != kGz) {
             continue;
         }
-        for (std::size_t e = 0; e < task.list.size(); ++e) {
-            const std::uint32_t mv = segs[task.list[e].seg].move;
+        for (std::size_t e = 0; e < st.list.size(); ++e) {
+            const std::uint32_t mv = segs[st.list[e].seg].move;
             vol[mv] += task.vol[e];
             if (wantHits && task.hit[e] != 0) {
                 nonCuttingHits[mv] = 1;
@@ -521,7 +651,7 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
         }
         for (std::size_t b = 0; b < task.tiles.size(); ++b) {
             if (task.tiles[b] != 0) {
-                const std::size_t ty = static_cast<std::size_t>(task.tileRow0) + b / static_cast<std::size_t>(tilesX_);
+                const std::size_t ty = static_cast<std::size_t>(st.tileRow0) + b / static_cast<std::size_t>(tilesX_);
                 tileVersion_[ty * static_cast<std::size_t>(tilesX_) + b % static_cast<std::size_t>(tilesX_)] = version_;
             }
         }
@@ -531,6 +661,10 @@ void TriDexelCpu::cutBatch(const ToolShape& shape, std::span<const CutMove> move
         for (std::size_t i = 0; i < moves.size(); ++i) {
             removedMm3[i] = static_cast<double>(vol[i]) / kVolumeScale * cellArea;
         }
+    }
+    if (probe != nullptr) {
+        rec.end = probe->now();
+        probe->batch(std::move(rec));
     }
 }
 
@@ -558,7 +692,8 @@ bool TriDexelCpu::intersects(const ToolShape& part, const Vec3& from, const Vec3
         return false;
     }
     for (int s = j0 / grid.rowsPerStrip; s <= j1 / grid.rowsPerStrip; ++s) {
-        if (touchesZ(grid, grid.stripTiles(s), grid.row0(s), grid.row1(s), shape, g, tables.data(), layout)) {
+        if (touchesZ(grid, grid.stripTiles(s), grid.row0(s), grid.row1(s), 0, grid.nv, shape, g, tables.data(),
+                     layout)) {
             return true;
         }
     }
@@ -676,9 +811,11 @@ TriDexelInfo TriDexelCpu::info() const
     in.tilesX = tilesX_;
     in.tilesY = tilesY_;
     in.bytes = sizeof(*this) + tileVersion_.capacity() * sizeof(std::uint32_t) + bin_.bytes();
+    for (const Strip& s : strips_) {
+        in.bytes += sizeof(Strip) + s.list.capacity() * sizeof(Entry);
+    }
     for (const Task& t : tasks_) {
-        in.bytes += sizeof(Task) + t.list.capacity() * sizeof(Entry) + t.vol.capacity() * sizeof(std::int64_t) +
-                    t.hit.capacity() + t.tiles.capacity();
+        in.bytes += sizeof(Task) + t.vol.capacity() * sizeof(std::int64_t) + t.hit.capacity() + t.tiles.capacity();
     }
     for (int gi = 0; gi < 3; ++gi) {
         const Grid& g = g_[gi];
@@ -775,12 +912,49 @@ std::uint64_t TriDexelCpu::intern(const TriDexelSnapshot* prev)
     if (!ready_) {
         return 0;
     }
+    CutProbe* const probe = probe_;
+    InternRecord rec;
+    const auto stamp = [probe](std::uint64_t& t) {
+        if (probe != nullptr) {
+            t = probe->now();
+        }
+    };
+    stamp(rec.begin);
+    rec.buckets = table_.buckets.size();
     // Tiles no one but the table holds any more go.
-    for (auto it = table_.buckets.begin(); it != table_.buckets.end();) {
-        std::vector<TileRef>& b = it->second;
-        b.erase(std::remove_if(b.begin(), b.end(), [](const TileRef& t) { return t.unique(); }), b.end());
-        it = b.empty() ? table_.buckets.erase(it) : std::next(it);
+    // Bucket by bucket in parallel (each touches only its own; no tile changes hands meanwhile: whether a tile is the
+    // table's alone is the same whenever it is read in this call), the order within each kept.
+    // The tiles let go are kept for the next copies on write (TileBin, as those that intern and restore drop), or freed
+    // when it is full, in the chunks too (freeing blocks of tens of kilobytes is slow on Windows).
+    JobContext ctx;
+    constexpr std::size_t kBucketGrain = 256;
+    std::vector<std::uint64_t> freed((table_.buckets.size() + kBucketGrain - 1) / kBucketGrain, 0);
+    (void)jobs_.parallelChunks(table_.buckets.size(), kBucketGrain, ctx,
+                               [&](std::size_t chunk, std::size_t b, std::size_t e) -> Status {
+                                   for (std::size_t k = b; k < e; ++k) {
+                                       std::vector<TileRef>& refs = table_.buckets[k].refs;
+                                       std::size_t w = 0;
+                                       for (std::size_t r = 0; r < refs.size(); ++r) {
+                                           if (refs[r].unique()) {
+                                               bin_.put(refs[r].dropKeepingLast());
+                                               ++freed[chunk];
+                                           } else {
+                                               if (w != r) {
+                                                   refs[w] = std::move(refs[r]);
+                                               }
+                                               ++w;
+                                           }
+                                       }
+                                       refs.resize(w);
+                                   }
+                                   return Status{};
+                               });
+    stamp(rec.purgedScan);
+    for (const std::uint64_t f : freed) {
+        rec.freed += f;
     }
+    table_.dropEmpty();
+    stamp(rec.purged);
     // The tiles changed since prev, in grid order.
     struct Item {
         int g;
@@ -799,27 +973,34 @@ std::uint64_t TriDexelCpu::intern(const TriDexelSnapshot* prev)
             }
         }
     }
+    stamp(rec.listed);
+    rec.items = items.size();
     if (items.empty()) {
+        if (probe != nullptr) {
+            rec.hashed = rec.looked = rec.compared = rec.end = rec.listed;
+            probe->intern(rec);
+        }
         return 0;
     }
     constexpr std::size_t kGrain = 16;
-    JobContext ctx;
     (void)jobs_.parallelChunks(items.size(), kGrain, ctx, [&](std::size_t, std::size_t b, std::size_t e) -> Status {
         for (std::size_t k = b; k < e; ++k) {
             items[k].hash = contentHash(*g_[items[k].g].tiles[items[k].i].get());
         }
         return Status{};
     });
+    stamp(rec.hashed);
     // In grid order: the first tile met with a hash is the one the later ones with it are compared with.
     for (Item& it : items) {
         const TileRef& own = g_[it.g].tiles[it.i];
-        std::vector<TileRef>& bucket = table_.buckets[it.hash];
+        std::vector<TileRef>& bucket = table_[it.hash];
         if (bucket.empty()) {
             bucket.push_back(own);
         } else if (bucket.front().get() != own.get()) {
             it.match = &bucket.front();
         }
     }
+    stamp(rec.looked);
     // Compared in parallel (the table is not changed meanwhile), then replaced in grid order. A tile dropped that no
     // one else held goes to the bin, for the next copies.
     (void)jobs_.parallelChunks(items.size(), kGrain, ctx, [&](std::size_t, std::size_t b, std::size_t e) -> Status {
@@ -831,6 +1012,7 @@ std::uint64_t TriDexelCpu::intern(const TriDexelSnapshot* prev)
         }
         return Status{};
     });
+    stamp(rec.compared);
     std::uint64_t replaced = 0;
     for (const Item& it : items) {
         if (it.match != nullptr && it.same) {
@@ -846,8 +1028,13 @@ std::uint64_t TriDexelCpu::intern(const TriDexelSnapshot* prev)
     // kept as it is, and in the table, though never matched.
     for (const Item& it : items) {
         if (it.match != nullptr && !it.same) {
-            table_.buckets[it.hash].push_back(g_[it.g].tiles[it.i]);
+            table_[it.hash].push_back(g_[it.g].tiles[it.i]);
         }
+    }
+    if (probe != nullptr) {
+        stamp(rec.end);
+        rec.replaced = replaced;
+        probe->intern(rec);
     }
     return replaced;
 }
@@ -959,6 +1146,16 @@ std::uint64_t triDexelMeshTriangles(const IStockModel& m, int step)
 std::uint64_t triDexelWrites(const IStockModel& m)
 {
     return asCpu(m).writes();
+}
+
+void setCutProbe(IStockModel& m, CutProbe* probe)
+{
+    dynamic_cast<TriDexelCpu&>(m).setProbe(probe);
+}
+
+void setTriDexelPartTiles(IStockModel& m, int tiles)
+{
+    dynamic_cast<TriDexelCpu&>(m).setPartTiles(tiles);
 }
 
 std::uint64_t internTiles(IStockModel& m, const IStockModel::Snapshot* prev)

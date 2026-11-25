@@ -134,7 +134,13 @@ std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, con
             if (!stadiumCross(g.ax, g.ay, g.bx, g.by, R, y, xl, xh)) {
                 continue;
             }
-            const int i0 = std::max(0, firstIdx(xl, grid.cv)), i1 = std::min(nv - 1, lastIdx(xh, grid.cv));
+            // The rays the sweep's cross-section covers on this row, of the task's columns.
+            const int i0 = std::max(std::max(0, firstIdx(xl, grid.cv)), s.v0);
+            const int i1 = std::min(std::min(nv - 1, lastIdx(xh, grid.cv)), s.v1 - 1);
+            if (i0 > i1) {
+                continue;
+            }
+            s.reached += static_cast<std::uint64_t>(i1 - i0 + 1);
             const std::size_t tileRow = static_cast<std::size_t>(j / kTileCells - tileRow0) * tilesX;
             const double wy = y - g.ay;
             // Tile by tile (a tile's runs are the grid's: Tile::top). A tile still shared with a snapshot is read in
@@ -160,9 +166,25 @@ std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, con
                             wtop[b] = wt->topOf(wrow + b * kTopRun, std::min(kTopRun, w - b * kTopRun));
                             changed = false;
                         }
-                        if (static_cast<double>(top[li / kTopRun]) <= skipBelow) {
-                            i = std::min(ib, c0 + (li / kTopRun + 1) * kTopRun - 1);
+                        const int runEnd = std::min(ib, c0 + (li / kTopRun + 1) * kTopRun - 1);
+                        const double runTop = static_cast<double>(top[li / kTopRun]);
+                        if (runTop <= skipBelow) {
+                            i = runEnd;
                             continue;
+                        }
+                        if (!level && !g.vertical) {
+                            // The per-ray bound below for the whole run at once: its rays' distances e from the path's
+                            // line are at least the least at its ends (e is |f| with f linear in x and computed
+                            // monotonically, so 0 when f changes sign), so their bounds are at least the bound there,
+                            // less a margin far above the envelope's rounding across its breakpoints. When even that
+                            // is above the run's top, or the run is out of reach, every ray of it would be skipped.
+                            const double f0 = ((i + 0.5) * grid.cv - g.ax) * g.uy - wy * g.ux;
+                            const double f1 = ((runEnd + 0.5) * grid.cv - g.ax) * g.uy - wy * g.ux;
+                            const double emin = (f0 <= 0) != (f1 <= 0) ? 0.0 : std::min(std::abs(f0), std::abs(f1));
+                            if (emin > R || runTop <= std::min(g.az, g.bz) + pc.low.eval(emin) - 1e-9) {
+                                i = runEnd;
+                                continue;
+                            }
                         }
                     }
                     const Dexel& x = row[li];
@@ -195,7 +217,18 @@ std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, con
                                     continue;
                                 }
                                 const double bound = std::min(g.az, g.bz) + pc.low.eval(e);
-                                if (static_cast<double>(rt->data(x)[2 * x.n - 1]) <= bound) {
+                                const double rayTop = static_cast<double>(rt->data(x)[2 * x.n - 1]);
+                                if (rayTop <= bound) {
+                                    continue;
+                                }
+                                // Tighter at the move's ends (most of a short move's reach, where the move before
+                                // already cut): the envelope at the ray's distance from the segment itself, clamped
+                                // to the envelope's end as minimiseAlong clamps it, less a margin far above the
+                                // rounding of both. The interval's bottom is then above the material: nothing to cut.
+                                const double along = std::clamp(wx * g.ux + wy * g.uy, 0.0, g.lenXY);
+                                const double ex = wx - along * g.ux, ey = wy - along * g.uy;
+                                const double dseg = std::min(std::sqrt(ex * ex + ey * ey), pc.low.dmax());
+                                if (rayTop <= std::min(g.az, g.bz) + pc.low.eval(dseg) - 1e-6) {
                                     continue;
                                 }
                             }
@@ -237,8 +270,8 @@ std::int64_t cutZ(const Grid& grid, StripTiles& s, const CutterShape& shape, con
     return vol;
 }
 
-bool touchesZ(const Grid& grid, const TileRef* tiles, int u0, int u1, const CutterShape& shape, const Seg& g,
-              const double* tables, const ShapeTables& layout)
+bool touchesZ(const Grid& grid, const TileRef* tiles, int u0, int u1, int v0, int v1, const CutterShape& shape,
+              const Seg& g, const double* tables, const ShapeTables& layout)
 {
     const double R = shape.rmax;
     if (std::min(g.az, g.bz) + shape.hmin >= grid.len || std::max(g.az, g.bz) + shape.hmax <= 0) {
@@ -253,7 +286,8 @@ bool touchesZ(const Grid& grid, const TileRef* tiles, int u0, int u1, const Cutt
         if (!stadiumCross(g.ax, g.ay, g.bx, g.by, R, y, xl, xh)) {
             continue;
         }
-        const int i0 = std::max(0, firstIdx(xl, grid.cv)), i1 = std::min(nv - 1, lastIdx(xh, grid.cv));
+        const int i0 = std::max(std::max(0, firstIdx(xl, grid.cv)), v0);
+        const int i1 = std::min(std::min(nv - 1, lastIdx(xh, grid.cv)), v1 - 1);
         for (int i = i0; i <= i1; ++i) {
             const int t = i / kTileCols;
             const Tile& s = *tiles[t].get();
@@ -287,8 +321,9 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
     const double br = ar + dr, bv = av + dv;
     const double R = shape.rmax;
     const int nv = grid.nv;
-    const int j0 = std::max(0, firstIdx(std::min(av, bv) - R, grid.cv));
-    const int j1 = std::min(nv - 1, lastIdx(std::max(av, bv) + R, grid.cv));
+    // The columns the sweep can reach, of the task's.
+    const int j0 = std::max(std::max(0, firstIdx(std::min(av, bv) - R, grid.cv)), s.v0);
+    const int j1 = std::min(std::min(nv - 1, lastIdx(std::max(av, bv) + R, grid.cv)), s.v1 - 1);
     const int k0 = std::max(u0, firstIdx(std::min(g.az, g.bz) + shape.hmin, grid.cu));
     const int k1 = std::min(u1 - 1, lastIdx(std::max(g.az, g.bz) + shape.hmax, grid.cu));
     if (j0 > j1 || k0 > k1) {
@@ -312,6 +347,11 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
     stamp.assign(cols, 0);
     std::uint32_t run = 0;
     const double zLo = std::min(g.az, g.bz), zHi = std::max(g.az, g.bz);
+    // Where along the rays the sweep can be: the move's extent along them and the widest radius, padded far beyond the
+    // rounding of the intervals (to floats, about 2e-5 mm on a 300 mm ray). A run of rays whose material lies outside
+    // it (Tile::occ) loses nothing: skipped.
+    const double occPad = 0.01, scale = grid.occScale;
+    const std::uint64_t cutBits = occBits(std::min(ar, br) - R - occPad, std::max(ar, br) + R + occPad, scale);
     for (int k = k0; k <= k1; ++k) {
         const std::size_t L = static_cast<std::size_t>(k - k0);
         const double z = (k + 0.5) * grid.cu;
@@ -392,6 +432,7 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
             }
         }
         // Tile by tile; a tile still shared with a snapshot is copied only at the first ray that loses material.
+        s.reached += static_cast<std::uint64_t>(j1 - j0 + 1);
         for (int t = j0 / kTileCols; t <= j1 / kTileCols; ++t) {
             const int c0 = Grid::col0(t), w = grid.cols(t);
             const int ja = std::max(j0, c0), jb = std::min(j1, c0 + w - 1);
@@ -400,7 +441,24 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
             Tile* wt = s.mine(t);
             const Dexel* row = rt->d.data() + rowOff; // read; written through wrow once the tile is ours
             Dexel* wrow = wt != nullptr ? wt->d.data() + rowOff : nullptr;
+            const std::size_t occOff = static_cast<std::size_t>(k - u0) * topRuns(w);
+            bool changed = false; // a ray of the current run lost material (the tile is then ours)
+            const auto reOcc = [&](int b) {
+                wt->occ[occOff + static_cast<std::size_t>(b)] =
+                    wt->occOf(wrow + b * kTopRun, std::min(kTopRun, w - b * kTopRun), scale);
+            };
             for (int j = ja; j <= jb; ++j) {
+                const int lj = j - c0;
+                if (lj % kTopRun == 0 || j == ja) {
+                    if (changed) { // the run before: its bits again
+                        reOcc((lj - 1) / kTopRun);
+                        changed = false;
+                    }
+                    if ((rt->occ[occOff + static_cast<std::size_t>(lj / kTopRun)] & cutBits) == 0) {
+                        j = std::min(jb, c0 + (lj / kTopRun + 1) * kTopRun - 1);
+                        continue;
+                    }
+                }
                 if (row[j - c0].n == 0) {
                     continue;
                 }
@@ -432,11 +490,15 @@ void cutLateral(const Grid& grid, int gi, StripTiles& s, const CutterShape& shap
                         Dexel& x = wrow[j - c0];
                         subtractInterval(*wt, x, iv[2 * p], iv[2 * p + 1]);
                         ++s.writes;
+                        changed = true;
                         if (x.n == 0) {
                             break;
                         }
                     }
                 }
+            }
+            if (changed) {
+                reOcc((jb - c0) / kTopRun);
             }
         }
     }
