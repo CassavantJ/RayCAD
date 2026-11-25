@@ -42,7 +42,8 @@ set(RAY_SLOW_TESTS
     ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
     ray_bench_adaptive_review # docs/reports/adaptive.md rebuilt and compared (T-062)
     ray_render_backplot_cost  # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
-    ray_render_stock_cost)    # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
+    ray_render_stock_cost     # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
+    ray_ui_cam_slow_seek_tests) # the Simulate panel's slow-seek line from a real High run (2.5 GB, about 50 s)
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
@@ -111,7 +112,8 @@ set(RAY_SANITIZER_HEAVY_TESTS
 set(RAY_BENCH_TESTS
     ray_sketch_drag_bench    # the median drag step under 16 ms
     ray_store_bench          # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
-    ray_sim_simulator_bench) # T-072: simulation run and seek times per tier (section 9)
+    ray_sim_simulator_bench # T-072: simulation run and seek times per tier (section 9)
+    ray_ui_cam_slow_seek_tests) # the slow-seek line at High needs the run's seek estimate over 100 ms (no time limit)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
