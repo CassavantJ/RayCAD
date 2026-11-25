@@ -6,6 +6,7 @@
 #include "../sketch/sketch_geom.h"
 #include "../sketch/sketch_mode.h"
 #include "../viewport_item.h"
+#include "directedit_tool.h"
 #include "feature_tools.h"
 #include "model_util.h"
 
@@ -46,6 +47,9 @@ QString typeTitle(const QString& type)
         {"chamfer", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Chamfer")},
         {"hole", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Hole")},
         {"transform_body", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Move body")}, // T-077
+        {"delete_face", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Delete faces")}, // T-083
+        {"offset_face", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Push/Pull")},
+        {"resize_hole", QT_TRANSLATE_NOOP("ray::ui::FeatureTreeModel", "Resize hole")},
     };
     for (const auto& [t, title] : titles) {
         if (type == QLatin1String(t))
@@ -67,6 +71,12 @@ QString iconOf(const QString& type)
         return QStringLiteral("cube");
     if (type == QLatin1String("transform_body")) // T-077: a fixture placed against the part
         return QStringLiteral("lock");
+    if (type == QLatin1String("delete_face")) // T-083: the direct edits
+        return QStringLiteral("deleteFace");
+    if (type == QLatin1String("offset_face"))
+        return QStringLiteral("pushPull");
+    if (type == QLatin1String("resize_hole"))
+        return QStringLiteral("resizeHole");
     return QStringLiteral("document");
 }
 
@@ -595,6 +605,19 @@ bool FeatureTreeModel::edit(int row)
     if (rollback_ >= 0 && row > rollback_) {
         setMessage(trt("%1 is rolled back: move the rollback bar below it to edit it").arg(r.name));
         return false;
+    }
+    // T-083: the direct edits open in their own panel (model/directedit_tool.h); a face deletion has no value to
+    // change.
+    if (r.type == QLatin1String("delete_face")) {
+        setMessage(trt("%1 removes faces and has no value to change: delete it and remove other faces with a new one")
+                       .arg(r.name));
+        return false;
+    }
+    if (r.type == QLatin1String("offset_face") || r.type == QLatin1String("resize_hole")) {
+        auto* directEdit = engine_ != nullptr ? engine_->singletonInstance<DirectEditModel*>(
+                                                    QStringLiteral("RayCad.Ui"), QStringLiteral("DirectEdit"))
+                                              : nullptr;
+        return directEdit != nullptr && directEdit->edit(idText(id->value));
     }
     return tool_ && tool_->edit(idText(id->value));
 }

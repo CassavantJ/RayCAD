@@ -64,6 +64,8 @@ std::span<const UiCommand> camTemplatesUiCommands(); // cam/templates_model.cpp:
 std::span<const UiCommand> camSheetUiCommands();     // cam/setupsheet_tool.cpp: cam.setupSheet.* (T-076)
 std::span<const UiCommand> camFixturesUiCommands();  // cam/fixtures_tool.cpp: cam.fixtures.* (T-077)
 std::span<const UiCommand> camSimUiCommands();       // cam/sim_tool.cpp: cam.sim.* (T-074)
+std::span<const UiCommand> directEditUiCommands();   // model/directedit_tool.cpp: directEdit.* (T-083)
+std::span<const UiCommand> referenceUiCommands();    // model/directedit_review.cpp: references.*, toolpaths.* (T-083)
 // All of the above, in that order.
 const std::vector<UiCommand>& allUiCommands();
 

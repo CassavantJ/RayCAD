@@ -140,6 +140,11 @@ FocusScope {
             anchors.fill: parent
             view: viewport.view
         }
+        // T-083: Push/Pull's arrow over the view (model/DirectEditLayer.qml).
+        DirectEditLayer {
+            anchors.fill: parent
+            view: viewport.view
+        }
     }
 
     // T-022: the M key and the measure commands show the Measure tab; it draws its witness while shown.
@@ -330,6 +335,27 @@ FocusScope {
         FeaturePanel {
             anchors.fill: parent
             visible: viewportArea.designShown
+        }
+        // T-083: the direct-edit tools' panel (model/DirectEditPanel.qml), in the feature panel's place.
+        DirectEditPanel {
+            anchors.fill: parent
+            visible: viewportArea.designShown
+        }
+        // T-083: the reference review (panels/References.qml), bottom right, made the first time it is shown.
+        Loader {
+            objectName: "referenceReviewLoader"
+            z: 1
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            property bool used: References.shown
+            onUsedChanged: if (used) used = true // stays once made
+            active: used
+            visible: References.shown && Session.hasDocument
+            width: item ? Math.min(parent.width - 2 * Theme.spacingL, item.implicitWidth) : 0
+            height: item ? Math.min(parent.height * 0.6, item.implicitHeight) : 0
+            sourceComponent: Component {
+                ReferenceReview {}
+            }
         }
 
         // T-019: someone else holds the document's write lock.
@@ -970,6 +996,21 @@ FocusScope {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingL
 
+            // T-083: references to review and toolpaths out of date, while there are any; opens the review.
+            ToolButton {
+                objectName: "referenceBadge"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: Session.hasDocument && (References.count > 0 || References.staleCount > 0)
+                compact: true
+                iconName: "warning"
+                checked: References.shown
+                text: References.count > 0 && References.staleCount > 0
+                      ? qsTr("%1 to review · %2 stale").arg(References.count).arg(References.staleCount)
+                      : References.count > 0 ? qsTr("%1 to review").arg(References.count)
+                      : qsTr("%1 stale").arg(References.staleCount)
+                toolTipText: qsTr("References to review and out-of-date toolpaths (Ctrl+Shift+R)")
+                onClicked: References.shown = !References.shown
+            }
             // T-024: the quick unit toggle of the open document (display only; Units, units.h).
             ToolButton {
                 objectName: "unitsToggle"

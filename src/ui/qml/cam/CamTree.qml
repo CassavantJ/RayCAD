@@ -64,7 +64,26 @@ Item {
                 text: qsTr("Setups")
                 secondaryText: String(CamTreeModel.setupCount)
                 font: Theme.strongFont
-                rightPadding: rightInset + Theme.spacingS + newSetup.width + fixturesButton.width + 2 * Theme.spacingXs
+                rightPadding: rightInset + Theme.spacingS + newSetup.width + fixturesButton.width
+                              + (regenerateButton.visible ? regenerateButton.width + Theme.spacingXs : 0)
+                              + 2 * Theme.spacingXs
+                // T-083: every out-of-date toolpath regenerated in one action (toolpaths.regenerateStale), while there
+                // are any: the count is on the button, each stale row says so in amber.
+                ToolButton {
+                    id: regenerateButton
+                    objectName: "camTreeRegenerate"
+                    visible: References.staleCount > 0
+                    anchors.right: fixturesButton.left
+                    anchors.rightMargin: Theme.spacingXs
+                    anchors.verticalCenter: parent.verticalCenter
+                    compact: true
+                    iconName: "refresh"
+                    text: String(References.staleCount)
+                    toolTipText: qsTr("Regenerate the %1 out-of-date toolpaths").arg(References.staleCount)
+                                 + (Shortcuts.revision >= 0 && Shortcuts.shortcutText("toolpaths.regenerateStale") !== ""
+                                    ? " (" + Shortcuts.shortcutText("toolpaths.regenerateStale") + ")" : "")
+                    onClicked: Commands.trigger("toolpaths.regenerateStale")
+                }
                 // T-077: the fixtures panel (vise, parallels, your own STEP), left of New setup.
                 ToolButton {
                     id: fixturesButton

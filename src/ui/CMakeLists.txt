@@ -39,6 +39,8 @@ add_library(ray_ui STATIC
     model/model_util.h
     model/preview.h
     model/preview.cpp
+    model/directedit_logic.h # T-083
+    model/directedit_logic.cpp
     cam/setup_logic.h # T-044
     cam/setup_logic.cpp
     cam/operation_logic.h # T-045
@@ -132,6 +134,9 @@ set(RAY_UI_QML_FILES
     qml/model/FeatureLayer.qml
     qml/model/FeatureRow.qml
     qml/model/ParameterTable.qml
+    qml/model/DirectEditPanel.qml # T-083
+    qml/model/DirectEditLayer.qml
+    qml/panels/ReferenceReview.qml
     qml/cam/SetupPanel.qml
     qml/cam/CamTree.qml
     qml/cam/SchemaForm.qml
@@ -197,6 +202,10 @@ qt_add_qml_module(ray_ui
         model/feature_tree.cpp
         model/params.h
         model/params.cpp
+        model/directedit_tool.h # T-083
+        model/directedit_tool.cpp
+        model/directedit_review.h
+        model/directedit_review.cpp
         cam/setup_tool.h
         cam/setup_tool.cpp
         cam/setup_tree.h

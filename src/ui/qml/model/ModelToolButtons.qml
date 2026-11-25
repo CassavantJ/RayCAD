@@ -50,4 +50,35 @@ Column {
             }
         }
     }
+
+    // T-083: the direct edits on the faces selected in the view (any body, imported or modelled).
+    Rectangle {
+        width: Theme.controlHeightSmall
+        height: Theme.borderWidth
+        anchors.horizontalCenter: parent.horizontalCenter
+        color: Theme.panelBorder
+    }
+    Repeater {
+        model: [
+            { command: "directEdit.deleteFaces", tool: "delete", icon: "deleteFace", title: qsTr("Delete faces") },
+            { command: "directEdit.pushPull", tool: "pushPull", icon: "pushPull", title: qsTr("Push/Pull") },
+            { command: "directEdit.resizeHole", tool: "resize", icon: "resizeHole", title: qsTr("Resize hole") }
+        ]
+        delegate: ToolButton {
+            required property var modelData
+            objectName: "modelTool." + modelData.tool
+            iconName: modelData.icon
+            enabled: !Session.readOnly
+            checked: DirectEdit.active && DirectEdit.tool === modelData.tool
+            toolTipText: modelData.title + root.shortcut(modelData.command, hovered)
+            Accessible.checkable: true
+            Accessible.checked: checked
+            onClicked: {
+                if (checked)
+                    DirectEdit.cancel()
+                else
+                    Commands.trigger(modelData.command)
+            }
+        }
+    }
 }

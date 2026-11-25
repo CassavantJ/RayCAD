@@ -81,6 +81,12 @@ Item {
                 Accessible.role: Accessible.Tree
                 Accessible.name: qsTr("Features")
 
+                // T-083: Delete here deletes the current feature, not the faces selected in the view (the Delete key's
+                // command in the Design workspace): the list claims the key the way Qt's shortcuts ask.
+                Keys.onShortcutOverride: event => {
+                    event.accepted = (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace)
+                                     && FeatureTree.currentIndex >= 0
+                }
                 Keys.onPressed: event => {
                     const cur = FeatureTree.currentIndex
                     if (event.key === Qt.Key_F2 && cur >= 0) {
