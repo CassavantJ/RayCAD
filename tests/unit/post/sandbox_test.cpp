@@ -20,8 +20,9 @@ using namespace ray::post::test;
 namespace {
 
 // How late a CPU stop may be: the poll sees the limit between native calls, so it can lag by one call. One sort of
-// 20,000 strings takes milliseconds in an optimised build and over half a second in a Debug (unoptimised) engine.
-#if defined(NDEBUG)
+// 20,000 strings takes milliseconds in an optimised build and over half a second in a Debug (unoptimised) engine, and
+// longer than the optimised allowance under AddressSanitizer on the CI runner (RAY_SANITIZED_BUILD, run 45528384533).
+#if defined(NDEBUG) && !defined(RAY_SANITIZED_BUILD)
 constexpr double kCpuLateness = 0.25;
 #else
 constexpr double kCpuLateness = 2.0;

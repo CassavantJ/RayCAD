@@ -36,11 +36,13 @@
 #include <ray_api/cam_tools.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <map>
 #include <new>
 #include <set>
+#include <thread>
 #include <utility>
 
 namespace ray::api::detail {
@@ -1069,6 +1071,34 @@ std::optional<std::size_t> userRoot(const lib::LibraryStack& stack)
     return out;
 }
 
+// Waits (on the action's worker) while a library root is still being read in the background: the shared folders and
+// the user library join the stack after start-up or a settings change (cam_wiring.cpp, kLibraryWait), and until then
+// the user library is not writable. Without this, saving a template in that moment failed with "There is no writable
+// library" (seen on the slow macOS CI runner). Bounded; cancellable.
+Status waitForLibraryReads(AppImpl& app, JobContext& ctx)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (;;) {
+        if (auto st = ctx.cancel.check(); !st) {
+            return tl::unexpected(st.error());
+        }
+        auto loading = app.bridge().call<bool>(
+            [&]() -> Result<bool> {
+                const lib::LibraryStack* stack = app.libraries();
+                if (stack == nullptr) {
+                    return false;
+                }
+                const auto roots = stack->roots();
+                return std::any_of(roots.begin(), roots.end(), [](const auto& r) { return r.loading; });
+            },
+            ctx.cancel);
+        if (!loading || !*loading || std::chrono::steady_clock::now() >= deadline) {
+            return Status{};
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
 std::string mmText(double mm)
 {
     // Shortest round-trip text, with a leading "+ " or "- " for an offset.
@@ -1228,6 +1258,9 @@ Result<ActionResult> saveFromAction(AppImpl& app, std::string_view argsJson, Job
         return tl::unexpected(back.error());
     }
 
+    if (auto st = waitForLibraryReads(app, ctx); !st) {
+        return tl::unexpected(st.error());
+    }
     // The library to save into and what it holds now (the conflict check), on the UI thread.
     struct Target {
         std::shared_ptr<lib::ILibrary> library;
