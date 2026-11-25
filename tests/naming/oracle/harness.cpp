@@ -491,7 +491,7 @@ bool Builder::edit(Feature& f)
                 continue;
             const bool same = e.relation == kernel::HistoryEntry::Relation::Modified && e.results.size() == 1 &&
                               e.results[0] == e.source;
-            if (same)
+            if (same && std::getenv("RAYCAD_NAMING_EDIT_DEBUG")[0] != '3')
                 continue;
             text += "\n  " +
                     std::string(e.relation == kernel::HistoryEntry::Relation::Modified    ? "Modified "

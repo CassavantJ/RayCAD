@@ -254,7 +254,19 @@ bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, cons
         if (info->type == kernel::SurfaceType::Cylinder) {
             const double along = dot(d, axis);
             const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};
-            return norm(radial) <= info->radius + kContainTolerance;
+            const double rho = norm(radial);
+            if (rho > info->radius + kContainTolerance)
+                return false;
+            // On the face, not merely inside its box: the picked centroid moved out onto the cylinder must lie on it
+            // (T-081b sorted block 5:15: a sliver of a boss's side beside a cut, the cut moved over it, the rest of
+            // the side whole). A centroid on the axis (a whole ring) tells no place; the box test stands.
+            if (rho <= kContainTolerance)
+                return true;
+            const double k = info->radius / rho;
+            const Vec3 onCylinder{info->origin.x + along * axis.x + k * radial.x,
+                                  info->origin.y + along * axis.y + k * radial.y,
+                                  info->origin.z + along * axis.z + k * radial.z};
+            return Probe(shape, c).on(onCylinder, kContainTolerance);
         }
         return false;
     }

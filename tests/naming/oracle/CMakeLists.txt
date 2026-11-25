@@ -85,3 +85,11 @@ set_tests_properties(ray_naming_random_directedit_smoke PROPERTIES TIMEOUT 1800)
 add_test(NAME ray_naming_random_directedit COMMAND ray_naming_oracle_tests "[random-directedit]")
 ray_test_runtime_path(ray_naming_random_directedit)
 set_tests_properties(ray_naming_random_directedit PROPERTIES TIMEOUT 7200)
+# Holdout blocks with direct edits (the generator that picks faces by geometry), each first run once, unseen: the block
+# on the main block's seeds (first run, unseen, in T-081b round 1), then blocks on new seeds (from round 2).
+add_test(NAME ray_naming_random_directedit_sorted COMMAND ray_naming_oracle_tests "[random-directedit-sorted]")
+ray_test_runtime_path(ray_naming_random_directedit_sorted)
+set_tests_properties(ray_naming_random_directedit_sorted PROPERTIES TIMEOUT 7200)
+add_test(NAME ray_naming_random_directedit_holdout1 COMMAND ray_naming_oracle_tests "[random-directedit-holdout1]")
+ray_test_runtime_path(ray_naming_random_directedit_holdout1)
+set_tests_properties(ray_naming_random_directedit_holdout1 PROPERTIES TIMEOUT 7200)

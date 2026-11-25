@@ -301,6 +301,10 @@ struct Owners {
     // Owners a direct edit removed (EditSpec::removed): their elements are gone, not somewhere the oracle cannot map
     // them to (TruthBuilder::mappedTo).
     std::set<std::string> removedByEdit;
+    // Every owner a direct edit removed, moved or resized (expect: a separator that only a direct edit moved).
+    std::set<std::string> touchedByEdit;
+    // Every owner whose extent a direct edit's fill grew (EditSpec::grown; expect: ground only an edit gave an owner).
+    std::set<std::string> grownByEdit;
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);
