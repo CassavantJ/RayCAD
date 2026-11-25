@@ -2083,8 +2083,8 @@ bool insideSweep(const Feature& f, const Vec3& p, double m)
 }
 
 // Does element s lie (in part) beyond a boundary the picked element had at pick time: inside the volume a feature of
-// the pick-time script swept (a cut's air, a boss's material), whose faces bounded what was picked? New ground there was
-// cut away or covered then; it is not where the picked element could have run on (T-081b round 2, the coordinator's
+// the pick-time script swept (a cut's air, a boss's material), whose faces bounded what was picked? New ground there
+// was cut away or covered then; it is not where the picked element could have run on (T-081b round 2, the coordinator's
 // rule (b); the resolver's facePiecesStayInside test).
 bool beyondPickBoundary(const ElemSamples& s, const Owners& before)
 {
@@ -2730,11 +2730,11 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             const Owner* o1 = now.get(alt);
             x.inPlace = x.inPlace && o0 != nullptr && o1 != nullptr && !carrierChanged(o0->c, o1->c);
         }
-    // REMNANTS. Moved only because a separator or a bounding feature moved, its own carriers as they were: an element on
-    // those carriers lying all but 10 % on the picked element where it was is ground the pick had and kept, whichever
-    // side of a moved separator it now lies (T-081b holdout1 15:12: a push/pull pulled the separating face away but
-    // left two strips of the pick, where it did not extend an angled neighbour; 17:10: the start cap of a boss a moved
-    // cut had bounded). The map, which moves such an element with what bounds it, would place it elsewhere.
+    // REMNANTS. Moved only because a separator or a bounding feature moved, its own carriers as they were: an element
+    // on those carriers lying all but 10 % on the picked element where it was is ground the pick had and kept,
+    // whichever side of a moved separator it now lies (T-081b holdout1 15:12: a push/pull pulled the separating face
+    // away but left two strips of the pick, where it did not extend an angled neighbour; 17:10: the start cap of a boss
+    // a moved cut had bounded). The map, which moves such an element with what bounds it, would place it elsewhere.
     std::set<std::uint32_t> remnants;
     if (x.moved && x.inPlace && x.kind != SubKind::Vertex)
         for (const std::uint32_t e : L.elems) {
@@ -2840,8 +2840,8 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     x.anchored.resize(x.logical.size(), 0);
     for (std::size_t i = 0; i < x.logical.size(); ++i)
         x.anchored[i] = (remnants.count(x.logical[i]) != 0 ||
-                         (!x.mapped.pts.empty() && (containers.count(x.logical[i]) != 0 ||
-                                                    overlap(N[x.logical[i]], x.mapped, x.kind, pickTol))))
+                         (!x.mapped.pts.empty() &&
+                          (containers.count(x.logical[i]) != 0 || overlap(N[x.logical[i]], x.mapped, x.kind, pickTol))))
                             ? 1
                             : 0;
     if (x.weak) {
@@ -3259,11 +3259,14 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 x.mergeUnknown = true;
                 x.sharedAnchor = true;
             }
-    // Only what bounds the picked element moved (Expectation::inPlace): an expected element that holds none of the pick
-    // in place and lies beyond a boundary the pick had at pick time is new ground past the pick's old end, not its
-    // continuation (T-081b holdout1 3:31: an arc piece past the seam vertex, inside where the cut that ended the picked
-    // arc was).
-    if (x.moved && x.inPlace && x.expected.elems.size() >= 2) {
+    // Only what bounds the picked element moved (Expectation::inPlace), and some of it is still where it was: an
+    // expected element that holds none of the pick in place and lies beyond a boundary the pick had at pick time is new
+    // ground past the pick's old end, not its continuation (T-081b holdout1 3:31: an arc piece past the seam vertex,
+    // inside where the cut that ended the picked arc was).
+    bool holdsInPlace = false;
+    for (const std::uint32_t e : x.expected.elems)
+        holdsInPlace = holdsInPlace || shareOn(pick.picked(), N[e], x.kind) > 0.0;
+    if (x.moved && x.inPlace && holdsInPlace && x.expected.elems.size() >= 2) {
         TruthEval kept;
         for (const std::uint32_t e : x.expected.elems)
             if (shareOn(N[e], pick.picked(), x.kind) > 0.0 || shareOn(pick.picked(), N[e], x.kind) > 0.0 ||
@@ -3571,8 +3574,8 @@ std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Sa
            " expected left out that hold none of the surviving picked ground";
 }
 
-Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp,
-                    Answer answer, std::vector<std::uint32_t> X);
+Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp, Answer answer,
+                    std::vector<std::uint32_t> X);
 
 } // namespace
 
@@ -3597,8 +3600,8 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
 
 namespace {
 
-Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp,
-                    Answer answer, std::vector<std::uint32_t> X)
+Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp, Answer answer,
+                    std::vector<std::uint32_t> X)
 {
     Judgement j;
     std::sort(X.begin(), X.end());

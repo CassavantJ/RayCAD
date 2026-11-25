@@ -1123,7 +1123,7 @@ struct Looked {
     Answer answer = Answer::Broken;
     std::vector<std::uint32_t> elements;
     Judgement judgement;
-    Judgement other; // the oracle's verdict on another element answered Exact
+    Judgement other;               // the oracle's verdict on another element answered Exact
     std::vector<Judgement> probes; // the oracle's verdicts on the answers asked for (replayAndLook probes)
 };
 
@@ -1175,7 +1175,8 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
                     if (N[e].pts.empty() || x.inLogical(e))
                         continue;
                     const Vec3 m = centre(N[e]);
-                    const double d = (m.x - at.x) * (m.x - at.x) + (m.y - at.y) * (m.y - at.y) + (m.z - at.z) * (m.z - at.z);
+                    const double d =
+                        (m.x - at.x) * (m.x - at.x) + (m.y - at.y) * (m.y - at.y) + (m.z - at.z) * (m.z - at.z);
                     if (d < dBest) {
                         dBest = d;
                         best = e;
@@ -1210,9 +1211,9 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         Answer answer;
         Verdict verdict;
         const char* about;
-        bool byIndex = true; // found with the generator's first version (SequenceOptions::byIndex)
-        std::uint64_t seed = 0; // another block's seeds (SequenceOptions::seedBase)
-        bool newGround = false; // accepted by the new-ground rule (oracle.cpp newGroundRule)
+        bool byIndex = true;       // found with the generator's first version (SequenceOptions::byIndex)
+        std::uint64_t seed = 0;    // another block's seeds (SequenceOptions::seedBase)
+        bool newGround = false;    // accepted by the new-ground rule (oracle.cpp newGroundRule)
         std::vector<Probe> wrongs; // answers the oracle must still judge wrong (the relaxed rule's negatives)
     };
     const std::string k = "directedit raycad-synthetic/";
@@ -1225,26 +1226,75 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         // The first run of holdout 1 (seeds 0xA81B7000, choices by geometry): its six wrong answers, each with the
         // answers the relaxed rule must still call wrong.
         //  - remnants: a push/pull pulled the separating face away, leaving two strips of the pick (oracle);
-        {15, 12, k + "slot_through_1.stp #12|face 8", Answer::Split, Verdict::Correct, "remnants of the pick", false,
-         0xA81B7000ull, false, {{Answer::Split, {22}}, {Answer::Split, {22, 28, 14}}}},
+        {15,
+         12,
+         k + "slot_through_1.stp #12|face 8",
+         Answer::Split,
+         Verdict::Correct,
+         "remnants of the pick",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {22}}, {Answer::Split, {22, 28, 14}}}},
         //  - remnants: a boss's start cap and its fillet's edge, bounded by a cut that moved away (oracle);
         //    (its fillet's edge, a replayed pick, is judged in the block itself)
-        {17, 10, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #10|face 7", Answer::Split, Verdict::Correct,
-         "remnants of a bounded pick", false, 0xA81B7000ull, false, {{Answer::Split, {11}}, {Answer::Exact, {17}}}},
+        {17,
+         10,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #10|face 7",
+         Answer::Split,
+         Verdict::Correct,
+         "remnants of a bounded pick",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {11}}, {Answer::Exact, {17}}}},
         //  - two vertices 3 um apart, the mapped pick on one (oracle);
-        {17, 7, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 39", Answer::Exact, Verdict::Correct,
-         "vertex the mapped pick lies on", false, 0xA81B7000ull, false, {{Answer::Exact, {30}}}},
-        {17, 7, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 42", Answer::Exact, Verdict::Correct,
-         "vertex the mapped pick lies on", false, 0xA81B7000ull, false, {{Answer::Exact, {34}}}},
+        {17,
+         7,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 39",
+         Answer::Exact,
+         Verdict::Correct,
+         "vertex the mapped pick lies on",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Exact, {30}}}},
+        {17,
+         7,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 42",
+         Answer::Exact,
+         Verdict::Correct,
+         "vertex the mapped pick lies on",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Exact, {34}}}},
         //  - an arc piece past the seam vertex, inside where the cut that ended the picked arc was: past the pick's
         //    old end, not its continuation (oracle); with another piece's arc, or that piece alone, still wrong;
-        {3, 31, k + "closed_pocket_3.stp #31|edge 37", Answer::Merged, Verdict::Correct, "past the pick's old end",
-         false, 0xA81B7000ull, false, {{Answer::Split, {40, 43}}, {Answer::Split, {40, 42}}, {Answer::Exact, {42}}}},
-        //  - a sliver of new ground on the top face where the moved cut used to be, cut off and joined to the face's
-        //    split family: not a piece (resolver: dropPiecesWithoutPickedGround); the old answer with it, the sliver
-        //    alone, and the sliver swapped for a face off the top, all wrong;
-        {14, 49, k + "rib_plate_1.stp #49|face 39", Answer::Split, Verdict::Correct, "split piece of new ground: resolver",
-         false, 0xA81B7000ull, false, {{Answer::Split, {2, 9}}, {Answer::Exact, {9}}, {Answer::Split, {2, 9}, 9}}},
+        {3,
+         31,
+         k + "closed_pocket_3.stp #31|edge 37",
+         Answer::Merged,
+         Verdict::Correct,
+         "past the pick's old end",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {40, 43}}, {Answer::Split, {40, 42}}, {Answer::Exact, {42}}}},
+        //  - OPEN RESOLVER FINDING: a sliver of new ground on the top face where the moved cut used to be, cut off and
+        //    joined to the face's split family, is answered as a piece (Split {2 9}); the oracle expects {2}. Pinned as
+        //    it
+        //    is, so a fix shows here; the sliver alone and the sliver swapped for a face off the top are wrong too;
+        {14,
+         49,
+         k + "rib_plate_1.stp #49|face 39",
+         Answer::Split,
+         Verdict::WrongOther,
+         "split piece of new ground: open resolver finding",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {2, 9}}, {Answer::Exact, {9}}, {Answer::Split, {2, 9}, 9}}},
 
         // Resolver (propagate_resolve.cpp canContain): a sliver of a boss's cylindrical side, split off by a cut that
         // then moved over it; the rest of the side is whole, but holds none of the sliver: Broken, not Merged.

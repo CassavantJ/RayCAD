@@ -701,9 +701,9 @@ RefResult judgeReference(const PickRecord& pick, const Owners& now, const Sample
         Judgement j = judgeAnswer(x, pick, now, smp, a, m);
         std::string suffix;
         if (!j.newGround.empty()) {
-            // A legitimate answer under the new-ground rule: its negative instead, the extra pieces moved to the nearest
-            // element off the picked element's carriers (or, with no extra piece, the piece holding the most picked
-            // ground left out), which must still be wrong (T-081b round 2).
+            // A legitimate answer under the new-ground rule: its negative instead, the extra pieces moved to the
+            // nearest element off the picked element's carriers (or, with no extra piece, the piece holding the most
+            // picked ground left out), which must still be wrong (T-081b round 2).
             const std::vector<std::uint32_t>& E0 = out.expected;
             std::vector<std::uint32_t> skip(x.logical.begin(), x.logical.end());
             skip.insert(skip.end(), m.begin(), m.end());
