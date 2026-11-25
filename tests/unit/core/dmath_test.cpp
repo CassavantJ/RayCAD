@@ -202,8 +202,8 @@ TEST_CASE("dmath is within 1 ulp of the platform libm", "[dmath]")
         }
     }
     INFO("compared " << compared << ", worst " << worst << " ulp");
+    CHECK(over == 0); // first: the UNSCOPED_INFO lines above (which values) are reported with the next assertion
     CHECK(compared > 90000);
-    CHECK(over == 0);
 }
 
 TEST_CASE("dmath special values", "[dmath]")
