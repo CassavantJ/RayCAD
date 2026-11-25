@@ -863,24 +863,12 @@ QVariantList DirectEditModel::handles() const
     QVariantList out;
     if (!active() || tool_ != de::Tool::PushPull || !arrowBase_ || !arrowDir_ || !view_)
         return out;
+    // The knob stands at the distance itself (as the extrude arrow's does), so a drag keeps it under the pointer.
     const double d = numberOf(QStringLiteral("distance")).value_or(0);
     const auto b = toView(*arrowBase_);
-    auto t = toView(add(*arrowBase_, mul(*arrowDir_, d)));
-    const auto unitTip = toView(add(*arrowBase_, *arrowDir_));
-    if (!b || !t || !unitTip)
+    const auto t = toView(add(*arrowBase_, mul(*arrowDir_, d)));
+    if (!b || !t)
         return out;
-    // At least 40 pixels long on screen, so there is something to grab when the distance is small.
-    const double px = std::hypot(t->x() - b->x(), t->y() - b->y());
-    constexpr double kMinPx = 40;
-    if (px < kMinPx) {
-        QPointF dir = *unitTip - *b;
-        const double len = std::hypot(dir.x(), dir.y());
-        if (len > 1e-9) {
-            dir /= len;
-            const double sign = d < 0 ? -1.0 : 1.0;
-            t = *b + dir * (kMinPx * sign);
-        }
-    }
     out.append(QVariantMap{{QStringLiteral("key"), QStringLiteral("distance")},
                            {QStringLiteral("kind"), QStringLiteral("arrow")},
                            {QStringLiteral("x"), b->x()},

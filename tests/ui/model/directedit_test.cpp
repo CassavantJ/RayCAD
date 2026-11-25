@@ -1182,8 +1182,14 @@ TEST_CASE("a push/pull drag previews without stalling the UI thread", "[directed
     w.grab();
     const QPointF from = knob->mapToScene(QPointF(knob->width() / 2, knob->height() / 2));
     const int builds0 = w.tool()->previewBuilds();
+    // When the previews' meshes went on screen during the drag, against the watchdog's clock (for the report).
+    QElapsedTimer clock;
+    std::vector<qint64> shownAt;
+    const auto shownConnection = QObject::connect(&w.host->scene()->preview(), &ui::BodyOverlay::shown, w.window(),
+                                                  [&] { shownAt.push_back(clock.elapsed()); });
     ray::test::UiWatchdog dog;
     dog.start();
+    clock.start();
     w.sendMouse(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
     w.sendMouse(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
     QPointF at = from;
@@ -1192,9 +1198,23 @@ TEST_CASE("a push/pull drag previews without stalling the UI thread", "[directed
         w.sendMouse(QEvent::MouseMove, at, Qt::LeftButton, Qt::LeftButton);
         ray::test::waitMs(16);
     }
+    // The knob stayed under the pointer (it stands at the distance itself): released there, the view under it is not
+    // hovered, so no hover pick of the view comes with the release (one took a ~50 ms frame sync when the knob had
+    // lagged 20 px behind).
+    {
+        QQuickItem* k = w.find(QStringLiteral("directEditHandle.distance"));
+        const QPointF kc = k->mapToScene(QPointF(k->width() / 2, k->height() / 2));
+        CHECK(std::hypot(kc.x() - at.x(), kc.y() - at.y()) < k->width() / 2 + 4);
+    }
     w.sendMouse(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
     REQUIRE(ray::test::waitFor([&] { return !w.tool()->previewBusy(); }, kTimeoutMs));
     dog.stop();
+    QObject::disconnect(shownConnection);
+    std::string shownText;
+    for (const qint64 t : shownAt)
+        shownText += (shownText.empty() ? "" : ", ") + std::to_string(t) + " ms";
+    std::printf("push/pull drag: previews shown at %s; the worst gap began at %lld ms\n", shownText.c_str(),
+                static_cast<long long>(dog.worst().atMs));
     WARN("UI-thread watchdog while push/pull previews followed a drag: worst "
          << dog.worst().describe() << "; longest gap " << dog.worstWall().describe() << "; "
          << w.tool()->previewBuilds() - builds0 << " preview builds for 40 moves");
