@@ -178,6 +178,7 @@ set(RAY_TEST_PROCESSORS
 # (Not [timing]: the kernel tests already have a hidden "[.timing]" benchmark, which "[timing]" would select.)
 set(RAY_WALLCLOCK_SPLITS
     ray_kernel_tests=ray_kernel_tests
+    ray_doc_tests=ray_doc_tests # the sketch solve's cancel against its full time
     ray_cam_holes_tests=ray_cam_holes_tests
     ray_cam_cycletime_tests=ray_cam_cycletime_tests
     ray_cam_geom2d_tests=ray_cam_geom2d_tests

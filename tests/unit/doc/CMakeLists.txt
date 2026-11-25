@@ -35,7 +35,10 @@ target_compile_definitions(ray_doc_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_
 # The import tests read the small STEP and IGES files of the kernel tests.
 target_compile_definitions(ray_doc_tests PRIVATE RAY_DOC_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
     RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
-ray_add_test(ray_doc_tests)
+# Less its [wallclock] cases, which ray_doc_tests_wallclock runs alone (tests/tiers.cmake).
+add_test(NAME ray_doc_tests COMMAND ray_doc_tests "~[wallclock]")
+set_property(TARGET ray_doc_tests PROPERTY FOLDER "tests")
+ray_test_runtime_path(ray_doc_tests)
 # T-082: a rebuild cancelled in a slow face deletion (NIST CTC 05 fillets) is released within 100 ms. A hidden test
 # case of the suite, run here alone (tests/tiers.cmake: RAY_SERIAL_TESTS).
 add_test(NAME ray_doc_directedit_cancel COMMAND ray_doc_tests "[directedit-cancel]")

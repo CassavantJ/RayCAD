@@ -1255,7 +1255,9 @@ TEST_CASE("a sketch command prepared on a worker commits the state execute makes
     }
 }
 
-TEST_CASE("cancelling a long sketch solve in prepare returns promptly", "[doc][sketch][solved-store]")
+// [wallclock]: it compares two times measured on this machine; under a parallel ctest the cancelled prepare took 52 ms
+// against a 10.8 ms full solve (ray_doc_tests_wallclock runs it alone).
+TEST_CASE("cancelling a long sketch solve in prepare returns promptly", "[doc][sketch][solved-store][wallclock]")
 {
     // A tangent chain whose solve takes long (hundreds of ms in a release build); cancelled from another thread while
     // the solve runs, prepare returns Cancelled well before the solve would have ended.
