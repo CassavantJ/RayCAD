@@ -10,10 +10,15 @@ PanelBase {
     id: root
     objectName: "replaceImport"
 
-    readonly property real contentWidth: Theme.controlHeight * 11
-    implicitWidth: contentWidth + 2 * Theme.spacingM
+    // What it would like; the shell may give it less (a small window): the content then follows the width it has.
+    readonly property real preferredContentWidth: Theme.controlHeight * 11
+    readonly property real contentWidth: Math.max(0, width - 2 * Theme.spacingM)
+    implicitWidth: preferredContentWidth + 2 * Theme.spacingM
     implicitHeight: header.implicitHeight + Theme.spacingS + flick.contentHeight + Theme.spacingS
                     + footer.implicitHeight + 2 * Theme.spacingM
+    // The least the shell should give it beside the reference review: the title, a row's height of list, the buttons.
+    readonly property real minimumHeight: header.implicitHeight + 2 * Theme.spacingS + Theme.controlHeight * 1.5
+                                          + footer.implicitHeight + 2 * Theme.spacingM
 
     function fateColor(fate) {
         return fate === "new" ? Theme.success : fate === "removed" ? Theme.error : Theme.warning

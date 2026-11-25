@@ -314,6 +314,7 @@ FocusScope {
 
         // The view cube, the view buttons and the axis triad (T-020).
         ViewCube {
+            id: viewCube
             anchors.fill: parent
             view: viewport.view
             visible: Session.hasDocument || !AppContext.hasSession
@@ -353,28 +354,37 @@ FocusScope {
             active: used
             visible: References.shown && Session.hasDocument
             width: item ? Math.min(parent.width - 2 * Theme.spacingL, item.implicitWidth) : 0
-            height: item ? Math.min(parent.height * 0.6, item.implicitHeight) : 0
+            // Up to 60 % of the view; with the replace dialog above it, no more than leaves the dialog its minimum
+            // (its title, a row, its buttons), but never less than its own (only the lists scroll).
+            readonly property real roomLeft: replaceImportLoader.visible && replaceImportLoader.item
+                                             ? parent.height - replaceImportLoader.y
+                                               - replaceImportLoader.item.minimumHeight - Theme.spacingS
+                                             : parent.height
+            height: item ? Math.min(item.implicitHeight, parent.height,
+                                    Math.max(item.minimumHeight, Math.min(parent.height * 0.6, roomLeft))) : 0
             sourceComponent: Component {
                 ReferenceReview {}
             }
         }
-        // T-084: the replace dialog and its change summary (model/ReplaceImport.qml), top right, made when first shown.
+        // T-084: the replace dialog and its change summary (model/ReplaceImport.qml), made when first shown: on the
+        // right, below the view cube and its view buttons, and above the reference review when both are shown (the
+        // summary hands over to it); its list scrolls in what room there is.
         Loader {
+            id: replaceImportLoader
             objectName: "replaceImportLoader"
             z: 1
             anchors.right: parent.right
-            anchors.top: selectionFilterBar.visible ? selectionFilterBar.bottom : parent.top
-            anchors.topMargin: Theme.spacingS
+            y: Math.max(viewCube.visible ? viewCube.coverBottom : 0,
+                        selectionFilterBar.visible ? selectionFilterBar.y + selectionFilterBar.height : 0)
+               + Theme.spacingS
             property bool used: Replacement.shown
             onUsedChanged: if (used) used = true // stays once made
             active: used
             visible: Replacement.shown && Session.hasDocument
             width: item ? Math.min(parent.width - 2 * Theme.spacingL, item.implicitWidth) : 0
-            // Above the reference review when both are shown (the summary hands over to it).
-            height: item ? Math.min(Math.max(parent.height * 0.3, (referenceReviewLoader.visible
-                                                                   ? referenceReviewLoader.y - Theme.spacingS
-                                                                   : parent.height - Theme.spacingL) - y),
-                                    item.implicitHeight) : 0
+            height: item ? Math.max(0, Math.min(item.implicitHeight, (referenceReviewLoader.visible
+                                                                     ? referenceReviewLoader.y - Theme.spacingS
+                                                                     : parent.height - Theme.spacingL) - y)) : 0
             sourceComponent: Component {
                 ReplaceImport {}
             }

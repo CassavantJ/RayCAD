@@ -952,7 +952,7 @@ TEST_CASE("the reference review after edits that break CAM references; one actio
     const int merged = reviewRow(w, op3, naming::ResolveState::Merged);
     REQUIRE(merged >= 0);
     CHECK(w.review()->rows().at(merged).toMap().value(QStringLiteral("words")).toString() ==
-          QStringLiteral("This face is now part of a larger face"));
+          QStringLiteral("This face changed shape"));
     CHECK(w.review()->rows().at(merged - 1).toMap().value(QStringLiteral("title")).toString() ==
           QStringLiteral("Op 3 in Setup 1"));
     CHECK(opStatus(w, 3) == cam::OpStatus::ReferenceBroken);

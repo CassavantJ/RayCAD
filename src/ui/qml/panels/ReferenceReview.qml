@@ -21,6 +21,9 @@ PanelBase {
     // the footer (the note, the out-of-date toolpaths with their one action, the last message) stay in view.
     implicitHeight: header.implicitHeight + Theme.spacingS + column.implicitHeight
                     + (footer.implicitHeight > 0 ? Theme.spacingS + footer.implicitHeight : 0) + 2 * Theme.spacingM
+    // The least the shell should give it: the title, a row's height of list and the footer.
+    readonly property real minimumHeight: header.implicitHeight + 2 * Theme.spacingS + Theme.controlHeight * 1.5
+                                          + footer.implicitHeight + 2 * Theme.spacingM
 
     function stateColor(state) {
         return state === "broken" ? Theme.error : Theme.warning
