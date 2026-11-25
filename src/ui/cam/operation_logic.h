@@ -112,4 +112,11 @@ QJsonObject operationArgs(const OperationInput& input, bool adding);
 // the number changes. Applying a template follows the same rule (cam_template_actions.cpp).
 int newToolNumber(const cam::CamState* cam, const ToolId& tool, int toolDefault);
 
+// ---------- Warnings ----------
+// After M3: what the panel lists as warnings: the check's (ICamEngine::validate), then each of the preview generation's
+// (Toolpath::warnings) that the check did not give, in their order. A type's check may stop before what only
+// generation finds (adaptive2d does not run its engine there, slot does not link), so a last-resort plunge, say, is
+// listed once the preview has made the toolpath.
+QStringList mergedWarnings(const QStringList& checked, const QStringList& generated);
+
 } // namespace ray::ui::camui
