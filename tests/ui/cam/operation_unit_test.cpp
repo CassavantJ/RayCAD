@@ -790,3 +790,15 @@ TEST_CASE("a new operation's tool number: the document's for the tool, else the 
     CHECK(newToolNumber(&cam, tool('2'), 0) == 5);
     CHECK(newToolNumber(&cam, tool('3'), 0) == 10);
 }
+
+// After M3: the panel's warnings are the check's, then those only the preview's generation found (a type's check may
+// stop before linking or its engine: slot, adaptive2d), each once, in their order.
+TEST_CASE("the panel's warnings: the check's, then the generation's not already listed", "[cam][operation][ui]")
+{
+    const QString a = QStringLiteral("Lead made smaller"), b = QStringLiteral("Plunges straight down at 1 place");
+    CHECK(mergedWarnings({}, {}).isEmpty());
+    CHECK(mergedWarnings({a}, {}) == QStringList{a});
+    CHECK(mergedWarnings({}, {a, b}) == QStringList({a, b}));
+    CHECK(mergedWarnings({a}, {a, b}) == QStringList({a, b})); // pocket2d: the check links, the same list
+    CHECK(mergedWarnings({b}, {a, b}) == QStringList({b, a}));
+}

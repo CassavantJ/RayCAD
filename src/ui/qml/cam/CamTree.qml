@@ -147,6 +147,7 @@ Item {
                             required property string status
                             required property string statusText
                             required property string message
+                            required property string warnings // after M3: an up-to-date toolpath's, one per line
                             required property real progress
                             required property bool suppressed
                             required property int rowDepth
@@ -160,6 +161,10 @@ Item {
                             readonly property bool isSetup: rowKind === "setup"
                             readonly property bool current: CamTreeModel.currentIndex === index
                             readonly property bool bad: status === "failed" || status === "broken"
+                            // Generated, with something the generator warns of (amber, under the row as a failure's
+                            // reason is).
+                            readonly property bool warned: !bad && warnings !== ""
+                            readonly property bool marked: bad || warned
                             // Anywhere on the row, its tool buttons included (a passive handler, unlike the
                             // MouseArea's own hover, which a button under the pointer takes).
                             readonly property bool hovered: rowHover.hovered
@@ -182,6 +187,7 @@ Item {
                             height: implicitHeight
                             Accessible.role: Accessible.TreeItem
                             Accessible.name: rowName + (statusText !== "" ? ", " + statusText : "")
+                                             + (warned ? ", " + qsTr("with warnings") : "")
                                              + (rowTemplate !== "" ? ", " + qsTr("from template %1").arg(rowTemplate) : "")
                             Accessible.selected: current
 
@@ -247,7 +253,7 @@ Item {
                                     anchors.leftMargin: Theme.spacingXs
                                     // Clear of the slot and of the warning mark beside it, however wide the badge.
                                     anchors.right: slot.left
-                                    anchors.rightMargin: Theme.spacingXs + (row.bad ? warning.width + Theme.spacingXs : 0)
+                                    anchors.rightMargin: Theme.spacingXs + (row.marked ? warning.width + Theme.spacingXs : 0)
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: row.rowName
                                     font.family: Theme.uiFont.family
@@ -419,7 +425,8 @@ Item {
                                 }
 
                                 // The warning mark, right beside the badge (or beside the row's tools while they are
-                                // in its place), whatever the slot's width: its tooltip says why the row failed.
+                                // in its place), whatever the slot's width: its tooltip says why the row failed, or
+                                // (amber) what the generator warns of.
                                 Item {
                                     id: marks
                                     objectName: "camRowMarks." + row.index
@@ -432,33 +439,35 @@ Item {
                                     Item {
                                         id: warning
                                         objectName: "camRowWarning." + row.index
-                                        visible: row.bad
+                                        visible: row.marked
                                         anchors.fill: parent
                                         readonly property bool hovered: warnHover.hovered
                                         readonly property bool pressed: false
                                         Icon {
                                             anchors.fill: parent
                                             name: "warning"
-                                            color: Theme.error
+                                            color: row.bad ? Theme.error : Theme.warning
                                         }
                                         HoverHandler {
                                             id: warnHover
                                         }
                                         HoverToolTip {
                                             target: warning
-                                            text: row.message !== "" ? row.message : row.statusText
+                                            text: row.warned ? row.warnings
+                                                  : row.message !== "" ? row.message : row.statusText
                                         }
                                     }
                                 }
                             }
 
                             // What the setup is on, or why the row failed, or (T-057) the template an operation came
-                            // from.
+                            // from; after M3, before that, what its generator warns of (amber).
                             Label {
                                 id: details
                                 objectName: "camRowDetails." + row.index
                                 visible: row.bad ? row.message !== ""
-                                                 : row.isSetup ? row.rowDetail !== "" : row.rowTemplate !== ""
+                                                 : row.isSetup ? row.rowDetail !== ""
+                                                 : row.rowTemplate !== "" || row.warned
                                 anchors.top: main.bottom
                                 x: icon.x
                                 width: row.width - x - Theme.spacingS
@@ -466,12 +475,14 @@ Item {
                                 elide: Text.ElideNone
                                 maximumLineCount: 4
                                 font: Theme.smallFont
-                                color: row.bad ? Theme.error : Theme.textSecondary
+                                color: row.bad ? Theme.error : row.warned ? Theme.warning : Theme.textSecondary
                                 // T-059: a setup's cycle-time estimate on a line of its own; in full in the tooltip.
                                 // T-057: an operation's template.
                                 text: row.bad ? row.message
                                       : row.isSetup ? row.rowDetail + (row.cycleTime !== "" ? "\n" + row.cycleTime : "")
-                                      : qsTr("From template %1").arg(row.rowTemplate)
+                                      : (row.warned ? row.warnings : "")
+                                        + (row.warned && row.rowTemplate !== "" ? "\n" : "")
+                                        + (row.rowTemplate !== "" ? qsTr("From template %1").arg(row.rowTemplate) : "")
                                 readonly property bool hovered: detailsHover.hovered
                                 HoverHandler {
                                     id: detailsHover

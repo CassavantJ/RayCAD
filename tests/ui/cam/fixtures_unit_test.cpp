@@ -114,9 +114,24 @@ TEST_CASE("the shipped fixture models are found in the library's fixtures folder
     const std::vector<LibraryFixture> found =
         libraryFixtures({{std::string(RAY_SOURCE_DIR) + "/resources/library", "RayCAD built-in library"},
                          {std::string(RAY_SOURCE_DIR) + "/no-such-library", "gone"}});
-    REQUIRE(found.size() == 2);
-    CHECK(found[0].name == QStringLiteral("Generic parallels 1x6in"));
-    CHECK(found[1].name == QStringLiteral("Generic vise 6in"));
-    CHECK(found[1].path.endsWith(QStringLiteral("/resources/library/fixtures/generic-vise-6in.step")));
-    CHECK(found[1].root == QStringLiteral("RayCAD built-in library"));
+    // By file name: the taller pairs of after T-077 ("1.25" sorts before "1x").
+    REQUIRE(found.size() == 5);
+    CHECK(found[0].name == QStringLiteral("Generic parallels 1.25x6in"));
+    CHECK(found[1].name == QStringLiteral("Generic parallels 1.5x6in"));
+    CHECK(found[2].name == QStringLiteral("Generic parallels 1.625x6in"));
+    CHECK(found[3].name == QStringLiteral("Generic parallels 1x6in"));
+    CHECK(found[4].name == QStringLiteral("Generic vise 6in"));
+    CHECK(found[4].path.endsWith(QStringLiteral("/resources/library/fixtures/generic-vise-6in.step")));
+    CHECK(found[4].root == QStringLiteral("RayCAD built-in library"));
+}
+
+TEST_CASE("Place on stock's suggestion of taller parallels", "[ui][cam][fixtures]")
+{
+    CHECK(tallerParallelsText(QStringLiteral("Generic parallels 1.5x6in"), true, true, QString()) ==
+          QStringLiteral("Taller parallels (Generic parallels 1.5x6in) would bring the stock top above the jaws."));
+    CHECK(tallerParallelsText(QStringLiteral("Generic parallels 1.5x6in"), false, true, QString()) ==
+          QStringLiteral("Parallels (Generic parallels 1.5x6in) would bring the stock top above the jaws."));
+    CHECK(tallerParallelsText(QStringLiteral("Generic parallels 1.625x6in"), true, false, QStringLiteral("0.075 mm")) ==
+          QStringLiteral("Taller parallels (Generic parallels 1.625x6in) would bring the stock top to 0.075 mm below "
+                         "the jaws' top."));
 }
