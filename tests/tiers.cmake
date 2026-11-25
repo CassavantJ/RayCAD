@@ -99,9 +99,11 @@ set(RAY_DEBUG_HEAVY_TESTS
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property
 # tests of every operation type on their large seed sets passed their 2-hour timeout under ASan even on 32 hardware
-# threads (30 minutes in Release at most).
+# threads (30 minutes in Release at most). The adaptive engine's slow acceptance (S5 pockets, 32-run determinism) took
+# 45 minutes single-threaded under ASan on the runner (run 45528384533; about 5 minutes in a GCC Release build here).
 set(RAY_SANITIZER_HEAVY_TESTS
-    ray_cam_invariants_slow)
+    ray_cam_invariants_slow
+    ray_cam_adaptive_slow)
 
 # Tests whose pass or fail is a wall-clock budget, set for a developer's machine (PLAN.md section 9 rows, UI-thread
 # gaps, benchmarks): every <test>_wallclock split below (RAY_WALLCLOCK_SPLITS) and these. They get the label bench, which

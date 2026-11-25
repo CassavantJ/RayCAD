@@ -23,8 +23,16 @@ env:
 
 jobs:
   asan-ubsan:
+    # The quick and the slow tier are two jobs side by side: one after the other they ran past the 4-hour limit
+    # (run 45528384533: about 35 minutes of build, then over two hours of tests with the slow naming blocks still to
+    # come).
+    name: asan-ubsan-${{ matrix.tier }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [quick, slow]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -110,6 +118,8 @@ jobs:
           QT_QUICK_BACKEND: software
           ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        # Every test but those labelled sanitizer-heavy (too slow under ASan for the runner) and bench (wall-clock
-        # budgets for an optimised build on a developer's machine); tests/tiers.cmake.
-        run: ctest --preset linux-clang-asan -LE "^(sanitizer-heavy|bench)$" --parallel "$(getconf _NPROCESSORS_ONLN)"
+        # This job's tier, less the tests labelled sanitizer-heavy (too slow under ASan for the runner) and bench
+        # (wall-clock budgets for an optimised build on a developer's machine); tests/tiers.cmake.
+        run: >-
+          ctest --preset linux-clang-asan -L "^${{ matrix.tier }}$" -LE "^(sanitizer-heavy|bench)$"
+          --parallel "$(getconf _NPROCESSORS_ONLN)"
