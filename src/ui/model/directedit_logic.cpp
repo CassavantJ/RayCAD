@@ -330,11 +330,14 @@ QString consequence(const ReviewItem& item)
         switch (item.state) {
         case RefState::Exact:
             return {};
+        // Split and Merged: the feature goes on with what the reference points at now (with a warning); nothing is
+        // needed unless that is not what the user wants.
         case RefState::Split:
-            return item.elements == 2 ? tr("The feature uses both pieces.")
-                                      : tr("The feature uses all %1 pieces.").arg(countWord(item.elements));
+            return item.elements == 2 ? tr("The feature uses both pieces. Re-pick only if that is not what you want.")
+                                      : tr("The feature uses all %1 pieces. Re-pick only if that is not what you want.")
+                                            .arg(countWord(item.elements));
         case RefState::Merged:
-            return tr("The feature uses the whole %1.").arg(one);
+            return tr("The feature uses the whole %1. Re-pick only if that is not what you want.").arg(one);
         case RefState::Repaired:
             return tr("The feature does not build until you confirm the match or pick the %1 again.").arg(one);
         case RefState::Broken:

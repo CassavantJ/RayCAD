@@ -192,6 +192,7 @@ private:
     void updateBlendOffer();
     void loadDiameter();
     void updateArrow();
+    void loadEditArrow(); // editing a push/pull: finds its face in the document's build, then updateArrow()
     void schedulePreview();
     void startPreview();
     void onPreviewBuilt(doc::DocStatePtr state, doc::BuildResultPtr build);
@@ -231,6 +232,11 @@ private:
     std::optional<FeatureId> editId_; // editing this feature (its faces are kept: editRefs_)
     QJsonArray editRefs_;
     QString editName_;
+    // Editing a push/pull: its first face in the document's build (located on a worker) and the stored distance (mm),
+    // for the arrow.
+    std::optional<std::pair<BodyId, std::uint32_t>> editFace_;
+    double editStoredMm_ = 0;
+    std::uint64_t editArrowSerial_ = 0;
     QVariantMap values_;
     QString message_, hint_;
     bool diameterTouched_ = false;

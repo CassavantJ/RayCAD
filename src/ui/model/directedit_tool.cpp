@@ -508,6 +508,7 @@ void DirectEditModel::open(de::Tool tool, std::optional<FeatureId> editId)
         emit activeChanged();
         emit valuesChanged();
         emit picksChanged();
+        loadEditArrow();
         schedulePreview();
         emit statusChanged();
         return;
@@ -540,6 +541,8 @@ void DirectEditModel::close()
     editId_.reset();
     editRefs_ = QJsonArray();
     editName_.clear();
+    editFace_.reset();
+    ++editArrowSerial_;
     values_.clear();
     message_.clear();
     hint_.clear();
@@ -702,7 +705,8 @@ QString DirectEditModel::pickText() const
 QString DirectEditModel::pickHint() const
 {
     if (editId_)
-        return trd("Change the value; the faces stay as they are.");
+        return tool_ == de::Tool::PushPull ? trd("Type a new distance or drag the arrow; the faces stay as they are.")
+                                           : trd("Change the value; the faces stay as they are.");
     switch (tool_) {
     case de::Tool::Delete:
         return trd("Click faces in the view (Shift adds, Ctrl toggles). Any face of a hole removes the whole hole.");
@@ -839,16 +843,58 @@ void DirectEditModel::updateArrow()
 {
     arrowBase_.reset();
     arrowDir_.reset();
-    if (tool_ == de::Tool::PushPull && !picks_.empty() && scene_) {
-        const int index = sceneIndexOf(picks_.front().body);
+    // A new push/pull: the first picked face as the view shows it. Editing one: its first face as the document's
+    // build has it (moved by the stored distance), so the arrow starts where the face stood before the edit and its
+    // knob stands on the face at the stored distance.
+    std::optional<std::pair<BodyId, std::uint32_t>> face;
+    if (editId_)
+        face = editFace_;
+    else if (!picks_.empty())
+        face = std::make_pair(picks_.front().body, picks_.front().index);
+    if (tool_ == de::Tool::PushPull && face && scene_) {
+        const int index = sceneIndexOf(face->first);
         if (const auto mesh = index >= 0 ? scene_->meshOf(index) : nullptr) {
-            if (const auto frame = faceFrame(*mesh, picks_.front().index)) {
-                arrowBase_ = frame->first;
+            if (const auto frame = faceFrame(*mesh, face->second)) {
+                arrowBase_ = editId_ ? sub(frame->first, mul(frame->second, editStoredMm_)) : frame->first;
                 arrowDir_ = frame->second;
             }
         }
     }
     emit handlesChanged();
+}
+
+void DirectEditModel::loadEditArrow()
+{
+    editFace_.reset();
+    doc::Document* d = liveDoc();
+    IJobSystem* jobs = scene_ ? scene_->jobs() : nullptr;
+    const doc::BuildResultPtr build = d ? d->build() : nullptr;
+    if (tool_ != de::Tool::PushPull || !editId_ || editRefs_.isEmpty() || !build || jobs == nullptr)
+        return;
+    editStoredMm_ = numberOf(QStringLiteral("distance")).value_or(0);
+    const std::string ref = jsonText(editRefs_.first().toObject());
+    const std::uint64_t serial = ++editArrowSerial_;
+    // Where the stored face is in the document's build (the resolver: on a worker).
+    JobHandle<std::optional<std::pair<BodyId, std::uint32_t>>> job =
+        jobs->submit<std::optional<std::pair<BodyId, std::uint32_t>>>(
+            JobInfo{"Push/pull face", JobPriority::Interactive, false},
+            [build, ref](JobContext&) -> Result<std::optional<std::pair<BodyId, std::uint32_t>>> {
+                const auto found = api::feature_edit::locate(*build, ref);
+                if (!found)
+                    return std::optional<std::pair<BodyId, std::uint32_t>>();
+                for (const kernel::SubId& e : found->elements) {
+                    if (e.kind == kernel::SubKind::Face)
+                        return std::optional<std::pair<BodyId, std::uint32_t>>(std::make_pair(found->body, e.index));
+                }
+                return std::optional<std::pair<BodyId, std::uint32_t>>();
+            });
+    QPointer<DirectEditModel> self(this);
+    job.then([self, serial](Result<std::optional<std::pair<BodyId, std::uint32_t>>> r) {
+        if (!self || serial != self->editArrowSerial_ || !self->active() || !r)
+            return;
+        self->editFace_ = *r;
+        self->updateArrow();
+    });
 }
 
 std::optional<std::pair<Vec3, Vec3>> DirectEditModel::arrow() const
