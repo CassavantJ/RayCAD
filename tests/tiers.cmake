@@ -121,11 +121,39 @@ set(RAY_DEBUG_HEAVY_TESTS
 # tests of every operation type on their large seed sets passed their 2-hour timeout under ASan even on 32 hardware
 # threads (30 minutes in Release at most). The adaptive engine's slow acceptance (S5 pockets, 32-run determinism) took
 # 45 minutes single-threaded under ASan on the runner (run 45528384533; about 5 minutes in a GCC Release build here).
+# The naming blocks run one at a time on the 4-processor runner (8 workers each), so ASan keeps one direct-edit block
+# of 1,000 sequences: the main one ran past 68 minutes there (run 45646625017). The other three run the same code on
+# other seeds, as the perturbed block does on holdout5's.
 set(RAY_SANITIZER_HEAVY_TESTS
     ray_cam_invariants_slow
     ray_cam_adaptive_slow
     ray_kernel_directedit_corpus # T-080: 1,337 Defeaturing and boolean edits, each with a 20 s limit
-    ray_kernel_directedit_nist)
+    ray_kernel_directedit_nist
+    ray_naming_random_perturbed
+    ray_naming_random_directedit_sorted
+    ray_naming_random_directedit_holdout1
+    ray_naming_random_directedit_holdout2)
+
+# The slow naming blocks, each in a CI job of its own family (build-test.yml, sanitizers.yml): run one at a time after
+# everything else they took the Release and ASan jobs past the 4-hour limit (run 45646624932: Windows Release stopped
+# at 114 of 121 tests, the direct-edit block alone 36 minutes). Label naming-blocks: the T-081a blocks; label
+# directedit-blocks: the T-081b ones. Local runs are unchanged.
+set(RAY_NAMING_BLOCK_TESTS
+    ray_naming_random
+    ray_naming_session
+    ray_naming_random_holdout
+    ray_naming_random_holdout2
+    ray_naming_random_holdout3
+    ray_naming_random_holdout4
+    ray_naming_random_holdout5
+    ray_naming_random_holdout6
+    ray_naming_random_perturbed)
+set(RAY_DIRECTEDIT_BLOCK_TESTS
+    ray_naming_random_directedit
+    ray_naming_directedit_replays
+    ray_naming_random_directedit_sorted
+    ray_naming_random_directedit_holdout1
+    ray_naming_random_directedit_holdout2)
 
 # Tests whose pass or fail is a wall-clock budget, set for a developer's machine (PLAN.md section 9 rows, UI-thread
 # gaps, benchmarks): every <test>_wallclock split below (RAY_WALLCLOCK_SPLITS) and these. They get the label bench, which
@@ -341,6 +369,19 @@ foreach(_test IN LISTS RAY_SANITIZER_HEAVY_TESTS)
 endforeach()
 foreach(_test IN LISTS RAY_BENCH_TESTS)
     ray_tier_set(${_test} APPEND LABELS bench)
+endforeach()
+foreach(_family naming-blocks directedit-blocks)
+    if(_family STREQUAL "naming-blocks")
+        set(_list ${RAY_NAMING_BLOCK_TESTS})
+    else()
+        set(_list ${RAY_DIRECTEDIT_BLOCK_TESTS})
+    endif()
+    foreach(_test IN LISTS _list)
+        if(NOT _test IN_LIST RAY_SLOW_TESTS)
+            message(FATAL_ERROR "tests/tiers.cmake: '${_test}' is in the ${_family} family but is not a slow test")
+        endif()
+        ray_tier_set(${_test} APPEND LABELS ${_family})
+    endforeach()
 endforeach()
 foreach(_entry IN LISTS RAY_TEST_PROCESSORS)
     string(REPLACE "=" ";" _pair "${_entry}")

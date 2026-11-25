@@ -1,5 +1,5 @@
 # Configure, build and test on Windows, Linux and macOS (Apple Silicon): Debug with the quick test tier, Release
-# with every test, each configuration in a job of its own.
+# with every test, each configuration in a job of its own (Release in three: the slow naming blocks in two of theirs).
 #
 # vcpkg binaries are cached with actions/cache on vcpkg's file-based binary cache folder (the old x-gha
 # backend is gone). No secret is needed. Qt comes from prebuilt binaries (tools/fetch_qt.py, cached).
@@ -28,7 +28,11 @@ jobs:
     # Debug and Release are separate jobs that run side by side. In one job, one after the other, they did not fit
     # the time limit on the 4-processor Windows runner (run 45129357124: about 15 minutes of Debug build, over 100
     # of Debug tests, then the Release build and every test still to come at 4 hours).
-    name: ${{ matrix.preset }}-${{ matrix.config }}
+    # Release is three jobs (part): every test but the slow naming blocks (main), the T-081a naming blocks (naming)
+    # and the T-081b direct-edit blocks (directedit), labels naming-blocks and directedit-blocks in tests/tiers.cmake.
+    # The blocks run one at a time on the 4-processor runner; after everything else in one job they took Windows past
+    # the 4-hour limit (run 45646624932: stopped at 114 of 121 tests).
+    name: ${{ matrix.preset }}-${{ matrix.config }}${{ matrix.part != 'main' && format('-{0}', matrix.part) || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     strategy:
@@ -36,6 +40,12 @@ jobs:
       matrix:
         preset: [windows-msvc, linux-gcc, macos-arm64]
         config: [debug, release]
+        part: [main, naming, directedit]
+        exclude:
+          - config: debug
+            part: naming
+          - config: debug
+            part: directedit
         include:
           - preset: windows-msvc
             os: windows-latest
@@ -55,7 +65,17 @@ jobs:
           - config: debug
             tests: debug-ci
           - config: release
+            part: main
             tests: release-ci
+          # The naming blocks are all in one program: those jobs build only it.
+          - config: release
+            part: naming
+            tests: release-naming-ci
+            build_args: --target ray_naming_oracle_tests
+          - config: release
+            part: directedit
+            tests: release-directedit-ci
+            build_args: --target ray_naming_oracle_tests
           # Windows also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself
           # rather than through a test preset (an -LE given with --preset was not combined with the preset's own
           # exclusion): the same selection as on Linux and macOS, less the label desktop.
@@ -64,7 +84,16 @@ jobs:
             windows_tests: '-C Debug -L "^quick$" -LE "^(debug-heavy|bench|desktop)$"'
           - preset: windows-msvc
             config: release
-            windows_tests: '-C Release -LE "^(bench|desktop)$"'
+            part: main
+            windows_tests: '-C Release -LE "^(bench|desktop|naming-blocks|directedit-blocks)$"'
+          - preset: windows-msvc
+            config: release
+            part: naming
+            windows_tests: '-C Release -L "^naming-blocks$" -LE "^(bench|desktop)$"'
+          - preset: windows-msvc
+            config: release
+            part: directedit
+            windows_tests: '-C Release -L "^directedit-blocks$" -LE "^(bench|desktop)$"'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -186,12 +215,12 @@ jobs:
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
-          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} || exit /b 1
+          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }} || exit /b 1
           ctest --test-dir build/${{ matrix.preset }} ${{ matrix.windows_tests }} --output-on-failure --timeout 300 --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
       - name: Build (Linux, macOS)
         if: runner.os != 'Windows'
-        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
+        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }}
 
       # Diagnosis of the naming answers that differ on macOS (temporary): the sequences that gave wrong answers there,
       # with the resolver's and the oracle's answers (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE) and every cos and sin
@@ -199,7 +228,7 @@ jobs:
       # (RAYCAD_NAMING_LIBM_TABLE). tests/naming/oracle/random_test.cpp says how. Before the tests: after them, a job
       # that had to rebuild its dependencies reached its time limit first (run 45576522199).
       - name: Naming diagnosis (macOS)
-        if: runner.os == 'macOS' && matrix.config == 'release'
+        if: runner.os == 'macOS' && matrix.config == 'release' && matrix.part == 'main'
         continue-on-error: true
         timeout-minutes: 20
         env:

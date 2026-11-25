@@ -1,5 +1,5 @@
 # AddressSanitizer and UndefinedBehaviorSanitizer on Linux (Clang), preset linux-clang-asan.
-# The vcpkg libraries and Qt are not instrumented; RayCAD's own code and the tests are. Every test runs (both tiers,
+# The vcpkg libraries and Qt are not instrumented; RayCAD's own code and the tests are. Every test runs (four jobs
 # in parallel) except those labelled sanitizer-heavy or bench (tests/tiers.cmake). The preset builds without precompiled headers (RAY_PCH=OFF), so this job is also the one that proves
 # every source includes what it uses.
 # Needs no secret. Actions are pinned to commit SHAs; the comment gives the release tag.
@@ -23,16 +23,29 @@ env:
 
 jobs:
   asan-ubsan:
-    # The quick and the slow tier are two jobs side by side: one after the other they ran past the 4-hour limit
-    # (run 45528384533: about 35 minutes of build, then over two hours of tests with the slow naming blocks still to
-    # come).
+    # The quick and the slow tier are jobs side by side: one after the other they ran past the 4-hour limit (run
+    # 45528384533: about 35 minutes of build, then over two hours of tests with the slow naming blocks still to come).
+    # The slow naming blocks have jobs of their own, the T-081a ones (naming) and the T-081b direct-edit ones
+    # (directedit), labels in tests/tiers.cmake: with the rest of the slow tier they ran past it again (run
+    # 45646625017: the direct-edit block still running at 4 hours).
     name: asan-ubsan-${{ matrix.tier }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        tier: [quick, slow]
+        tier: [quick, slow, naming, directedit]
+        include:
+          - tier: quick
+            labels: -L "^quick$" -LE "^(sanitizer-heavy|bench)$"
+          - tier: slow
+            labels: -L "^slow$" -LE "^(sanitizer-heavy|bench|naming-blocks|directedit-blocks)$"
+          - tier: naming
+            labels: -L "^naming-blocks$" -LE "^(sanitizer-heavy|bench)$"
+            build_args: --target ray_naming_oracle_tests
+          - tier: directedit
+            labels: -L "^directedit-blocks$" -LE "^(sanitizer-heavy|bench)$"
+            build_args: --target ray_naming_oracle_tests
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -106,7 +119,8 @@ jobs:
 
       - name: Build
         # -k 0: a failed compile does not stop the others, so one run reports every source that does not build.
-        run: cmake --build --preset linux-clang-asan -- -k 0
+        # The naming tiers build only the program of their tests.
+        run: cmake --build --preset linux-clang-asan ${{ matrix.build_args }} -- -k 0
 
       # Leak detection is off for now: Qt, Fontconfig and OpenCASCADE keep process-lifetime allocations
       # that LeakSanitizer reports, and no suppression list has been built yet.
@@ -118,8 +132,8 @@ jobs:
           QT_QUICK_BACKEND: software
           ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        # This job's tier, less the tests labelled sanitizer-heavy (too slow under ASan for the runner) and bench
-        # (wall-clock budgets for an optimised build on a developer's machine); tests/tiers.cmake.
+        # This job's tests (matrix.labels): each leaves out those labelled sanitizer-heavy (too slow under ASan for the
+        # runner) and bench (wall-clock budgets for an optimised build on a developer's machine); tests/tiers.cmake.
         run: >-
-          ctest --preset linux-clang-asan -L "^${{ matrix.tier }}$" -LE "^(sanitizer-heavy|bench)$"
+          ctest --preset linux-clang-asan ${{ matrix.labels }}
           --parallel "$(getconf _NPROCESSORS_ONLN)"
