@@ -45,7 +45,7 @@
 // in the result (the normalisation every kernel history follows; SubIds are not kept across shapes). A face that
 // Defeaturing lists as an old face's Modified image but that lies on the old face's surface looking the other way (the
 // cap it puts on what is left of a hole, on the plane of a counterbore floor that is now inside the material) is not
-// that face, nor is an image that lies apart from the old face altogether: either is Generated from it, and the old
+// that face, nor is an image that shares no ground with the old face: either is Generated from it, and the old
 // face Deleted if nothing else is its image. The same holds for the faces a push/pull or a resize does not move (a
 // small face that a push/pull's boolean listed as Modified into a face 4 mm away). T-081b: naming would otherwise
 // resolve a reference to the floor to a face on the other side of the material, or a reference to a fillet to a face
@@ -407,7 +407,15 @@ bool looksTheOtherWay(const TopoDS_Face& source, const TopoDS_Face& image)
     return own.Dot(normal) < 0.0;
 }
 
-// Does face `image` lie apart from face `source`, their boxes (with the tolerance) not even meeting? May throw.
+// Is `point` on `face` (within the tolerance of the "point on the result" checks)? May throw.
+bool onFace(const TopoDS_Face& face, const gp_Pnt& point)
+{
+    BRepExtrema_DistShapeShape measure(BRepBuilderAPI_MakeVertex(point).Vertex(), face);
+    return measure.IsDone() && measure.NbSolution() > 0 && measure.Value() < kOnTolerance;
+}
+
+// Does face `image` share no ground with face `source`: their boxes (with the tolerance) do not meet, or neither face
+// holds a point inside the other? False when that cannot be told (no interior point). May throw.
 bool liesApart(const TopoDS_Face& source, const TopoDS_Face& image)
 {
     Bnd_Box a, b;
@@ -415,17 +423,25 @@ bool liesApart(const TopoDS_Face& source, const TopoDS_Face& image)
     BRepBndLib::AddOptimal(image, b, false, false);
     a.Enlarge(kOnTolerance);
     b.Enlarge(kOnTolerance);
-    return !a.IsVoid() && !b.IsVoid() && a.IsOut(b);
+    if (a.IsVoid() || b.IsVoid())
+        return false;
+    if (a.IsOut(b))
+        return true;
+    gp_Pnt p, q;
+    gp_Dir n;
+    if (!detail::interiorPoint(image, p, n) || onFace(source, p))
+        return false;
+    return detail::interiorPoint(source, q, n) && !onFace(image, q);
 }
 
 // See "HISTORY": Defeaturing may close what is left of a cavity with the surface of a face that is no longer on the
 // body, the new face looking the other way (removing a counterbore's wall caps the bore with the plane of the
 // counterbore floor, looking down; the floor, which looked up, is inside the material now), and its history then
 // lists that face as the old face's Modified image. It may also list as an old face's image a face on its surface
-// that lies apart from it altogether (a fillet along a removed pocket's edge, gone, and its surface run on elsewhere).
-// Neither is the old face (a removal does not move faces: an image keeps some of its ground): such an image is
-// reported Generated from it, and the old face Deleted when nothing else is its image. `history` holds the caller's
-// SubIds of `input`.
+// that shares no ground with it (a fillet along a removed pocket's edge, gone, and its surface run on elsewhere; a
+// piece of a wall\n// listed as the image of the piece beside it). Neither is the old face (a removal does not move
+// faces: an image keeps some of its ground): such an image is reported Generated from it, and the old face Deleted when
+// nothing else is its image. `history` holds the caller's SubIds of `input`.
 void demoteReversedImages(ShapeHistory& history, const Shape& input, const Shape& result,
                           std::span<const int> moved = {})
 {
