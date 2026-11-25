@@ -189,24 +189,19 @@ jobs:
           cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} || exit /b 1
           ctest --test-dir build/${{ matrix.preset }} ${{ matrix.windows_tests }} --output-on-failure --timeout 300 --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
-      # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
-      # the offscreen platform.
-      - name: Build and test (Linux, macOS)
+      - name: Build (Linux, macOS)
         if: runner.os != 'Windows'
-        env:
-          QT_QPA_PLATFORM: offscreen
-          QT_QUICK_BACKEND: software
-        run: |
-          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
-          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)"
+        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
 
       # Diagnosis of the naming answers that differ on macOS (temporary): the sequences that gave wrong answers there,
       # with the resolver's and the oracle's answers (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE) and every cos and sin
       # the sequences took (RAYCAD_NAMING_LIBM_LOG), printed here, so they can be replayed on Windows and Linux
-      # (RAYCAD_NAMING_LIBM_TABLE). tests/naming/oracle/random_test.cpp says how.
+      # (RAYCAD_NAMING_LIBM_TABLE). tests/naming/oracle/random_test.cpp says how. Before the tests: after them, a job
+      # that had to rebuild its dependencies reached its time limit first (run 45576522199).
       - name: Naming diagnosis (macOS)
-        if: always() && runner.os == 'macOS' && matrix.config == 'release'
+        if: runner.os == 'macOS' && matrix.config == 'release'
         continue-on-error: true
+        timeout-minutes: 20
         env:
           QT_QPA_PLATFORM: offscreen
           RAYCAD_NAMING_WORKERS: "1"
@@ -230,3 +225,12 @@ jobs:
           RAYCAD_NAMING_ONLY=3:1 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random-holdout6]" 2>&1 | tail -n 120 || true
           echo "== cos and sin taken (function, argument bits, result bits)"
           sort -u "$log" || true
+
+      # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
+      # the offscreen platform.
+      - name: Test (Linux, macOS)
+        if: runner.os != 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)"

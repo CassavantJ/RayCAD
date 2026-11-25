@@ -1,5 +1,5 @@
 // ray::dmath against the stored reference table (tools/gen_dmath_table.py), bit for bit, and against the
-// platform libm to within 1 ulp.
+// platform libm to within 1 ulp (Apple's tan: 3).
 #include <catch2/catch_test_macros.hpp>
 
 #include <ray/core.h>
@@ -179,13 +179,27 @@ TEST_CASE("dmath matches the stored table bit for bit", "[dmath]")
     CHECK(mismatches == 0);
 }
 
-TEST_CASE("dmath is within 1 ulp of the platform libm", "[dmath]")
+// How far the platform libm may be from dmath, in ulp. 1 everywhere, except Apple's tan: up to 3 ulp at 84 of the
+// table's arguments on macOS ARM64 (CI run 45576522199; sin, cos, asin, acos, atan2 and hypot within 1 there). This
+// compares with a library dmath does not use; what dmath gives is the bit-for-bit test above.
+std::uint64_t platformBound(int function)
+{
+#if defined(__APPLE__)
+    if (std::strcmp(kNames[function], "tan") == 0) {
+        return 3;
+    }
+#endif
+    (void)function;
+    return 1;
+}
+
+TEST_CASE("dmath is within 1 ulp of the platform libm (Apple's tan: 3)", "[dmath]")
 {
     const std::vector<Record> records = loadTable();
     std::size_t compared = 0;
     std::size_t over = 0;
     std::uint64_t worst = 0;
-    std::map<std::string, std::size_t> overBy; // function name: values more than 1 ulp off
+    std::map<std::string, std::size_t> overBy; // function name: values past the function's bound
     std::string examples;                      // the first 40, reported with the check
     for (const Record& r : records) {
         const double ours = dmathCall(r.function, r.a, r.b);
@@ -197,7 +211,7 @@ TEST_CASE("dmath is within 1 ulp of the platform libm", "[dmath]")
         ++compared;
         const std::uint64_t distance = ulpDistance(ours, theirs);
         worst = distance > worst ? distance : worst;
-        if (distance > 1) {
+        if (distance > platformBound(r.function)) {
             if (over < 40) {
                 examples += "\n  " + describe(r, theirs) + " (platform; ours " + describe(r, ours) + "), " +
                             std::to_string(distance) + " ulp";
@@ -209,7 +223,8 @@ TEST_CASE("dmath is within 1 ulp of the platform libm", "[dmath]")
     std::string byFunction;
     for (const auto& [name, n] : overBy)
         byFunction += " " + name + " " + std::to_string(n);
-    INFO("compared " << compared << ", worst " << worst << " ulp; over 1 ulp by function:" << byFunction << examples);
+    INFO("compared " << compared << ", worst " << worst << " ulp; past the bound by function:" << byFunction
+                     << examples);
     CHECK(over == 0);
     CHECK(compared > 90000);
 }

@@ -38,6 +38,7 @@ set(RAY_SLOW_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6
     ray_naming_random_directedit # T-081b: 1,000 sequences with direct edits
+    ray_naming_random_perturbed
     ray_sketch_drag_agreement
     ray_cam_invariants_slow   # the property tests of every operation type on their large seed sets (T-058)
     ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
@@ -58,6 +59,7 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6
     ray_naming_random_directedit
+    ray_naming_random_perturbed
     ray_kernel_directedit_corpus) # T-080: 1,337 edits on unoptimised OpenCASCADE, many past their time limit
 
 # Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
@@ -139,6 +141,7 @@ set(RAY_TEST_PROCESSORS
     ray_naming_random_holdout5=8
     ray_naming_random_holdout6=8
     ray_naming_random_directedit=8
+    ray_naming_random_perturbed=8
     ray_naming_s4=7             # 7.0
     ray_naming_random_smoke=5   # 4.8
     ray_naming_random_directedit_smoke=5 # T-081b, about the same as the T-081a smoke
@@ -147,6 +150,10 @@ set(RAY_TEST_PROCESSORS
     ray_doc_s4_hole=6           # 6.4
     ray_kernel_blend_stress=2   # 2.0 (8 threads that mostly wait on each other)
     ray_cam_carried_tiers=4     # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
+    # 5.1 and 10.4 (GCC Release, WSL). Unlisted, they ran beside four other tests on the 4-processor CI runner, and the
+    # single-threaded adaptive2d suite there went from 132 s to past its 300 s timeout (runs 45568849399, 45576522199).
+    ray_cam_adaptive_slow=5
+    ray_cam_adaptive_concurrency=10
     ray_kernel_directedit_corpus=8) # T-080: 8 workers over the S9 set
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those

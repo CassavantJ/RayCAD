@@ -71,17 +71,33 @@ const char* const kParts[] = {
 };
 constexpr int kPartCount = static_cast<int>(sizeof(kParts) / sizeof(kParts[0]));
 
-// The sequences take their sweep directions and moves from std::cos and std::sin, whose last bits differ between
-// standard libraries (Apple's libm differs from glibc's and the UCRT's by a few ulp at some arguments). For diagnosis,
-// RAYCAD_NAMING_PERTURB=<seed> moves each such result by -3 to +3 ulp, chosen by a hash of the seed and the value
-// (so the same in every thread and in the baseline and the replay): the answers must stay right, or be flagged, under
-// such differences. Unset (the default), nothing changes.
+// The sequences take their sweep directions and moves from cos and sin. They use ray::dmath, the same bits on every
+// platform, so a sequence is the same everywhere (with std::cos and std::sin they were not: Apple's libm differs from
+// glibc's and the UCRT's by a few ulp at some arguments, and so did the macOS answers). Other libm results can still
+// reach a sequence through the kernel. RAYCAD_NAMING_PERTURB=<seed> moves each cos and sin result by -3 to +3 ulp,
+// chosen by a hash of the seed and the value (so the same in every thread and in the baseline and the replay): the
+// answers must stay right, or be flagged, under such differences. Unset (the default), nothing changes.
+std::atomic<std::uint64_t>& perturbSeed()
+{
+    static std::atomic<std::uint64_t> seed{[] {
+        const char* s = std::getenv("RAYCAD_NAMING_PERTURB");
+        return s != nullptr ? static_cast<std::uint64_t>(std::strtoull(s, nullptr, 10)) : std::uint64_t{0};
+    }()};
+    return seed;
+}
+
+// The perturbation set by a test for its own lifetime (the regression cases and the perturbed block below).
+struct PerturbLastBits {
+    std::uint64_t before;
+    explicit PerturbLastBits(std::uint64_t seed) : before(perturbSeed().exchange(seed)) {}
+    ~PerturbLastBits() { perturbSeed().store(before); }
+    PerturbLastBits(const PerturbLastBits&) = delete;
+    PerturbLastBits& operator=(const PerturbLastBits&) = delete;
+};
+
 double libmLastBits(double v)
 {
-    static const std::uint64_t seed = [] {
-        const char* s = std::getenv("RAYCAD_NAMING_PERTURB");
-        return s != nullptr ? static_cast<std::uint64_t>(std::strtoull(s, nullptr, 10)) : 0;
-    }();
+    const std::uint64_t seed = perturbSeed().load();
     if (seed == 0 || !std::isfinite(v))
         return v;
     std::uint64_t z = std::bit_cast<std::uint64_t>(v) ^ (seed * 0x9E3779B97F4A7C15ull);
@@ -96,8 +112,8 @@ double libmLastBits(double v)
 
 // The other diagnosis: RAYCAD_NAMING_LIBM_LOG=<file> appends every cos and sin the sequences take as a line
 // "<cos|sin> <argument bits> <result bits>" (hexadecimal), and RAYCAD_NAMING_LIBM_TABLE=<file> (lines in that form)
-// answers an argument listed there with the listed result instead of this platform's: a log written on one platform
-// replays that platform's inputs on another. Unset (the default), nothing changes.
+// answers an argument listed there with the listed result instead of ray::dmath's: a log written by a build that took
+// another library's cos and sin replays that build's inputs. Unset (the default), nothing changes.
 struct LibmTrace {
     std::mutex mutex;
     std::FILE* log = nullptr;
@@ -145,12 +161,12 @@ LibmTrace& libmTrace()
 
 double oracleCos(double a)
 {
-    return libmTrace()('c', a, std::cos(a));
+    return libmTrace()('c', a, dmath::cos(a));
 }
 
 double oracleSin(double a)
 {
-    return libmTrace()('s', a, std::sin(a));
+    return libmTrace()('s', a, dmath::sin(a));
 }
 
 // splitmix64, with uniform doubles from the top 53 bits.
@@ -1047,6 +1063,29 @@ TEST_CASE("Sixth holdout: 200 randomised sequences on seeds first run after the 
     checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
 }
 
+TEST_CASE("Fifth holdout's seeds with every cos and sin of the inputs a few ulp off: no wrong answer",
+          "[random-perturbed]")
+{
+    // Another standard library's cos and sin differ in the last bits (Apple's libm: the macOS answers that differed,
+    // CI run 45528384530), and so do the inputs of every sequence, and through them which near-ties the kernel and
+    // the resolver meet. The fifth holdout's sequences again, each cos and sin moved by up to 3 ulp
+    // (RAYCAD_NAMING_PERTURB, seed 1), under the holdout pass criterion: answers may be flagged differently, none may
+    // be wrong.
+    const PerturbLastBits perturb(1);
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions holdout;
+    holdout.seedBase = 0x6C3A9000ull;
+    holdout.keyPrefix = "perturbed1 ";
+    const BlockResult r = runBlock("Fifth holdout, perturbed", parts, kHoldoutPerPart, holdout);
+    checkNoFault(guardBefore);
+    checkGates(r, kHoldoutPerPart, holdout.keyPrefix);
+}
+
 // ---------------------------------------------------------------- oracle fixes on the corpus cases that showed them
 // Each replays one sequence of a holdout block (deterministic: its seed is fixed) and checks the oracle's verdict on
 // the references the fix is about, with a negative case: a wrong answer to the same reference is still judged wrong.
@@ -1332,6 +1371,31 @@ TEST_CASE(
     CHECK(looked[0].answer == Answer::Split);
     CHECK(looked[0].judgement.verdict == Verdict::Correct);
     CHECK(looked[0].other.verdict == Verdict::WrongIncomplete);
+}
+
+TEST_CASE("Oracle (holdout5 15:0, cos and sin a few ulp off): a face piece that was a sliver beside a boss continues "
+          "itself, not the pick across the boss",
+          "[naming][acceptance][oracle-gate]")
+{
+    // slot_through_1 with every cos and sin of the inputs moved by up to 3 ulp (RAYCAD_NAMING_PERTURB=1, as another
+    // platform's libm can give). At pick time the import face I/i4 is in pieces that no separator tells apart (a weak
+    // description): the picked piece 35 on one side of the boss R1, and on the other side a piece a hair wide (29).
+    // R1 is resized: 35 is unchanged, and 29 becomes a band 0.1 mm wide. Before the fix the oracle claimed for the
+    // picked piece's siblings only what overlaps their interior, which a sliver has not: it expected {29 35}, and
+    // judged the resolver's Exact {35} incomplete. The band continues the sliver (it holds its mapped samples), not the
+    // pick. Negative: Split {29 35} is wrong.
+    const PerturbLastBits perturb(1);
+    const std::string id = "holdout5 raycad-synthetic/slot_through_1.stp #0|face 35";
+    const std::vector<Looked> looked = replayAndLook(
+        15, 0, 0x6C3A9000ull, "holdout5 ", {id}, [](const Expectation&, const std::vector<std::uint32_t>&) {
+            return std::make_pair(Answer::Split, std::vector<std::uint32_t>{29, 35});
+        });
+    REQUIRE(looked.size() == 1);
+    INFO(looked[0].reason);
+    CHECK(looked[0].answer == Answer::Exact);
+    CHECK(looked[0].elements == std::vector<std::uint32_t>{35});
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    CHECK(looked[0].other.verdict != Verdict::Correct);
 }
 
 TEST_CASE(
