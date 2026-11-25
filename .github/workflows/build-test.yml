@@ -222,11 +222,11 @@ jobs:
         if: runner.os != 'Windows'
         run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }}
 
-      # Diagnosis of the naming answers that differ on macOS (temporary): the sequences that gave wrong answers there,
-      # with the resolver's and the oracle's answers (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE) and every cos and sin
-      # the sequences took (RAYCAD_NAMING_LIBM_LOG), printed here, so they can be replayed on Windows and Linux
-      # (RAYCAD_NAMING_LIBM_TABLE). tests/naming/oracle/random_test.cpp says how. Before the tests: after them, a job
-      # that had to rebuild its dependencies reached its time limit first (run 45576522199).
+      # Diagnosis of the naming answers that differ on macOS (temporary): the resolver's and the oracle's answers on the
+      # sequences concerned (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE: every element of the baseline and the replay).
+      # macOS's OpenCASCADE builds other geometry from the same inputs, so these sequences are judged from this output.
+      # Before the tests: after them, a job that had to rebuild its dependencies reached its time limit first
+      # (run 45576522199).
       - name: Naming diagnosis (macOS)
         if: runner.os == 'macOS' && matrix.config == 'release' && matrix.part == 'main'
         continue-on-error: true
@@ -236,24 +236,22 @@ jobs:
           RAYCAD_NAMING_WORKERS: "1"
         run: |
           bin="build/${{ matrix.preset }}/bin/Release/ray_naming_oracle_tests"
-          log="$RUNNER_TEMP/libm.log"
-          export RAYCAD_NAMING_LIBM_LOG="$log"
+          # Settled: holdout6 3:1 (Exact is right) and holdout3 16:1 (another scenario; that case skips). Open: the
+          # Repaired answers of 8:18, and the macOS-only answers not judged in 10:2 and the first holdout's 7:7 (their
+          # geometry, for the reviewed list).
           for spec in \
             "- 8:18 5EED0000|raycad-synthetic/l_bracket_1.stp #18|edge 104" \
             "- 8:18 5EED0000|raycad-synthetic/l_bracket_1.stp #18|vertex 69" \
-            "holdout6 3:1 1F6A6000|raycad-synthetic/closed_pocket_3.stp #1|face 3" \
-            "holdout6 3:1 1F6A6000|raycad-synthetic/closed_pocket_3.stp #1|edge 8" \
-            "holdout3 16:1 7A11D000|raycad-synthetic/thin_wall_box_1.stp #1|edge 5" \
             "- 10:2 5EED0000|raycad-synthetic/open_pocket_step_1.stp #2|face 16"; do
             echo "== probe $spec"
             RAYCAD_NAMING_PROBE="$spec" "$bin" "[.naming-probe]" 2>&1 | grep -E "^probe |FAILED|replay failure" || true
           done
           echo "== 8:18 of the main block, verbose"
           RAYCAD_NAMING_ONLY=8:18 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random]" 2>&1 || true
-          echo "== 3:1 of holdout 6, verbose"
-          RAYCAD_NAMING_ONLY=3:1 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random-holdout6]" 2>&1 | tail -n 120 || true
-          echo "== cos and sin taken (function, argument bits, result bits)"
-          sort -u "$log" || true
+          echo "== 10:2 of the main block, verbose"
+          RAYCAD_NAMING_ONLY=10:2 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random]" 2>&1 || true
+          echo "== 7:7 of the first holdout, verbose"
+          RAYCAD_NAMING_ONLY=7:7 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random-holdout]" 2>&1 || true
 
       # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
       # the offscreen platform.
