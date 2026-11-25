@@ -12,6 +12,7 @@ add_library(ray_doc STATIC
     expr.cpp
     features/chamfer_feature.cpp
     features/datum_plane_feature.cpp
+    features/delete_face_feature.cpp # T-082: delete_face, and the code the direct edits share
     features/extrude_feature.cpp
     features/feature_props.cpp
     features/fillet_feature.cpp
@@ -20,6 +21,8 @@ add_library(ray_doc STATIC
     features/import_command.cpp
     features/import_feature.cpp
     features/import_props.cpp
+    features/offset_face_feature.cpp # T-082
+    features/resize_hole_feature.cpp # T-082
     features/revolve_feature.cpp
     features/sketch_commands.cpp
     features/sketch_feature.cpp

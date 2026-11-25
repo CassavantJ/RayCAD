@@ -1,9 +1,12 @@
 // The feature type registry and the built-in feature types (<ray/document.h>).
 #include "features/datum_plane_feature.h"
+#include "features/delete_face_feature.h"
 #include "features/extrude_feature.h"
 #include "features/fillet_feature.h"
 #include "features/hole_feature.h"
 #include "features/import_feature.h"
+#include "features/offset_face_feature.h"
+#include "features/resize_hole_feature.h"
 #include "features/revolve_feature.h"
 #include "features/sketch_feature.h"
 #include "features/transform_body_feature.h"
@@ -73,6 +76,9 @@ Status registerBuiltinFeatureTypes(FeatureRegistry& registry)
         types.push_back(features::makeChamferFeatureType());
         types.push_back(features::makeHoleFeatureType());          // task T-097
         types.push_back(features::makeTransformBodyFeatureType()); // task T-077
+        types.push_back(features::makeDeleteFaceFeatureType());    // task T-082
+        types.push_back(features::makeOffsetFaceFeatureType());
+        types.push_back(features::makeResizeHoleFeatureType());
         for (const auto& type : types) {
             if (registry.find(type->typeName()) != nullptr) {
                 return tl::unexpected(

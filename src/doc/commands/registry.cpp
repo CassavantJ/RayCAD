@@ -3,11 +3,14 @@
 
 #include "../document_impl.h"
 #include "../features/datum_plane_feature.h"
+#include "../features/delete_face_feature.h"
 #include "../features/extrude_feature.h"
 #include "../features/feature_props.h"
 #include "../features/fillet_feature.h"
 #include "../features/hole_feature.h"
 #include "../features/import_feature.h"
+#include "../features/offset_face_feature.h"
+#include "../features/resize_hole_feature.h"
 #include "../features/revolve_feature.h"
 #include "../features/sketch_commands.h"
 #include "../features/sketch_feature.h"
@@ -95,6 +98,9 @@ Status registerBuiltinCommands(CommandRegistry& registry)
             {features::kChamferType, features::chamferPropsSchema()},
             {features::kHoleType, features::holePropsSchema()},                   // task T-097
             {features::kTransformBodyType, features::transformBodyPropsSchema()}, // task T-077
+            {features::kDeleteFaceType, features::deleteFacePropsSchema()},       // task T-082
+            {features::kOffsetFaceType, features::offsetFacePropsSchema()},
+            {features::kResizeHoleType, features::resizeHolePropsSchema()},
         };
         for (const auto& [type, schema] : typed) {
             for (auto& handler : features::makeTypedFeatureCommands(type, schema)) {

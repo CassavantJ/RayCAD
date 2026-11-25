@@ -184,7 +184,8 @@ set(RAY_SERIAL_TESTS
     ray_store_bench         # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
     ray_render_backplot_cost  # 2 M backplot segments under the 500k-triangle baseline frame time on WARP
     ray_render_stock_cost     # T-073: frame time of a 2 M-triangle stock against the same triangles as one mesh
-    ray_sim_simulator_bench)  # T-072: simulation run and seek times per tier (section 9)
+    ray_sim_simulator_bench   # T-072: simulation run and seek times per tier (section 9)
+    ray_doc_directedit_cancel) # T-082: a rebuild cancelled in a slow face deletion released within 100 ms
 
 # "<lock>=<test>", one list entry per test and lock.
 #   desktop    every test that shows a window. The windows of one desktop share the active window (only it gets keys

@@ -1,6 +1,7 @@
 # cam unit tests: the CAM state, the cam.* commands and the staleness engine (task T-032).
 add_executable(ray_cam_engine_tests
     engine_api_test.cpp
+    engine_directedit_test.cpp # operation references through the direct-edit features (T-082)
     engine_document_test.cpp
     engine_notify_test.cpp # notifications, status on a worker, validate, previews, material and feeds record (T-045)
     engine_test.cpp
