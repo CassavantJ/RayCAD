@@ -57,7 +57,11 @@
 // Error{Cancelled} at once, and the thread stops at OCCT's next poll and throws its result away. Structured exceptions
 // on that thread are caught by guarded() like everywhere else in the kernel. OCCT 8.0.1 ran the face trim of a feature
 // removal without a progress range, so a cancel there waited for the trim to end (237 s on a NIST CTC 05 fillet);
-// ports/opencascade/0011-bopalgo-removefeatures-cancel.patch passes the range down to the edge/face searches.
+// ports/opencascade/0011-bopalgo-removefeatures-cancel.patch passes the range down to the edge/face searches, and
+// 0012-geometric-searches-cancel.patch makes the intersection searches, the approximation of intersection lines, the
+// section-edge measurements and the tolerance correction of a boolean poll it (NIST CTC 02 and D2MI 904 ran on for 80
+// to 167 s and up to 40 s without it). The corpus tests time how long each abandoned edit runs on after its cancel
+// (testing::EditEnd).
 #include "directedit_internal.h"
 
 #include "io_internal.h"
@@ -104,6 +108,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -125,6 +130,11 @@ std::atomic<int>& rawDirectEditHistory() noexcept
 {
     static std::atomic<int> count{0};
     return count;
+}
+std::shared_ptr<std::atomic<std::int64_t>>& editEndRecord() noexcept
+{
+    thread_local std::shared_ptr<std::atomic<std::int64_t>> record;
+    return record;
 }
 } // namespace detail
 
@@ -222,16 +232,23 @@ Result<OpResult> runEdit(JobContext& ctx, std::string_view where, Work work)
     if (auto ok = ctx.cancel.check(); !ok)
         return tl::unexpected(detail::cancelledError(where));
     CancelToken token = ctx.cancel;
+    std::shared_ptr<std::atomic<std::int64_t>> endRecord = detail::editEndRecord(); // tests only
+    if (endRecord)
+        endRecord->store(detail::kEditRunning);
     Result<OpResult> result = detail::runAbandonable<OpResult>(
-        ctx, where, [token, where, work = std::move(work)](detail::IoTask& task) mutable -> Result<OpResult> {
+        ctx, where,
+        [token, where, endRecord, work = std::move(work)](detail::IoTask& task) mutable -> Result<OpResult> {
             Progress progress([&task](double fraction, std::string_view) { task.report(fraction, kStage); });
             JobContext inner{token, progress};
-            return detail::guarded(where, [&]() -> Result<OpResult> {
+            Result<OpResult> out = detail::guarded(where, [&]() -> Result<OpResult> {
                 if (detail::directEditFaultRequests().load(std::memory_order_relaxed) > 0 &&
                     detail::directEditFaultRequests().fetch_sub(1, std::memory_order_relaxed) > 0)
                     detail::raiseTestFault();
                 return work(inner);
             });
+            if (endRecord)
+                endRecord->store(std::chrono::steady_clock::now().time_since_epoch().count());
+            return out;
         });
     if (!result && result.error().code == ErrorCode::KernelFailure &&
         result.error().message.rfind("The geometry kernel failed:", 0) == 0) {

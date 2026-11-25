@@ -17,7 +17,11 @@
 #pragma once
 #include <ray/kernel.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -109,5 +113,28 @@ public:
 // (io_internal.h: direct edits share the import threads).
 void waitForAbandonedEdits();
 int runningEditThreads();
+
+// When the kernel thread of a direct edit ended its work, also after the caller was released by a cancel: how long a
+// cancelled edit ran on. Copies share one record, which the last edit started under an EditEndScope with it writes.
+class EditEnd {
+public:
+    EditEnd();
+    std::optional<std::chrono::steady_clock::time_point> time() const; // empty while the edit runs (or none ran)
+
+private:
+    friend class EditEndScope;
+    std::shared_ptr<std::atomic<std::int64_t>> ticks_;
+};
+// While one lives, the direct edits started on this thread record their end in `end`.
+class EditEndScope {
+public:
+    explicit EditEndScope(const EditEnd& end);
+    ~EditEndScope();
+    EditEndScope(const EditEndScope&) = delete;
+    EditEndScope& operator=(const EditEndScope&) = delete;
+
+private:
+    std::shared_ptr<std::atomic<std::int64_t>> previous_;
+};
 
 } // namespace ray::kernel::testing

@@ -668,4 +668,24 @@ int runningEditThreads()
     return detail::runningIoThreads();
 }
 
+EditEnd::EditEnd() : ticks_(std::make_shared<std::atomic<std::int64_t>>(detail::kEditRunning)) {}
+
+std::optional<std::chrono::steady_clock::time_point> EditEnd::time() const
+{
+    const std::int64_t ticks = ticks_->load();
+    if (ticks == detail::kEditRunning)
+        return std::nullopt;
+    return std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(ticks));
+}
+
+EditEndScope::EditEndScope(const EditEnd& end) : previous_(detail::editEndRecord())
+{
+    detail::editEndRecord() = end.ticks_;
+}
+
+EditEndScope::~EditEndScope()
+{
+    detail::editEndRecord() = previous_;
+}
+
 } // namespace ray::kernel::testing
