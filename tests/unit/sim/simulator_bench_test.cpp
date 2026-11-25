@@ -994,11 +994,13 @@ TEST_CASE("Simulator benchmark: a facing-heavy plate at every tier", "[.][sim][s
 
 // Part of the section 9 benchmark (ray_sim_simulator_bench): the finishing program (a pocket roughed in twelve levels,
 // then three ball rasters over it: the work S6 does not have, a batch's moves within a few strips) at High on 8
-// workers, its run within High's 10 s per 100k moves. Measured with the machine quiet (hidden test "[stress-finish]"):
-// 5.3 to 5.4 s per 100k, 6.6 with other load starting (before strips were split into parts, the lateral and Z skips
+// workers, its run within High's 10 s per 100k moves. Measured as this test counts it (removal and gouges, per 100k
+// motions): 4.8 to 5.0 s with the machine quiet, 7.4 with other load arriving; the removal alone (hidden test
+// "[stress-finish]") 5.3 to 5.4 s per 100k moves quiet (before strips were split into parts, the lateral and Z skips
 // and the parallel look through the intern table: 11.7 to 12.1). Its seeks are not checked: it is thinned at High and
 // its worst seek is over 100 ms (simulator.h, KEYFRAMES). Not run in other builds.
-TEST_CASE("Simulator benchmark: the finishing program at High", "[.][sim][simulator][bench][simulator-bench]")
+TEST_CASE("Simulator benchmark: the finishing program at High",
+          "[.][sim][simulator][bench][simulator-bench][bench-finish]")
 {
     if (!optimisedBuild()) {
         SKIP("timed only in an optimised build");
