@@ -146,6 +146,10 @@ set(RAY_TEST_PROCESSORS
     ray_doc_s4_hole=6           # 6.4
     ray_kernel_blend_stress=2   # 2.0 (8 threads that mostly wait on each other)
     ray_cam_carried_tiers=4     # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
+    # 5.1 and 10.4 (GCC Release, WSL). Unlisted, they ran beside four other tests on the 4-processor CI runner, and the
+    # single-threaded adaptive2d suite there went from 132 s to past its 300 s timeout (runs 45568849399, 45576522199).
+    ray_cam_adaptive_slow=5
+    ray_cam_adaptive_concurrency=10
     ray_kernel_directedit_corpus=8) # T-080: 8 workers over the S9 set
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those
