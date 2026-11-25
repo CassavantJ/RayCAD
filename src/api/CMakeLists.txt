@@ -32,6 +32,8 @@ add_library(ray_api STATIC
     cam_sim_session.cpp
     include/ray_api/cam_fixtures.h # a library vise placed on a setup's stock (the fixtures panel, after T-077)
     cam_fixtures.cpp
+    include/ray_api/references.h # every reference of a document and how it resolves, for the reference review (T-083)
+    references.cpp
     viewer.cpp
     measure.cpp
     measure_actions.h

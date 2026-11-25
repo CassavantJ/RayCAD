@@ -217,6 +217,7 @@ set(RAY_TEST_LOCKS
     desktop=ray_ui_section_tests
     desktop=ray_ui_sketch_tests
     desktop=ray_ui_model_tests
+    desktop=ray_ui_directedit_tests # T-083
     desktop=ray_ui_cam_tests
     desktop=ray_ui_cam_operation_tests
     desktop=ray_ui_cam_operation_scale_1

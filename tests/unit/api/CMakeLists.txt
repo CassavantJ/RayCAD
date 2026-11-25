@@ -14,6 +14,7 @@ add_executable(ray_api_tests
     hole_actions_test.cpp
     measure_test.cpp
     recovery_test.cpp
+    references_test.cpp # T-083: the reference review's listing and commands
     session_test.cpp
     settings_test.cpp
     # Temp folders with non-ASCII names and child processes, shared with the store tests.

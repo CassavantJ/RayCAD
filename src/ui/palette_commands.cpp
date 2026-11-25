@@ -176,6 +176,10 @@ constexpr ContextEntry kContextMenu[] = {
     {"measure.boundingBox", kBody, 6, nullptr, false},
     {"edit.undo", kAlways, 5, nullptr, false},
     {"edit.redo", kAlways, 5, nullptr, false},
+    // T-083: the direct edits on the selected faces (Design workspace only: hidden elsewhere).
+    {"directEdit.deleteFaces", kFace, 7, nullptr, true},
+    {"directEdit.pushPull", kFace, 7, nullptr, true},
+    {"directEdit.resizeHole", kFace, 7, nullptr, true},
 };
 
 unsigned scopeOf(kernel::SubKind kind)
@@ -382,6 +386,10 @@ const std::vector<UiCommand>& allUiCommands()
         out.insert(out.end(), fixtures.begin(), fixtures.end());
         const std::span<const UiCommand> sim = camSimUiCommands(); // T-074
         out.insert(out.end(), sim.begin(), sim.end());
+        const std::span<const UiCommand> directEdit = directEditUiCommands(); // T-083
+        out.insert(out.end(), directEdit.begin(), directEdit.end());
+        const std::span<const UiCommand> references = referenceUiCommands(); // T-083
+        out.insert(out.end(), references.begin(), references.end());
         return out;
     }();
     return all;

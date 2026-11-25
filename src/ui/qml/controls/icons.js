@@ -123,7 +123,15 @@ var paths = {
     "to-start": { d: "M 3.25 3.5 V 12.5 M 8.75 3.5 L 4.75 8 L 8.75 12.5 M 13.25 3.5 L 9.25 8 L 13.25 12.5" },
     "to-end": { d: "M 12.75 3.5 V 12.5 M 7.25 3.5 L 11.25 8 L 7.25 12.5 M 2.75 3.5 L 6.75 8 L 2.75 12.5" },
     "simulate": { d: "M 6.5 1.75 H 9.5 V 5.5 H 6.5 Z M 7.25 5.5 V 8.25 H 8.75 V 5.5 "
-                     + "M 2.25 9.75 H 6.25 V 11.25 H 13.75 V 14.25 H 2.25 Z" }
+                     + "M 2.25 9.75 H 6.25 V 11.25 H 13.75 V 14.25 H 2.25 Z" },
+    // T-083: the direct edits (a block with its front face crossed out; a face with an arrow up and an arrow down
+    // through it; a hole with arrows pushing its wall out).
+    "deleteFace": { d: "M 2.5 6 H 9.5 V 13 H 2.5 Z M 2.5 6 L 6 2.75 H 13.25 L 9.5 6 M 13.25 2.75 V 9.5 L 9.5 13 "
+                       + "M 4.5 8 L 7.5 11 M 7.5 8 L 4.5 11" },
+    "pushPull": { d: "M 1.75 9.75 L 4.5 6.5 H 14.25 L 11.5 9.75 Z M 8 5 V 1.5 M 6.25 3.25 L 8 1.5 L 9.75 3.25 "
+                     + "M 8 11.25 V 14.5 M 6.25 12.75 L 8 14.5 L 9.75 12.75" },
+    "resizeHole": { d: "M 10.5 8 A 2.5 2.5 0 1 1 5.5 8 A 2.5 2.5 0 1 1 10.5 8 Z M 1.75 8 H 4 M 12 8 H 14.25 "
+                       + "M 3 6.75 L 1.75 8 L 3 9.25 M 13 6.75 L 14.25 8 L 13 9.25" }
 };
 
 function path(name) {
