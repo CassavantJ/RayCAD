@@ -39,7 +39,15 @@ foreach(_t ray_render_tests ray_render_frame_stats ray_render_pick_latency ray_r
     # About 180 s in a debug build on a loaded machine; the presets' default limit is 300 s. Where no graphics API
     # can be created every viewport test skips, and Catch2 exits with 4 when all of a run's test cases did (the
     # three measurement tests on their own): CTest reports that as skipped, as for the Qt Quick tests.
-    set_tests_properties(${_t} PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 4)
+    # macOS: the CI runner (a virtual machine, Apple's paravirtual GPU) draws these several times slower than Windows
+    # CI's WARP: ray_render_frame_stats 583 s against 103 s, ray_render_cost 470 s against 157 s, and
+    # ray_render_pick_latency, which checks the picks and only prints its times, past 900 s (run 45528384530).
+    if(APPLE)
+        set(_render_timeout 2700)
+    else()
+        set(_render_timeout 900)
+    endif()
+    set_tests_properties(${_t} PROPERTIES TIMEOUT ${_render_timeout} SKIP_RETURN_CODE 4)
     # ray_render links Qt (Core and Gui), so the test needs the Qt DLL folder on Windows, and the vcpkg folder for the
     # delay-loaded OCCT toolkits of ray_kernel.
     ray_test_runtime_path(${_t} QT)

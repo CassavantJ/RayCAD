@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -68,6 +69,29 @@ const char* const kParts[] = {
     "nist-pmi/nist_ctc_01_asme1_rd_geometry.stp",
 };
 constexpr int kPartCount = static_cast<int>(sizeof(kParts) / sizeof(kParts[0]));
+
+// The sequences take their sweep directions and moves from std::cos and std::sin, whose last bits differ between
+// standard libraries (Apple's libm differs from glibc's and the UCRT's by a few ulp at some arguments). For diagnosis,
+// RAYCAD_NAMING_PERTURB=<seed> moves each such result by -3 to +3 ulp, chosen by a hash of the seed and the value
+// (so the same in every thread and in the baseline and the replay): the answers must stay right, or be flagged, under
+// such differences. Unset (the default), nothing changes.
+double libmLastBits(double v)
+{
+    static const std::uint64_t seed = [] {
+        const char* s = std::getenv("RAYCAD_NAMING_PERTURB");
+        return s != nullptr ? static_cast<std::uint64_t>(std::strtoull(s, nullptr, 10)) : 0;
+    }();
+    if (seed == 0 || !std::isfinite(v))
+        return v;
+    std::uint64_t z = std::bit_cast<std::uint64_t>(v) ^ (seed * 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    const int steps = static_cast<int>(z % 7) - 3;
+    for (int i = 0; i < std::abs(steps); ++i)
+        v = std::nextafter(v, steps > 0 ? 2.0 : -2.0);
+    return v;
+}
 
 // splitmix64, with uniform doubles from the top 53 bits.
 struct Rng {
@@ -212,7 +236,7 @@ std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rn
     const double a = rng.uniform(0, kPi);
     Frame fr;
     fr.n = n;
-    fr.xd = add(mul(x0, std::cos(a)), mul(y0, std::sin(a)));
+    fr.xd = add(mul(x0, libmLastBits(std::cos(a))), mul(y0, libmLastBits(std::sin(a))));
     // The face plane through the sample point (samples of a planar face lie on it).
     fr.o = point;
     const double extent = norm(sub(f.boxMax, f.boxMin));
@@ -332,7 +356,8 @@ std::string randomEdit(Script& edited, const Part& part, Rng& rng, int& inserted
         }
         if (kind == 1) {
             const double a = rng.uniform(0, 2 * kPi), d = profileWidth(f.loops[0]) * rng.uniform(0.1, 1.2);
-            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * std::cos(a)), mul(f.frame.yd(), d * std::sin(a))));
+            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * libmLastBits(std::cos(a))),
+                                           mul(f.frame.yd(), d * libmLastBits(std::sin(a)))));
             return "move " + f.id;
         }
         if (kind == 2) {
