@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -146,6 +147,51 @@ struct Plate {
 
 } // namespace
 
+TEST_CASE("a reference that records a planar face's outline passes every consumer, and a save and reload",
+          "[api][references]")
+{
+    // T-081b: model.reference records a planar face's pick-time outline (naming.h TopoRef::outline); the shared
+    // TopoRef argument schema (doc/features/feature_props.cpp topoRefSchema) must take it wherever a reference goes.
+    Plate p;
+    const std::string topRef = p.ref(p.face(ray::kernel::SurfaceType::Plane, 10));
+    REQUIRE_THAT(topRef, ContainsSubstring("\"outline\":{\"chords\":[["));
+    // A feature (push/pull of the top face).
+    invoke(*p.app, "feature.offset_face.add",
+           R"({"id":")" + id('f', 3) + R"(","props":{"faces":[)" + topRef + R"(],"distance":"1 mm"}})");
+    // A setup whose WCS Z comes from the face, and an operation on it.
+    invoke(*p.app, "cam.setup.add",
+           R"({"id":")" + id('a', 1) + R"(","name":"Setup 1","partBodies":[")" + p.body + R"("],"machine":")" +
+               id('9', 1) + R"(","library":{"machines":[)" + ray::lib::toJson(machine()) + "]}}");
+    invoke(*p.app, "cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","wcs":{"zFace":)" + topRef + "}}");
+    invoke(*p.app, "cam.operation.add",
+           R"({"id":")" + id('c', 1) + R"(","setup":")" + id('a', 1) +
+               R"(","type":"no.such.type","name":"Op 1",)"
+               R"("tool":{"tool":")" +
+               id('d', 1) +
+               R"("},"cutting":{"rpm":8000,"feedCut":1200,"feedPlunge":300},)"
+               R"("heights":{"clearance":25,"retract":5,"feedPlane":2,"top":0,"bottom":-5},"geometry":[)" +
+               topRef + R"(],"library":{"tools":[)" + ray::lib::toJson(tool()) + "]}}");
+    const auto stored = [&] {
+        const refs::Listing all = p.list(true);
+        std::size_t withOutline = 0;
+        for (const refs::Reference& r : all.references)
+            withOutline += r.refJson.find("\"outline\":{\"chords\":[[") != std::string::npos ? 1 : 0;
+        return std::make_pair(all.references.size(), withOutline);
+    };
+    const auto before = stored();
+    CHECK(before.first == 3); // the feature's face, the setup's Z face and the operation's geometry
+    CHECK(before.second == before.first);
+    // Saved and opened again: the references keep their outlines.
+    const ray::test::TempDir dir;
+    const std::string path = dir.file("outline_refs.raycad");
+    invoke(*p.app, "file.saveAs", R"({"path":)" + json::write(json::Value::string(path)) + "}");
+    invoke(*p.app, "file.close", "{}");
+    invoke(*p.app, "file.open", R"({"path":)" + json::write(json::Value::string(path)) + "}");
+    p.od = p.app->active();
+    REQUIRE(p.od != nullptr);
+    const auto after = stored();
+    CHECK(after == before);
+}
 TEST_CASE("the references of features and CAM operations, resolved where their owners resolve them",
           "[api][references]")
 {

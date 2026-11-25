@@ -38,6 +38,7 @@ set(RAY_SLOW_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6
     ray_naming_random_directedit # T-081b: 1,000 sequences with direct edits
+    ray_naming_directedit_replays # and the replays of its findings, one sequence each
     ray_naming_random_directedit_sorted   # and its holdout blocks
     ray_naming_random_directedit_holdout1
     ray_naming_random_directedit_holdout2
@@ -63,6 +64,7 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6
     ray_naming_random_directedit
+    ray_naming_directedit_replays
     ray_naming_random_directedit_sorted
     ray_naming_random_directedit_holdout1
     ray_naming_random_directedit_holdout2
@@ -150,6 +152,7 @@ set(RAY_TEST_PROCESSORS
     ray_naming_random_holdout5=8
     ray_naming_random_holdout6=8
     ray_naming_random_directedit=8
+    ray_naming_directedit_replays=1 # one sequence after another
     ray_naming_random_directedit_sorted=8
     ray_naming_random_directedit_holdout1=8
     ray_naming_random_directedit_holdout2=8

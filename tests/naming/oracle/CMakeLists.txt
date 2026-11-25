@@ -79,6 +79,11 @@ set_tests_properties(ray_naming_random_holdout6 PROPERTIES TIMEOUT 7200)
 # with direct edits of every part (quick), and the block of 1,000 such sequences (slow).
 add_test(NAME ray_naming_directedit COMMAND ray_naming_oracle_tests "[directedit]")
 ray_test_runtime_path(ray_naming_directedit)
+# The scripted scenarios and a few key replays above (quick); every replay that pins a T-081b oracle rule or naming fix,
+# each a sequence of a randomised block, here (slow).
+add_test(NAME ray_naming_directedit_replays COMMAND ray_naming_oracle_tests "[directedit-replays]")
+ray_test_runtime_path(ray_naming_directedit_replays)
+set_tests_properties(ray_naming_directedit_replays PROPERTIES TIMEOUT 1200)
 add_test(NAME ray_naming_random_directedit_smoke COMMAND ray_naming_oracle_tests "[random-directedit-smoke]")
 ray_test_runtime_path(ray_naming_random_directedit_smoke)
 set_tests_properties(ray_naming_random_directedit_smoke PROPERTIES TIMEOUT 1800)

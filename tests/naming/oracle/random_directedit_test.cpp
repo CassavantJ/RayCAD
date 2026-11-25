@@ -1199,9 +1199,15 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
 
 } // namespace
 
-TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on the sequences that showed them",
-          "[naming][directedit][oracle-gate]")
+namespace {
+
+// The replays of T-081b's findings (the cases below), each a sequence of a randomised block; `keyOnly`: only the few
+// the quick tier runs (one per kind of fix: kernel history, resolver, pick outline, oracle remnants and past-end rule).
+void replayCases(bool keyOnly)
 {
+    static const std::vector<std::string> key{"fixture_plate_1.stp #43|face 23", "fixture_plate_1.stp #15|face 54",
+                                              "rib_plate_1.stp #49|face 39", "slot_through_1.stp #12|face 8",
+                                              "closed_pocket_3.stp #31|edge 37"};
     // Each case replays one sequence of the block (its seed is fixed) and checks the resolver's answer and the oracle's
     // verdict on the reference the refinement is about; for a correct answer, also that another element answered
     // Exact is judged wrong (the oracle is not vacuous there).
@@ -1353,6 +1359,10 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
          "owner gone, ground held"},
     };
     for (const Case& c : cases) {
+        if (keyOnly && std::none_of(key.begin(), key.end(), [&](const std::string& s) {
+                return c.id.size() >= s.size() && c.id.compare(c.id.size() - s.size(), s.size(), s) == 0;
+            }))
+            continue;
         const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex, c.seed, c.wrongs);
         INFO(c.id << " (" << c.about << ")");
         REQUIRE(looked.size() == 1);
@@ -1370,8 +1380,22 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
     }
 }
 
-TEST_CASE("Oracle (directedit 7:12, 15:46; hidden 6:47): edits the oracle's model does not describe are not modelled",
+} // namespace
+
+TEST_CASE("Oracle and kernel (directedit replays, key cases): one refinement of each kind, on its sequence",
           "[naming][directedit][oracle-gate]")
+{
+    replayCases(true);
+}
+
+TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on the sequences that showed them",
+          "[naming][directedit-replays]")
+{
+    replayCases(false);
+}
+
+TEST_CASE("Oracle (directedit 7:12, 15:46; hidden 6:47): edits the oracle's model does not describe are not modelled",
+          "[naming][directedit-replays]")
 {
     // keyway_tslot_1 #12: deleting a hole whose mouth chamfer Defeaturing extends into a cone where the bore was;
     // slot_through_1 #46: deleting an arc wall of a cut leaves a remnant of its straight wall. Which logical face such

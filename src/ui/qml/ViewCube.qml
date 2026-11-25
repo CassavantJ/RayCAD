@@ -12,6 +12,8 @@ Item {
 
     // The ViewportItem to steer.
     required property var view
+    // How far down the cube and its view buttons reach in the top-right corner: panels on the right go below it.
+    readonly property real coverBottom: cubeColumn.y + cubeColumn.height
 
     readonly property vector3d camRight: view ? view.viewRight : Qt.vector3d(1, 0, 0)
     readonly property vector3d camUp: view ? view.viewUp : Qt.vector3d(0, 0, 1)
