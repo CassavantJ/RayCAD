@@ -8,6 +8,7 @@
 // saving an operation as a template, applying it, editing it (no hidden link), re-applying it, conflicts, rename and
 // remove.
 #include "engine_test_util.h"
+#include "lib/library_internal.h"
 #include "parametric_test_util.h"
 
 #include <ray/api.h>
@@ -15,10 +16,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <map>
 #include <string>
+#include <thread>
 
 using Catch::Matchers::ContainsSubstring;
 using namespace ray;
@@ -557,6 +560,41 @@ TEST_CASE("an operation saved as a template applies elsewhere, has no hidden lin
                           R"({"setup":")" + kSetup + R"(","templates":[")" + tapTemplate.toString() + R"("]})");
     REQUIRE_FALSE(gone);
     CHECK(gone.error().code == ErrorCode::NotFound);
+}
+
+TEST_CASE("saving a template waits for a user library that is still being read", "[cam][templates][api]")
+{
+    // The user library is read in the background and joins the stack when read (cam_wiring.cpp waits 500 ms for it at
+    // start-up): here its read takes 1.5 s, so it is still loading when the template is saved.
+    std::atomic<int> slowed{0};
+    lib::detail::setBackgroundReadHook([&](const std::string& dir, const CancelToken& cancel) {
+        if (std::filesystem::path(dir).parent_path().filename() != "user") {
+            return;
+        }
+        ++slowed;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+        while (std::chrono::steady_clock::now() < until && !cancel.cancelled()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    });
+    struct Unhook {
+        ~Unhook() { lib::detail::setBackgroundReadHook({}); }
+    } unhook;
+    TempDir dir;
+    auto app = makeApp(dir.file("user"));
+    invoke(*app, "file.new", "{}");
+    buildPlate(*app);
+    addSetup(*app);
+    api::OpenDocument* od = app->active();
+    invoke(*app, "cam.template.apply", R"({"setup":")" + kSetup + R"(","set":"Tapped holes"})");
+    const auto ops = operationsOf(*od->document->state());
+    REQUIRE(ops.size() == 3);
+    const Json saved{invoke(*app, "cam.template.saveFrom",
+                            R"({"operation":")" + ops[2]->id.value.toString() + R"(","name":"Late tap"})")};
+    CHECK(slowed.load() == 1);
+    const lib::OpTemplate* t = app->libraries()->opTemplate(Uuid::fromString(saved.str("id")));
+    REQUIRE(t != nullptr);
+    CHECK(t->name == "Late tap");
 }
 
 TEST_CASE("cam.batch applies several CAM commands as one and refuses as a whole", "[cam][templates][api]")
