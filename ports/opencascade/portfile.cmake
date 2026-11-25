@@ -1,7 +1,7 @@
 # RayCAD overlay of the vcpkg opencascade port (vcpkg-configuration.json "overlay-ports"). It is the port of the
-# pinned baseline (8.0.1, port-version 1) unchanged, plus the RayCAD patches 0006 to 0010;
-# port-version 6 tells the patched build apart in vcpkg output and the binary cache. When the baseline moves to an
-# OCCT with all five fixes, delete this folder.
+# pinned baseline (8.0.1, port-version 1) unchanged, plus the RayCAD patches 0006 to 0011;
+# port-version 7 tells the patched build apart in vcpkg output and the binary cache. When the baseline moves to an
+# OCCT with all six fixes, delete this folder.
 string(REPLACE "." "_" VERSION_STR "V${VERSION}")
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
@@ -20,6 +20,7 @@ vcpkg_from_github(
         0008-chfi3d-initialise-prol.patch # RayCAD: see the header of the patch
         0009-brepmesh-heal-faces-serially.patch # RayCAD: see the header of the patch
         0010-chfi3d-vertex-tolerance-only-on-vertices.patch # RayCAD: see the header of the patch
+        0011-bopalgo-removefeatures-cancel.patch # RayCAD: see the header of the patch
 )
 
 if (VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
