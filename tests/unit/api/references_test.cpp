@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -180,7 +179,8 @@ TEST_CASE("a reference that records a planar face's outline passes every consume
     CHECK(before.first == 3); // the feature's face, the setup's Z face and the operation's geometry
     CHECK(before.second == before.first);
     // Saved and opened again: the references keep their outlines.
-    const std::string path = (std::filesystem::temp_directory_path() / "raycad_outline_refs.raycad").string();
+    const ray::test::TempDir dir;
+    const std::string path = dir.file("outline_refs.raycad");
     invoke(*p.app, "file.saveAs", R"({"path":)" + json::write(json::Value::string(path)) + "}");
     invoke(*p.app, "file.close", "{}");
     invoke(*p.app, "file.open", R"({"path":)" + json::write(json::Value::string(path)) + "}");
@@ -188,8 +188,6 @@ TEST_CASE("a reference that records a planar face's outline passes every consume
     REQUIRE(p.od != nullptr);
     const auto after = stored();
     CHECK(after == before);
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
 }
 TEST_CASE("the references of features and CAM operations, resolved where their owners resolve them",
           "[api][references]")

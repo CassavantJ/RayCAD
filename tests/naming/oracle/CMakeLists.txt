@@ -77,8 +77,12 @@ ray_test_runtime_path(ray_naming_random_holdout6)
 set_tests_properties(ray_naming_random_holdout6 PROPERTIES TIMEOUT 7200)
 # T-081b: references through the T-080 direct edits. The scripted scenarios (quick), the first 2 randomised sequences
 # with direct edits of every part (quick), and the block of 1,000 such sequences (slow).
-add_test(NAME ray_naming_directedit COMMAND ray_naming_oracle_tests "[directedit]")
+add_test(NAME ray_naming_directedit COMMAND ray_naming_oracle_tests "[directedit]~[oracle-gate]")
 ray_test_runtime_path(ray_naming_directedit)
+# The replays that pin the T-081b oracle rules and naming fixes, each a sequence of a randomised block: their own entry.
+add_test(NAME ray_naming_directedit_replays COMMAND ray_naming_oracle_tests "[directedit][oracle-gate]")
+ray_test_runtime_path(ray_naming_directedit_replays)
+set_tests_properties(ray_naming_directedit_replays PROPERTIES TIMEOUT 1200)
 add_test(NAME ray_naming_random_directedit_smoke COMMAND ray_naming_oracle_tests "[random-directedit-smoke]")
 ray_test_runtime_path(ray_naming_random_directedit_smoke)
 set_tests_properties(ray_naming_random_directedit_smoke PROPERTIES TIMEOUT 1800)
