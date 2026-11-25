@@ -148,7 +148,9 @@ Value summaryOf(const dc::PreparedReplace& prepared, const doc::DocState& state,
     out.set("label", Value::string(prepared.command.label));
     out.set("oldFile", Value::string(prepared.oldFile));
     out.set("newFile", Value::string(prepared.newFile));
-    auto units = [](UnitSystem u) { return Value::string(u == UnitSystem::Inch ? "inch" : "metric"); };
+    auto units = [](UnitSystem u) {
+        return Value::string(u == UnitSystem::Inch ? "inch" : "metric");
+    };
     if (prepared.oldUnits) {
         out.set("oldUnits", units(*prepared.oldUnits));
     }
@@ -226,9 +228,10 @@ Status registerReplaceImportActions(AppImpl& app)
     path.set("minLength", Value::integer(1));
     Value feature = prop("string", "The import feature whose file is replaced");
     feature.set("pattern", Value::string(kUuidPattern));
-    Value props = Value::object({{"feature", std::move(feature)},
-                                 {"path", std::move(path)},
-                                 {"document", prop("string", "The OpenDocument id; the active document when omitted")}});
+    Value props =
+        Value::object({{"feature", std::move(feature)},
+                       {"path", std::move(path)},
+                       {"document", prop("string", "The OpenDocument id; the active document when omitted")}});
     Value schema = Value::object({{"$schema", Value::string("https://json-schema.org/draft/2020-12/schema")},
                                   {"type", Value::string("object")},
                                   {"additionalProperties", Value::boolean(false)},

@@ -43,9 +43,11 @@ QString trr(const char* text)
 {
     return QCoreApplication::translate("ray::ui::ReplaceImport", text);
 }
-QString trn(const char* text, int n)
+// One of two texts by count (English source texts; a translation file may give more forms).
+QString count(int n, const char* one, const char* many)
 {
-    return QCoreApplication::translate("ray::ui::ReplaceImport", text, nullptr, n);
+    return n == 1 ? QCoreApplication::translate("ray::ui::ReplaceImport", one)
+                  : QCoreApplication::translate("ray::ui::ReplaceImport", many).arg(n);
 }
 
 std::vector<Hash256> hashesOf(const QJsonArray& list)
@@ -80,7 +82,8 @@ std::vector<Vec3> boxSegments(const Box3& b)
     const Vec3 c[8] = {{b.min.x, b.min.y, b.min.z}, {b.max.x, b.min.y, b.min.z}, {b.max.x, b.max.y, b.min.z},
                        {b.min.x, b.max.y, b.min.z}, {b.min.x, b.min.y, b.max.z}, {b.max.x, b.min.y, b.max.z},
                        {b.max.x, b.max.y, b.max.z}, {b.min.x, b.max.y, b.max.z}};
-    const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                              {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     std::vector<Vec3> out;
     for (const auto& e : edges) {
         out.push_back(c[e[0]]);
@@ -194,6 +197,11 @@ void ReplaceImportModel::setCommands(CommandCatalog* commands)
             [self](const QString& id) { return self && self->runCommand(id); }});
 }
 
+void ReplaceImportModel::setFeatureTree(FeatureTreeModel* tree)
+{
+    tree_ = tree;
+}
+
 api::IApp* ReplaceImportModel::app() const
 {
     return context_ ? context_->app() : nullptr;
@@ -234,7 +242,8 @@ void ReplaceImportModel::refreshImports()
             item.insert(QStringLiteral("id"), idText(f->id.value));
             item.insert(QStringLiteral("name"), qs(f->name));
             const auto props = QJsonDocument::fromJson(QByteArray::fromStdString(f->propsJson)).object();
-            item.insert(QStringLiteral("file"), QFileInfo(props.value(QStringLiteral("sourceFile")).toString()).fileName());
+            item.insert(QStringLiteral("file"),
+                        QFileInfo(props.value(QStringLiteral("sourceFile")).toString()).fileName());
             list.push_back(item);
         }
     }
@@ -398,20 +407,11 @@ bool ReplaceImportModel::replace()
             return;
         }
         self->setMessage(QString(), false);
+        self->refreshImports(); // the import's file is the new one now
         self->takeResult(r->resultJson);
         emit self->replaced();
     });
     return true;
-}
-
-void ReplaceImportModel::review()
-{
-    if (!context_)
-        return;
-    // The reference review is a singleton of its own (directedit_review.h); it is shown through its command so this
-    // model needs no pointer to it.
-    if (commands_)
-        commands_->run(QStringLiteral("references.review"));
 }
 
 bool ReplaceImportModel::undo()
@@ -435,6 +435,7 @@ bool ReplaceImportModel::undo()
             return;
         }
         self->clearResult();
+        self->refreshImports();
         self->setMessage(trr("The replace was undone: the part is back to its previous revision."), false);
     });
     return true;
@@ -514,11 +515,12 @@ void ReplaceImportModel::takeResult(const std::string& json)
     } else {
         QStringList parts;
         if (changed_ > 0)
-            parts << trn("%n face(s) changed", changed_);
+            parts << count(changed_, "1 face changed", "%1 faces changed");
         if (added_ > 0)
-            parts << (parts.isEmpty() ? trn("%n new face(s)", added_) : trn("%n new", added_));
+            parts << (parts.isEmpty() ? count(added_, "1 new face", "%1 new faces") : trr("%1 new").arg(added_));
         if (removed_ > 0)
-            parts << (parts.isEmpty() ? trn("%n face(s) removed", removed_) : trn("%n removed", removed_));
+            parts << (parts.isEmpty() ? count(removed_, "1 face removed", "%1 faces removed")
+                                      : trr("%1 removed").arg(removed_));
         summary_ = parts.join(QStringLiteral(", "));
     }
     int ec = 0, en = 0, er = 0;
@@ -540,7 +542,8 @@ void ReplaceImportModel::takeResult(const std::string& json)
                            oldUnits == QStringLiteral("inch") ? inch : metric);
     }
     if (toolpaths_ > 0)
-        notes_ << trn("%n toolpath(s) use this part and need regenerating.", toolpaths_);
+        notes_ << count(toolpaths_, "1 toolpath uses this part and needs regenerating.",
+                        "%1 toolpaths use this part and need regenerating.");
     for (const QJsonValue& w : result.value(QStringLiteral("warnings")).toArray())
         notes_ << trr("From the new file: %1").arg(w.toString());
 
@@ -552,7 +555,8 @@ void ReplaceImportModel::takeResult(const std::string& json)
             Row row;
             row.fate = f.value(QStringLiteral("fate")).toString();
             row.body = body;
-            row.sub = kernel::SubId{kernel::SubKind::Face, static_cast<std::uint32_t>(f.value(QStringLiteral("index")).toInt())};
+            row.sub = kernel::SubId{kernel::SubKind::Face,
+                                    static_cast<std::uint32_t>(f.value(QStringLiteral("index")).toInt())};
             row.names = hashesOf(f.value(QStringLiteral("names")).toArray());
             const QJsonArray box = f.value(QStringLiteral("box")).toArray();
             if (box.size() == 6)
@@ -684,8 +688,8 @@ void ReplaceImportModel::applyTints()
         if (tint->indices.empty())
             continue;
         const render::Token token = key.second ? render::Token::Success : render::Token::Warning;
-        const render::ItemId item =
-            viewport->addMesh(tint, Xform::identity(), render::MeshStyle{token, token, 1.0f, false, false, std::nullopt});
+        const render::ItemId item = viewport->addMesh(
+            tint, Xform::identity(), render::MeshStyle{token, token, 1.0f, false, false, std::nullopt});
         if (item == 0)
             continue;
         viewport->setPickMode(item, render::PickMode::Never); // picks go to the model under it
@@ -716,7 +720,7 @@ void ReplaceImportModel::applyCurrent()
     if (selection_ && !highlighted_.empty())
         selection_->setToolHighlight({});
     highlighted_.clear();
-    if (current_ < 0 || current_ >= static_cast<int>(rows_.size()) || tintItems_.empty() && !(lines_ && lines_->count()))
+    if (current_ < 0 || current_ >= static_cast<int>(rows_.size()) || !tinted())
         return;
     const Row& row = rows_[static_cast<std::size_t>(current_)];
     if (row.fate == QStringLiteral("removed")) {

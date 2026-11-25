@@ -70,8 +70,8 @@ Result<DocStatePtr> applyReplace(const DocState& before, std::string_view argsJs
         return args->error("props", "must list the bodies");
     }
     if (props->bodies->size() != old->bodies->size()) {
-        return args->error("props", "must list the import's " + std::to_string(old->bodies->size()) +
-                                        " bodies, not " + std::to_string(props->bodies->size()));
+        return args->error("props", "must list the import's " + std::to_string(old->bodies->size()) + " bodies, not " +
+                                        std::to_string(props->bodies->size()));
     }
     for (std::size_t i = 0; i < props->bodies->size(); ++i) {
         if ((*props->bodies)[i].id != (*old->bodies)[i].id) {
@@ -103,7 +103,8 @@ public:
     Result<DocStatePtr> apply(DocStatePtr before, std::string_view argsJson) const override
     {
         if (!before) {
-            return invalidArgument(std::string(kReplaceImportCommand) + ": there is no document snapshot to apply it to");
+            return invalidArgument(std::string(kReplaceImportCommand) +
+                                   ": there is no document snapshot to apply it to");
         }
         try {
             return applyReplace(*before, argsJson);
@@ -235,8 +236,8 @@ void classifyReplacement(const naming::ElementMap& beforeMap, const kernel::Shap
                 }
             }
             const ElementFate fate = carried > 0 && carried == names.size() ? ElementFate::Unchanged
-                                     : carried > 0 || piece                ? ElementFate::Changed
-                                                                           : ElementFate::New;
+                                     : carried > 0 || piece                 ? ElementFate::Changed
+                                                                            : ElementFate::New;
             lists[static_cast<std::size_t>(fate)].push_back(ReplacedElement{sub, {names.begin(), names.end()}});
         }
         for (std::uint32_t i = 0; i < before.count(kind); ++i) {
@@ -269,11 +270,13 @@ Result<PreparedReplace> prepareReplaceImport(const DocState& state, const IObjec
         }
         if (!old->bodies) {
             return failure(ErrorCode::InvalidArgument,
-                           "'" + it->name + "' was imported without storing its geometry; import the new file instead.");
+                           "'" + it->name +
+                               "' was imported without storing its geometry; import the new file instead.");
         }
         const std::string newFile(features::fileNameOf(request.path));
         const std::string oldFile(features::fileNameOf(old->sourceFile));
-        const std::optional<ImportFormat> format = request.format ? request.format : features::formatFromPath(request.path);
+        const std::optional<ImportFormat> format =
+            request.format ? request.format : features::formatFromPath(request.path);
         if (!format) {
             return failure(ErrorCode::InvalidArgument,
                            "'" + newFile + "' is not a STEP (.step, .stp) or IGES (.iges, .igs) file.");
@@ -293,8 +296,8 @@ Result<PreparedReplace> prepareReplaceImport(const DocState& state, const IObjec
             }
             auto shape = kernel::deserialize(*bytes);
             if (!shape) {
-                return failure(shape.error().code,
-                               "The stored geometry of body '" + body.name + "' cannot be read: " + shape.error().message);
+                return failure(shape.error().code, "The stored geometry of body '" + body.name +
+                                                       "' cannot be read: " + shape.error().message);
             }
             std::optional<std::string> note;
             auto map = features::importedBodyMap(
@@ -313,8 +316,9 @@ Result<PreparedReplace> prepareReplaceImport(const DocState& state, const IObjec
             return cannot(hashBefore.error());
         }
         if (*hashBefore == old->fileHash) {
-            return failure(ErrorCode::InvalidArgument, "'" + newFile + "' is the very file the part was imported from; "
-                                                                       "there is nothing to replace.");
+            return failure(ErrorCode::InvalidArgument, "'" + newFile +
+                                                           "' is the very file the part was imported from; "
+                                                           "there is nothing to replace.");
         }
         JobContext importCtx{ctx.cancel, ctx.progress.sub(0.47)};
         auto imported = features::importSourceFile(request.path, *format, old->options, importCtx);
@@ -364,8 +368,8 @@ Result<PreparedReplace> prepareReplaceImport(const DocState& state, const IObjec
             }
             if (solids != had) {
                 return cannot(Error{ErrorCode::InvalidArgument,
-                                    "its body is " + std::to_string(solids) + " solids where '" + (*old->bodies)[i].name +
-                                        "' is " + std::to_string(had) + ".",
+                                    "its body is " + std::to_string(solids) + " solids where '" +
+                                        (*old->bodies)[i].name + "' is " + std::to_string(had) + ".",
                                     {}});
             }
         }
@@ -420,7 +424,8 @@ Result<PreparedReplace> prepareReplaceImport(const DocState& state, const IObjec
         out.command.label = newFile == oldFile ? "Replace " + oldFile + " with a new revision"
                                                : "Replace " + oldFile + " with " + newFile;
         const std::string propsJson = features::writeImportProps(props);
-        out.command.argsJson = canonicalJson(R"({"id":")" + it->id.value.toString() + R"(","props":)" + propsJson + "}");
+        out.command.argsJson =
+            canonicalJson(R"({"id":")" + it->id.value.toString() + R"(","props":)" + propsJson + "}");
         if (out.command.argsJson.empty()) {
             return failure(ErrorCode::Internal, "The replacement could not be written.");
         }

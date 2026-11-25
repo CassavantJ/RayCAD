@@ -1,6 +1,7 @@
 // Replacing an imported part's file with a new revision (task T-084), private to src/doc, its tests and src/api (the
 // action that reads the file). Like an import (<ray/document.h>, "How an import enters a document") it is two steps:
-//   1. prepareReplaceImport(state, objects, request, ctx) on a worker: reads the stored geometry and names of the import
+//   1. prepareReplaceImport(state, objects, request, ctx) on a worker: reads the stored geometry and names of the
+//   import
 //      feature's bodies, imports the new file with the feature's own options, pairs the new bodies with the old ones,
 //      carries the names over (naming::rematchImported with the old shape) and stores each new body's BREP and element
 //      map as objects. It also says what became of every face, edge and vertex (unchanged, changed, new, removed).
@@ -74,12 +75,12 @@ struct ReplacedBody {
     }
 };
 struct PreparedReplace {
-    Command command; // feature.import.replace
+    Command command;                                                 // feature.import.replace
     std::vector<std::pair<Hash256, std::vector<std::byte>>> objects; // each new body's BREP and element map, by hash
-    std::vector<ReplacedBody> bodies;                                 // in the feature's body order
-    std::string oldFile, newFile;                                     // file names (no folders)
-    std::optional<UnitSystem> oldUnits, newUnits;                     // as the files declare them
-    std::vector<std::string> warnings;                                // the new file's import warnings
+    std::vector<ReplacedBody> bodies;                                // in the feature's body order
+    std::string oldFile, newFile;                                    // file names (no folders)
+    std::optional<UnitSystem> oldUnits, newUnits;                    // as the files declare them
+    std::vector<std::string> warnings;                               // the new file's import warnings
 };
 
 // Worker only (seconds for a large file). `objects` reads the document's stored objects (its pool, then its file).

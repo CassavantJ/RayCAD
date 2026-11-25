@@ -362,8 +362,8 @@ FocusScope {
             objectName: "replaceImportLoader"
             z: 1
             anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: Theme.spacingL
+            anchors.top: selectionFilterBar.visible ? selectionFilterBar.bottom : parent.top
+            anchors.topMargin: Theme.spacingS
             property bool used: Replacement.shown
             onUsedChanged: if (used) used = true // stays once made
             active: used

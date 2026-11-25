@@ -83,8 +83,7 @@ Result<naming::ElementMap> nameBody(const FeatureId& feature, const kernel::Shap
 Result<naming::ElementMap> namesOfBody(const FeatureId& feature, const kernel::Shape& shape, const ImportBody& body,
                                        RebuildContext& ctx, std::optional<std::string>& warning)
 {
-    return importedBodyMap(
-        feature, shape, body, [&](const Hash256& hash) { return ctx.blob(hash); }, warning);
+    return importedBodyMap(feature, shape, body, [&](const Hash256& hash) { return ctx.blob(hash); }, warning);
 }
 
 // A shape in the form a restore gives: deserialize(serialize(shape)), and its BREP bytes. Then the stored object,

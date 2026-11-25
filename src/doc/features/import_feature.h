@@ -5,23 +5,23 @@
 #include <ray/document.h>
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
-#include <span>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
-#include <cstdint>
-#include <memory>
 
 namespace ray::doc::features {
 
 std::unique_ptr<IFeatureType> makeImportFeatureType();
 
 struct ImportBody;
-// The element map of an imported body as the rebuild makes it (T-084): the names stored with the body (ImportBody::names,
-// written by feature.import.replace: the names rematchImported carried over from the revision it replaced) when they
-// can be read and fit `shape`, else naming::nameImported. `warning` is set (and nameImported used) when stored names
-// cannot be used. KernelFailure when the body cannot be named at all.
+// The element map of an imported body as the rebuild makes it (T-084): the names stored with the body
+// (ImportBody::names, written by feature.import.replace: the names rematchImported carried over from the revision it
+// replaced) when they can be read and fit `shape`, else naming::nameImported. `warning` is set (and nameImported used)
+// when stored names cannot be used. KernelFailure when the body cannot be named at all.
 Result<naming::ElementMap> importedBodyMap(const FeatureId& feature, const kernel::Shape& shape, const ImportBody& body,
                                            const std::function<Result<std::vector<std::byte>>(const Hash256&)>& object,
                                            std::optional<std::string>& warning);

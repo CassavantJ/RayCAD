@@ -26,8 +26,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -151,8 +151,8 @@ std::vector<SubId> planarFacesByArea(const kernel::Shape& shape)
 
 struct Pair {
     std::string name;
-    std::string base;    // where the base came from
-    std::string edit;    // what the revision changed
+    std::string base; // where the base came from
+    std::string edit; // what the revision changed
     kernel::Shape before, after;
 };
 
@@ -214,7 +214,8 @@ Tally judgePair(const Pair& pair)
                 ++t.faceElements;
                 ++t.faces[j.verdict];
             }
-            if (j.verdict == ro::Verdict::Flagged && state != ro::State::Broken && !before.identicalIn(pick, after).empty()) {
+            if (j.verdict == ro::Verdict::Flagged && state != ro::State::Broken &&
+                !before.identicalIn(pick, after).empty()) {
                 ++t.overFlagged;
                 if (kind == SubKind::Face) {
                     ++t.overFlaggedFaces;
@@ -229,7 +230,8 @@ Tally judgePair(const Pair& pair)
                             std::printf("    type %d/%d area %.9g/%.9g centroid d %.3g box d %.3g %.3g edges %zu/%zu "
                                         "origin d %.3g\n",
                                         static_cast<int>(x->type), static_cast<int>(y->type), x->area, y->area,
-                                        std::abs(x->centroid.x - y->centroid.x) + std::abs(x->centroid.y - y->centroid.y) +
+                                        std::abs(x->centroid.x - y->centroid.x) +
+                                            std::abs(x->centroid.y - y->centroid.y) +
                                             std::abs(x->centroid.z - y->centroid.z),
                                         std::abs(x->bounds.min.x - y->bounds.min.x) +
                                             std::abs(x->bounds.min.y - y->bounds.min.y) +
@@ -275,7 +277,9 @@ Tally judgePair(const Pair& pair)
                     std::printf("   -> %u: %s\n", s.index, describe(pair.after, s).c_str());
             }
             if (j.verdict == ro::Verdict::Wrong)
-                t.wrongs.push_back(std::string(kind == SubKind::Face ? "face " : kind == SubKind::Edge ? "edge " : "vertex ") +
+                t.wrongs.push_back(std::string(kind == SubKind::Face   ? "face "
+                                               : kind == SubKind::Edge ? "edge "
+                                                                       : "vertex ") +
                                    std::to_string(i) + " " + stateName(r.state) + ": " + j.why);
         }
     }
@@ -466,12 +470,13 @@ TEST_CASE("rematch revision pairs: a hole resized", "[rematch-pairs]")
     Pair p = nistBase(kCtc03, "hole-resized");
     p.edit = "one hole 0.5 mm larger in diameter";
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, holes(p.before, 10.0),
-                                       [&](SubId f) {
-                                           const auto info = kernel::surfaceInfo(p.before, f);
-                                           return kernel::resizeHole(p.before, f, 2 * info->radius + 0.5, ctx);
-                                       },
-                                       p.edit),
+    p.after = roundTrip(firstThatWorks(
+                            p.before, holes(p.before, 10.0),
+                            [&](SubId f) {
+                                const auto info = kernel::surfaceInfo(p.before, f);
+                                return kernel::resizeHole(p.before, f, 2 * info->radius + 0.5, ctx);
+                            },
+                            p.edit),
                         "hole_resized");
     run(p);
 }
@@ -481,32 +486,33 @@ TEST_CASE("rematch revision pairs: a hole moved", "[rematch-pairs]")
     Pair p = nistBase(kCtc01, "hole-moved");
     p.edit = "one hole filled and drilled again 3 mm away";
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, holes(p.before, 10.0),
-                                       [&](SubId f) -> Result<kernel::OpResult> {
-                                           const auto info = kernel::surfaceInfo(p.before, f);
-                                           auto filled = kernel::deleteFaces(p.before, std::vector<SubId>{f}, ctx);
-                                           if (!filled)
-                                               return filled;
-                                           // Perpendicular to the axis.
-                                           const Vec3 a = info->axis;
-                                           Vec3 d = std::abs(a.z) < 0.9 ? Vec3{-a.y, a.x, 0} : Vec3{1, 0, 0};
-                                           const double n = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-                                           d = {3 * d.x / n, 3 * d.y / n, 3 * d.z / n};
-                                           const Box3 b = info->bounds;
-                                           const double len = std::sqrt((b.max.x - b.min.x) * (b.max.x - b.min.x) +
-                                                                        (b.max.y - b.min.y) * (b.max.y - b.min.y) +
-                                                                        (b.max.z - b.min.z) * (b.max.z - b.min.z));
-                                           const Vec3 c{(b.min.x + b.max.x) / 2 + d.x, (b.min.y + b.max.y) / 2 + d.y,
-                                                        (b.min.z + b.max.z) / 2 + d.z};
-                                           auto tool = kernel::makeCylinder(
-                                               {c.x - a.x * len / 2, c.y - a.y * len / 2, c.z - a.z * len / 2}, a,
-                                               info->radius, len);
-                                           if (!tool)
-                                               return tl::unexpected(tool.error());
-                                           return kernel::boolean(kernel::BoolOp::Cut, filled->shape, *tool, ctx);
-                                       },
-                                       p.edit),
-                        "hole_moved");
+    p.after =
+        roundTrip(firstThatWorks(
+                      p.before, holes(p.before, 10.0),
+                      [&](SubId f) -> Result<kernel::OpResult> {
+                          const auto info = kernel::surfaceInfo(p.before, f);
+                          auto filled = kernel::deleteFaces(p.before, std::vector<SubId>{f}, ctx);
+                          if (!filled)
+                              return filled;
+                          // Perpendicular to the axis.
+                          const Vec3 a = info->axis;
+                          Vec3 d = std::abs(a.z) < 0.9 ? Vec3{-a.y, a.x, 0} : Vec3{1, 0, 0};
+                          const double n = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                          d = {3 * d.x / n, 3 * d.y / n, 3 * d.z / n};
+                          const Box3 b = info->bounds;
+                          const double len = std::sqrt((b.max.x - b.min.x) * (b.max.x - b.min.x) +
+                                                       (b.max.y - b.min.y) * (b.max.y - b.min.y) +
+                                                       (b.max.z - b.min.z) * (b.max.z - b.min.z));
+                          const Vec3 c{(b.min.x + b.max.x) / 2 + d.x, (b.min.y + b.max.y) / 2 + d.y,
+                                       (b.min.z + b.max.z) / 2 + d.z};
+                          auto tool = kernel::makeCylinder(
+                              {c.x - a.x * len / 2, c.y - a.y * len / 2, c.z - a.z * len / 2}, a, info->radius, len);
+                          if (!tool)
+                              return tl::unexpected(tool.error());
+                          return kernel::boolean(kernel::BoolOp::Cut, filled->shape, *tool, ctx);
+                      },
+                      p.edit),
+                  "hole_moved");
     run(p);
 }
 
@@ -516,20 +522,21 @@ TEST_CASE("rematch revision pairs: a hole added", "[rematch-pairs]")
     p.edit = "a 3 mm blind hole, 3 mm deep, drilled into the largest flat face";
     const ro::Samples samples(p.before);
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, planarFacesByArea(p.before),
-                                       [&](SubId f) -> Result<kernel::OpResult> {
-                                           const auto point = samples.interiorPoint(f, 4.0);
-                                           const auto sample = kernel::faceSample(p.before, f);
-                                           if (!point || !sample)
-                                               return tl::unexpected(Error{ErrorCode::InvalidArgument, "no room", {}});
-                                           const Vec3 n = sample->normal;
-                                           auto tool = kernel::makeCylinder(
-                                               {point->x - 3 * n.x, point->y - 3 * n.y, point->z - 3 * n.z}, n, 1.5, 4);
-                                           if (!tool)
-                                               return tl::unexpected(tool.error());
-                                           return kernel::boolean(kernel::BoolOp::Cut, p.before, *tool, ctx);
-                                       },
-                                       p.edit),
+    p.after = roundTrip(firstThatWorks(
+                            p.before, planarFacesByArea(p.before),
+                            [&](SubId f) -> Result<kernel::OpResult> {
+                                const auto point = samples.interiorPoint(f, 4.0);
+                                const auto sample = kernel::faceSample(p.before, f);
+                                if (!point || !sample)
+                                    return tl::unexpected(Error{ErrorCode::InvalidArgument, "no room", {}});
+                                const Vec3 n = sample->normal;
+                                auto tool = kernel::makeCylinder(
+                                    {point->x - 3 * n.x, point->y - 3 * n.y, point->z - 3 * n.z}, n, 1.5, 4);
+                                if (!tool)
+                                    return tl::unexpected(tool.error());
+                                return kernel::boolean(kernel::BoolOp::Cut, p.before, *tool, ctx);
+                            },
+                            p.edit),
                         "hole_added");
     run(p);
 }
@@ -551,9 +558,9 @@ TEST_CASE("rematch revision pairs: a hole removed from a bolt circle", "[rematch
             circle = faces;
     REQUIRE(circle.size() >= 3);
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, circle,
-                                       [&](SubId f) { return kernel::deleteFaces(p.before, std::vector<SubId>{f}, ctx); },
-                                       p.edit),
+    p.after = roundTrip(firstThatWorks(
+                            p.before, circle,
+                            [&](SubId f) { return kernel::deleteFaces(p.before, std::vector<SubId>{f}, ctx); }, p.edit),
                         "bolt_removed");
     run(p);
 }
@@ -575,10 +582,11 @@ TEST_CASE("rematch revision pairs: a pocket deepened", "[rematch-pairs]")
     }
     REQUIRE(!floors.empty());
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, floors,
-                                       [&](SubId f) { return kernel::offsetFaces(p.before, std::vector<SubId>{f}, -1.5, ctx); },
-                                       p.edit),
-                        "pocket_deeper");
+    p.after =
+        roundTrip(firstThatWorks(
+                      p.before, floors,
+                      [&](SubId f) { return kernel::offsetFaces(p.before, std::vector<SubId>{f}, -1.5, ctx); }, p.edit),
+                  "pocket_deeper");
     run(p);
 }
 
@@ -610,10 +618,11 @@ TEST_CASE("rematch revision pairs: an outer face moved (part made longer)", "[re
     Pair p = nistBase(kFtc09, "outer-face-moved");
     p.edit = "a flat outer face pulled out 2 mm";
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, planarFacesByArea(p.before),
-                                       [&](SubId f) { return kernel::offsetFaces(p.before, std::vector<SubId>{f}, 2.0, ctx); },
-                                       p.edit),
-                        "longer");
+    p.after =
+        roundTrip(firstThatWorks(
+                      p.before, planarFacesByArea(p.before),
+                      [&](SubId f) { return kernel::offsetFaces(p.before, std::vector<SubId>{f}, 2.0, ctx); }, p.edit),
+                  "longer");
     run(p);
 }
 
@@ -632,10 +641,11 @@ TEST_CASE("rematch revision pairs: a chamfer added", "[rematch-pairs]")
     for (const auto& [l, e] : lines)
         edges.push_back(e);
     JobContext ctx;
-    p.after = roundTrip(firstThatWorks(p.before, edges,
-                                       [&](SubId e) { return kernel::chamfer(p.before, std::vector<SubId>{e}, 0.8, ctx); },
-                                       p.edit),
-                        "chamfer");
+    p.after =
+        roundTrip(firstThatWorks(
+                      p.before, edges,
+                      [&](SubId e) { return kernel::chamfer(p.before, std::vector<SubId>{e}, 0.8, ctx); }, p.edit),
+                  "chamfer");
     run(p);
 }
 

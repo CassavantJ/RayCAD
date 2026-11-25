@@ -7,14 +7,14 @@
 //    on the same carrier (line: direction and position; circle: centre, axis, radius; any other curve: compared by its
 //    points only), of the same length, between the matching vertices, every territory point of each (territory.h)
 //    on the other; a face of the same surface type on the same carrier (plane: outward normal and offset; cylinder:
-//    axis line, radius and material side; any other surface: centroid and area, and its mesh nodes on the other), bounded
-//    by exactly the matching edges, every territory point and sample of each on the other. Matches must be one to one:
-//    when an element has two candidates (two holes that coincide within the tolerance), neither is matched. An edge or
-//    vertex is unchanged only if, besides, every face it lay on carries over to a face it lies on now; otherwise it is
-//    the same geometry with other faces around it, and counts as changed.
-//    Without the old shape (planByFingerprint): an element whose fingerprint (Fingerprint::matches) has exactly one
-//    match on each side, and (faces) whose neighbours, read from the edge names (an imported edge is named from its
-//    faces), match likewise; an edge or vertex whose faces match. Nothing is "changed" in this mode.
+//    axis line, radius and material side; any other surface: centroid and area, and its mesh nodes on the other),
+//    bounded by exactly the matching edges, every territory point and sample of each on the other. Matches must be one
+//    to one: when an element has two candidates (two holes that coincide within the tolerance), neither is matched. An
+//    edge or vertex is unchanged only if, besides, every face it lay on carries over to a face it lies on now;
+//    otherwise it is the same geometry with other faces around it, and counts as changed. Without the old shape
+//    (planByFingerprint): an element whose fingerprint (Fingerprint::matches) has exactly one match on each side, and
+//    (faces) whose edges, read from the edge names (an imported edge is named from its faces), pair off with the
+//    candidate's edges by fingerprint; an edge or vertex whose faces match. Nothing is "changed" in this mode.
 //  - CHANGED: old and new elements that are not unchanged but lie on the same carrier (plane or cylinder; line or
 //    circle) and share ground: an interior sample of one (at least kRematchMargin inside it) lies on the other. These
 //    pairs form groups (connected components). A group of one old element and one new one (a face that grew or shrank),

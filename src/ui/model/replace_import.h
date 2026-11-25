@@ -2,21 +2,24 @@
 // (qml/model/ReplaceImport.qml). Replacing an imported part's file with a new revision is the action
 // file.replaceImport (ray_api/replace_import.h); this model only drives it and shows its result.
 //
-//   Dialog     open() picks the import to replace: the feature selected in the model tree when it is an import, else the
+//   Dialog     open() picks the import to replace: the feature selected in the model tree when it is an import, else
+//   the
 //              document's only import (with several and none selected, the dialog lists them to choose). chooseFile()
-//              asks the QML for a file dialog; replace() runs the action on the job system. A refusal (another number of
-//              bodies, not a solid, the same file, a file that cannot be read) is shown with its message and nothing
+//              asks the QML for a file dialog; replace() runs the action on the job system. A refusal (another number
+//              of bodies, not a solid, the same file, a file that cannot be read) is shown with its message and nothing
 //              changes.
 //   Summary    after a replace: one line with the face counts ("12 faces changed, 3 new, 1 removed"; or "Every face is
-//              unchanged"), one with edges and corners, one for units when the files declare different ones, one for the
-//              toolpaths that must be generated again, and a row per changed, new and removed face, in that order.
+//              unchanged"), one with edges and corners, one for units when the files declare different ones, one for
+//              the toolpaths that must be generated again, and a row per changed, new and removed face, in that order.
 //   Viewport   while the summary is shown: changed faces tinted in the warning colour (amber), new ones in the success
 //              colour (green), each removed face's place a dashed box in the error colour; unchanged faces as they are.
 //              Tints are meshes over the scene's own (never picked). The current row is drawn with the selection
 //              highlight (its dashed box thicker, for a removed face). Faces are found in the document's build by their
 //              names (a later feature may have changed or removed them: such a row says "not in the model now").
-//   Hand-over  this model never reviews references: review() opens the reference review panel (References), which
-//              lists what the replace left for review, and stale toolpaths are regenerated from there or the CAM tree.
+//   Hand-over  this model never reviews references: the dialog opens the reference review panel (References), which
+//              lists what the replace left for review, by itself once the replaced model is listed (when there is
+//              something to review) and from its Review button; stale toolpaths are regenerated from there or the CAM
+//              tree. replaced() and `built` tell the QML when.
 //   Undo       undo() undoes the replace (edit.undo); the summary then closes. Any other change of the document clears
 //              the tints (the summary text stays until the dialog closes).
 #pragma once
@@ -86,7 +89,7 @@ public:
     ~ReplaceImportModel() override;
     static ReplaceImportModel* create(QQmlEngine* qml, QJSEngine* js);
     void setCommands(CommandCatalog* commands);
-    void setFeatureTree(FeatureTreeModel* tree) { tree_ = tree; }
+    void setFeatureTree(FeatureTreeModel* tree);
 
     bool shown() const { return shown_; }
     void setShown(bool shown);
@@ -120,7 +123,6 @@ public:
     Q_INVOKABLE void close();
     Q_INVOKABLE void chooseFile();
     Q_INVOKABLE bool replace();
-    Q_INVOKABLE void review();
     Q_INVOKABLE bool undo();
 
     // ---- the command catalog's hook (replaceImport.*) ----

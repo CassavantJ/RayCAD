@@ -15,6 +15,7 @@ add_executable(ray_api_tests
     measure_test.cpp
     recovery_test.cpp
     references_test.cpp # T-083: the reference review's listing and commands
+    replace_import_test.cpp # T-084: replacing an imported part with a new revision
     session_test.cpp
     settings_test.cpp
     # Temp folders with non-ASCII names and child processes, shared with the store tests.

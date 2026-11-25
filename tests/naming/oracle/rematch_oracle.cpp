@@ -72,8 +72,7 @@ double triangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3&
 }
 
 struct Box {
-    Vec3 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
-            std::numeric_limits<double>::max()};
+    Vec3 lo{std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
     Vec3 hi{-std::numeric_limits<double>::max(), -std::numeric_limits<double>::max(),
             -std::numeric_limits<double>::max()};
     void grow(const Vec3& p)
@@ -95,11 +94,11 @@ struct Box {
 
 struct Element {
     Box box;
-    std::vector<Vec3> nodes;                        // faces: mesh nodes; edges: polyline; vertices: the point
-    std::vector<std::array<Vec3, 3>> triangles;     // faces
-    std::vector<Box> triangleBoxes;                 // faces
-    std::vector<Vec3> interior;                     // samples away from the boundary
-    int surface = -1;                               // faces: kernel::SurfaceType; edges: kernel::CurveType
+    std::vector<Vec3> nodes;                    // faces: mesh nodes; edges: polyline; vertices: the point
+    std::vector<std::array<Vec3, 3>> triangles; // faces
+    std::vector<Box> triangleBoxes;             // faces
+    std::vector<Vec3> interior;                 // samples away from the boundary
+    int surface = -1;                           // faces: kernel::SurfaceType; edges: kernel::CurveType
 };
 
 // At most n points, spread.
@@ -377,8 +376,7 @@ std::optional<Vec3> Samples::interiorPoint(SubId face, double clearance) const
     return best;
 }
 
-Judgement judge(const Samples& before, SubId pick, const Samples& after, State state,
-                const std::vector<SubId>& answer)
+Judgement judge(const Samples& before, SubId pick, const Samples& after, State state, const std::vector<SubId>& answer)
 {
     auto name = [](SubId s) {
         const char* k = s.kind == SubKind::Face ? "face " : (s.kind == SubKind::Edge ? "edge " : "vertex ");
@@ -400,8 +398,8 @@ Judgement judge(const Samples& before, SubId pick, const Samples& after, State s
         for (const SubId& e : before.sharingIn(pick, after))
             if (std::find(answer.begin(), answer.end(), e) == answer.end() &&
                 before.shareOn(pick, after, e) >= kMissingShare)
-                return {Verdict::Wrong, "the answer leaves out " + name(e) + ", which holds part of the picked " +
-                                            name(pick)};
+                return {Verdict::Wrong,
+                        "the answer leaves out " + name(e) + ", which holds part of the picked " + name(pick)};
         return {Verdict::Flagged, {}};
     }
     case State::Broken:

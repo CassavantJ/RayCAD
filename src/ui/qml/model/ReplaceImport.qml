@@ -79,8 +79,7 @@ PanelBase {
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - 2 * Theme.spacingS - Theme.iconSize - closeButton.width
                 font: Theme.strongFont
-                text: Replacement.featureName !== "" ? qsTr("Replace %1 with a new revision").arg(Replacement.featureName)
-                                                       : qsTr("Replace with a new revision")
+                text: qsTr("Replace with a new revision")
             }
             ToolButton {
                 id: closeButton
@@ -129,12 +128,12 @@ PanelBase {
                 }
                 Label {
                     objectName: "replaceImportCurrent"
-                    visible: Replacement.feature !== "" && !Replacement.hasResult
+                    visible: Replacement.feature !== ""
                     width: parent.width
                     wrapMode: Text.Wrap
                     elide: Text.ElideNone
                     secondary: true
-                    text: qsTr("Now from %1").arg(Replacement.currentFile)
+                    text: qsTr("%1, now from %2").arg(Replacement.featureName).arg(Replacement.currentFile)
                 }
                 Label {
                     visible: Replacement.feature === "" && !Replacement.hasResult
@@ -270,7 +269,8 @@ PanelBase {
                 color: Replacement.messageIsError ? Theme.error : Theme.textSecondary
                 text: Replacement.message
             }
-            Row {
+            Flow {
+                width: parent.width
                 spacing: Theme.spacingS
                 Button {
                     objectName: "replaceImportReplace"
@@ -288,7 +288,7 @@ PanelBase {
                     text: References.count > 0 ? qsTr("Review references (%1)").arg(References.count)
                                                : qsTr("Review references")
                     toolTipText: qsTr("Open the reference review: what features and toolpaths need checking")
-                    onClicked: Replacement.review()
+                    onClicked: References.show()
                 }
                 Button {
                     objectName: "replaceImportUndo"

@@ -409,7 +409,8 @@ public:
         for (const KindPlan::Group& g : faces.groups)
             for (const std::uint32_t o : g.olds)
                 faceImage[o].insert(g.news.begin(), g.news.end());
-        auto facesCarried = [&](const std::vector<std::uint32_t>& oldFaces, const std::vector<std::uint32_t>& newFaces) {
+        auto facesCarried = [&](const std::vector<std::uint32_t>& oldFaces,
+                                const std::vector<std::uint32_t>& newFaces) {
             if (oldFaces.size() != newFaces.size())
                 return false;
             for (const std::uint32_t f : oldFaces) {
@@ -573,9 +574,9 @@ private:
         return faces.size() == 1 && faces.front() == face;
     }
 
-    // Does every edge of face `f` of `x` (seams aside) lie on edges of face `h` of `y`: its territory points, its interior
-    // samples and its end points, each on one of them? Two faces bounded alike, however the bounds are cut into edges (one
-    // file splits a hole's rim into two arcs, another writes one circle).
+    // Does every edge of face `f` of `x` (seams aside) lie on edges of face `h` of `y`: its territory points, its
+    // interior samples and its end points, each on one of them? Two faces bounded alike, however the bounds are cut
+    // into edges (one file splits a hole's rim into two arcs, another writes one circle).
     static bool boundaryOn(const Geo& x, std::uint32_t f, const Geo& y, std::uint32_t h)
     {
         std::vector<const Probe*> edges;
@@ -666,8 +667,7 @@ private:
             const FaceGeo& x = a_.faces[o];
             for (std::uint32_t n = 0; n < b_.faces.size(); ++n) {
                 const FaceGeo& y = b_.faces[n];
-                if (newMatched[n] || !boxesMeet(x.info.bounds, y.info.bounds, kRematchTolerance) ||
-                    !sameCarrier(x, y))
+                if (newMatched[n] || !boxesMeet(x.info.bounds, y.info.bounds, kRematchTolerance) || !sameCarrier(x, y))
                     continue;
                 const SubId so{SubKind::Face, o}, sn{SubKind::Face, n};
                 const std::size_t hits = countOn(b_.probe(sn), a_.territory(so)) +
@@ -699,10 +699,9 @@ private:
                 if (newMatched[n] || !y.ok || y.carrier != x.carrier || !y.box ||
                     !boxesMeet(*x.box, *y.box, kRematchTolerance) || !parallel(x.axis, y.axis))
                     continue;
-                const bool carrier =
-                    x.carrier == 0 ? offLine(y.info.start, x.info.start, x.axis) <= kRematchTolerance
-                                   : std::abs(x.info.radius - y.info.radius) <= kRematchTolerance &&
-                                         norm(sub(x.info.center, y.info.center)) <= kRematchTolerance;
+                const bool carrier = x.carrier == 0 ? offLine(y.info.start, x.info.start, x.axis) <= kRematchTolerance
+                                                    : std::abs(x.info.radius - y.info.radius) <= kRematchTolerance &&
+                                                          norm(sub(x.info.center, y.info.center)) <= kRematchTolerance;
                 if (!carrier)
                     continue;
                 const SubId so{SubKind::Edge, o}, sn{SubKind::Edge, n};
@@ -807,58 +806,64 @@ Result<RematchPlan> planByFingerprint(const ElementMap& old, const ElementMap& n
 {
     const MapFacts a = factsOf(old), b = factsOf(natural);
     RematchPlan plan;
-    // Faces: fingerprint, then neighbours (repeated until nothing changes: a face is kept while every neighbour of it
-    // has a candidate among the neighbours of its candidate).
-    std::vector<std::set<std::uint32_t>> candidates(a.fingerprints[kFace].size());
+    // Faces: fingerprint, and bounded alike: the fingerprints of the edges around each face (read from the edge
+    // names: an imported edge is named from its faces) pair off one to one. A square pocket's floor turned 45 degrees
+    // has the floor's fingerprint, but not its edges.
+    auto boundaryOf = [](const MapFacts& m) {
+        std::vector<std::vector<std::uint32_t>> out(m.fingerprints[kFace].size());
+        for (std::uint32_t e = 0; e < m.faces[kEdge].size(); ++e)
+            for (const std::uint32_t f : m.faces[kEdge][e])
+                if (f < out.size())
+                    out[f].push_back(e);
+        return out;
+    };
+    const auto mineAround = boundaryOf(a), theirsAround = boundaryOf(b);
+    auto boundedAlike = [&](std::uint32_t o, std::uint32_t n) {
+        const auto& mine = mineAround[o];
+        const auto& theirs = theirsAround[n];
+        if (mine.empty() || mine.size() != theirs.size())
+            return false;
+        std::vector<bool> used(theirs.size(), false);
+        for (const std::uint32_t e : mine) {
+            const auto& fe = a.fingerprints[kEdge][e];
+            bool found = false;
+            for (std::size_t k = 0; k < theirs.size() && !found; ++k) {
+                const auto& ft = b.fingerprints[kEdge][theirs[k]];
+                if (!used[k] && fe && ft && fe->matches(*ft)) {
+                    used[k] = true;
+                    found = true;
+                }
+            }
+            if (!found)
+                return false;
+        }
+        return true;
+    };
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> facePairs;
     for (std::uint32_t o = 0; o < a.fingerprints[kFace].size(); ++o)
         for (std::uint32_t n = 0; n < b.fingerprints[kFace].size(); ++n)
             if (a.fingerprints[kFace][o] && b.fingerprints[kFace][n] &&
-                a.fingerprints[kFace][o]->matches(*b.fingerprints[kFace][n]))
-                candidates[o].insert(n);
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (std::uint32_t o = 0; o < candidates.size(); ++o)
-            for (auto it = candidates[o].begin(); it != candidates[o].end();) {
-                const std::uint32_t n = *it;
-                const auto& mine = a.faceNeighbours[o];
-                const auto& theirs = b.faceNeighbours[n];
-                bool fits = mine.size() == theirs.size();
-                for (const std::uint32_t m : mine) {
-                    if (!fits)
-                        break;
-                    fits = std::any_of(theirs.begin(), theirs.end(),
-                                       [&](std::uint32_t t) { return candidates[m].count(t) != 0; });
-                }
-                if (fits) {
-                    ++it;
-                } else {
-                    it = candidates[o].erase(it);
-                    changed = true;
-                }
-            }
-    }
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> facePairs;
-    for (std::uint32_t o = 0; o < candidates.size(); ++o)
-        for (const std::uint32_t n : candidates[o])
-            facePairs.emplace_back(o, n);
+                a.fingerprints[kFace][o]->matches(*b.fingerprints[kFace][n]) && boundedAlike(o, n))
+                facePairs.emplace_back(o, n);
     plan.kinds[kFace].same = oneToOne(facePairs, a.fingerprints[kFace].size(), b.fingerprints[kFace].size());
     const std::vector<std::int64_t>& faceSame = plan.kinds[kFace].same;
     // Edges and vertices: fingerprint, and their faces map onto theirs.
     for (const std::size_t k : {kEdge, kVertex}) {
-        plan.kinds[k].same = fingerprintPairs(a.fingerprints[k], b.fingerprints[k], [&](std::uint32_t o, std::uint32_t n) {
-            const auto& mine = a.faces[k][o];
-            const auto& theirs = b.faces[k][n];
-            if (mine.empty() || mine.size() != theirs.size())
-                return false;
-            std::vector<std::uint32_t> mapped;
-            for (const std::uint32_t f : mine) {
-                if (faceSame[f] < 0)
+        plan.kinds[k].same =
+            fingerprintPairs(a.fingerprints[k], b.fingerprints[k], [&](std::uint32_t o, std::uint32_t n) {
+                const auto& mine = a.faces[k][o];
+                const auto& theirs = b.faces[k][n];
+                if (mine.empty() || mine.size() != theirs.size())
                     return false;
-                mapped.push_back(static_cast<std::uint32_t>(faceSame[f]));
-            }
-            std::sort(mapped.begin(), mapped.end());
-            return mapped == theirs;
-        });
+                std::vector<std::uint32_t> mapped;
+                for (const std::uint32_t f : mine) {
+                    if (faceSame[f] < 0)
+                        return false;
+                    mapped.push_back(static_cast<std::uint32_t>(faceSame[f]));
+                }
+                std::sort(mapped.begin(), mapped.end());
+                return mapped == theirs;
+            });
     }
     return plan;
 }
@@ -1007,9 +1012,9 @@ Result<RematchResult> assembleRematch(const ElementMap& old, const ElementMap& n
             }
         }
         // Everything else: its own name.
-        const std::uint32_t count =
-            static_cast<std::uint32_t>(std::count_if(natural.impl->elements.begin(), natural.impl->elements.end(),
-                                                     [&](const ElementMap::Impl::Element& e) { return e.sub.kind == kind; }));
+        const std::uint32_t count = static_cast<std::uint32_t>(
+            std::count_if(natural.impl->elements.begin(), natural.impl->elements.end(),
+                          [&](const ElementMap::Impl::Element& e) { return e.sub.kind == kind; }));
         for (std::uint32_t n = 0; n < count; ++n) {
             if (placed.count(n) != 0)
                 continue;

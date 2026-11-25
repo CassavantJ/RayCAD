@@ -10,8 +10,8 @@
 // triangles (and the same surface type); for
 // edges, the polyline points of each against the other's polyline; for vertices, the points. Two elements SHARE GROUND
 // when an interior sample of one (kMargin from its own boundary) lies on the other. The tolerance is the mesh chord
-// plus 1e-3 mm, an order above rematch's 1e-3 mm, so an element rematch calls unchanged is always identical here, and an
-// element this oracle calls different differs by more than rematch's tolerance.
+// plus 1e-3 mm, an order above rematch's 1e-3 mm, so an element rematch calls unchanged is always identical here, and
+// an element this oracle calls different differs by more than rematch's tolerance.
 //
 // JUDGING one reference (the old element `pick`, the resolver's state and answer in the new shape):
 //  - Exact: right only when the answer is one element identical to the pick. Anything else is WRONG (a silent wrong
@@ -34,7 +34,7 @@ namespace ray::rematch_oracle {
 using kernel::SubId;
 using kernel::SubKind;
 
-inline constexpr double kChord = 0.004;               // mesh chord, mm
+inline constexpr double kChord = 0.004;                 // mesh chord, mm
 inline constexpr double kTolerance = 2 * kChord + 1e-3; // on the other element, mm
 inline constexpr double kMargin = 3 * kTolerance;       // interior samples, from the element's own boundary, mm
 inline constexpr double kMissingShare = 0.2;            // of the pick's interior samples
@@ -74,7 +74,6 @@ struct Judgement {
     Verdict verdict = Verdict::Wrong;
     std::string why;
 };
-Judgement judge(const Samples& before, SubId pick, const Samples& after, State state,
-                const std::vector<SubId>& answer);
+Judgement judge(const Samples& before, SubId pick, const Samples& after, State state, const std::vector<SubId>& answer);
 
 } // namespace ray::rematch_oracle
