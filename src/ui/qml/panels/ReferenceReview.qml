@@ -11,10 +11,12 @@ PanelBase {
     id: root
     objectName: "referenceReview"
 
-    readonly property real contentWidth: Theme.controlHeight * 11
+    // What it would like; the shell may give it less (a small window): the content then follows the width it has.
+    readonly property real preferredContentWidth: Theme.controlHeight * 11
+    readonly property real contentWidth: Math.max(0, width - 2 * Theme.spacingM)
     signal closeRequested()
 
-    implicitWidth: contentWidth + 2 * Theme.spacingM
+    implicitWidth: preferredContentWidth + 2 * Theme.spacingM
     // The title, the list and the footer; the shell caps the height, and then only the list scrolls: the title and
     // the footer (the note, the out-of-date toolpaths with their one action, the last message) stay in view.
     implicitHeight: header.implicitHeight + Theme.spacingS + column.implicitHeight

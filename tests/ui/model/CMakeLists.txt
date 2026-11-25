@@ -21,7 +21,7 @@ target_compile_definitions(ray_ui_model_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SO
 set_property(TARGET ray_ui_model_tests PROPERTY FOLDER "tests")
 
 add_test(NAME ray_ui_model_tests COMMAND ray_ui_model_tests "~[wallclock]~[directedit]")
-add_test(NAME ray_ui_directedit_tests COMMAND ray_ui_model_tests "[directedit]~[wallclock]")
+add_test(NAME ray_ui_directedit_tests COMMAND ray_ui_model_tests "[directedit]~[wallclock]~[scale]")
 foreach(_test IN ITEMS ray_ui_model_tests ray_ui_directedit_tests)
     set_tests_properties(${_test} PROPERTIES TIMEOUT 900)
     # Catch2 exits with 4 when every test case skipped (no QRhi scene graph): CTest then reports the test as skipped.
@@ -33,4 +33,19 @@ foreach(_test IN ITEMS ray_ui_model_tests ray_ui_directedit_tests)
     endif()
     list(APPEND _mods "QSG_NO_VSYNC=set:1")
     set_tests_properties(${_test} PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
+endforeach()
+# T-083: the reference review panel's layout (a dozen rows, the title and the footer in view) from the shell's minimum
+# window size up, at 100 %, 150 % and 200 % (the monitor's own scaling off, so the device pixel ratio is the factor).
+foreach(_scale 1 1.5 2)
+    string(REPLACE "." "_" _name "${_scale}")
+    add_test(NAME ray_ui_directedit_scale_${_name} COMMAND ray_ui_model_tests "[directedit][scale]")
+    set_tests_properties(ray_ui_directedit_scale_${_name} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 4)
+    ray_test_runtime_path(ray_ui_directedit_scale_${_name} QT)
+    get_test_property(ray_ui_directedit_scale_${_name} ENVIRONMENT_MODIFICATION _mods)
+    if(NOT _mods)
+        set(_mods)
+    endif()
+    list(APPEND _mods "QSG_NO_VSYNC=set:1" "QT_ENABLE_HIGHDPI_SCALING=set:0" "QT_SCALE_FACTOR=set:${_scale}"
+         "RAY_TEST_SCALE=set:${_scale}")
+    set_tests_properties(ray_ui_directedit_scale_${_name} PROPERTIES ENVIRONMENT_MODIFICATION "${_mods}")
 endforeach()
