@@ -15,216 +15,239 @@ PanelBase {
     signal closeRequested()
 
     implicitWidth: contentWidth + 2 * Theme.spacingM
-    implicitHeight: column.implicitHeight + 2 * Theme.spacingM
+    // The title, the list and the footer; the shell caps the height, and then only the list scrolls: the title and
+    // the footer (the note, the out-of-date toolpaths with their one action, the last message) stay in view.
+    implicitHeight: header.implicitHeight + Theme.spacingS + column.implicitHeight
+                    + (footer.implicitHeight > 0 ? Theme.spacingS + footer.implicitHeight : 0) + 2 * Theme.spacingM
 
     function stateColor(state) {
         return state === "broken" ? Theme.error : Theme.warning
     }
 
-    Flickable {
-        id: flick
+    Item {
+        id: frame
         anchors.fill: parent
         anchors.margins: Theme.spacingM
-        contentHeight: column.implicitHeight
-        boundsBehavior: Flickable.StopAtBounds
-        interactive: contentHeight > height
-        clip: true
-        ScrollBar.vertical: ScrollBar {}
 
-        Column {
-            id: column
+        Row {
+            id: header
+            anchors.top: parent.top
             width: root.contentWidth
             spacing: Theme.spacingS
-
-            Row {
-                width: parent.width
-                spacing: Theme.spacingS
-                Icon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: "warning"
-                    color: References.count > 0 ? Theme.warning : Theme.textSecondary
-                }
-                Label {
-                    objectName: "referenceReviewTitle"
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 2 * Theme.spacingS - Theme.iconSize - closeButton.width
-                    font: Theme.strongFont
-                    text: References.count > 0 ? qsTr("Reference review: %1 to check").arg(References.count)
-                                                    : qsTr("Reference review")
-                }
-                ToolButton {
-                    id: closeButton
-                    objectName: "referenceReviewClose"
-                    anchors.verticalCenter: parent.verticalCenter
-                    compact: true
-                    iconName: "close"
-                    toolTipText: qsTr("Close (Ctrl+Shift+R opens it again)")
-                    onClicked: References.hide()
-                }
+            Icon {
+                anchors.verticalCenter: parent.verticalCenter
+                name: "warning"
+                color: References.count > 0 ? Theme.warning : Theme.textSecondary
             }
-
             Label {
-                objectName: "referenceReviewEmpty"
-                visible: References.count === 0
-                width: parent.width
-                wrapMode: Text.Wrap
-                elide: Text.ElideNone
-                secondary: true
-                text: References.busy ? qsTr("Checking the references…")
-                      : qsTr("Nothing to review: every feature and operation finds the faces, edges and points it was given.")
+                objectName: "referenceReviewTitle"
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 2 * Theme.spacingS - Theme.iconSize - closeButton.width
+                font: Theme.strongFont
+                text: References.count > 0 ? qsTr("Reference review: %1 to check").arg(References.count)
+                                                : qsTr("Reference review")
             }
+            ToolButton {
+                id: closeButton
+                objectName: "referenceReviewClose"
+                anchors.verticalCenter: parent.verticalCenter
+                compact: true
+                iconName: "close"
+                toolTipText: qsTr("Close (Ctrl+Shift+R opens it again)")
+                onClicked: References.hide()
+            }
+        }
 
-            Repeater {
-                id: rows
-                model: References.rows
-                delegate: Item {
-                    id: row
-                    required property int index
-                    required property var modelData
-                    readonly property bool group: modelData.kind === "group"
-                    readonly property bool current: References.current === index
-                    readonly property bool picking: References.picking && current
-                    objectName: (group ? "referenceGroup." : "referenceRow.") + index
-                    width: column.width
-                    height: group ? groupTitle.implicitHeight + Theme.spacingXs : body.implicitHeight + 2 * Theme.spacingXs
-                    Accessible.role: group ? Accessible.StaticText : Accessible.ListItem
-                    Accessible.name: group ? modelData.title : modelData.place + ": " + modelData.words
-                    Accessible.selected: current
+        Flickable {
+            id: flick
+            objectName: "referenceReviewList"
+            anchors.top: header.bottom
+            anchors.topMargin: Theme.spacingS
+            anchors.bottom: footer.top
+            anchors.bottomMargin: footer.implicitHeight > 0 ? Theme.spacingS : 0
+            width: parent.width
+            contentHeight: column.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            clip: true
+            ScrollBar.vertical: ScrollBar {}
 
-                    Label {
-                        id: groupTitle
-                        visible: row.group
-                        y: Theme.spacingXs
-                        width: parent.width
-                        font: Theme.strongFont
-                        text: row.group ? row.modelData.title : ""
-                    }
+            Column {
+                id: column
+                width: root.contentWidth
+                spacing: Theme.spacingS
 
-                    Rectangle {
-                        visible: !row.group
-                        anchors.fill: parent
-                        radius: Theme.radiusSmall
-                        color: row.current ? Theme.selectionFill : rowHover.hovered ? Theme.controlBgHover : "transparent"
-                    }
-                    HoverHandler {
-                        id: rowHover
-                        enabled: !row.group
-                    }
-                    TapHandler {
-                        enabled: !row.group
-                        onTapped: References.current = row.current ? -1 : row.index
-                    }
+                Label {
+                    objectName: "referenceReviewEmpty"
+                    visible: References.count === 0
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                    secondary: true
+                    text: References.busy ? qsTr("Checking the references…")
+                          : qsTr("Nothing to review: every feature and operation finds the faces, edges and points it was given.")
+                }
 
-                    Column {
-                        id: body
-                        visible: !row.group
-                        x: Theme.spacingS
-                        y: Theme.spacingXs
-                        width: parent.width - 2 * Theme.spacingS
-                        spacing: Theme.spacingXs / 2
+                Repeater {
+                    id: rows
+                    model: References.rows
+                    delegate: Item {
+                        id: row
+                        required property int index
+                        required property var modelData
+                        readonly property bool group: modelData.kind === "group"
+                        readonly property bool current: References.current === index
+                        readonly property bool picking: References.picking && current
+                        objectName: (group ? "referenceGroup." : "referenceRow.") + index
+                        width: column.width
+                        height: group ? groupTitle.implicitHeight + Theme.spacingXs : body.implicitHeight + 2 * Theme.spacingXs
+                        Accessible.role: group ? Accessible.StaticText : Accessible.ListItem
+                        Accessible.name: group ? modelData.title : modelData.place + ": " + modelData.words
+                        Accessible.selected: current
 
-                        Row {
-                            width: parent.width
-                            spacing: Theme.spacingS
-                            Rectangle {
-                                width: Theme.spacingS
-                                height: width
-                                radius: width / 2
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: row.group ? "transparent" : root.stateColor(row.modelData.state)
-                                Accessible.ignored: true
-                            }
-                            Label {
-                                objectName: "referenceState." + row.index
-                                anchors.verticalCenter: parent.verticalCenter
-                                font: Theme.smallFont
-                                color: row.group ? Theme.textSecondary : root.stateColor(row.modelData.state)
-                                text: row.group ? "" : row.modelData.stateLabel
-                            }
-                            Label {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - x
-                                secondary: true
-                                font: Theme.smallFont
-                                text: row.group ? "" : row.modelData.place
-                            }
-                        }
                         Label {
-                            objectName: "referenceWords." + row.index
+                            id: groupTitle
+                            visible: row.group
+                            y: Theme.spacingXs
                             width: parent.width
-                            wrapMode: Text.Wrap
-                            elide: Text.ElideNone
-                            text: row.group ? "" : row.modelData.words
+                            font: Theme.strongFont
+                            text: row.group ? row.modelData.title : ""
                         }
-                        Label {
-                            width: parent.width
-                            wrapMode: Text.Wrap
-                            elide: Text.ElideNone
-                            secondary: true
-                            font: Theme.smallFont
-                            text: row.group ? "" : row.modelData.consequence
+
+                        Rectangle {
+                            visible: !row.group
+                            anchors.fill: parent
+                            radius: Theme.radiusSmall
+                            color: row.current ? Theme.selectionFill : rowHover.hovered ? Theme.controlBgHover : "transparent"
                         }
-                        Label {
-                            visible: !row.group && row.current && row.modelData.reason !== ""
-                            width: parent.width
-                            wrapMode: Text.Wrap
-                            elide: Text.ElideNone
-                            secondary: true
-                            font: Theme.smallFont
-                            text: row.group ? "" : qsTr("Why: %1").arg(row.modelData.reason)
+                        HoverHandler {
+                            id: rowHover
+                            enabled: !row.group
                         }
-                        // The current row's actions.
-                        Row {
-                            visible: !row.group && row.current && !row.picking
-                            spacing: Theme.spacingS
-                            Button {
-                                objectName: "referenceConfirm." + row.index
-                                visible: !row.group && row.modelData.canConfirm === true
-                                primary: true
-                                text: qsTr("Confirm")
-                                toolTipText: qsTr("Use the likely match that is highlighted")
-                                onClicked: References.confirm(row.index)
-                            }
-                            Button {
-                                objectName: "referenceRepick." + row.index
-                                text: qsTr("Re-pick")
-                                toolTipText: qsTr("Click the element to use now in the view")
-                                onClicked: References.repick(row.index)
-                            }
+                        TapHandler {
+                            enabled: !row.group
+                            onTapped: References.current = row.current ? -1 : row.index
                         }
-                        // Re-pick: what to click, then Use.
+
                         Column {
-                            visible: row.picking
-                            width: parent.width
-                            spacing: Theme.spacingXs
+                            id: body
+                            visible: !row.group
+                            x: Theme.spacingS
+                            y: Theme.spacingXs
+                            width: parent.width - 2 * Theme.spacingS
+                            spacing: Theme.spacingXs / 2
+
+                            Row {
+                                width: parent.width
+                                spacing: Theme.spacingS
+                                Rectangle {
+                                    width: Theme.spacingS
+                                    height: width
+                                    radius: width / 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: row.group ? "transparent" : root.stateColor(row.modelData.state)
+                                    Accessible.ignored: true
+                                }
+                                Label {
+                                    objectName: "referenceState." + row.index
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    font: Theme.smallFont
+                                    color: row.group ? Theme.textSecondary : root.stateColor(row.modelData.state)
+                                    text: row.group ? "" : row.modelData.stateLabel
+                                }
+                                Label {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width - x
+                                    secondary: true
+                                    font: Theme.smallFont
+                                    text: row.group ? "" : row.modelData.place
+                                }
+                            }
+                            Label {
+                                objectName: "referenceWords." + row.index
+                                width: parent.width
+                                wrapMode: Text.Wrap
+                                elide: Text.ElideNone
+                                text: row.group ? "" : row.modelData.words
+                            }
                             Label {
                                 width: parent.width
                                 wrapMode: Text.Wrap
                                 elide: Text.ElideNone
+                                secondary: true
                                 font: Theme.smallFont
-                                text: References.pickHint
+                                text: row.group ? "" : row.modelData.consequence
                             }
+                            Label {
+                                visible: !row.group && row.current && row.modelData.reason !== ""
+                                width: parent.width
+                                wrapMode: Text.Wrap
+                                elide: Text.ElideNone
+                                secondary: true
+                                font: Theme.smallFont
+                                text: row.group ? "" : qsTr("Why: %1").arg(row.modelData.reason)
+                            }
+                            // The current row's actions.
                             Row {
+                                visible: !row.group && row.current && !row.picking
                                 spacing: Theme.spacingS
                                 Button {
-                                    objectName: "referenceUse." + row.index
+                                    objectName: "referenceConfirm." + row.index
+                                    visible: !row.group && row.modelData.canConfirm === true
                                     primary: true
-                                    enabled: References.pickCount > 0
-                                    text: References.pickCount > 1 ? qsTr("Use these %1").arg(References.pickCount)
-                                                                        : qsTr("Use")
-                                    toolTipText: qsTr("Put the picked element in its place (Enter): one step to undo")
-                                    onClicked: References.usePicks()
+                                    text: qsTr("Confirm")
+                                    toolTipText: qsTr("Use the likely match that is highlighted")
+                                    onClicked: References.confirm(row.index)
                                 }
                                 Button {
-                                    objectName: "referencePickCancel." + row.index
-                                    text: qsTr("Cancel")
-                                    onClicked: References.cancelPick()
+                                    objectName: "referenceRepick." + row.index
+                                    text: qsTr("Re-pick")
+                                    toolTipText: qsTr("Click the element to use now in the view")
+                                    onClicked: References.repick(row.index)
+                                }
+                            }
+                            // Re-pick: what to click, then Use.
+                            Column {
+                                visible: row.picking
+                                width: parent.width
+                                spacing: Theme.spacingXs
+                                Label {
+                                    width: parent.width
+                                    wrapMode: Text.Wrap
+                                    elide: Text.ElideNone
+                                    font: Theme.smallFont
+                                    text: References.pickHint
+                                }
+                                Row {
+                                    spacing: Theme.spacingS
+                                    Button {
+                                        objectName: "referenceUse." + row.index
+                                        primary: true
+                                        enabled: References.pickCount > 0
+                                        text: References.pickCount > 1 ? qsTr("Use these %1").arg(References.pickCount)
+                                                                            : qsTr("Use")
+                                        toolTipText: qsTr("Put the picked element in its place (Enter): one step to undo")
+                                        onClicked: References.usePicks()
+                                    }
+                                    Button {
+                                        objectName: "referencePickCancel." + row.index
+                                        text: qsTr("Cancel")
+                                        onClicked: References.cancelPick()
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+
+        Column {
+            id: footer
+            objectName: "referenceReviewFooter"
+            anchors.bottom: parent.bottom
+            width: root.contentWidth
+            spacing: Theme.spacingS
 
             Label {
                 objectName: "referenceViewNote"
