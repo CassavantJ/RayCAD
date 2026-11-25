@@ -96,6 +96,21 @@
 //    such a piece. A removal that leaves part of a removed face, or a face run on over it, is not modelled
 //    (measureEdit).
 //
+// Refinements of T-081b (direct edits; each has a replay, random_directedit_test.cpp [oracle-gate]):
+//  - A vertex where two pieces of a face met another face, the pieces since joined, nothing moved, continues the pick.
+//  - Another element's territory counts (merged) only on the description's own surfaces: the other element must lie on
+//    them itself (an element on another surface comes within the tolerance only where the surfaces meet).
+//  - Elements of an owner a direct edit removed are gone (not "cannot be mapped, so might lie anywhere").
+//  - A piece of the logical element on ground no baseline element held, beside a piece that continues the pick, when
+//    nothing moved, is new territory, not part of E (an answer with it is judged by the new-territory rule).
+//  - An element merged only because a baseline element that cannot be mapped might have moved there: an Exact answer
+//    of exactly E is not judged (Expectation::mergeUnknown).
+//  - A weak reference that moved, the pick and another baseline piece mapped onto the same element: no other answer
+//    inside the logical element is judged either (Expectation::sharedAnchor).
+//  - The logical element gone with its owner while an element still holds all the ground the pick held: no anchor.
+// RAYCAD_ORACLE_DEBUG_MERGED=1 prints, for every sample that makes an expected element merged, the baseline elements
+// it lies on.
+//
 // STRICT MODE. RAYCAD_ORACLE_STRICT=<list> restores the spike's strictness for the loosenings kept since: "nodes"
 // (every node within tolerance), "band" (separators apply everywhere). The tests print which is active. Measured on
 // the T-081a review (verdicts per reference compared, RAYCAD_NAMING_VERDICTS): "nodes" changes 0 of 33,785 S4 and
@@ -215,14 +230,16 @@ Result<std::shared_ptr<const ImportBase>> analyseImport(const kernel::Shape& sha
 
 // A direct edit (task T-081b: kernel deleteFaces, offsetFaces, resizeHole, unifySameDomain) of the logical faces
 // `targets` (owner keys). Its owners (buildOwners) follow from geometry alone, never from the kernel's history:
-//  - Delete: the owners in `removed` are gone. Every other owner's extent also takes in the ground the removed faces
-//    left (within each removed face's reach of its mesh as it was: the hole a face grows over when a hole, pocket or
-//    blend is removed, the corner a removed fillet rounded).
+//  - Delete: the owners in `removed` are gone. The extent of each owner that bordered a removed face (`grown`) also
+//    takes in the ground the removed faces left (within each removed face's reach of its mesh as it was: the hole a
+//    face grows over when a hole, pocket or blend is removed, the corner a removed fillet rounded).
 //  - Offset: each target (a plane with a known outward normal) is moved `amount` along its outward normal (positive
 //    adds material, as kernel::offsetFaces), its extent with it. Faces around it are not extended: where they now
 //    run on over ground nobody held, the merged rule's new territory covers it (expect).
 //  - Resize: each owner in `resized` (the bore: cylinders on one axis and radius) gets radius `amount`, its extent
-//    carried radially. The faces around it are not extended, as for an offset.
+//    carried radially; the extents of the owners that bordered the bore (`grown`) take in the ring between the two
+//    radii (as far as the radius changed from the bore's faces, `fill`) when the bore closes down: where it meets them
+//    now.
 //  - Unify: no owner changes; a face that unification made of two is described by both owners (merged).
 // The measured fields are filled by measureEdit when the edit is built, from the shapes before and after it: which
 // owners had a face before and have none after (Delete), which faces of the bore changed radius (Resize). The edit's
@@ -232,10 +249,12 @@ struct EditSpec {
     EKind kind = EKind::Delete;
     std::vector<std::string> targets;
     double amount = 0;
-    std::vector<std::string> removed;                  // Delete (measured)
-    std::vector<std::shared_ptr<const FaceMesh>> fill; // Delete (measured): the removed faces' meshes, before the edit
-    std::vector<double> fillReach;                     // parallel to fill: how far a face around may run on over it
-    std::vector<std::string> resized;                  // Resize (measured)
+    std::vector<std::string> removed; // Delete (measured)
+    std::vector<std::shared_ptr<const FaceMesh>>
+        fill;                         // Delete, Resize (measured): removed / bore faces' meshes, before
+    std::vector<double> fillReach;    // parallel to fill: how far a face around may run on over it
+    std::vector<std::string> grown;   // Delete, Resize (measured): owners that bordered the removed faces
+    std::vector<std::string> resized; // Resize (measured)
 };
 
 struct Feature {
@@ -467,6 +486,10 @@ struct Expectation {
     // whether that element continues both (merged) cannot be told, so an Exact answer is not judged (a Merged or Split
     // answer of exactly E is right either way).
     bool mergeUnknown = false;
+    // The same case: E is where both the pick and another baseline piece of its logical element went, so which of the
+    // logical element's parts continues the pick cannot be told either: any other answer inside the logical element is
+    // not judged (T-081b directedit 6:3: a cut moved across a hole, its wall's two crossings with the hole wall).
+    bool sharedAnchor = false;
     bool inLogical(std::uint32_t e) const;
     bool isAnchored(std::uint32_t e) const;
     bool isClaimed(std::uint32_t e) const;

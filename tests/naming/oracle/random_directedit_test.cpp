@@ -604,7 +604,8 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
             std::snprintf(buf, sizeof buf, " amount %.6f size %.6f dist %.6f faces %u", f->edit.amount, f->size,
                           f->dist, b.shape().count(SubKind::Face));
             what += buf;
-            what += b.built() > before ? " built" : " refused: " + (b.failed().size() > failedBefore ? b.failed().back() : "");
+            what += b.built() > before ? " built"
+                                       : " refused: " + (b.failed().size() > failedBefore ? b.failed().back() : "");
             std::printf("  step %s\n", what.c_str());
         }
         if (b.built() > before) {
@@ -683,6 +684,13 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
                               "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
         for (const std::string& fail : replay.failed())
             out.log.wrongs.push_back("  replay failure: " + fail);
+        std::string built;
+        for (const std::string& id : replay.builtIds())
+            built += " " + id;
+        out.log.wrongs.push_back("  replay built:" + built);
+        if (std::getenv("RAYCAD_NAMING_ONLY") != nullptr)
+            out.log.wrongs.push_back("  baseline faces:\n" + dumpElements(b, **smp0, SubKind::Face) +
+                                     "  replay faces:\n" + dumpElements(replay, **smp1, SubKind::Face));
     }
     return out;
 }
@@ -1007,29 +1015,77 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
 
 } // namespace
 
-TEST_CASE("Oracle (directedit 7:0, 4:1): a vertex where two pieces of a blend met a face, the pieces since joined, "
-          "continues the pick",
+TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on the sequences that showed them",
           "[naming][directedit][oracle-gate]")
 {
-    // keyway_tslot_1 #0 and fillet_block_1 #1: a fillet round a boss side or a hole wall is in two pieces that meet the
-    // side at a vertex; a push/pull elsewhere on the part (its boolean unifies same-domain faces) joins the two pieces
-    // into one face. The vertex stays where it was, on the side and the fillet, and keeps its name. Before the
-    // refinement the oracle expected nothing (the description wants a face of its own for each piece) and called the
-    // resolver's Exact a ghost. Negative: another vertex answered Exact is wrong.
-    const std::vector<std::pair<int, std::string>> cases{
-        {7, "directedit raycad-synthetic/keyway_tslot_1.stp #0|vertex 0"},
-        {4, "directedit raycad-synthetic/fillet_block_1.stp #1|vertex 15"}};
-    for (const auto& [partIndex, id] : cases) {
-        const int seq = id.find("#0|") != std::string::npos ? 0 : 1;
-        const std::vector<Looked> looked = replayAndLook(partIndex, seq, {id});
+    // Each case replays one sequence of the block (its seed is fixed) and checks the resolver's answer and the oracle's
+    // verdict on the reference the refinement is about; for a correct answer, also that another element answered
+    // Exact is judged wrong (the oracle is not vacuous there).
+    struct Case {
+        int part, seq;
+        std::string id;
+        Answer answer;
+        Verdict verdict;
+        const char* about;
+    };
+    const std::string k = "directedit raycad-synthetic/";
+    const std::vector<Case> cases{
+        // Kernel (directedit.cpp demoteReversedImages): removing a counterbore wall caps the bore on the floor's plane,
+        // looking down; that cap was the floor's Modified image, and the floor resolved Exact to it (a ghost).
+        {5, 43, k + "fixture_plate_1.stp #43|face 23", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
+        {9, 13, k + "manifold_block_1.stp #13|face 19", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
+        // A vertex where two pieces of a blend met a face, the pieces joined by a later push/pull's boolean.
+        {7, 0, k + "keyway_tslot_1.stp #0|vertex 0", Answer::Exact, Verdict::Correct, "joined blend pieces"},
+        {4, 1, k + "fillet_block_1.stp #1|vertex 15", Answer::Exact, Verdict::Correct, "joined blend pieces"},
+        // The reach of a removed face is its own size: a 0.3 mm chamfer ring round a hub does not let the hub's bolt
+        // holes grow over each other's faces 50 mm away.
+        {6, 9, k + "flange_bolt_circle_1.stp #9|face 5", Answer::Exact, Verdict::Correct, "removed face's reach"},
+        // A face beside the picked one on its plane, on ground nobody held (a push/pull slab's side, left a face of its
+        // own), is new territory, not part of the picked face.
+        {0, 19, k + "block_blind_holes_1.stp #19|face 6", Answer::Exact, Verdict::Correct, "new-territory piece"},
+        // Territory of another element counts only on the description's surfaces: an arc tangent to the picked line, a
+        // floor a wall stands on, a hole wall another hole crosses.
+        {8, 6, k + "l_bracket_1.stp #6|edge 26", Answer::Exact, Verdict::Correct, "tangent arc"},
+        {15, 25, k + "slot_through_1.stp #25|face 10", Answer::Exact, Verdict::Correct, "wall on a floor"},
+        {7, 47, k + "keyway_tslot_1.stp #47|face 14", Answer::Exact, Verdict::Correct, "crossing hole walls"},
+        // Faces bordering a bore closed down run on over the ring between the radii.
+        {3, 49, k + "closed_pocket_3.stp #49|edge 5", Answer::Exact, Verdict::Correct, "bore closed down"},
+        // Not judged (each on reviewed_unjudged.txt): the pick and another piece mapped onto one place; merged only for
+        // an element that cannot be mapped; the owner gone while an element holds all of the pick's ground.
+        {6, 3, k + "flange_bolt_circle_1.stp #3|edge 23", Answer::Split, Verdict::Unjudged, "shared anchor"},
+        {11, 17, k + "plate_counterbore_1.stp #17|face 17", Answer::Exact, Verdict::Unjudged, "merge unknown"},
+        {17, 20, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #20|face 13", Answer::Merged, Verdict::Unjudged,
+         "owner gone, ground held"},
+    };
+    for (const Case& c : cases) {
+        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id});
+        INFO(c.id << " (" << c.about << ")");
         REQUIRE(looked.size() == 1);
-        INFO(id << ": " << verdictName(looked[0].judgement.verdict));
-        CHECK(looked[0].answer == Answer::Exact);
-        CHECK(looked[0].judgement.verdict == Verdict::Correct);
-        CHECK(isWrong(looked[0].other.verdict));
+        INFO("verdict " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == c.answer);
+        CHECK(looked[0].judgement.verdict == c.verdict);
+        if (c.verdict == Verdict::Correct || c.verdict == Verdict::BrokenGone)
+            CHECK(isWrong(looked[0].other.verdict));
     }
 }
 
+TEST_CASE("Oracle (directedit 7:12, 15:46): a removal that leaves part of a removed face is not modelled",
+          "[naming][directedit][oracle-gate]")
+{
+    // keyway_tslot_1 #12: deleting a hole whose mouth chamfer Defeaturing extends into a cone where the bore was;
+    // slot_through_1 #46: deleting an arc wall of a cut leaves a remnant of its straight wall. Which logical face such
+    // a face continues is not what the oracle's model of a removal says, so the step is skipped (counted), not judged.
+    for (const auto& [part, seq] : std::vector<std::pair<int, int>>{{7, 12}, {15, 46}}) {
+        const Part pt = loadPart(kParts[part]);
+        REQUIRE(pt.base != nullptr);
+        const SequenceResult r = runSequence(pt, part, seq, SequenceOptions{});
+        INFO(kParts[part] << " #" << seq);
+        CHECK_FALSE(r.skipped);
+        const auto it = r.editCounts.find("delete_hole: not modelled (a removed face is still there in part)");
+        CHECK((it != r.editCounts.end() && it->second >= 1));
+        CHECK(r.tally.wrong() == 0);
+    }
+}
 TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
 {
     int part = 0, seq = 0;
@@ -1046,9 +1102,10 @@ TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
                     p.boxMin.z, p.boxMax.x, p.boxMax.y, p.boxMax.z);
         for (const SubId& s : res.elements) {
             const ElemSamples& a = samples.of(s.kind)[s.index];
-            std::printf("   answer %u type %d nrm (%.3f %.3f %.3f) sided %d sigma %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
-                        s.index, a.type, a.nrm.x, a.nrm.y, a.nrm.z, a.sided ? 1 : 0, a.sigma, a.boxMin.x, a.boxMin.y,
-                        a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z);
+            std::printf(
+                "   answer %u type %d nrm (%.3f %.3f %.3f) sided %d sigma %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
+                s.index, a.type, a.nrm.x, a.nrm.y, a.nrm.z, a.sided ? 1 : 0, a.sigma, a.boxMin.x, a.boxMin.y,
+                a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z);
             std::printf("   against the baseline owners: %s\n",
                         explain(ref.record.truth, *ref.record.owners, samples, s.index).c_str());
         }

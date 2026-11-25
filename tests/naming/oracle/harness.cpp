@@ -479,12 +479,13 @@ bool Builder::edit(Feature& f)
             const std::uint32_t i = s.index;
             char buf[160];
             std::snprintf(buf, sizeof buf, "%u[t%d n(%.2f %.2f %.2f) (%.2f %.2f %.2f)-(%.2f %.2f %.2f)]", i, es.type,
-                          es.nrm.x, es.nrm.y, es.nrm.z, es.boxMin.x, es.boxMin.y, es.boxMin.z, es.boxMax.x,
-                          es.boxMax.y, es.boxMax.z);
+                          es.nrm.x, es.nrm.y, es.nrm.z, es.boxMin.x, es.boxMin.y, es.boxMin.z, es.boxMax.x, es.boxMax.y,
+                          es.boxMax.z);
             return std::string(buf);
         };
         for (const kernel::HistoryEntry& e : op->history.entries) {
-            if (e.source.kind != SubKind::Face && (e.source.kind != SubKind::Edge || std::getenv("RAYCAD_NAMING_EDIT_DEBUG")[0] != '2'))
+            if (e.source.kind != SubKind::Face &&
+                (e.source.kind != SubKind::Edge || std::getenv("RAYCAD_NAMING_EDIT_DEBUG")[0] != '2'))
                 continue;
             const bool same = e.relation == kernel::HistoryEntry::Relation::Modified && e.results.size() == 1 &&
                               e.results[0] == e.source;
@@ -493,7 +494,7 @@ bool Builder::edit(Feature& f)
             text += "\n  " +
                     std::string(e.relation == kernel::HistoryEntry::Relation::Modified    ? "Modified "
                                 : e.relation == kernel::HistoryEntry::Relation::Generated ? "Generated "
-                                                                                           : "Deleted ") +
+                                                                                          : "Deleted ") +
                     (e.source.kind == SubKind::Edge ? "edge " : "") + face(**samples, e.source) + " ->";
             for (const SubId& r : e.results)
                 text += " " + face(**after, r);

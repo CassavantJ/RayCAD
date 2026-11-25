@@ -654,23 +654,6 @@ void applyEdit(Owners& O, const Feature& f)
                 kept.push_back(std::move(o));
         O.v = std::move(kept);
         reindex();
-        if (!e.fill.empty()) {
-            const auto fill = e.fill;
-            const auto reach = e.fillReach;
-            for (Owner& o : O.v) {
-                const auto old = o.in;
-                o.in = [old, fill, reach](const Vec3& p, double m) {
-                    if (old(p, m))
-                        return true;
-                    for (std::size_t i = 0; i < fill.size() && i < reach.size(); ++i) {
-                        const double limit = reach[i] + m;
-                        if (fill[i] && fill[i]->distanceWithin(p, limit) <= limit)
-                            return true;
-                    }
-                    return false;
-                };
-            }
-        }
         break;
     }
     case EKind::Offset:
@@ -719,6 +702,27 @@ void applyEdit(Owners& O, const Feature& f)
         break;
     case EKind::Unify:
         break;
+    }
+    // Delete, Resize: the faces that bordered the removed faces or the bore run on over the ground they left.
+    if (!e.fill.empty()) {
+        const auto fill = e.fill;
+        const auto reach = e.fillReach;
+        const std::set<std::string> grown(e.grown.begin(), e.grown.end());
+        for (Owner& o : O.v) {
+            if (grown.count(o.key) == 0)
+                continue;
+            const auto old = o.in;
+            o.in = [old, fill, reach](const Vec3& p, double m) {
+                if (old(p, m))
+                    return true;
+                for (std::size_t i = 0; i < fill.size() && i < reach.size(); ++i) {
+                    const double limit = reach[i] + m;
+                    if (fill[i] && fill[i]->distanceWithin(p, limit) <= limit)
+                        return true;
+                }
+                return false;
+            };
+        }
     }
     // A sweep with an edited face is no longer the sweep the script describes: its volume is not what it moved or
     // kept (mapElement).
@@ -1502,6 +1506,26 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
         s.push_back(f);
         return buildOwners(s);
     };
+    // The owners, other than `exclude`, with a face that shares an edge with one of `faces` (of the shape before).
+    auto bordering = [&](const std::set<std::uint32_t>& faces, const std::vector<std::string>& exclude) {
+        std::vector<std::string> out;
+        for (const Owner& o : O0.v) {
+            if (std::find(exclude.begin(), exclude.end(), o.key) != exclude.end())
+                continue;
+            bool borders = false;
+            for (const std::uint32_t x : facesOn(o.key, O0, before))
+                for (std::uint32_t edge = 0; !borders && edge < before.facesOf[1].size(); ++edge) {
+                    const auto& fs = before.facesOf[1][edge];
+                    if (std::find(fs.begin(), fs.end(), x) == fs.end())
+                        continue;
+                    for (const std::uint32_t y : fs)
+                        borders = borders || faces.count(y) != 0;
+                }
+            if (borders)
+                out.push_back(o.key);
+        }
+        return out;
+    };
     switch (e.kind) {
     case EKind::Delete: {
         e.removed.clear();
@@ -1566,6 +1590,8 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
                 }
             }
         }
+        // The owners whose faces bordered a removed face (shared an edge with one): only those run on over the ground.
+        e.grown = bordering(gone, e.removed);
         // How far a face around may run on over each removed face: a curved face's smallest box dimension (a hole's
         // diameter, a fillet's size; a ring-shaped blend is as thick as its size, not as wide as its ring), a flat
         // face's 0.1 mm (a face running on over a removed pocket or flat chamfer runs over ground nobody held: new
@@ -1610,6 +1636,18 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
         }
         if (std::find(e.resized.begin(), e.resized.end(), T->key) == e.resized.end())
             return "the picked bore face is still at its old radius: " + T->key;
+        // The faces around the bore run on over the ring between the old and the new radius when it closes down: as far
+        // as the radius changed from the bore's faces as they were.
+        e.fill.clear();
+        e.fillReach.clear();
+        std::set<std::uint32_t> bore;
+        for (const std::string& r : e.resized)
+            for (const std::uint32_t x : facesOn(r, O0, before))
+                if (e.amount < T->c.r && bore.insert(x).second && before.of(SubKind::Face)[x].mesh) {
+                    e.fill.push_back(before.of(SubKind::Face)[x].mesh);
+                    e.fillReach.push_back(std::abs(T->c.r - e.amount) + 0.1);
+                }
+        e.grown = bordering(bore, e.resized);
         const Owners O1 = withEdit();
         for (const std::string& r : e.resized)
             if (facesOn(r, O1, after).empty())
@@ -2621,6 +2659,29 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     const TruthEval L = evalTruth(withoutSeparators(d), now, smp);
     std::set_union(L.elems.begin(), L.elems.end(), x.strict.elems.begin(), x.strict.elems.end(),
                    std::back_inserter(x.logical));
+    // The logical element is gone with its owner (a feature suppressed, a face a direct edit removed), yet an element
+    // of the shape still holds all the ground the picked one held: whose element that is now cannot be told (the
+    // description named one of two coincident owners: T-081b directedit 17:20, a cut's start cap on the plane of a
+    // boss's start cap, the boss suppressed). Only an answer that is not Broken is affected (not judged instead of a
+    // ghost).
+    if (x.logical.empty()) {
+        bool ownerGone = false;
+        for (const Constraint& c : d.cons) {
+            bool any = false;
+            for (const std::string& alt : c.alts)
+                any = any || now.get(alt) != nullptr;
+            ownerGone = ownerGone || !any;
+        }
+        if (ownerGone)
+            for (std::uint32_t e = 0; e < N.size(); ++e)
+                if (!N[e].pts.empty() && sameSheet(pick.picked(), N[e], x.kind) &&
+                    (x.kind == SubKind::Vertex || N[e].type == pick.picked().type) &&
+                    shareOn(pick.picked(), N[e], x.kind) >= 0.9) {
+                    x.noAnchor = "the picked element's owner is gone, but element " + std::to_string(e) +
+                                 " holds all of its ground";
+                    return x;
+                }
+    }
     // A description using a degenerate blend surface that nothing of the edited shape fits: the kernel built another
     // surface, and where the blend went cannot be told (Owners::degenerate).
     if (x.logical.empty())
@@ -2795,10 +2856,9 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             sameSurface.emplace(std::make_pair(&b, &owners), all);
             return all;
         };
-        // Is p of element `of` on territory of element b (inside it, not beside it)? `owners`: whose carriers b must lie
-        // on (today's, or the baseline's for a point carried back to pick time).
-        auto onTerritoryOf = [&](const Vec3& p, const ElemSamples& of, const ElemSamples& b,
-                                 const Owners& owners) {
+        // Is p of element `of` on territory of element b (inside it, not beside it)? `owners`: whose carriers b must
+        // lie on (today's, or the baseline's for a point carried back to pick time).
+        auto onTerritoryOf = [&](const Vec3& p, const ElemSamples& of, const ElemSamples& b, const Owners& owners) {
             return !b.pts.empty() && sameSheet(of, b, x.kind) &&
                    nearInterior(p, b, x.kind, kAnchorTolerance, besideMargin(b, x.kind)) &&
                    onDescribedSurfaces(b, owners);
@@ -2838,20 +2898,29 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         // owner, plus 1 mm: an element moves with its owners), each mapped once. One that cannot be described or mapped
         // counts as lying at p (it might have moved there).
         const double reach = 2.0 * largestOwnerShift(*pick.owners, now) + 1.0;
+        // (`unknown` is set when the only reason is an element that cannot be mapped.)
+        bool unknown = false;
         auto onMovedBaseline = [&](const Vec3& p, const ElemSamples& of) {
-            if (!pick.builder)
+            unknown = false;
+            if (!pick.builder) {
+                unknown = true;
                 return true; // nothing can be mapped: as before, the element stays merged
+            }
+            bool unmapped = false;
             for (const std::uint32_t i : near(of, reach)) {
                 if (outsideBox(p, B[i].boxMin, B[i].boxMax, reach))
                     continue;
                 // (Mapped once per element and edited script, for every reference of the baseline: TruthBuilder.)
                 const std::optional<ElemSamples>& m = pick.builder->mappedTo(SubId{x.kind, i}, now);
-                if (!m)
-                    return true;
+                if (!m) {
+                    unmapped = true;
+                    continue;
+                }
                 if (!m->pts.empty() && onTerritoryOf(p, of, *m, now)) // no samples: where it was, onBaseline's business
                     return true;
             }
-            return false;
+            unknown = unmapped;
+            return unmapped;
         };
         // When every face of the description is one sweep's and that sweep moved or was scaled (profileScale), the
         // picked element moved with it, and so did everything else of that sweep: a point is checked where it was
@@ -2878,13 +2947,15 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         }
         const bool movedWithSweep = x.moved && fa != nullptr;
         std::vector<std::uint32_t> still;
+        bool allUnknown = true; // every merged element is merged only for an element that cannot be mapped
         for (const std::uint32_t e : te.partial) {
             const std::vector<char>* mask = nullptr;
             for (const auto& [m, bits] : masks)
                 if (m == e)
                     mask = &bits;
             bool merged = mask == nullptr || (x.weak && x.isClaimed(e));
-            for (std::size_t j = 0; !merged && j < N[e].pts.size(); ++j) {
+            bool onlyUnknown = !merged;
+            for (std::size_t j = 0; (!merged || onlyUnknown) && j < N[e].pts.size(); ++j) {
                 if ((*mask)[j] != 0)
                     continue;
                 const Vec3& p = N[e].pts[j];
@@ -2898,21 +2969,30 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                     continue; // new territory of an element that moved with its sweep
                 if (x.moved && !movedWithSweep && !onBaseline(p, N[e]) && !onMovedBaseline(p, N[e]))
                     continue; // new territory of an element that moved otherwise: nothing had it, here or moved here
+                const bool concrete = !(x.moved && !movedWithSweep && !onBaseline(p, N[e]) && unknown);
                 merged = true;
+                onlyUnknown = onlyUnknown && !concrete;
                 if (std::getenv("RAYCAD_ORACLE_DEBUG_MERGED") != nullptr) {
                     std::string on;
                     for (std::uint32_t i = 0; i < B.size(); ++i)
                         if (i != pick.base.index && onTerritoryOf(p, N[e], B[i], *pick.owners))
                             on += " b" + std::to_string(i) + "(t" + std::to_string(B[i].type) + ")";
-                    std::printf("merged: element %u (t%d) sample (%.3f %.3f %.3f) moved %d on%s\n", e, N[e].type, p.x, p.y, p.z,
-                                x.moved ? 1 : 0, on.c_str());
+                    std::printf("merged: element %u (t%d) sample (%.3f %.3f %.3f) moved %d on%s\n", e, N[e].type, p.x,
+                                p.y, p.z, x.moved ? 1 : 0, on.c_str());
                 }
             }
-            if (merged)
+            if (merged) {
                 still.push_back(e);
+                allUnknown = allUnknown && onlyUnknown;
+            }
         }
         te.partial = still;
         te.merged = !still.empty();
+        // Merged only because a baseline element that cannot be mapped through the edit might have moved there (a
+        // direct edit's faces among them: T-081b directedit 17:29, 11:17, 6:38): whether the element took in another's
+        // ground cannot be told, so an Exact answer is not judged (a Merged one of exactly E is right either way).
+        if (te.merged && allUnknown)
+            x.mergeUnknown = true;
     };
     std::set<int> strictParts, anchoredParts;
     for (const std::uint32_t e : x.strict.elems)
@@ -2952,8 +3032,10 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     // mergeUnknown).
     if (x.weak && x.moved)
         for (const std::uint32_t e : x.expected.elems)
-            if (x.isAnchored(e) && x.isClaimed(e))
+            if (x.isAnchored(e) && x.isClaimed(e)) {
                 x.mergeUnknown = true;
+                x.sharedAnchor = true;
+            }
     if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
         x.twins = true;
         const Vec3 p = N[x.expected.elems.front()].nodes.front();
@@ -3195,7 +3277,11 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
             j.verdict = E.empty() ? Verdict::BrokenGone : Verdict::Missed;
         else if (E.empty())
             j.verdict = Verdict::WrongGhost;
-        else if (X.empty() || !std::includes(E.begin(), E.end(), X.begin(), X.end()))
+        else if (x.sharedAnchor && !X.empty() && X != E &&
+                 std::all_of(X.begin(), X.end(), [&](std::uint32_t e) { return x.inLogical(e); })) {
+            j.verdict = Verdict::Unjudged; // Expectation::sharedAnchor
+            j.unjudged = true;
+        } else if (X.empty() || !std::includes(E.begin(), E.end(), X.begin(), X.end()))
             j.verdict = Verdict::WrongOther;
         else if (answer == Answer::Exact || answer == Answer::Repaired) {
             // The one piece that continues the pick; an element that also continues another baseline piece is a
@@ -3213,6 +3299,17 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
         } else
             j.verdict = X == E ? Verdict::Correct : Verdict::WrongIncomplete;
         return j;
+    }
+    // An Exact answer of exactly E, where whether E took in another element's ground cannot be told (ownTerritory).
+    if (x.mergeUnknown && x.expected.merged && (answer == Answer::Exact || answer == Answer::Repaired)) {
+        std::vector<std::uint32_t> sorted = X;
+        std::sort(sorted.begin(), sorted.end());
+        sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+        if (sorted == E) {
+            j.verdict = Verdict::Unjudged;
+            j.unjudged = true;
+            return j;
+        }
     }
     j.verdict = judge(answer, X, x.expected);
     if (isWrong(j.verdict) && answer != Answer::Broken &&

@@ -418,9 +418,8 @@ void demoteReversedImages(ShapeHistory& history, const Shape& input, const Shape
         const TopoDS_Face source = TopoDS::Face(inFaces.FindKey(static_cast<int>(e.source.index) + 1));
         std::vector<SubId> kept, reversed;
         for (const SubId& r : e.results) {
-            const bool other =
-                r.kind == SubKind::Face &&
-                looksTheOtherWay(source, TopoDS::Face(outFaces.FindKey(static_cast<int>(r.index) + 1)));
+            const bool other = r.kind == SubKind::Face &&
+                               looksTheOtherWay(source, TopoDS::Face(outFaces.FindKey(static_cast<int>(r.index) + 1)));
             (other ? reversed : kept).push_back(r);
         }
         if (reversed.empty())

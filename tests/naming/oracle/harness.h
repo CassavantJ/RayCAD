@@ -110,8 +110,8 @@ public:
     // Direct edits that failed because the kernel call ran past its time limit (included in failed()).
     int editTimeouts() const { return editTimeouts_; }
     // What became of every direct edit applied, as "<role>: <outcome>" -> count; outcomes: "applied", "kernel
-    // refused" (KernelFailure or InvalidArgument), "time limit", "not modelled (<why>)" (measureEdit), "pick not Exact",
-    // "no target face", "other" (sampling or naming failed).
+    // refused" (KernelFailure or InvalidArgument), "time limit", "not modelled (<why>)" (measureEdit), "pick not
+    // Exact", "no target face", "other" (sampling or naming failed).
     const std::map<std::string, int>& editCounts() const { return editCounts_; }
     // Every map the build produced, serialised, in order (for determinism checks).
     const std::vector<std::vector<std::byte>>& history() const { return history_; }
