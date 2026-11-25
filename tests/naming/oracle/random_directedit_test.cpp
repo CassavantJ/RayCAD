@@ -1236,12 +1236,15 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
          "vertex the mapped pick lies on", false, 0xA81B7000ull, false, {{Answer::Exact, {30}}}},
         {17, 7, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 42", Answer::Exact, Verdict::Correct,
          "vertex the mapped pick lies on", false, 0xA81B7000ull, false, {{Answer::Exact, {34}}}},
-        //  - new ground in a flagged answer: an arc past a seam left out, a disconnected sliver of the top taken in
-        //    (accepted, counted); with the extra piece on another element's ground or another carrier, still wrong;
-        {3, 31, k + "closed_pocket_3.stp #31|edge 37", Answer::Merged, Verdict::Correct, "new ground left out", false,
-         0xA81B7000ull, true, {{Answer::Split, {40, 43}}, {Answer::Exact, {40}}}},
-        {14, 49, k + "rib_plate_1.stp #49|face 39", Answer::Split, Verdict::Correct, "new ground taken in", false,
-         0xA81B7000ull, true, {{Answer::Split, {2, 9}, 9}, {Answer::Exact, {9}}}},
+        //  - an arc piece past the seam vertex, inside where the cut that ended the picked arc was: past the pick's
+        //    old end, not its continuation (oracle); with another piece's arc, or that piece alone, still wrong;
+        {3, 31, k + "closed_pocket_3.stp #31|edge 37", Answer::Merged, Verdict::Correct, "past the pick's old end",
+         false, 0xA81B7000ull, false, {{Answer::Split, {40, 43}}, {Answer::Split, {40, 42}}, {Answer::Exact, {42}}}},
+        //  - a sliver of new ground on the top face where the moved cut used to be, cut off and joined to the face's
+        //    split family: not a piece (resolver: dropPiecesWithoutPickedGround); the old answer with it, the sliver
+        //    alone, and the sliver swapped for a face off the top, all wrong;
+        {14, 49, k + "rib_plate_1.stp #49|face 39", Answer::Split, Verdict::Correct, "split piece of new ground: resolver",
+         false, 0xA81B7000ull, false, {{Answer::Split, {2, 9}}, {Answer::Exact, {9}}, {Answer::Split, {2, 9}, 9}}},
 
         // Resolver (propagate_resolve.cpp canContain): a sliver of a boss's cylindrical side, split off by a cut that
         // then moved over it; the rest of the side is whole, but holds none of the sliver: Broken, not Merged.

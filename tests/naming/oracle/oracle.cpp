@@ -2082,6 +2082,19 @@ bool insideSweep(const Feature& f, const Vec3& p, double m)
     return false;
 }
 
+// Does element s lie (in part) beyond a boundary the picked element had at pick time: inside the volume a feature of
+// the pick-time script swept (a cut's air, a boss's material), whose faces bounded what was picked? New ground there was
+// cut away or covered then; it is not where the picked element could have run on (T-081b round 2, the coordinator's
+// rule (b); the resolver's facePiecesStayInside test).
+bool beyondPickBoundary(const ElemSamples& s, const Owners& before)
+{
+    for (const auto& [id, f] : before.sweeps)
+        for (const Vec3& p : s.pts)
+            if (insideSweep(f, p, kAnchorTolerance))
+                return true;
+    return false;
+}
+
 // The same sweep in both scripts (nothing about it edited).
 bool sameSweep(const Feature& a, const Feature& b)
 {
@@ -3246,6 +3259,24 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 x.mergeUnknown = true;
                 x.sharedAnchor = true;
             }
+    // Only what bounds the picked element moved (Expectation::inPlace): an expected element that holds none of the pick
+    // in place and lies beyond a boundary the pick had at pick time is new ground past the pick's old end, not its
+    // continuation (T-081b holdout1 3:31: an arc piece past the seam vertex, inside where the cut that ended the picked
+    // arc was).
+    if (x.moved && x.inPlace && x.expected.elems.size() >= 2) {
+        TruthEval kept;
+        for (const std::uint32_t e : x.expected.elems)
+            if (shareOn(N[e], pick.picked(), x.kind) > 0.0 || shareOn(pick.picked(), N[e], x.kind) > 0.0 ||
+                !beyondPickBoundary(N[e], *pick.owners))
+                kept.elems.push_back(e);
+        if (!kept.elems.empty() && kept.elems.size() < x.expected.elems.size()) {
+            for (const std::uint32_t e : x.expected.partial)
+                if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
+                    kept.partial.push_back(e);
+            kept.merged = x.expected.merged;
+            x.expected = kept;
+        }
+    }
     // Two vertices of the logical element both near the mapped pick (the ends of an edge a few micrometres long, both
     // on the description's faces: T-081b holdout1 17:7), and the mapped pick on exactly one of them: a vertex continues
     // as one vertex, the one it lies on.
@@ -3479,8 +3510,9 @@ namespace {
 // person reviews every flagged answer before a toolpath can be posted, and sees an extra sliver of the same face.
 // Accepted when (a) the answer holds all the picked ground that survives (the mapped pick, or the pick in place when
 // its carriers did not move: Expectation::inPlace), and some of it; (b) every element of the answer that is not
-// expected is on the picked element's own carriers and on no ground any element held at pick time (the picked one
-// included: an extra piece is new ground, not ground the pick had); (c) the
+// expected is on the picked element's own carriers, on no ground any element held at pick time (the picked one
+// included: an extra piece is new ground, not ground the pick had), and not beyond a boundary the pick had then
+// (beyondPickBoundary); (c) the
 // answer is flagged. Never for an Exact answer. Returns why, or nothing.
 std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Samples& smp, Answer answer,
                           const std::vector<std::uint32_t>& X)
@@ -3522,6 +3554,13 @@ std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Sa
             for (std::uint32_t i = 0; i < B.size(); ++i)
                 if (sameSheet(N[e], B[i], kind) && nearElement(p, B[i], kind, tol))
                     return {};
+        if (beyondPickBoundary(N[e], *pick.owners))
+            return {};
+        // Past the picked element's ends (its box at pick time): beyond the faces or edge ends that bounded it then.
+        const ElemSamples& P = pick.picked();
+        for (const Vec3& p : N[e].pts)
+            if (outsideBox(p, P.boxMin, P.boxMax, tol))
+                return {};
         ++extras;
     }
     std::size_t missing = 0;

@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -661,6 +662,39 @@ bool facePiecesStayInside(const ElementMap& map, const kernel::Shape& shape, con
     return true;
 }
 
+// Face pieces of a Split that hold none of the picked territory, when the other pieces hold all of it: ground the
+// picked face never had, joined to its family by the split (T-081b holdout1 14:49: a sliver of a top face where a
+// cut that bounded it at pick time used to be, now cut off by the moved cut; the face names around it are the same,
+// so facePiecesStayInside does not see it). Only when every recorded point of the picked territory lies on a piece
+// that is kept (the picked face survives whole among them); else nothing is dropped.
+void dropPiecesWithoutPickedGround(const kernel::Shape& shape, std::vector<SubId>& pieces, const TopoRef& ref)
+{
+    if (pieces.size() < 2 || pieces.front().kind != SubKind::Face || !ref.territory.known())
+        return;
+    std::vector<std::unique_ptr<Probe>> probes;
+    for (const SubId& p : pieces)
+        probes.push_back(std::make_unique<Probe>(shape, p));
+    std::vector<char> holds(pieces.size(), 0);
+    for (const auto& q : ref.territory.points) {
+        Territory one;
+        one.points = {q};
+        bool on = false;
+        for (std::size_t i = 0; i < pieces.size(); ++i)
+            if (probes[i]->count(one) > 0) {
+                holds[i] = 1;
+                on = true;
+            }
+        if (!on)
+            return;
+    }
+    std::vector<SubId> kept;
+    for (std::size_t i = 0; i < pieces.size(); ++i)
+        if (holds[i] != 0)
+            kept.push_back(pieces[i]);
+    if (!kept.empty())
+        pieces = std::move(kept);
+}
+
 // Is `candidate` surrounded by exactly the faces the reference's neighbour names resolve to? Each neighbour name
 // must lead to a face around the candidate, and every face around it must be reached by one.
 bool surroundedAsPicked(const ElementMap& map, const kernel::Shape& shape, SubId candidate, const TopoRef& ref)
@@ -839,6 +873,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 return broken("Part of the picked element no longer exists.");
             return std::nullopt; // the Exact stage's business
         }
+        dropPiecesWithoutPickedGround(shape, elements, ref);
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
         if (!facePiecesStayInside(map, shape, elements, ref))
@@ -880,6 +915,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 std::erase_if(elements, [&](const SubId& s) { return zeroMeasure(shape, s, ref.hint); });
                 if (elements.empty())
                     continue;
+                dropPiecesWithoutPickedGround(shape, elements, ref);
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||

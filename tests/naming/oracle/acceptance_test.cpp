@@ -386,9 +386,7 @@ std::string refsAbout(const Run& r, const std::string& owner)
 }
 
 // The resolver's answer lies inside the oracle's expectation (or is Broken), and the answers that take the separate
-// parts of the logical element are judged wrong: confidently (Exact) always; flagged (Split) unless the separate parts
-// are new ground on the picked element's own carriers, which the new-ground rule then accepts and counts (T-081b round
-// 2, oracle.cpp newGroundRule: a flagged answer goes to the reference review; never accepted silently).
+// parts of the logical element are judged wrong.
 void checkSeparateParts(const Run& r, const Outcome& o)
 {
     const std::vector<std::uint32_t> all = logicalElements(r, o);
@@ -397,9 +395,7 @@ void checkSeparateParts(const Run& r, const Outcome& o)
                       << text(o.expected.elems) << ", logical" << text(all) << "; resolver " << o.resolved.reason);
     REQUIRE_FALSE(o.expected.elems.empty());
     REQUIRE_FALSE(others.empty());
-    const Judgement split = judgeOther(r, o, Answer::Split, all);
-    INFO("Split of every part: " << verdictName(split.verdict) << " " << split.newGround);
-    CHECK((isWrong(split.verdict) || !split.newGround.empty()));
+    CHECK(isWrong(judgeOther(r, o, Answer::Split, all).verdict));
     for (const std::uint32_t e : others)
         CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e}).verdict));
     for (const SubId& e : o.resolved.elements)
