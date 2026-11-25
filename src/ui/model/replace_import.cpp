@@ -125,7 +125,7 @@ std::shared_ptr<const kernel::Mesh> tintOf(const kernel::Mesh& mesh, const std::
 
 } // namespace
 
-std::span<const UiCommand> replaceImportUiCommands()
+std::span<const UiCommand> replaceUiCommands()
 {
     return kReplaceImportCommands;
 }
