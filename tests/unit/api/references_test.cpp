@@ -115,14 +115,15 @@ struct Plate {
     const ray::kernel::Shape& shape() const { return od->document->build()->bodies.begin()->second.shape; }
     std::uint32_t face(ray::kernel::SurfaceType type, double z = -1) const
     {
-        for (std::uint32_t i = 0; i < shape().count(ray::kernel::SubKind::Face); ++i) {
+        std::optional<std::uint32_t> found;
+        for (std::uint32_t i = 0; i < shape().count(ray::kernel::SubKind::Face) && !found; ++i) {
             auto s = ray::kernel::surfaceInfo(shape(), ray::kernel::SubId{ray::kernel::SubKind::Face, i});
             if (s && s->type == type && (z < 0 || std::abs(s->centroid.z - z) < 1e-9)) {
-                return i;
+                found = i;
             }
         }
-        FAIL("no such face");
-        return 0;
+        REQUIRE(found.has_value());
+        return found.value_or(0);
     }
     std::string ref(std::uint32_t face) const
     {

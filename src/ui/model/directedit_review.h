@@ -101,7 +101,8 @@ public:
     int count() const { return static_cast<int>(items_.size()); }
     int staleCount() const { return staleCount_; }
     int generatingCount() const { return generatingCount_; }
-    bool busy() const { return listJob_.valid() && !listJob_.done(); }
+    // A listing is scheduled or running, or the document has a build of a state not listed yet.
+    bool busy() const;
     QVariantList rows() const { return rows_; }
     int current() const { return current_; }
     void setCurrent(int row);

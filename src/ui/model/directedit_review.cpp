@@ -16,6 +16,7 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
+#include <QtCore/QScopeGuard>
 
 #include <algorithm>
 #include <cmath>
@@ -348,13 +349,24 @@ void ReferenceReviewModel::unsubscribe()
     emit currentChanged();
 }
 
+bool ReferenceReviewModel::busy() const
+{
+    if (refreshTimer_.isActive() || (listJob_.valid() && !listJob_.done()))
+        return true;
+    doc::Document* d = liveDoc();
+    return d != nullptr && d->build() && d->builtState() == d->state() && d->state() != listedState_;
+}
+
 void ReferenceReviewModel::scheduleRefresh()
 {
     refreshTimer_.start();
+    emit busyChanged();
 }
 
 void ReferenceReviewModel::refresh()
 {
+    // Whatever this run does, busy() may have changed (the timer that called it is over).
+    const auto notify = qScopeGuard([this] { emit busyChanged(); });
     if (doc_ == nullptr && app() != nullptr && app()->active() != nullptr)
         subscribe();
     doc::Document* d = liveDoc();
@@ -418,6 +430,7 @@ void ReferenceReviewModel::onListed(std::shared_ptr<const refs::Listing> listing
     listedState_ = state;
     keys_ = std::move(keys);
     ++listings_;
+    emit busyChanged();
     rebuildRows();
     current_ = -1;
     if (!currentKey.empty()) {

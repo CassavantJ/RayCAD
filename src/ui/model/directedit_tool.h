@@ -92,7 +92,8 @@ class DirectEditModel : public QObject {
     Q_PROPERTY(QString pickHint READ pickHint NOTIFY activeChanged)
     // Delete faces: the faces of the blend run a picked fillet face belongs to, when more than are picked; 0 otherwise.
     Q_PROPERTY(int blendRunCount READ blendRunCount NOTIFY offerChanged)
-    // Push/pull: the arrow, [{key: "distance", x, y, tipX, tipY}] in view coordinates (none until a face is picked).
+    // Push/pull: the arrow, [{key: "distance", x, y, tipX, tipY}] in view coordinates, from the middle of the first
+    // picked face along its outward normal to the distance (none until a flat face is picked; none on a curved one).
     Q_PROPERTY(QVariantList handles READ handles NOTIFY handlesChanged)
     Q_PROPERTY(bool handleDragging READ handleDragging NOTIFY handlesChanged)
     Q_PROPERTY(QObject* view READ view WRITE setView NOTIFY viewChanged)
