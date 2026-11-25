@@ -52,7 +52,7 @@ SubId faceAt(const kernel::Shape& s, kernel::SurfaceType type, Vec3 c, double to
             std::abs(info->centroid.y - c.y) < tol && std::abs(info->centroid.z - c.z) < tol)
             return {SubKind::Face, i};
     }
-    FAIL("no face of that type at that centroid");
+    FAIL_CHECK("no face of that type at that centroid");
     return {};
 }
 // The face of `s` on the plane z = height facing `up`.
@@ -64,7 +64,7 @@ SubId planeZ(const kernel::Shape& s, double height)
             std::abs(info->bounds.max.z - height) < 1e-6)
             return {SubKind::Face, i};
     }
-    FAIL("no plane at that height");
+    FAIL_CHECK("no plane at that height");
     return {};
 }
 SubId cylinderAt(const kernel::Shape& s, double x, double y)
@@ -75,7 +75,7 @@ SubId cylinderAt(const kernel::Shape& s, double x, double y)
             std::abs(info->centroid.y - y) < 1e-6)
             return {SubKind::Face, i};
     }
-    FAIL("no cylinder there");
+    FAIL_CHECK("no cylinder there");
     return {};
 }
 

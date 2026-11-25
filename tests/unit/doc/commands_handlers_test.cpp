@@ -84,7 +84,7 @@ TEST_CASE("the built-in registry has the seven model commands and document.impor
                                                         "feature.fillet.edit",
                                                         "feature.hole.add",
                                                         "feature.hole.edit",
-                                                        "feature.import.replace", // T-084
+                                                        "feature.import.replace",  // T-084
                                                         "feature.offset_face.add", // T-082
                                                         "feature.offset_face.edit",
                                                         "feature.remove",

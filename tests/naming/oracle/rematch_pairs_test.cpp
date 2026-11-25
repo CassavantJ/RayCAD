@@ -357,7 +357,7 @@ kernel::Shape firstThatWorks(const kernel::Shape& shape, const std::vector<SubId
             return r->shape;
         }
     }
-    FAIL("no candidate could be edited: " << what);
+    FAIL_CHECK("no candidate could be edited: " << what);
     return shape;
 }
 

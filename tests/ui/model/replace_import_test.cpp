@@ -206,7 +206,7 @@ struct Window {
                 std::abs(s->bounds.max.z - 20) < 1e-6)
                 return i;
         }
-        FAIL("no top face");
+        FAIL_CHECK("no top face");
         return 0;
     }
     void shot(const char* name) const

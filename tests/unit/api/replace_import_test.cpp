@@ -175,7 +175,7 @@ struct Part {
         for (std::uint32_t i = 0; i < s.count(SubKind::Face); ++i)
             if (const auto info = kernel::surfaceInfo(s, {SubKind::Face, i}); info && is(*info))
                 return i;
-        FAIL("no such face");
+        FAIL_CHECK("no such face");
         return 0;
     }
     std::uint32_t hole(double x, double y) const
@@ -499,6 +499,55 @@ TEST_CASE("a replacement is refused, and nothing changes, when it cannot stand f
             .message,
         ContainsSubstring("must keep the import's bodies"));
     unchanged();
+}
+
+TEST_CASE("several bodies: paired by where they lie, whatever their order in the file; refused when unclear",
+          "[api][replace-import]")
+{
+    ray::test::TempDir files;
+    const kernel::Shape lug = take(kernel::makeBox({100, 0, 0}, {120, 10, 10}));
+    const std::string base = files.file("two parts.step");
+    writeStep(base, {block(false, false), lug});
+    auto app = makeApp();
+    invoke(*app, "file.new", "{}");
+    invoke(*app, "file.import", R"({"path":)" + ray::test::jsonString(base) + "}");
+    api::OpenDocument* od = app->active();
+    REQUIRE(app->waitForBuild(*od, kWait));
+    const doc::DocStatePtr state = od->document->state();
+    REQUIRE(state->bodies.size() == 2);
+    const std::string feature = state->features.front().id.value.toString();
+    auto boxOf = [&](const BodyId& b) {
+        REQUIRE(app->waitForBuild(*od, kWait));
+        return kernel::bounds(od->document->build()->bodies.at(b).shape);
+    };
+    const BodyId first = state->bodies[0].id, second = state->bodies[1].id;
+    const bool blockFirst = boxOf(first).max.x < 90;
+    const BodyId blockBody = blockFirst ? first : second, lugBody = blockFirst ? second : first;
+
+    // The revision lists the lug first, then the block with a hole added: each new body goes to the old one it lies on.
+    const std::string rev = files.file("two parts rev B.step");
+    writeStep(rev, {lug, block(true, false)});
+    const auto summary =
+        take(json::parse(invoke(*app, ray::api::replace_import::kAction,
+                                R"({"feature":")" + feature + R"(","path":)" + ray::test::jsonString(rev) + "}")));
+    CHECK(count(summary, "faces", "new") == 1);
+    CHECK(count(summary, "faces", "changed") == 2);
+    CHECK(boxOf(blockBody).max.x < 90);
+    CHECK(boxOf(lugBody).min.x > 90);
+    for (const json::Value& b : summary.find("bodies")->asArray()) {
+        const bool isLug = b.find("body")->asString() == lugBody.value.toString();
+        CHECK(b.find("faces")->asArray().size() == (isLug ? 0u : 3u)); // the lug is unchanged
+    }
+
+    // Two new bodies that overlap both old ones alike: which replaces which cannot be told.
+    const std::string unclear = files.file("two parts unclear.step");
+    writeStep(unclear,
+              {take(kernel::makeBox({0, 0, 0}, {120, 40, 20})), take(kernel::makeBox({0, 0, 0}, {120, 40, 20.5}))});
+    const Hash256 before = od->document->state()->stateHash();
+    const Error e = invokeFails(*app, ray::api::replace_import::kAction,
+                                R"({"feature":")" + feature + R"(","path":)" + ray::test::jsonString(unclear) + "}");
+    CHECK_THAT(e.message, ContainsSubstring("cannot be told from where they lie"));
+    CHECK(od->document->state()->stateHash() == before);
 }
 
 TEST_CASE("a revision in other units is compared in millimetres; the summary says the units changed",
