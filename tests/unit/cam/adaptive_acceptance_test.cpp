@@ -23,6 +23,23 @@ using namespace ray::cam::adaptive2d::test;
 
 namespace {
 
+// A sanitizer build (the CI's AddressSanitizer job) instruments every memory access: the PLAN.md section 9 times are
+// for an optimised build and are only reported there, as the benchmarks in tests/unit/sim do.
+constexpr bool sanitizedBuild()
+{
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    return true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+    return true;
+#else
+    return false;
+#endif
+#else
+    return false;
+#endif
+}
+
 const std::vector<sw::s5::Case>& cases()
 {
     static const std::vector<sw::s5::Case> c = sw::s5::makeCases();
@@ -101,6 +118,8 @@ TEST_CASE("Run time of PLAN.md section 9 on the High tier: BP2 circle 0.5 s, isl
             worst = std::max(worst, s);
         }
         WARN(id << " at 20% load: best " << best << " s, worst " << worst << " s of 3 (budget " << limit << " s)");
-        CHECK(best <= limit);
+        if (!sanitizedBuild()) {
+            CHECK(best <= limit);
+        }
     }
 }

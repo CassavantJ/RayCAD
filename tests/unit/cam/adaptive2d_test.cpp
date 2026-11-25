@@ -19,6 +19,23 @@ using namespace ray::cam::test;
 
 namespace {
 
+// A sanitizer build (the CI's AddressSanitizer job) instruments every memory access: the PLAN.md section 9 times are
+// for an optimised build and are only reported there, as the benchmarks in tests/unit/sim do.
+constexpr bool sanitizedBuild()
+{
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    return true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+    return true;
+#else
+    return false;
+#endif
+#else
+    return false;
+#endif
+}
+
 namespace ad = ray::cam::adaptive2d;
 
 AdaptiveCase withParams(AdaptiveCase c, const std::string& params)
@@ -660,9 +677,11 @@ TEST_CASE("adaptive2d's run time on S5's circle and islands pockets, and what th
         WARN(id << " at 20 % load, one depth: the operation " << op << " s, the engine alone " << engine
                 << " s, the operation adds " << op - engine << " s (PLAN.md section 9 High tier: " << limit << " s)");
         // What the operation adds (the part's slices, the areas, arc fitting, linking): small beside the engine.
-        CHECK(op - engine <= 0.25);
-        // The row itself: the engine's own test holds it (adaptive_acceptance_test.cpp); the operation within it plus
-        // what it adds.
-        CHECK(op <= std::max(limit, engine) + 0.25);
+        if (!sanitizedBuild()) {
+            CHECK(op - engine <= 0.25);
+            // The row itself: the engine's own test holds it (adaptive_acceptance_test.cpp); the operation within it
+            // plus what it adds.
+            CHECK(op <= std::max(limit, engine) + 0.25);
+        }
     }
 }
