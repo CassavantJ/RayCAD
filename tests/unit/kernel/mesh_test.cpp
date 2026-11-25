@@ -501,6 +501,45 @@ TEST_CASE("meshing the naming tests' corpus parts with InParallel gives the seri
     }
 }
 
+TEST_CASE("meshing the STEP files named by RAY_MESH_FILES", "[.meshfiles]")
+{
+    // Not run by default: for trying new corpus files. RAY_MESH_FILES is a ';'-separated list of STEP paths; every
+    // body of each is meshed for display (serial, then InParallel, which must agree) and triangulated exactly.
+    const char* list = std::getenv("RAY_MESH_FILES");
+    if (list == nullptr)
+        SKIP("set RAY_MESH_FILES to ';'-separated STEP paths");
+    std::string rest = list;
+    while (!rest.empty()) {
+        const std::size_t cut = rest.find(';');
+        const std::string path = rest.substr(0, cut);
+        rest = cut == std::string::npos ? std::string() : rest.substr(cut + 1);
+        if (path.empty())
+            continue;
+        INFO(path);
+        JobContext ctx;
+        auto imported = importStep(path, ImportOptions{}, ctx);
+        REQUIRE(imported.has_value());
+        for (const ImportedBody& body : imported->bodies) {
+            const auto start = std::chrono::steady_clock::now();
+            std::vector<unsigned char> serial;
+            {
+                const ParallelSwitch off(false);
+                serial = displayBytes(body.shape, MeshOptions{0.02, 0.2});
+            }
+            const ParallelSwitch on(true);
+            const std::vector<unsigned char> parallel = displayBytes(body.shape, MeshOptions{0.02, 0.2});
+            const std::vector<unsigned char> exact = exactBytes(body.shape, 0.02);
+            const double ms =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            std::cout << "mesh " << path << " faces " << body.shape.count(SubKind::Face) << " display bytes "
+                      << serial.size() << " exact bytes " << exact.size() << " " << ms << " ms\n";
+            CHECK_FALSE(serial.empty());
+            CHECK(parallel == serial);
+            CHECK_FALSE(exact.empty());
+        }
+    }
+}
+
 TEST_CASE("8 threads meshing 8 shapes give the serial results", "[kernel][mesh][threads]")
 {
     std::vector<Named> items = shapes();

@@ -50,8 +50,9 @@ set `SSL_CERT_FILE`.
 
 | Source | Files | Licence | Committed |
 |-|-|-|-|
-| NIST MBE PMI test cases (CTC, FTC, STC), AP203 and AP242 | 33 STEP | US Government work, public domain; NIST: "can be used without any restrictions" | 13 files up to 1 MB; the rest from the NIST zip |
+| NIST MBE PMI test cases (CTC, FTC, STC), AP203 and AP242 | 39 STEP: 33 from the nist.gov zip, 6 from the copy of that zip in NIST's STEP File Analyzer release (`nist-pmi/sfa/`) | US Government work, public domain; NIST: "can be used without any restrictions" | 14 files up to 1 MB; the rest from the two zips |
 | NIST D2MI models (NX) | 5 STEP | US Government work, public domain (README in the zip) | 4 of 5 |
+| NIST/MTC box assembly: box, cover, plate (SOLIDWORKS MBD 2018 via HOOPS Exchange, AP242 with PMI) | 3 STEP | US Government work, public domain; listed with the NIST PMI project's CAD models | none: fetch-only (4.3 to 4.8 MB each) |
 | OCCT repository `data/` (Euclid exports) | 2 STEP, 2 IGES | LGPL-2.1 with the OCCT exception | `screw.step` |
 | FreeCAD repository example and test data | 2 STEP, 4 DXF | LGPL-2.1-or-later | all |
 | FreeCAD parts library | 156 STEP, 4 DXF | CC-BY-3.0 (`LICENSE-Assets` of that repository) | none: fetch-only |
@@ -73,6 +74,18 @@ were left out too), pythonocc-demos models (no licence file), files that look li
 issue attachment, a commercial CAM output, a drawing of unknown origin, vendor-named parts), and anything else whose
 licence was unclear. The FreeCAD library's licence is clear, but its parts are fetch-only, so this repository
 redistributes none of them.
+
+NIST public test models (checked 2026-11-25). NIST publishes the CTC, FTC and STC parts natively for each CAD system
+(CATIA V5, Creo, NX, Inventor, SolidWorks), but as STEP only in its own STEP-file zip, with the originating system
+blanked in every header; there is no NIST download of the same part exported to STEP by several CAD systems. Taken:
+everything in that zip, the six files in which the copy in NIST's STEP File Analyzer release on GitHub
+(usnistgov/SFA) differs from it (four of them only in their header or PMI entities; the STC 09 file is a different
+export), and the box, cover and plate of the NIST/MTC box assembly (usnistgov/AR-PMI, the only SOLIDWORKS exports in
+the set). Left out: the STEP files inside the CAD-model and test-definition zips (the AP203 geometry-only files again,
+differing in the FILE_DESCRIPTION line only), the STC, HTC and MTC CAD-model zips (native CAD files, no STEP), the
+box assembly's assembly file (it includes vendor fastener parts), the box assembly dataset on data.nist.gov (249 MB
+for one STEP file), and the NIST Engineering Design Model Repository (usnistgov/engineering-design-models: 1990s
+parts from industrial collaborators, not NIST's own test models).
 
 ## Synthetic parts
 
