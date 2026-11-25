@@ -1003,6 +1003,10 @@ Result<Output> planAdaptive(const Input& in, const EntryOptions& opt, JobContext
                 break;
             }
         }
+        // The smaller-helix attempt adds nothing after its separator when no other attempt follows it.
+        while (needs.ends_with("; ")) {
+            needs.erase(needs.size() - 2);
+        }
         std::string message =
             "adaptive: no entry into the region around " + whereText(out.regions[p.index].toolBounds) + ": " + needs;
         if (!in.allowUnentered) {

@@ -2566,10 +2566,9 @@ TEST_CASE("a pocket too small for a helix or a ramp: a plunge warned of in the p
         pickFloor();
         w.click(QStringLiteral("operationUseCalculated"));
         REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
-        // pocket2d names the cause (linking's "the tool does not cut at its centre, so it cannot plunge"); adaptive2d's
-        // refusal lists the entries it tried, and says nothing of the plunge it did not (src/cam, not changed here).
-        const QLatin1String cause = type == QStringLiteral("pocket2d") ? QLatin1String("does not cut at its centre")
-                                                                       : QLatin1String("no entry into the area");
+        // Both name the cause: "the tool does not cut at its centre, so it cannot plunge" (pocket2d from linking,
+        // adaptive2d after the entries it tried).
+        const QLatin1String cause("does not cut at its centre, so it cannot plunge");
         const bool refused = QTest::qWaitFor(
             [&] {
                 return !w.op()->previewBusy() && !w.op()->errors().isEmpty() &&

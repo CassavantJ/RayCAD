@@ -321,7 +321,8 @@ TEST_CASE("adaptive2d: the entry order of the setting, and the fall-back to a sm
         INFO(e.message);
         CHECK(contains(e.message, "a helix needs the area to be at least"));
         CHECK(contains(e.message, "a ramp needs a straight run of at least 6 mm"));
-        CHECK_FALSE(contains(e.message, "plunge"));
+        CHECK(contains(e.message, "; plunge: the tool does not cut at its centre, so it cannot plunge"));
+        CHECK_FALSE(contains(e.message, "; ;"));
         c.tool.centreCutting.reset();
         auto plan = c.plan();
         REQUIRE(plan);
@@ -347,7 +348,8 @@ TEST_CASE("adaptive2d last resort: an area no helix or ramp fits is plunged into
         INFO(e.message);
         CHECK(e.message.rfind("At Z12 in the area with its floor at Z9", 0) == 0);
         CHECK(contains(e.message, "no entry into the area around X19.999 Y14.999: a helix needs"));
-        CHECK_FALSE(contains(e.message, "plunge"));
+        CHECK(contains(e.message, "; plunge: the tool does not cut at its centre, so it cannot plunge"));
+        CHECK_FALSE(contains(e.message, "; ;"));
     }
     SECTION("pre-drilled holes only: never a plunge, whatever the tool")
     {

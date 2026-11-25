@@ -1000,7 +1000,12 @@ private:
     Error engineError(Error e, const Area& a, Nm z) const
     {
         if (e.code == ErrorCode::InvalidArgument || e.code == ErrorCode::ToolpathFailed) {
+            const bool noEntry = e.message.find("no entry into the region") != std::string::npos;
             e.message = "At Z" + mmText(z) + " in " + a.where + ": " + machinistWords(e.message);
+            // As pocket2d and slot say it (link.cpp): why the last resort, a straight plunge, was not tried.
+            if (noEntry && p_.entry != "preDrill" && !mayPlunge(tool())) {
+                e.message += "; plunge: the tool does not cut at its centre, so it cannot plunge";
+            }
             // The engine saw the area with its walls moved in by these (op.h AT EACH DEPTH): widths it names are of
             // that area.
             e.message += " (widths of the area less " + mmText(stockWall_ + kAdaptiveFitToleranceNm) +
