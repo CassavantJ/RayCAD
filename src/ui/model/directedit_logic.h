@@ -112,7 +112,8 @@ std::vector<ReviewGroup> groupItems(const std::vector<ReviewItem>& items);
 QString stateLabel(RefState state);
 // "split", "merged", "repaired", "broken", "exact": QML's keys (colours).
 QString stateKey(RefState state);
-// What happened, in shop words: "This reference now points at two faces", "This face is now part of a larger face",
+// What happened, in shop words: "This reference now points at two faces", "This face changed shape" (Merged: the
+// element that carries its name now is not the one picked, larger, smaller or reshaped; the row cannot tell which),
 // "This face changed; a likely match was found", "This face no longer exists".
 QString stateWords(const ReviewItem& item);
 // What it means for the owner: "The feature does not build until the face is picked again.", ...

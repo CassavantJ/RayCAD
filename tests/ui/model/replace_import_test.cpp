@@ -302,6 +302,49 @@ TEST_CASE("replacing an imported part with a new revision: the dialog, the colou
     CHECK(w.review()->count() >= 1);
     w.shown(QStringLiteral("referenceReview"));
     w.shotsBothThemes("t084_summary");
+    // The dialog leaves the view cube and its view buttons free, and with the review open below it both are whole, at
+    // this size and at the shell's minimum window size (their lists scroll).
+    {
+        const auto sceneRect = [](QQuickItem* item) {
+            return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+        };
+        const QSize normal = w.window()->size();
+        const QSize minimum(w.window()->minimumWidth(), w.window()->minimumHeight());
+        for (const QSize size : {normal, minimum}) {
+            if (w.window()->size() != size) {
+                w.window()->resize(size);
+                REQUIRE(QTest::qWaitFor([&] { return w.window()->size() == size; }, 5000));
+                QTest::qWait(100);
+            }
+            w.grab();
+            const QRectF area = sceneRect(w.shown(QStringLiteral("viewportArea")));
+            const QRectF cube = sceneRect(w.shown(QStringLiteral("viewCubeColumn")));
+            const QRectF dialog = sceneRect(w.shown(QStringLiteral("replaceImport")));
+            const QRectF panel = sceneRect(w.shown(QStringLiteral("referenceReview")));
+            INFO("window " << size.width() << " x " << size.height() << "; cube " << cube.x() << "," << cube.y() << " "
+                           << cube.width() << "x" << cube.height() << "; dialog " << dialog.x() << "," << dialog.y()
+                           << " " << dialog.width() << "x" << dialog.height() << "; review " << panel.x() << ","
+                           << panel.y() << " " << panel.width() << "x" << panel.height());
+            CHECK_FALSE(dialog.intersects(cube));
+            CHECK_FALSE(dialog.intersects(panel));
+            CHECK(area.contains(dialog));
+            CHECK(area.contains(panel));
+            // Each whole: its title, its list (some of it) and its buttons inside it.
+            for (const char* name : {"replaceImportTitle", "replaceImportDone"})
+                CHECK(dialog.contains(sceneRect(w.shown(QString::fromLatin1(name)))));
+            CHECK(sceneRect(w.shown(QStringLiteral("replaceImportList"))).height() > 0);
+            CHECK(panel.contains(sceneRect(w.shown(QStringLiteral("referenceReviewTitle")))));
+            const QRectF footer = sceneRect(w.find(QStringLiteral("referenceReviewFooter")));
+            CHECK(footer.top() >= panel.top());
+            CHECK(footer.bottom() <= panel.bottom());
+            CHECK(sceneRect(w.shown(QStringLiteral("referenceReviewList"))).height() > 0);
+            if (size == minimum)
+                w.shotsBothThemes("t084_summary_minimum_window");
+        }
+        w.window()->resize(normal);
+        REQUIRE(QTest::qWaitFor([&] { return w.window()->size() == normal; }, 5000));
+        QTest::qWait(100);
+    }
     // A row shows its face.
     int newRow = -1;
     for (int i = 0; i < r->rows().size(); ++i)

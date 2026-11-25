@@ -173,12 +173,15 @@ TEST_CASE("the review list: grouped by owner, features first, in shop words", "[
 
     // Shop words.
     CHECK(de::stateWords(items[1]) == QStringLiteral("This reference now points at two edges"));
-    CHECK(de::stateWords(items[2]) == QStringLiteral("This edge is now part of a longer edge"));
+    CHECK(de::stateWords(items[2]) == QStringLiteral("This edge changed shape"));
     CHECK(de::stateWords(items[4]) == QStringLiteral("This face no longer exists"));
     CHECK(de::stateWords(items[3]) == QStringLiteral("This face changed; a likely match was found"));
     de::ReviewItem merged = items[4];
     merged.state = de::RefState::Merged;
-    CHECK(de::stateWords(merged) == QStringLiteral("This face is now part of a larger face"));
+    // Merged says only what is true whether the face grew (halves joined) or not (a revision changed a hole in it).
+    CHECK(de::stateWords(merged) == QStringLiteral("This face changed shape"));
+    merged.kind = de::ElementKind::Vertex;
+    CHECK(de::stateWords(merged) == QStringLiteral("This point changed"));
     CHECK(de::stateLabel(de::RefState::Broken) == QStringLiteral("Missing"));
     CHECK(de::stateLabel(de::RefState::Repaired) == QStringLiteral("Check match"));
     CHECK(de::stateLabel(de::RefState::Exact).isEmpty());

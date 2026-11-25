@@ -309,12 +309,15 @@ QString stateWords(const ReviewItem& item)
         if (item.elements < 2)
             return tr("This %1 was split").arg(one);
         return tr("This reference now points at %1 %2").arg(countWord(item.elements), elementWord(item.kind, 2));
+    // Merged: the element that carries the picked one's name now differs from it. It may have grown (two halves
+    // joined) or not (a new revision changed a hole in it): the row has the pick-time box but not the element's now,
+    // so the words say only what is true in every case.
     case RefState::Merged:
         if (item.kind == ElementKind::Edge)
-            return tr("This edge is now part of a longer edge");
+            return tr("This edge changed shape");
         if (item.kind == ElementKind::Vertex)
-            return tr("This point is now part of a larger element");
-        return tr("This face is now part of a larger face");
+            return tr("This point changed");
+        return tr("This face changed shape");
     case RefState::Repaired:
         return tr("This %1 changed; a likely match was found").arg(one);
     case RefState::Broken:
