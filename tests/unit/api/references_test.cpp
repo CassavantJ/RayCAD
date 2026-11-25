@@ -164,8 +164,11 @@ TEST_CASE("a reference that records a planar face's outline passes every consume
                id('9', 1) + R"(","library":{"machines":[)" + ray::lib::toJson(machine()) + "]}}");
     invoke(*p.app, "cam.setup.edit", R"({"id":")" + id('a', 1) + R"(","wcs":{"zFace":)" + topRef + "}}");
     invoke(*p.app, "cam.operation.add",
-           R"({"id":")" + id('c', 1) + R"(","setup":")" + id('a', 1) + R"(","type":"no.such.type","name":"Op 1",)"
-               R"("tool":{"tool":")" + id('d', 1) + R"("},"cutting":{"rpm":8000,"feedCut":1200,"feedPlunge":300},)"
+           R"({"id":")" + id('c', 1) + R"(","setup":")" + id('a', 1) +
+               R"(","type":"no.such.type","name":"Op 1",)"
+               R"("tool":{"tool":")" +
+               id('d', 1) +
+               R"("},"cutting":{"rpm":8000,"feedCut":1200,"feedPlunge":300},)"
                R"("heights":{"clearance":25,"retract":5,"feedPlane":2,"top":0,"bottom":-5},"geometry":[)" +
                topRef + R"(],"library":{"tools":[)" + ray::lib::toJson(tool()) + "]}}");
     const auto stored = [&] {
