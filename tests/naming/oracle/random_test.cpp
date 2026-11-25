@@ -71,11 +71,12 @@ const char* const kParts[] = {
 };
 constexpr int kPartCount = static_cast<int>(sizeof(kParts) / sizeof(kParts[0]));
 
-// The sequences take their sweep directions and moves from std::cos and std::sin, whose last bits differ between
-// standard libraries (Apple's libm differs from glibc's and the UCRT's by a few ulp at some arguments). For diagnosis,
-// RAYCAD_NAMING_PERTURB=<seed> moves each such result by -3 to +3 ulp, chosen by a hash of the seed and the value
-// (so the same in every thread and in the baseline and the replay): the answers must stay right, or be flagged, under
-// such differences. Unset (the default), nothing changes.
+// The sequences take their sweep directions and moves from cos and sin. They use ray::dmath, the same bits on every
+// platform, so a sequence is the same everywhere (with std::cos and std::sin they were not: Apple's libm differs from
+// glibc's and the UCRT's by a few ulp at some arguments, and so did the macOS answers). Other libm results can still
+// reach a sequence through the kernel. RAYCAD_NAMING_PERTURB=<seed> moves each cos and sin result by -3 to +3 ulp,
+// chosen by a hash of the seed and the value (so the same in every thread and in the baseline and the replay): the
+// answers must stay right, or be flagged, under such differences. Unset (the default), nothing changes.
 std::atomic<std::uint64_t>& perturbSeed()
 {
     static std::atomic<std::uint64_t> seed{[] {
@@ -111,8 +112,8 @@ double libmLastBits(double v)
 
 // The other diagnosis: RAYCAD_NAMING_LIBM_LOG=<file> appends every cos and sin the sequences take as a line
 // "<cos|sin> <argument bits> <result bits>" (hexadecimal), and RAYCAD_NAMING_LIBM_TABLE=<file> (lines in that form)
-// answers an argument listed there with the listed result instead of this platform's: a log written on one platform
-// replays that platform's inputs on another. Unset (the default), nothing changes.
+// answers an argument listed there with the listed result instead of ray::dmath's: a log written by a build that took
+// another library's cos and sin replays that build's inputs. Unset (the default), nothing changes.
 struct LibmTrace {
     std::mutex mutex;
     std::FILE* log = nullptr;
@@ -160,12 +161,12 @@ LibmTrace& libmTrace()
 
 double oracleCos(double a)
 {
-    return libmTrace()('c', a, std::cos(a));
+    return libmTrace()('c', a, dmath::cos(a));
 }
 
 double oracleSin(double a)
 {
-    return libmTrace()('s', a, std::sin(a));
+    return libmTrace()('s', a, dmath::sin(a));
 }
 
 // splitmix64, with uniform doubles from the top 53 bits.
