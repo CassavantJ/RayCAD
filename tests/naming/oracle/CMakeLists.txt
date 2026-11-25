@@ -100,5 +100,11 @@ target_link_libraries(ray_naming_rematch_tests PRIVATE ray_rematch_oracle ray_na
     Catch2::Catch2WithMain)
 target_compile_definitions(ray_naming_rematch_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus")
 set_property(TARGET ray_naming_rematch_tests PROPERTY FOLDER "tests")
-add_test(NAME ray_naming_rematch_pairs COMMAND ray_naming_rematch_tests "[rematch-pairs]")
-ray_test_runtime_path(ray_naming_rematch_pairs)
+# In three processes of about half a minute each in Release (together about 100 s): the pairs on parts built here, and
+# the pairs on NIST parts in two halves.
+add_test(NAME ray_naming_rematch_pairs COMMAND ray_naming_rematch_tests "[rematch-pairs]~[nist-a]~[nist-b]")
+add_test(NAME ray_naming_rematch_pairs_nist_a COMMAND ray_naming_rematch_tests "[rematch-pairs][nist-a]")
+add_test(NAME ray_naming_rematch_pairs_nist_b COMMAND ray_naming_rematch_tests "[rematch-pairs][nist-b]")
+foreach(_test IN ITEMS ray_naming_rematch_pairs ray_naming_rematch_pairs_nist_a ray_naming_rematch_pairs_nist_b)
+    ray_test_runtime_path(${_test})
+endforeach()

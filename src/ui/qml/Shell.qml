@@ -343,6 +343,7 @@ FocusScope {
         }
         // T-083: the reference review (panels/References.qml), bottom right, made the first time it is shown.
         Loader {
+            id: referenceReviewLoader
             objectName: "referenceReviewLoader"
             z: 1
             anchors.right: parent.right
@@ -369,7 +370,11 @@ FocusScope {
             active: used
             visible: Replacement.shown && Session.hasDocument
             width: item ? Math.min(parent.width - 2 * Theme.spacingL, item.implicitWidth) : 0
-            height: item ? Math.min(parent.height * (References.shown ? 0.38 : 0.6), item.implicitHeight) : 0
+            // Above the reference review when both are shown (the summary hands over to it).
+            height: item ? Math.min(Math.max(parent.height * 0.3, (referenceReviewLoader.visible
+                                                                   ? referenceReviewLoader.y - Theme.spacingS
+                                                                   : parent.height - Theme.spacingL) - y),
+                                    item.implicitHeight) : 0
             sourceComponent: Component {
                 ReplaceImport {}
             }

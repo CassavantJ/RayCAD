@@ -363,12 +363,17 @@ kernel::Shape firstThatWorks(const kernel::Shape& shape, const std::vector<SubId
 
 } // namespace
 
-TEST_CASE("rematch revision pairs: identity re-export of a NIST part keeps every name", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: identity re-export of a NIST part keeps every name", "[rematch-pairs][nist-a]")
 {
     Pair p = nistBase(kCtc01, "identity-reexport");
     p.edit = "the same part written again by RayCAD's exporter and read back";
     p.after = roundTrip(p.before, "identity");
     run(p, true);
+    // The base of the outer-face pair too (inch, freeform faces): its many changed faces are the edit's, not noise.
+    Pair q = nistBase(kFtc09, "identity-reexport-ftc09");
+    q.edit = p.edit;
+    q.after = roundTrip(q.before, "identity_ftc09");
+    run(q, true);
 }
 
 // The faces of the first CLOSED_SHELL of a STEP file listed in reverse order: the same geometry, other face (and so
@@ -428,7 +433,7 @@ bool numberingDiffers(const kernel::Shape& a, const kernel::Shape& b)
     return false;
 }
 
-TEST_CASE("rematch revision pairs: the same part with its faces listed in another order", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: the same part with its faces listed in another order", "[rematch-pairs][nist-a]")
 {
     {
         Pair p = nistBase(kCtc01, "shuffled-order-nist");
@@ -454,7 +459,7 @@ TEST_CASE("rematch revision pairs: the same part with its faces listed in anothe
     }
 }
 
-TEST_CASE("rematch revision pairs: noise below the tolerance keeps every name", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: noise below the tolerance keeps every name", "[rematch-pairs][nist-a]")
 {
     Pair p = nistBase(kCtc01, "noise-5e-5mm");
     p.edit = "the whole part moved 5e-5 mm (below rematch's 1e-3 mm), re-exported";
@@ -465,7 +470,7 @@ TEST_CASE("rematch revision pairs: noise below the tolerance keeps every name", 
     run(p, true);
 }
 
-TEST_CASE("rematch revision pairs: a hole resized", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: a hole resized", "[rematch-pairs][nist-a]")
 {
     Pair p = nistBase(kCtc03, "hole-resized");
     p.edit = "one hole 0.5 mm larger in diameter";
@@ -481,7 +486,7 @@ TEST_CASE("rematch revision pairs: a hole resized", "[rematch-pairs]")
     run(p);
 }
 
-TEST_CASE("rematch revision pairs: a hole moved", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: a hole moved", "[rematch-pairs][nist-b]")
 {
     Pair p = nistBase(kCtc01, "hole-moved");
     p.edit = "one hole filled and drilled again 3 mm away";
@@ -516,7 +521,7 @@ TEST_CASE("rematch revision pairs: a hole moved", "[rematch-pairs]")
     run(p);
 }
 
-TEST_CASE("rematch revision pairs: a hole added", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: a hole added", "[rematch-pairs][nist-b]")
 {
     Pair p = nistBase(kFtc06, "hole-added");
     p.edit = "a 3 mm blind hole, 3 mm deep, drilled into the largest flat face";
@@ -613,7 +618,7 @@ TEST_CASE("rematch revision pairs: a fillet radius changed", "[rematch-pairs]")
     run(p);
 }
 
-TEST_CASE("rematch revision pairs: an outer face moved (part made longer)", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: an outer face moved (part made longer)", "[rematch-pairs][nist-b]")
 {
     Pair p = nistBase(kFtc09, "outer-face-moved");
     p.edit = "a flat outer face pulled out 2 mm";
@@ -626,7 +631,7 @@ TEST_CASE("rematch revision pairs: an outer face moved (part made longer)", "[re
     run(p);
 }
 
-TEST_CASE("rematch revision pairs: a chamfer added", "[rematch-pairs]")
+TEST_CASE("rematch revision pairs: a chamfer added", "[rematch-pairs][nist-b]")
 {
     Pair p = nistBase(kCtc01, "chamfer-added");
     p.edit = "a 0.8 mm chamfer on a straight outer edge";
