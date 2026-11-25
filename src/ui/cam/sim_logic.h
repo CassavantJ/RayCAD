@@ -18,8 +18,14 @@
 //              cannot keep up, the clock keeps its speed and the stock catches up to where the clock is (frames are
 //              dropped, never time).
 //   Severity   as the event says (sim.h SimEvent::severity): Error, Warning or Info. Every check of T-071 and the gouge
-//              test of T-072 raise Error today; ExcessEngagement and FeedIntoStockAtRapidHeight would be Warning when
+//              test of T-072 raise Error; the fixture checks (after T-074) raise Error for a fixture in the part and
+//              Warning for one in the stock only; ExcessEngagement and FeedIntoStockAtRapidHeight would be Warning when
 //              raised. The panel adds nothing and drops nothing.
+//   Setup      an event of the setup (sim.h kSetupEvent: a fixture against the part or the stock) has no move: its row
+//              says "Before the first move", its marker sits at the start of the timeline, choosing it goes to the
+//              start and marks the place of the overlap on the stock.
+//   Seeks      when a run's keyframes had to be thinned and its slowest seek is estimated over the tier's budget
+//              (seekBudgetMs), one plain line says so near the resolution (slowSeekText); nothing otherwise.
 //   Words      each kind's title in a machinist's words (eventTitle); the event's own message follows it unchanged
 //              (with its resolution where it depends on it).
 //   Markers    events closer than kMarkerMergePx on the timeline merge into one marker (clusterMarkers): it sits at the
@@ -55,6 +61,13 @@ const char* eventKindName(int kind);
 QString eventTitle(int kind);
 // "error", "warning", "info".
 QString severityKey(SimSeverity s);
+
+// ---------- Seek time (added with the slow-seek notice) ----------
+// The seek budget of the tier whose preset cell this is (PLAN.md section 9: Low 250 ms, Medium 150, High 100).
+double seekBudgetMs(double simCellMm);
+// The panel's line when a run's seeks will be slow (sim::SeekReport): only when its keyframes were thinned (memory is
+// the cause the line names) and the estimate is over the budget; "" otherwise. The time to a tenth of a second.
+QString slowSeekText(bool thinned, double worstSeekMs, double simCellMm);
 
 // ---------- Markers ----------
 inline constexpr double kMarkerMergePx = 8.0;

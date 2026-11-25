@@ -42,20 +42,48 @@ TEST_CASE("playback speeds are machine-time multiples, slowest first, 10x by def
 TEST_CASE("every event kind has a title in a machinist's words and its enumerator's name", "[sim][logic]")
 {
     std::set<QString> titles;
-    for (int kind = 0; kind <= 13; ++kind) {
+    for (int kind = 0; kind <= 15; ++kind) {
         INFO("kind " << kind);
         CHECK(QString::fromLatin1(eventKindName(kind)).size() > 0);
         CHECK_FALSE(eventTitle(kind).isEmpty());
         titles.insert(eventTitle(kind));
     }
-    CHECK(titles.size() == 14); // each its own
+    CHECK(titles.size() == 16); // each its own
     CHECK(QString::fromLatin1(eventKindName(5)) == QStringLiteral("HolderHitsFixture"));
     CHECK(eventTitle(5) == QStringLiteral("Holder hits a fixture"));
     CHECK(QString::fromLatin1(eventKindName(13)) == QStringLiteral("ShankHitsPart"));
-    CHECK(QString::fromLatin1(eventKindName(14)).isEmpty());
+    // The setup's (after T-074): a fixture against the part and the stock.
+    CHECK(QString::fromLatin1(eventKindName(14)) == QStringLiteral("FixtureHitsPart"));
+    CHECK(eventTitle(14) == QStringLiteral("Fixture cuts into the part"));
+    CHECK(QString::fromLatin1(eventKindName(15)) == QStringLiteral("FixtureHitsStock"));
+    CHECK(eventTitle(15) == QStringLiteral("Fixture overlaps the stock"));
+    CHECK(QString::fromLatin1(eventKindName(16)).isEmpty());
     CHECK(severityKey(SimSeverity::Error) == QStringLiteral("error"));
     CHECK(severityKey(SimSeverity::Warning) == QStringLiteral("warning"));
     CHECK(severityKey(SimSeverity::Info) == QStringLiteral("info"));
+}
+
+TEST_CASE("the slow-seek line: only when thinned and over the tier's budget, the time to a tenth", "[sim][logic]")
+{
+    CHECK(seekBudgetMs(0.2) == 250);  // Low
+    CHECK(seekBudgetMs(0.1) == 150);  // Medium
+    CHECK(seekBudgetMs(0.05) == 100); // High
+    CHECK(seekBudgetMs(0) == 150);    // not known
+    // Within the budget, or not thinned (memory is the cause the line names): nothing.
+    CHECK(slowSeekText(true, 90, 0.05).isEmpty());
+    CHECK(slowSeekText(true, 100, 0.05).isEmpty());
+    CHECK(slowSeekText(false, 600, 0.05).isEmpty());
+    CHECK(slowSeekText(true, 240, 0.2).isEmpty());
+    // Over it: one plain line, the time rounded.
+    const QString high = slowSeekText(true, 614, 0.05);
+    CHECK(high == QStringLiteral("Jumping around this program may take up to about 0.6 s at this resolution: it needs "
+                                 "more memory for jump points than is allowed. A coarser resolution jumps faster."));
+    CHECK(slowSeekText(true, 312, 0.05).contains(QStringLiteral("about 0.3 s")));
+    CHECK(slowSeekText(true, 160, 0.1).contains(QStringLiteral("about 0.2 s")));
+    CHECK(slowSeekText(true, 4380, 0.05).contains(QStringLiteral("about 4.4 s")));
+    CHECK(slowSeekText(true, 12400, 0.05).contains(QStringLiteral("about 12 s")));
+    for (const QString& word : {QStringLiteral("keyframe"), QStringLiteral("tier"), QStringLiteral("thinn")})
+        CHECK_FALSE(high.contains(word, Qt::CaseInsensitive));
 }
 
 TEST_CASE("markers closer than the merge distance become one: at the earliest, the worst severity, the count",

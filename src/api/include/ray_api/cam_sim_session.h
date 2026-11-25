@@ -25,7 +25,8 @@
 //
 // EVENTS. Each event's place on the timeline (EventPlace): its operation and move, and the fraction t01 of that move's
 // path where the tool tip comes nearest the event's position (the tip where the contact or gouge was first found), so
-// seeking there shows the tool at the contact.
+// seeking there shows the tool at the contact. An event of the setup (sim::kSetupEvent) has no move: it is placed at
+// the start, before the first move.
 //
 // THE SESSION (SimSession). One simulator for one run. run() and seek() must be called one at a time (they may be on
 // different worker threads): the caller is the serial queue (the UI keeps at most one job on a session). run() builds
@@ -146,8 +147,12 @@ struct RunRequest {
     MeshAsk mesh; // the first display mesh (full)
     // Tests only (empty in the app; added after T-074): events added to the simulator's before anything reads them, so
     // a kind or a severity that no check raises yet goes the whole way the real ones go (placed on the timeline, in
-    // RunResult::events, the panel's markers and rows). `operation` must be one of the program's.
+    // RunResult::events, the panel's markers and rows). `operation` must be one of the program's (or, for a setup's
+    // event, nil with moveIndex sim::kSetupEvent).
     std::vector<sim::SimEvent> addedEvents;
+    // Tests only (unset in the app; added with the slow-seek notice): replaces the run's sim::SeekReport in RunResult,
+    // so the panel's notice can be shown without a program that takes gigabytes to thin its keyframes.
+    std::optional<sim::SeekReport> seekReport;
 };
 
 struct RunResult {
@@ -161,8 +166,13 @@ struct RunResult {
     // sim::buildBackplot with modelFromWcs and the setup's machine, arcs within 0.01 mm), for the Simulate workspace to
     // draw with IViewport::addBackplot (added after T-074). Null for an operation without a toolpath.
     std::vector<std::shared_ptr<const sim::Backplot>> backplots;
-    std::vector<sim::SimEvent> events; // ISimulator::events
-    std::vector<EventPlace> places;    // parallel to events
+    // ISimulator::events. A setup's event (moveIndex sim::kSetupEvent: a fixture against the part or the stock; added
+    // after T-074) belongs to no move: it comes first and its place is the start of the timeline ({0, 0, 0}, 0 s).
+    std::vector<sim::SimEvent> events;
+    std::vector<EventPlace> places; // parallel to events
+    // ISimulator::seekReport of the run (added with the slow-seek notice): whether its keyframes were thinned to stay
+    // in memory, and an estimate of its slowest seek.
+    sim::SeekReport seek;
     Timeline timeline;
     Xform modelFromWcs = Xform::identity();
     Box3 stockBounds; // the stock model's box (setup WCS): the uncut faces of the display

@@ -31,7 +31,9 @@ constexpr const char* kKindNames[] = {"RapidIntoStock",
                                       "FeedIntoStockAtRapidHeight",
                                       "TravelLimit",
                                       "ToolTooShort",
-                                      "ShankHitsPart"};
+                                      "ShankHitsPart",
+                                      "FixtureHitsPart",
+                                      "FixtureHitsStock"};
 
 } // namespace
 
@@ -97,9 +99,35 @@ QString eventTitle(int kind)
         return trs("Tool sticks out too little");
     case 13:
         return trs("Tool shank hits the part");
+    case 14:
+        return trs("Fixture cuts into the part");
+    case 15:
+        return trs("Fixture overlaps the stock");
     default:
         return trs("Problem");
     }
+}
+
+double seekBudgetMs(double simCellMm)
+{
+    // PLAN.md section 9, "Timeline seek": Low 250 ms, Medium 150, High 100 (by the preset's cell, as the simulator's
+    // keyframe budget goes: src/sim/simulator.h keyframeBudgetFor).
+    if (!(simCellMm > 0) || !std::isfinite(simCellMm))
+        return 150;
+    return simCellMm >= 0.15 ? 250 : simCellMm >= 0.075 ? 150 : 100;
+}
+
+QString slowSeekText(bool thinned, double worstSeekMs, double simCellMm)
+{
+    if (!thinned || !std::isfinite(worstSeekMs) || !(worstSeekMs > seekBudgetMs(simCellMm)))
+        return {};
+    // To a tenth of a second below ten seconds (never shown as 0.0: it is over the budget), whole seconds above.
+    const double sec = worstSeekMs / 1000.0;
+    const QString amount = sec < 9.95 ? QString::number(std::max(0.1, std::round(sec * 10.0) / 10.0), 'f', 1)
+                                      : QString::number(std::llround(sec));
+    return trs("Jumping around this program may take up to about %1 s at this resolution: it needs more memory for "
+               "jump points than is allowed. A coarser resolution jumps faster.")
+        .arg(amount);
 }
 
 QString severityKey(SimSeverity s)

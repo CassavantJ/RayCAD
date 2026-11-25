@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <random>
 
@@ -476,4 +477,93 @@ TEST_CASE("finalStock is a closed solid: the stock at the run's end wherever the
     const kernel::TriSoup carried = carry->finalStock();
     CHECK(carried.positions == atEnd.positions);
     CHECK(carried.indices == atEnd.indices);
+}
+
+// ---------- The seek report (added after T-074: the slow-seek notice) ----------
+namespace {
+
+// A run of `f` at 0.05 mm, keyframes every 8 M rays, under a keyframe budget (0: the cell's).
+std::unique_ptr<ISimulator> seekRun(SimFixture& f, std::uint64_t budgetBytes)
+{
+    auto sim = makeSimulator(jobs(), nullptr);
+    sim::detail::SimTuning t;
+    t.keyframeRays = 8.0e6;
+    t.keyframeBudgetBytes = budgetBytes;
+    sim::detail::setSimTuning(*sim, t);
+    SimOptions o = options(0.05, false);
+    o.gouges = false;
+    JobContext ctx;
+    REQUIRE(sim->run(f.build(), o, ctx));
+    return sim;
+}
+
+} // namespace
+
+TEST_CASE("The seek report: not thinned within the budget; thinned under a small one", "[sim][simulator][seekreport]")
+{
+    SimFixture f = manyMovesFixture(0.25);
+    auto before = makeSimulator(jobs(), nullptr);
+    CHECK_FALSE(before->seekReport().thinned);
+    CHECK(before->seekReport().worstSeekMs == 0);
+
+    auto plain = seekRun(f, 0);
+    const sim::detail::SimRunInfo info = sim::detail::simRunInfo(*plain);
+    REQUIRE(info.thinnings == 0);
+    REQUIRE(info.keyframeMotions.size() > 6);
+    CHECK_FALSE(plain->seekReport().thinned);
+    CHECK(plain->seekReport().worstSeekMs > 0);
+    CHECK(std::isfinite(plain->seekReport().worstSeekMs));
+
+    // A third of what its keyframes pin: thinned (the memory cap, as a finishing program at High meets its 2 GB).
+    auto thin = seekRun(f, std::max<std::uint64_t>(1, info.keyframeBytes / 3));
+    const sim::detail::SimRunInfo thinInfo = sim::detail::simRunInfo(*thin);
+    REQUIRE(thinInfo.thinnings > 0);
+    CHECK(thin->seekReport().thinned);
+    // Its intervals are longer: so is the estimate (the cutting is the same; the same machine, a moment apart).
+    CHECK(thin->seekReport().worstSeekMs > 0);
+    WARN("seek report: within the budget " << plain->seekReport().worstSeekMs << " ms (" << info.keyframeMotions.size()
+                                           << " keyframes), thinned " << thinInfo.thinnings << " times "
+                                           << thin->seekReport().worstSeekMs << " ms ("
+                                           << thinInfo.keyframeMotions.size() << " keyframes)");
+    // A failed run clears it.
+    SimFixture none = manyMovesFixture(0.25);
+    none.prog.stock.reset();
+    JobContext ctx;
+    REQUIRE_FALSE(thin->run(none.build(), options(0.05), ctx));
+    CHECK_FALSE(thin->seekReport().thinned);
+    CHECK(thin->seekReport().worstSeekMs == 0);
+}
+
+TEST_CASE("The seek report's estimate is the right size: against the worst seek timed", "[sim][simulator][wallclock]")
+{
+    SimFixture f = manyMovesFixture(0.25);
+    auto plain = seekRun(f, 0);
+    const std::uint64_t bytes = sim::detail::simRunInfo(*plain).keyframeBytes;
+    plain.reset();
+    auto sim = seekRun(f, std::max<std::uint64_t>(1, bytes / 3));
+    const sim::detail::SimRunInfo info = sim::detail::simRunInfo(*sim);
+    REQUIRE(info.thinnings > 0);
+    const double estimate = sim->seekReport().worstSeekMs;
+    // The worst case of every interval: from the end, to just before the next keyframe (a restore and the whole
+    // interval recut); the best of two tries each, as the benchmark times seeks.
+    double worst = 0;
+    const std::vector<std::uint64_t>& keys = info.keyframeMotions;
+    for (std::size_t k = 0; k + 1 < keys.size(); ++k) {
+        const std::uint64_t m = std::max<std::uint64_t>(keys[k + 1], 1) - 1;
+        const TimelinePosition at{info.motionOp[m], info.motionMove[m], 0.9};
+        double best = 1e300;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            REQUIRE(sim->seek(sim->runEnd()));
+            const auto t0 = std::chrono::steady_clock::now();
+            REQUIRE(sim->seek(at));
+            best = std::min(best,
+                            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        }
+        worst = std::max(worst, best);
+    }
+    WARN("seek report: estimate " << estimate << " ms, worst seek timed " << worst << " ms over " << keys.size() - 1
+                                  << " intervals (" << info.thinnings << " thinnings)");
+    // The right size: within a factor of three either way (the header promises about two).
+    CHECK(estimate > worst / 3);
+    CHECK(estimate < worst * 3);
 }

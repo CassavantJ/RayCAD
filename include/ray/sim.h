@@ -29,6 +29,14 @@
 //  - ISimulator::position() and runEnd(), added at the end: where the stock and tool are, and where the run stopped.
 //  - The comments of ISimulator now state what run, events, seek, stock, toolPose, totalMoves and finalStock do, the
 //    timeline's positions, cancel and threading.
+//
+// Changed after T-074 (the slow-seek notice and the fixture checks; each also in docs/interfaces/sim.h, all additions):
+//  - EventKind::FixtureHitsPart and FixtureHitsStock, added at the end: the first checks of the SETUP rather than of a
+//    move (a fixture overlapping the part or the stock). Such an event concerns no move: SimEvent::moveIndex is
+//    kSetupEvent and operation the nil id; events() and verifyFast list them first.
+//  - SimProgram::stockCellMm, added at the end: a carried stock's cell, which the fixture check allows for.
+//  - ISimulator::seekReport() and SeekReport, added at the end: whether the run's keyframes were thinned and an
+//    estimate of its slowest seek, so a caller can say when jumping around the timeline will be slow.
 #pragma once
 #include "core.h"
 #include "kernel.h"
@@ -173,12 +181,20 @@ enum class EventKind {
     PlungeWithNonCentreCutting, ExcessEngagement, FeedIntoStockAtRapidHeight,
     TravelLimit,               // move exceeds machine axis travel
     ToolTooShort,              // required flute length or stick-out exceeds the tool; suggests minimum safe stick-out
-    ShankHitsPart              // Error, tier-independent (added by T-071)
+    ShankHitsPart,             // Error, tier-independent (added by T-071)
+    // Setup-level (added after T-074; src/sim/verify.h, SETUP): a fixture solid against the part and the INITIAL stock,
+    // before any move, exactly on their triangles; touching is not an overlap (src/sim/verify.h says how deep counts).
+    FixtureHitsPart,           // Error: a fixture overlaps the finished part
+    FixtureHitsStock           // Warning: a fixture overlaps the stock but not the part (rough stock is often drawn
+                               // oversize, so it may be right)
 };
+// The moveIndex of an event that concerns no move (a setup-level kind; added after T-074). Its operation is the nil id.
+inline constexpr std::uint32_t kSetupEvent = 0xFFFFFFFFu;
 struct SimEvent {
     EventKind kind; Severity severity;
-    OperationId operation; std::uint32_t moveIndex;
-    Vec3 position; double amountMm;       // gouge depth, overtravel or required extra stick-out
+    OperationId operation; std::uint32_t moveIndex;   // kSetupEvent and the nil id: no move (see EventKind)
+    Vec3 position; double amountMm;       // gouge depth, overtravel or required extra stick-out; a fixture overlap's
+                                          // depth at `position` (a point of the overlap)
     std::string message;
 };
 
@@ -199,6 +215,10 @@ struct SimProgram {                        // one setup
     // Added by T-071: parallel to ops, the library tool (CamState's embedded copy); empty, shorter or null: not known
     // (the checks then take the tool as not cutting at its centre and give no stick-out limit).
     std::vector<const lib::Tool*> toolDefs = {};
+    // Added after T-074: the cell a carried stock was simulated at (cam::CarriedStock::cellMm); 0 when stockSolid is
+    // the stock's own exact solid. A carried stock's cut walls lie up to half a cell outside the material they stand
+    // for, so the fixture check allows that much more overlap with the stock (never with the part).
+    double stockCellMm = 0;
 };
 // resolution: the stock model's cell (the tier preset's; a run that carries stock uses its own fixed one).
 // gougeTolMm (settled in T-072): how far the cutting part of the tool may go into the PART (not the part plus stock to
@@ -215,6 +235,16 @@ struct SimOptions { StockResolution resolution; double gougeTolMm = 0.05; bool s
 // motions at its start included). (op, m, 1) is (op, m + 1, 0). Settled in T-072.
 struct TimelinePosition { std::uint32_t opIndex; std::uint32_t moveIndex; double t01; };   // t01 = fraction along the move
 
+// How a run's keyframes came out (ISimulator::seekReport; added after T-074). thinned: the keyframes' memory passed the
+// simulator's budget for the cell (src/sim/simulator.h, KEYFRAMES) and they were thinned at least once, so a seek
+// recuts more than the simulator's own spacing. worstSeekMs: an ESTIMATE of the run's slowest seek: the cutting of its
+// longest keyframe interval (what a seek to just before the next keyframe recuts after restoring one), timed as the run
+// itself cut that interval on this machine. Rough: it leaves out the restore and the caller's display mesh, and the
+// machine's load differs between the run and the seek; take it as good to within about a factor of two (the simulator
+// tests compare it with seeks they time). It is the one number the simulator gives that depends on the wall clock: for
+// telling the user, never for anything that changes a result.
+struct SeekReport { bool thinned = false; double worstSeekMs = 0; };
+
 class ISimulator {
 public:
     virtual ~ISimulator() = default;
@@ -223,7 +253,8 @@ public:
     // machine's travel. A stock contact the exact test cannot settle, because earlier moves may have cut that
     // material, is checked on the checker's own stock model at a FIXED cell, never the tier's, which its event's
     // message states; that model runs only when there is such a contact. Results do not depend on the tier or the
-    // thread count. Fast enough to run after every toolpath generation.
+    // thread count. Fast enough to run after every toolpath generation. Before the moves, the setup's fixtures against
+    // the part and the initial stock (FixtureHitsPart, FixtureHitsStock): those events come first.
     virtual Result<std::vector<SimEvent>> verifyFast(const SimProgram&, JobContext&) = 0;
     // Full material-removal run (settled in T-072): the checks and the gouge test (SimOptions), then the stock model is
     // reset from stockSolid in its bounding box (the setup WCS) and every move is cut through cutBatch in batches,
@@ -237,7 +268,8 @@ public:
     virtual Status run(const SimProgram&, const SimOptions&, JobContext&) = 0;
     // The checks' events and the gouges, sorted by (opIndex, moveIndex), at one move the checks' kinds first. Gouge:
     // amountMm the depth (an upper bound, within about 0.015 mm), moveIndex the first of a run of gouging moves of one
-    // operation, the message names the deepest. Kept until the next run.
+    // operation, the message names the deepest. Kept until the next run. The setup-level events (moveIndex kSetupEvent)
+    // come before all others; stopOnError does not stop at them (they belong to no move).
     virtual std::span<const SimEvent> events() const = 0;               // sorted by (opIndex, moveIndex)
     // Puts the stock and the tool at a position (see TimelinePosition; an operation or move past the end, or past where
     // stopOnError stopped, means runEnd(); t01 is clamped). A forward seek with no keyframe between continues from where
@@ -262,6 +294,8 @@ public:
     // Added by T-072: the end of the last run: the last move of the last operation with moves at t01 1, or the move of
     // the first Error event when stopOnError stopped it there. {0, 0, 0} before a run or for a program without moves.
     virtual TimelinePosition runEnd() const = 0;
+    // Added after T-074: how the last run's keyframes came out (SeekReport). Before a successful run: {false, 0}.
+    virtual SeekReport seekReport() const = 0;
 };
 // The stock model may be null (a CPU tri-dexel model is made). Threads: one at a time calls run, seek and verifyFast;
 // the const functions may run together, but not during a run or a seek. Everything is DETERMINISTIC: events, removed

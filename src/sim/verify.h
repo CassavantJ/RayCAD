@@ -67,10 +67,38 @@
 // EVENTS. One per run of consecutive IR moves of one operation with the same kind, obstacle and layer (moveIndex the
 // first; the message counts the rest), each at the tool tip of the first contact found along that run's first motion.
 // Sorted by operation (program order), move index, kind. All Severity::Error. amountMm: ToolTooShort the extra length,
-// TravelLimit the excess, collisions 0.
+// TravelLimit the excess, collisions 0. The setup's events (SETUP below) come before all of them.
 //
 // FRAME. Every solid and the toolpaths are in the setup WCS, mm (sim.h SimProgram). Solids are closed triangle soups,
 // either orientation (inside = nonzero winding).
+//
+// SETUP (added after T-074; verify_setup.cpp). Before the moves, once per program: each fixture solid against the part
+// and against the INITIAL stock. Contact is not interference: a vise jaw against the stock's side, the stock on the
+// vise floor or on parallels ("Place on stock", ray_api/cam_fixtures.h) touch over whole faces. So two solids overlap
+// only when the overlap is DEEPER than a tolerance: when a point of one solid's surface lies inside the other more than
+// the tolerance from every one of its triangles (either way round: the fixture's surface in the part, or the part's in
+// the fixture, which catches one solid wholly inside the other). For two blocks pushed together by d that depth is d.
+//   The tolerance is kFixtureOverlapMm: it passes touching faces and the rounding of an import or a placement (a
+//   STEP file's 1e-7 mm, a mate's rounded points, the soups' chords, 0.009 mm inside curved faces), and
+//   catches any overlap a machinist would call wrong. Against a carried stock (SimProgram::stockCellMm) half its cell
+//   more: its cut walls lie up to half a cell outside the material they stand for.
+//   How, exactly on the triangles (verify_setup.cpp): every triangle of one solid that lies in the other's box is a
+//   patch. A patch is settled when it lies within the tolerance of one triangle of the other (distance to a triangle is
+//   convex, so its corners decide), or of a face of several triangles in one plane (its shadow on that plane inside the
+//   face: so touching faces settle at once however they are triangulated), or of the other's surface as a whole (its
+//   centre's distance plus its size), or when it is clear of that surface (then it is all outside, or all inside and an
+//   overlap if clear by more than the tolerance: one point decides which, by the vote of three rays, as one ray running
+//   along a face reads either way). Otherwise it is cut in two across its longest edge, down to patches
+//   kFixturePatchFraction of the tolerance in radius, where its centre decides. So an overlap is reported only when one
+//   is deeper than the tolerance, and always when one is deeper than the tolerance plus that radius. The work lies
+//   along the lines where the faces that touch end, a few patches per tenth of a millimetre of them; at most
+//   kFixturePatchesPerTriangle patches per piece (counted: none reached in the tests). The triangles are first cut
+//   into pieces at most 2 mm across within the other's box, which run in parallel; the overlap reported is the first
+//   found on the lowest-numbered piece, the same for any worker count.
+//   Events (in fixture order, before every move's): a fixture overlapping the part is FixtureHitsPart (Error: the part
+//   cannot be there); else one overlapping the initial stock is FixtureHitsStock (Warning: rough stock is often drawn
+//   oversize, so it may stand as it is). moveIndex kSetupEvent, operation nil, position a point of the overlap (setup
+//   WCS), amountMm how deep that point lies (an overlap is at least that deep).
 #pragma once
 
 #include "toolshape.h"
@@ -114,6 +142,16 @@ inline constexpr double kCutStockCellMm = 0.1;
 inline constexpr std::uint64_t kCutStockMaxDexels = 8'000'000;
 // Sub-motions per cutBatch call of the cut-stock layer.
 inline constexpr std::size_t kCutStockBatch = 2048;
+// SETUP (added after T-074): a fixture overlaps the part or the stock when the overlap is deeper than this. Well above
+// touching faces and placement rounding (micrometres), well below any misplacement that matters (a tenth and more).
+inline constexpr double kFixtureOverlapMm = 0.05;
+// Patches are cut down to this fraction of the tolerance across (the radius about their centre): an overlap deeper
+// than the tolerance times (1 + this) is never missed.
+inline constexpr double kFixturePatchFraction = 0.25;
+// At most this many patches per piece of a triangle (the parallel search's units, at most 2 mm across: a bound on the
+// time of a pathological pair, e.g. two curved soups lying on each other); a piece that reaches it is left as it is and
+// counted (OverlapStats::capped).
+inline constexpr std::uint32_t kFixturePatchesPerTriangle = 1u << 18;
 
 // One operation of the program.
 struct VerifyOperation {
@@ -130,6 +168,7 @@ struct VerifyInput {
     std::vector<const kernel::TriSoup*> fixtures; // each closed; nulls are skipped
     const lib::MachineDef* machine = nullptr;     // null: no travel checks
     std::optional<Vec3> wcsInMachine;             // see TRAVEL above
+    double stockCellMm = 0;                       // SimProgram::stockCellMm (SETUP above)
 };
 
 struct VerifyOptions {
@@ -142,7 +181,8 @@ struct VerifyStats {
     std::uint64_t skippedMotions = 0; // straight up with a tool that never narrows upward
     std::uint64_t deferred = 0;       // contacts with the initial stock handed to the cut-stock layer
     bool cutStockRan = false;
-    double cutStockCellMm = 0; // the cell it used (0 when it did not run)
+    double cutStockCellMm = 0;                       // the cell it used (0 when it did not run)
+    std::uint64_t setupPatches = 0, setupCapped = 0; // the setup checks' OverlapStats (SETUP above)
 };
 
 // The checks of a whole setup. Cancellable (polls ctx.cancel); reports progress. `jobs` runs the cut-stock model.
@@ -151,6 +191,25 @@ Result<std::vector<SimEvent>> verifyProgram(const VerifyInput&, IJobSystem& jobs
 
 // The input of a SimProgram (pointers into it: keep it alive). SimProgram::toolDefs may be empty or shorter than ops.
 VerifyInput verifyInputFrom(const SimProgram&);
+
+// ---------- Setup checks (verify_setup.cpp; SETUP above) ----------
+struct OverlapStats {
+    std::uint64_t triangles = 0; // triangles of either solid that lay in the other's box
+    std::uint64_t patches = 0;   // patches looked at
+    std::uint64_t capped = 0;    // triangles that reached kFixturePatchesPerTriangle
+};
+struct Overlap {
+    Vec3 point;   // a point of one solid's surface inside the other
+    double depth; // its distance from the other's surface (more than the tolerance)
+};
+// Whether solids a and b (closed soups) overlap by more than tolMm (SETUP above): a point of the overlap, or nothing.
+// The same for any worker count. Cancellable.
+Result<std::optional<Overlap>> overlapDeeperThan(const kernel::TriSoup& a, const kernel::TriSoup& b, double tolMm,
+                                                 IJobSystem& jobs, JobContext& ctx, OverlapStats* stats = nullptr);
+// The setup-level events of a program: each fixture against the part, then (when it does not overlap the part) against
+// the initial stock. In fixture order. Cancellable; progress on ctx.progress.
+Result<std::vector<SimEvent>> setupEvents(const VerifyInput&, IJobSystem& jobs, JobContext& ctx,
+                                          OverlapStats* stats = nullptr);
 
 // The cut-stock cell for a stock box: kCutStockCellMm, doubled until the three grids hold at most kCutStockMaxDexels.
 double cutStockCell(const Box3& stockBounds);

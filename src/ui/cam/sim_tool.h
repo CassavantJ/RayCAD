@@ -28,7 +28,10 @@
 //   Event      selectEvent(i) (a marker, a row): the stock and the tool go to where the event happened (EventPlace),
 //   and
 //              when the program posted for the setup is current the G-code viewer opens on the event's move (its first
-//              line current, every line of it marked: GcodeModel::showMove, through PostOutput::lineMap).
+//              line current, every line of it marked: GcodeModel::showMove, through PostOutput::lineMap). An event of
+//              the setup (sim::kSetupEvent, after T-074: a fixture in the part or the stock) has no move: it goes to
+//              the start, its place on the stock is marked (a box about its position, as deep as the overlap and 3 mm
+//              more), and it has no G-code line of its own (the viewer follows the stock to the start, as on Home).
 //   G-code     gcodeState: "current" (the viewer's program is this setup's, from exactly these toolpaths), "stale"
 //              (it is this setup's, from other toolpaths), "none" (no program of this setup). When it is not current
 //              the panel says so and offers Post..., which opens the post dialog (its gate applies); nothing is posted
@@ -59,6 +62,7 @@
 #include <ray_api/cam_post.h>
 #include <ray_api/cam_setup.h>
 #include <ray_api/cam_sim_session.h>
+#include <ray_render/viewport.h> // render::StockMark
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QObject>
@@ -118,10 +122,13 @@ class SimToolModel : public QObject {
     Q_PROPERTY(bool outOfDate READ outOfDate NOTIFY outOfDateChanged)
     Q_PROPERTY(QString outOfDateReason READ outOfDateReason NOTIFY outOfDateChanged)
     Q_PROPERTY(QString resolutionText READ resolutionText NOTIFY resultChanged)
+    // The slow-seek notice (camui::slowSeekText of the run's sim::SeekReport): "" when seeks keep to the tier's budget.
+    Q_PROPERTY(QString slowSeekText READ slowSeekText NOTIFY resultChanged)
     Q_PROPERTY(QString summary READ summary NOTIFY resultChanged)
     Q_PROPERTY(int errorCount READ errorCount NOTIFY resultChanged)
     Q_PROPERTY(int warningCount READ warningCount NOTIFY resultChanged)
-    // [{index, kind, kindName, severity, title, message, operation, opIndex, move (1-based), sec, time, x (0..1)}]
+    // [{index, kind, kindName, severity, title, message, operation, opIndex, move (1-based; 0 for the setup's), setup
+    // (no move: sim::kSetupEvent), where ("Face · move 12", "Before the first move"), sec, time, x (0..1)}]
     Q_PROPERTY(QVariantList events READ events NOTIFY resultChanged)
     // [{name, start, end (0..1 of the timeline), startSec, endSec}]
     Q_PROPERTY(QVariantList operations READ operations NOTIFY resultChanged)
@@ -174,6 +181,7 @@ public:
     bool outOfDate() const { return result_ != nullptr && !outOfDateReason_.isEmpty(); }
     QString outOfDateReason() const { return result_ ? outOfDateReason_ : QString(); }
     QString resolutionText() const;
+    QString slowSeekText() const;
     QString summary() const;
     int errorCount() const;
     int warningCount() const;
@@ -263,6 +271,10 @@ public:
     bool toolpathVisible() const { return toolpathVisible_; }
     // Tests only: events every later run adds to the simulator's (cam_sim::RunRequest::addedEvents).
     void setAddedEvents(std::vector<sim::SimEvent> events) { addedEvents_ = std::move(events); }
+    // Tests only: the seek report every later run gives instead of its own (cam_sim::RunRequest::seekReport).
+    void setSeekReport(std::optional<sim::SeekReport> report) { seekReport_ = report; }
+    // The stock's marks as last given to the viewport (the chosen event's first).
+    const std::vector<render::StockMark>& stockMarks() const { return marks_; }
     // Bodies the workspace hides now (by scene index).
     std::vector<int> hiddenBodies() const { return std::vector<int>(hidden_.begin(), hidden_.end()); }
     std::uint32_t triangleBudget() const { return budget_; }
@@ -406,7 +418,9 @@ private:
     bool stockShownKnown_ = false, stockStale_ = false;
     bool bodiesTouched_ = false;
     bool showStock_ = true, showTool_ = true, showHolder_ = true, showFixtures_ = true, showToolpath_ = true;
-    std::vector<sim::SimEvent> addedEvents_; // tests only
+    std::vector<sim::SimEvent> addedEvents_;    // tests only
+    std::optional<sim::SeekReport> seekReport_; // tests only
+    std::vector<render::StockMark> marks_;
 
     // Position, seeks and playback.
     sim::TimelinePosition position_{0, 0, 0};

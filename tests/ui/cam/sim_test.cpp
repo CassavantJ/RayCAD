@@ -493,8 +493,9 @@ void addTurnedOverSetup(const Window& w)
 // around in X only, none in Y where the jaws are; the vise and its jaw as fixtures); peck drilling of the two front
 // holes (y = 26.7) with the shipped 6 mm drill 25 mm out of a 60 mm holder (c1), generated: the holder reaches 3.3 mm
 // over the fixed jaw, and once the tip is 5 mm into the plate it comes down on the jaw. A real HolderHitsFixture,
-// nothing seeded.
-void buildViseJob(const Window& w)
+// nothing seeded. `stockFront` (added with the fixture checks): stock in front of the plate (yNeg), where the fixed
+// jaw stands: that much of it overlaps the jaw (a fixture in the stock, not in the part).
+void buildViseJob(const Window& w, double stockFront = 0)
 {
     const BodyId plateId = w.plate();
     const QString vise = QStringLiteral(RAY_SOURCE_DIR "/resources/library/fixtures/generic-vise-6in.step");
@@ -523,7 +524,8 @@ void buildViseJob(const Window& w)
                          R"({"id":")" + id('a', 1) + R"(","name":"In the vise","partBodies":[")" +
                              plateId.value.toString() + R"("],"fixtureBodies":[")" + viseId.value.toString() +
                              R"(",")" + jawId.value.toString() + R"("],"machine":")" + kVmc +
-                             R"(","stock":{"type":"box","xNeg":2,"xPos":2,"yNeg":0,"yPos":0,"zNeg":0,"zPos":0},)"
+                             R"(","stock":{"type":"box","xNeg":2,"xPos":2,"yNeg":)" + std::to_string(stockFront) +
+                             R"(,"yPos":0,"zNeg":0,"zPos":0},)"
                              R"("library":{"machines":[)" +
                              api::cam_setup::machineJson(*m) + "]}}");
     REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() >= 1; }, kTimeoutMs));
@@ -1188,6 +1190,8 @@ TEST_CASE("a real holder collision: the library vise, its marker, the holder at 
     for (std::size_t i = 0; i < res->events.size(); ++i) {
         // Nothing seeded: the stock is the plate's own size, the drill's rapids stay above it.
         CHECK(res->events[i].kind != sim::EventKind::RapidIntoStock);
+        // The jaws touch the plate and its stock on both sides: no fixture in the part or the stock (after T-074).
+        CHECK(res->events[i].moveIndex != sim::kSetupEvent);
         if (res->events[i].kind == sim::EventKind::HolderHitsFixture && !hit)
             hit = static_cast<int>(i);
     }
@@ -1362,14 +1366,138 @@ TEST_CASE("a warning the whole way: its amber marker and row, and both seek ther
 }
 
 // =============================================================================================================
-// wallclock
-TEST_CASE("a larger program on a pocket part: the UI thread while it runs, plays and scrubs",
-          "[ui][cam][sim][wallclock]")
+// added after T-074: the fixture checks and the slow-seek notice
+TEST_CASE("a fixture in the stock: a warning of the setup, without a move, its amber row and marker at the start; the "
+          "slow-seek line",
+          "[ui][cam][sim][setup]")
 {
     RAY_REQUIRE_RHI();
     Window w;
-    w.open(kPocketPart);
+    w.open(kPlate);
     w.toWorkspace(ui::kCamWorkspace);
+    buildViseJob(w, 1.0); // 1 mm of stock in front of the plate, where the fixed jaw stands
+    w.toWorkspace(ui::kSimWorkspace);
+    SimToolModel* s = w.sim();
+    w.shown(QStringLiteral("simPanel"));
+    REQUIRE(QTest::qWaitFor([&] { return s->setupIdText().toStdString() == id('a', 1); }, 5000));
+    w.runSim();
+    const auto res = s->result();
+    REQUIRE(res);
+    for (std::size_t i = 0; i < res->events.size(); ++i)
+        UNSCOPED_INFO(ui::camui::eventKindName(static_cast<int>(res->events[i].kind))
+                      << " op " << res->places[i].opIndex << " move " << res->events[i].moveIndex << " at "
+                      << res->places[i].sec << " s: " << res->events[i].message);
+    // The real check, nothing added: the fixed jaw (the vise's body, fixture 1) 1 mm into the stock, not the plate.
+    REQUIRE_FALSE(res->events.empty());
+    const sim::SimEvent& e = res->events[0];
+    CHECK(e.kind == sim::EventKind::FixtureHitsStock);
+    CHECK(e.severity == sim::Severity::Warning);
+    CHECK(e.moveIndex == sim::kSetupEvent);
+    for (std::size_t i = 1; i < res->events.size(); ++i)
+        CHECK(res->events[i].moveIndex != sim::kSetupEvent);
+    CHECK(res->places[0].sec == 0);
+    CHECK(s->warningCount() == 1);
+    CHECK(s->summary().contains(QStringLiteral("1 warning")));
+
+    // ---- Its row: amber, the title, no operation and no move: "Before the first move" ----
+    const QVariantMap row0 = s->events()[0].toMap();
+    CHECK(row0.value(QStringLiteral("severity")).toString() == QStringLiteral("warning"));
+    CHECK(row0.value(QStringLiteral("title")).toString() == QStringLiteral("Fixture overlaps the stock"));
+    CHECK(row0.value(QStringLiteral("setup")).toBool());
+    CHECK(row0.value(QStringLiteral("operation")).toString().isEmpty());
+    CHECK(row0.value(QStringLiteral("move")).toInt() == 0);
+    CHECK(row0.value(QStringLiteral("time")).toString() == ui::camui::formatClock(0));
+    QQuickItem* row = w.shown(QStringLiteral("simEvent.0"));
+    QQuickItem* where = w.find(QStringLiteral("simEventWhere.0"), row);
+    REQUIRE(where != nullptr);
+    CHECK(where->property("text").toString() == QStringLiteral("Before the first move · ") + ui::camui::formatClock(0));
+    QQuickItem* message = w.find(QStringLiteral("simEventMessage.0"), row);
+    REQUIRE(message != nullptr);
+    CHECK(message->property("text").toString().startsWith(QStringLiteral("Fixture 1 overlaps the stock")));
+    // Its marker: amber, at the start of the track.
+    QQuickItem* track = w.shown(QStringLiteral("simTrack"));
+    const QVariantList markers = s->markers(track->width());
+    REQUIRE_FALSE(markers.isEmpty());
+    const QVariantMap first = markers[0].toMap();
+    CHECK(first.value(QStringLiteral("first")).toInt() == 0);
+    CHECK(first.value(QStringLiteral("x")).toDouble() == 0);
+    CHECK(first.value(QStringLiteral("severity")).toString() == QStringLiteral("warning"));
+    const QColor amber = w.host->theme()->property("warning").value<QColor>();
+    CHECK(w.shown(QStringLiteral("simMarker.0"))->property("colour").value<QColor>() == amber);
+
+    // ---- From the end, the row: the start, the place marked on the stock ----
+    w.view()->forceActiveFocus();
+    w.key(Qt::Key_End);
+    w.simIdle();
+    REQUIRE(s->positionSec() > 0);
+    w.click(QStringLiteral("simEvent.0"));
+    REQUIRE(QTest::qWaitFor([&] { return s->currentEvent() == 0; }, 5000));
+    w.simIdle();
+    CHECK(s->position().opIndex == 0);
+    CHECK(s->position().moveIndex == 0);
+    CHECK(s->position().t01 == 0);
+    CHECK(s->positionSec() == 0);
+    CHECK(row->property("current").toBool());
+    REQUIRE_FALSE(s->stockMarks().empty());
+    const Box3 mark = s->stockMarks().front().box;
+    CHECK(mark.min.x < e.position.x);
+    CHECK(mark.max.x > e.position.x);
+    CHECK(mark.min.y < e.position.y);
+    CHECK(mark.max.y > e.position.y);
+    CHECK(mark.min.z < e.position.z);
+    CHECK(mark.max.z > e.position.z);
+    // As deep as the overlap there and 3 mm more each way, so it reaches the stock's face.
+    CHECK(mark.max.y - mark.min.y == Catch::Approx(2 * (e.amountMm + 3)));
+    w.view()->fitAll();
+    w.simIdle();
+    w.shotsBothThemes(QStringLiteral("simnotice_fixture_warning"));
+    // The marker does the same, from the end.
+    w.key(Qt::Key_End);
+    w.simIdle();
+    REQUIRE(s->positionSec() > 0);
+    w.click(QStringLiteral("simMarker.0"));
+    w.simIdle();
+    CHECK(s->currentEvent() == 0);
+    CHECK(s->positionSec() == 0);
+    // The holder's collision on the drilling still comes after it, on its move (the existing check).
+    bool holder = false;
+    for (const sim::SimEvent& ev : res->events)
+        holder = holder || ev.kind == sim::EventKind::HolderHitsFixture;
+    CHECK(holder);
+
+    // ---- The slow-seek line: none for this run (its keyframes kept within memory) ----
+    CHECK_FALSE(res->seek.thinned);
+    CHECK(s->slowSeekText().isEmpty());
+    CHECK_FALSE(w.find(QStringLiteral("simSlowSeek"))->isVisible());
+    // A run whose keyframes were thinned and whose slowest seek is about 0.64 s (the run's own report replaced, as
+    // cam_sim::RunRequest::seekReport lets tests do): the line, near the resolution.
+    s->setSeekReport(sim::SeekReport{true, 640});
+    w.runSim();
+    CHECK(s->slowSeekText() == ui::camui::slowSeekText(true, 640, s->result()->cellMm));
+    QQuickItem* slow = w.shown(QStringLiteral("simSlowSeek"));
+    CHECK(slow->property("text").toString().startsWith(
+        QStringLiteral("Jumping around this program may take up to about 0.6 s at this resolution")));
+    QQuickItem* resolution = w.shown(QStringLiteral("simResolution"));
+    CHECK(slow->mapToScene(QPointF(0, 0)).y() > resolution->mapToScene(QPointF(0, 0)).y());
+    CHECK(slow->mapToScene(QPointF(0, 0)).y() <
+          resolution->mapToScene(QPointF(0, resolution->height())).y() + 2 * slow->height());
+    w.shotsBothThemes(QStringLiteral("simnotice_slow_seek"));
+    // Within Medium's 150 ms though thinned: no line.
+    s->setSeekReport(sim::SeekReport{true, 120});
+    w.runSim();
+    CHECK(s->slowSeekText().isEmpty());
+    CHECK_FALSE(w.find(QStringLiteral("simSlowSeek"))->isVisible());
+    s->setSeekReport(std::nullopt);
+    w.checkNoWarnings();
+}
+
+// =============================================================================================================
+// wallclock
+namespace {
+// The larger program on the pocket part (in the CAM workspace): a setup with a box stock, facing, pocket and adaptive
+// clearing of the pocket with a 3 mm end mill, generated. Returns its moves.
+std::uint64_t buildPocketJob(const Window& w)
+{
     // The pocket's floor: the highest upward planar face below the top.
     const Box3 box = kernel::bounds(w.document()->build()->bodies.at(w.plate()).shape);
     std::optional<kernel::SubId> floor;
@@ -1429,6 +1557,18 @@ TEST_CASE("a larger program on a pocket part: the UI thread while it runs, plays
     std::uint64_t moves = 0;
     for (const auto& [op, st] : w.statuses())
         moves += st.toolpath ? st.toolpath->moves.size() : 0;
+    return moves;
+}
+} // namespace
+
+TEST_CASE("a larger program on a pocket part: the UI thread while it runs, plays and scrubs",
+          "[ui][cam][sim][wallclock]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPocketPart);
+    w.toWorkspace(ui::kCamWorkspace);
+    const std::uint64_t moves = buildPocketJob(w);
 
     w.toWorkspace(ui::kSimWorkspace);
     SimToolModel* s = w.sim();
@@ -1503,6 +1643,93 @@ TEST_CASE("a larger program on a pocket part: the UI thread while it runs, plays
     }
     w.checkNoWarnings();
 }
+// Hidden (a measurement for the report of the fixture checks, after T-074): the larger program on the pocket part at
+// Medium, simulated without fixtures and then with the library vise and parallels placed on its stock
+// (CamFixtures::placeOnStock):
+// the run's time both ways, and the setup checks alone (verifyFast of the program without its moves), which must find
+// nothing for a vise placed on the stock.
+TEST_CASE("measure: the setup checks on the pocket part in the library vise placed on its stock",
+          "[.][ui][cam][sim][measure]")
+{
+    RAY_REQUIRE_RHI();
+    Window w;
+    w.open(kPocketPart);
+    w.toWorkspace(ui::kCamWorkspace);
+    const std::uint64_t moves = buildPocketJob(w);
+    SimToolModel* s = w.sim();
+    const auto runs = [&](const char* what) {
+        w.toWorkspace(ui::kSimWorkspace);
+        double best = 1e300;
+        for (int i = 0; i < 3; ++i) {
+            w.runSim();
+            best = std::min(best, s->result()->runSec);
+        }
+        for (const sim::SimEvent& e : s->result()->events)
+            CHECK(e.moveIndex != sim::kSetupEvent);
+        WARN(what << ": " << moves << " moves, the simulator's run (checks, gouges, removal) best of 3: " << best * 1000
+                  << " ms; " << s->result()->events.size() << " events");
+        return best;
+    };
+    const double without = runs("without fixtures");
+
+    w.toWorkspace(ui::kCamWorkspace);
+    ui::FixturesToolModel* f = w.fixtures();
+    REQUIRE(f->open());
+    // The vise and the parallels (the 21 mm stock on them, the jaws below its top, so the facing clears them).
+    int vise = -1, parallels = -1;
+    const QVariantList library = f->library();
+    for (int i = 0; i < library.size(); ++i) {
+        const QString name = library[i].toMap().value(QStringLiteral("name")).toString();
+        if (name == QStringLiteral("Generic vise 6in"))
+            vise = i;
+        else if (name.contains(QStringLiteral("parallels"), Qt::CaseInsensitive))
+            parallels = i;
+    }
+    REQUIRE(vise >= 0);
+    REQUIRE(parallels >= 0);
+    REQUIRE(f->addFromLibrary(vise));
+    REQUIRE(QTest::qWaitFor([&] { return f->fixtures().size() == 2 && !f->busy(); }, kTimeoutMs));
+    w.settle();
+    f->cancel();
+    REQUIRE(f->addFromLibrary(parallels));
+    REQUIRE(QTest::qWaitFor([&] { return f->fixtures().size() == 4 && !f->busy(); }, kTimeoutMs));
+    w.settle();
+    f->cancel();
+    REQUIRE(f->placeOnStock());
+    REQUIRE(QTest::qWaitFor([&] { return !f->placingOnStock() && !f->stockStatus().isEmpty(); }, kTimeoutMs));
+    w.settle();
+    INFO(f->stockMessage().toStdString());
+    REQUIRE(f->stockStatus() != QStringLiteral("failed"));
+    f->close();
+    for (std::uint64_t op = 1; op <= 3; ++op)
+        w.generate(op); // the fixtures are inputs of the toolpaths
+    const double with = runs("in the vise placed on the stock");
+
+    // The setup checks alone: the program without its moves.
+    JobContext ctx;
+    auto built = api::cam_sim::buildSimProgram(w.document()->state(), w.document()->build(), setupId(1), {}, {}, ctx);
+    REQUIRE(built);
+    REQUIRE(built->program.fixtureSolids.size() == 4);
+    std::size_t tris = 0;
+    for (const kernel::TriSoup& soup : built->program.fixtureSolids)
+        tris += soup.indices.size() / 3;
+    auto simulator = sim::makeSimulator(*w.host->scene()->jobs(), nullptr);
+    double best = 1e300;
+    for (int i = 0; i < 5; ++i) {
+        QElapsedTimer t;
+        t.start();
+        auto events = simulator->verifyFast(built->program, ctx);
+        best = std::min(best, static_cast<double>(t.nsecsElapsed()) / 1e6);
+        REQUIRE(events);
+        CHECK(events->empty());
+    }
+    WARN("the setup checks alone (the vise, its jaw and the parallels, "
+         << tris << " triangles, against the part, " << built->program.partSolid.indices.size() / 3
+         << " triangles, and the box stock): best of 5 " << best << " ms on " << w.host->scene()->jobs()->workerCount()
+         << " workers; the whole run " << (with - without) * 1000
+         << " ms longer with the vise (its per-move checks too)");
+}
+
 int main(int argc, char** argv)
 {
     // The real user profile is never touched.
