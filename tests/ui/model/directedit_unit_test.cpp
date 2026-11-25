@@ -185,10 +185,16 @@ TEST_CASE("the review list: grouped by owner, features first, in shop words", "[
     CHECK(de::stateKey(de::RefState::Split) == QStringLiteral("split"));
     // What it means for the owner.
     CHECK(de::consequence(items[4]) == QStringLiteral("The feature does not build until the face is picked again."));
-    CHECK(de::consequence(items[1]) == QStringLiteral("The feature uses both pieces."));
+    // A feature goes on with a Split or Merged reference: the row says what it does, and that nothing is needed unless
+    // that is wrong.
+    CHECK(de::consequence(items[1]) ==
+          QStringLiteral("The feature uses both pieces. Re-pick only if that is not what you want."));
     de::ReviewItem three = items[1];
     three.elements = 3;
-    CHECK(de::consequence(three) == QStringLiteral("The feature uses all three pieces."));
+    CHECK(de::consequence(three) ==
+          QStringLiteral("The feature uses all three pieces. Re-pick only if that is not what you want."));
+    CHECK(de::consequence(items[2]) ==
+          QStringLiteral("The feature uses the whole edge. Re-pick only if that is not what you want."));
     CHECK(de::consequence(items[0]) == QStringLiteral("The toolpath cannot be posted until the face is picked again."));
     CHECK(de::consequence(items[3]).contains(QStringLiteral("confirm the match")));
     // Which reference.
