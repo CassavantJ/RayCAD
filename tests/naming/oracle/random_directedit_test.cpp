@@ -1281,16 +1281,16 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
          0xA81B7000ull,
          false,
          {{Answer::Split, {40, 43}}, {Answer::Split, {40, 42}}, {Answer::Exact, {42}}}},
-        //  - OPEN RESOLVER FINDING: a sliver of new ground on the top face where the moved cut used to be, cut off and
-        //    joined to the face's split family, is answered as a piece (Split {2 9}); the oracle expects {2}. Pinned as
-        //    it
-        //    is, so a fix shows here; the sliver alone and the sliver swapped for a face off the top are wrong too;
+        //  - a sliver of new ground on the top face where the moved cut used to be, cut off and joined to the face's
+        //    split family, lies outside the picked face's outline at pick time (TopoRef::outline): not a piece
+        //    (resolver: piecesInsideOutline); the old answer with it, the sliver alone, and the sliver swapped for a
+        //    face off the top, all wrong;
         {14,
          49,
          k + "rib_plate_1.stp #49|face 39",
          Answer::Split,
-         Verdict::WrongOther,
-         "split piece of new ground: open resolver finding",
+         Verdict::Correct,
+         "split piece outside the pick-time outline: resolver",
          false,
          0xA81B7000ull,
          false,
@@ -1416,6 +1416,7 @@ TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
             std::string els;
             for (const SubId& s : res.elements)
                 els += " " + std::to_string(s.index);
+            std::printf("LOOK outline %zu chords\n", ref.ref.outline.chords.size());
             std::printf("LOOK %s: names %s; answer %d {%s }, verdict %s; desc %s\n", id.c_str(), ref.names.c_str(),
                         static_cast<int>(rr.answer), els.c_str(), verdictName(rr.judgement.verdict),
                         explain(ref.record.truth, *ref.record.owners, *ref.record.baseline,

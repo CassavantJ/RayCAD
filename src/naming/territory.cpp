@@ -576,6 +576,125 @@ std::array<std::int64_t, 3> toQuanta(const Vec3& p)
     return {quantise(p.x, kLengthQuantaPerMm), quantise(p.y, kLengthQuantaPerMm), quantise(p.z, kLengthQuantaPerMm)};
 }
 
+PickOutline pickOutlineOf(const kernel::Shape& shape, SubId face)
+{
+    PickOutline out;
+    try {
+        const auto info = kernel::surfaceInfo(shape, face);
+        if (!info || info->type != kernel::SurfaceType::Plane)
+            return out;
+        std::vector<Curve> curves;
+        std::size_t arcs = 0;
+        for (const SubId& edge : kernel::adjacent(shape, face, SubKind::Edge)) {
+            const auto c = curveOf(shape, edge);
+            if (!c || !c->known)
+                return out;
+            arcs += c->line ? 0 : 1;
+            curves.push_back(*c);
+        }
+        const std::size_t lines = curves.size() - arcs;
+        if (curves.empty() || lines + 4 * arcs > kMaxOutlineChords)
+            return out;
+        const std::size_t perArc = arcs == 0 ? 0 : std::max<std::size_t>(4, (kMaxOutlineChords - lines) / arcs);
+        for (const Curve& c : curves) {
+            std::vector<Vec3> pts;
+            double slack = 0.0;
+            if (c.line) {
+                pts = {c.info.start, c.info.end};
+            } else {
+                for (std::size_t i = 0; i <= perArc; ++i)
+                    pts.push_back(i == perArc && !c.info.closed
+                                      ? c.info.end
+                                      : curvePoint(c, static_cast<double>(i) / static_cast<double>(perArc)));
+                slack = c.info.radius * (1.0 - dmath::cos(std::abs(c.sweep) / (2.0 * static_cast<double>(perArc))));
+            }
+            const std::int64_t qSlack = c.line ? 0 : quantise(slack, kLengthQuantaPerMm) + 1;
+            for (std::size_t i = 1; i < pts.size(); ++i) {
+                const auto a = toQuanta(pts[i - 1]), b = toQuanta(pts[i]);
+                out.chords.push_back({a[0], a[1], a[2], b[0], b[1], b[2], qSlack});
+            }
+        }
+    } catch (...) {
+        out = PickOutline{};
+    }
+    return out;
+}
+
+std::vector<SubId> piecesInsideOutline(const kernel::Shape& shape, const std::vector<SubId>& pieces,
+                                       const PickOutline& outline)
+{
+    try {
+        if (!outline.known() || pieces.size() < 2 || pieces.front().kind != SubKind::Face)
+            return pieces;
+        // The outline's plane: a chord, and the first chord not along it.
+        Outline o;
+        const auto start = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][0], outline.chords[i][1], outline.chords[i][2]});
+        };
+        const auto end = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][3], outline.chords[i][4], outline.chords[i][5]});
+        };
+        o.origin = start(0);
+        Vec3 d0{};
+        if (!unitOf(sub(end(0), start(0)), d0))
+            return pieces;
+        bool plane = false;
+        for (std::size_t i = 1; i < outline.chords.size() && !plane; ++i)
+            plane = unitOf(cross(d0, sub(end(i), start(i))), o.n) || unitOf(cross(d0, sub(end(i), o.origin)), o.n);
+        if (!plane)
+            return pieces;
+        o.e1 = d0;
+        o.e2 = cross(o.n, o.e1);
+        std::vector<double> slack;
+        double planeMargin = kOnTolerance;
+        for (std::size_t i = 0; i < outline.chords.size(); ++i) {
+            const auto a = o.uv(start(i)), b = o.uv(end(i));
+            o.chords.push_back({a[0], a[1], b[0], b[1]});
+            slack.push_back(static_cast<double>(outline.chords[i][6]) / kLengthQuantaPerMm);
+            planeMargin = std::max(planeMargin, slack.back() + kOnTolerance);
+        }
+        // Distance from (u, v) past each chord's slack: a point within a chord's slack of it may lie on either side
+        // of the boundary the chord stands for.
+        const auto clearance = [&](double u, double v) {
+            double best = 1e300;
+            for (std::size_t i = 0; i < o.chords.size(); ++i) {
+                const auto& c = o.chords[i];
+                const double dx = c[2] - c[0], dy = c[3] - c[1];
+                const double l2 = dx * dx + dy * dy;
+                const double t = l2 > 0.0 ? std::clamp(((u - c[0]) * dx + (v - c[1]) * dy) / l2, 0.0, 1.0) : 0.0;
+                const double px = c[0] + dx * t - u, py = c[1] + dy * t - v;
+                best = std::min(best, std::sqrt(px * px + py * py) - slack[i]);
+            }
+            return best;
+        };
+        const double margin = kOnTolerance;
+        const TerritoryCache territories(shape);
+        std::vector<SubId> kept;
+        bool anyInside = false;
+        for (const SubId& piece : pieces) {
+            const Territory& t = territories.of(piece);
+            bool outside = t.known();
+            for (const auto& q : t.points) {
+                const Vec3 p = fromQuanta(q);
+                const auto uv = o.uv(p);
+                const bool onPlane = std::abs(o.off(p)) <= planeMargin;
+                const bool in = !onPlane || o.inside(uv[0], uv[1]) || clearance(uv[0], uv[1]) <= margin;
+                if (in)
+                    outside = false;
+                if (onPlane && o.inside(uv[0], uv[1]))
+                    anyInside = true;
+            }
+            if (!outside)
+                kept.push_back(piece);
+        }
+        if (!anyInside || kept.empty())
+            return pieces;
+        return kept;
+    } catch (...) {
+        return pieces;
+    }
+}
+
 Box3 boxOf(const Territory& t)
 {
     return Box3{fromQuanta(t.qMin), fromQuanta(t.qMax)};

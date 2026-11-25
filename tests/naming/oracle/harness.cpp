@@ -19,6 +19,16 @@ namespace ray::naming_oracle {
 
 namespace {
 
+naming::TopoRef withoutOutlineIfAsked(naming::TopoRef ref)
+{
+    // RAYCAD_NAMING_NO_OUTLINE: references as a build before TopoRef::outline made them (T-081b round 2: answers must
+    // be those of that build).
+    static const bool strip = std::getenv("RAYCAD_NAMING_NO_OUTLINE") != nullptr;
+    if (strip)
+        ref.outline = naming::PickOutline{};
+    return ref;
+}
+
 kernel::ProfileLoop toKernel(const Loop& loop)
 {
     kernel::ProfileLoop out;
@@ -288,7 +298,8 @@ bool Builder::blend(const Feature& f)
                 continue;
             for (auto& [e, desc] : pickTarget(f.targets[k], owners, **samples)) {
                 const SubId edge{SubKind::Edge, e};
-                picks.push_back({k, resolver->makeRef(testBody(), edge), PickRecord{edge, desc, *samples, ownersAt}});
+                picks.push_back({k, withoutOutlineIfAsked(resolver->makeRef(testBody(), edge)),
+                                 PickRecord{edge, desc, *samples, ownersAt}});
                 edges.insert(e);
                 if (!desc.ok)
                     ++unverifiablePicks_;
@@ -411,7 +422,8 @@ bool Builder::edit(Feature& f)
                     if (!d.ok || d.cons.size() != 1 || d.cons[0].alts != std::vector<std::string>{f.edit.targets[k]})
                         return fail("no target face", "face " + std::to_string(face) + " of " + f.edit.targets[k] +
                                                           " is not described by it alone");
-                    picks.push_back({k, resolver->makeRef(testBody(), s), PickRecord{s, d, *samples, ownersAt}});
+                    picks.push_back({k, withoutOutlineIfAsked(resolver->makeRef(testBody(), s)),
+                                     PickRecord{s, d, *samples, ownersAt}});
                     faces.insert(face);
                 }
             if (faces.empty())
@@ -563,8 +575,8 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                     ++(*skipped)[std::string(kindName(kind)) + ": element has no name"];
                 continue;
             }
-            refs.push_back(
-                Ref{resolver->makeRef(testBody(), s), PickRecord{s, d, samples, owners, builder}, namesOf(b.map(), s)});
+            refs.push_back(Ref{withoutOutlineIfAsked(resolver->makeRef(testBody(), s)),
+                               PickRecord{s, d, samples, owners, builder}, namesOf(b.map(), s)});
         }
     }
     return refs;

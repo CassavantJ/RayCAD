@@ -285,6 +285,8 @@ private:
         const detail::TerritoryCache& territories = territoriesOf(body);
         ref.territory = territories.of(sub);
         ref.pickNeighbours = detail::pickNeighboursOf(map, body->shape, sub, territories);
+        if (sub.kind == kernel::SubKind::Face)
+            ref.outline = detail::pickOutlineOf(body->shape, sub);
     }
 
     std::vector<ResolverBody> bodies_;                                 // sorted by id, unique

@@ -4,6 +4,8 @@
 // the first rules resolved 17 of 33,785 references to a wrong element; these gave 0 on the same scenarios.
 // Amended after the T-081a gate (PLAN.md 0.6): pick-time evidence in TopoRef, its JSON form, input shapes in
 // NamingInput, and Resolved::postableWithoutReview.
+// Amended by T-081b (naming through direct edits): TopoRef::outline, an optional planar face's pick-time outline, and
+// its JSON member; additive (a reference without it resolves as before).
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -134,6 +136,20 @@ struct PickNeighbour {
     Territory territory;
 };
 
+// The outline of a picked PLANAR face at pick time (T-081b round 2): its boundary as chords on its plane, unordered
+// (a point of the plane is inside when a ray from it crosses an odd number of chords). A line edge is one chord; an
+// arc is cut into equal chords, at least 4, sharing what is left of kMaxOutlineChords once every line has its one.
+// Quantised like Territory; each chord carries how far it may lie from the boundary it stands for (0 for a line, the
+// sagitta for an arc's chord), so a point near a line is judged exactly and near an arc within that. Empty when
+// the face is not planar, has an edge that is neither a line nor an arc, or more edges than kMaxOutlineChords / 4
+// arcs allow: such a pick has no outline evidence and resolves as references made before the outline existed. About
+// 200 bytes of JSON for a rectangle, 1 to 3 kB for a face with holes; never more than kMaxOutlineChords chords.
+inline constexpr std::size_t kMaxOutlineChords = 96;
+struct PickOutline {
+    std::vector<std::array<std::int64_t, 7>> chords; // (x0, y0, z0, x1, y1, z1, slack) in quanta
+    bool known() const { return !chords.empty(); }
+};
+
 struct TopoRef {
     BodyId body;
     kernel::SubKind kind;
@@ -152,10 +168,12 @@ struct TopoRef {
     //    are gone (the pieces joined where it now is), and Broken when a recorded sibling moved differently from it
     //    (they slid instead of moving together: which is which cannot be told);
     //  - Split pieces that together do not fit in the picked element's box (translated), or one of which covers a
-    //    neighbour's territory, are Broken.
+    //    neighbour's territory, are Broken; and a Split face piece that lies wholly outside the picked face's
+    //    outline on its plane is not a piece (ground the picked face never had, past a bound that moved).
     // An element that merely grew into territory nobody recorded (a dimension change) stays Exact.
     Territory territory;                 // the picked element's own
     std::vector<PickNeighbour> pickNeighbours;
+    PickOutline outline;                 // a planar face's (T-081b round 2)
 };
 
 // ---- The JSON form of a TopoRef ----
@@ -170,13 +188,14 @@ struct TopoRef {
 //    "kind": "face" | "edge" | "vertex",       required
 //    "names": ["<64 hex>", ...],               required, at least one
 //    "neighbourNames": [...], "splitParents": [...],
+//    "outline": {"chords": [[x0, y0, z0, x1, y1, z1, slack], ...]},   optional, in quanta
 //    "pickNeighbours": [{"names": [...], "relation": "sibling" | "carrier", "territory": T}, ...],   optional
 //    "repairConfirmed": bool,
 //    "territory": T}                           optional
 // where T = {"box": [xmin, ymin, zmin, xmax, ymax, zmax], "measure": n, "points": [[x, y, z], ...]} in quanta.
 // Every integer is a JSON number, or a decimal string when beyond +-2^53. toJson writes every member (empty arrays
-// included) except territory and pickNeighbours, which it writes only when the territory is known / the list is not
-// empty, so a reference made without evidence is written exactly as references were before the evidence existed.
+// included) except territory, pickNeighbours and outline, which it writes only when the territory or the outline is
+// known / the list is not empty, so a reference made without evidence is written exactly as references were before the evidence existed.
 std::string toJson(const TopoRef&);
 // Reads the JSON form. Every member but body, kind and names is optional; unknown members are refused. Errors are
 // InvalidArgument, with the problem in `message` ("must list at least one name") and the member in context[0]

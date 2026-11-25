@@ -839,6 +839,8 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 return broken("Part of the picked element no longer exists.");
             return std::nullopt; // the Exact stage's business
         }
+        // A face piece wholly outside the picked face's outline at pick time is not a piece (TopoRef::outline).
+        elements = piecesInsideOutline(shape, elements, ref.outline);
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
         if (!facePiecesStayInside(map, shape, elements, ref))
@@ -880,6 +882,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 std::erase_if(elements, [&](const SubId& s) { return zeroMeasure(shape, s, ref.hint); });
                 if (elements.empty())
                     continue;
+                elements = piecesInsideOutline(shape, elements, ref.outline);
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||
