@@ -541,6 +541,7 @@ void OperationToolModel::open(const SetupId& setup, const std::optional<Operatio
     previewStatus_.clear();
     errors_.clear();
     warnings_.clear();
+    generatedWarnings_.clear();
     progress_ = -1;
     committing_ = rejected_ = checked_ = false;
     previewBusy_ = previewPending_ = false;
@@ -630,6 +631,7 @@ void OperationToolModel::close()
     previewStatus_.clear();
     errors_.clear();
     warnings_.clear();
+    generatedWarnings_.clear();
     progress_ = -1;
     committing_ = false;
     previewBusy_ = previewPending_ = false;
@@ -2073,6 +2075,7 @@ void OperationToolModel::startPreview()
         cancelJobs();
         errors_.clear();
         warnings_.clear();
+        generatedWarnings_.clear();
         progress_ = -1;
         setStatus(QStringLiteral("incomplete"), error, field);
         return;
@@ -2115,6 +2118,7 @@ void OperationToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResult
     } else {
         // What ran for the values before is superseded.
         cancelJobs();
+        generatedWarnings_.clear();
         const std::uint64_t serial = previewSerial_;
         const OperationId id = *id_;
         const SetupId setup = *setup_;
@@ -2160,6 +2164,13 @@ void OperationToolModel::onPreviewBuilt(doc::DocStatePtr state, doc::BuildResult
                 return;
             }
             self->previewPath_ = *r;
+            // After M3: what the generation itself warned of. A type's check may stop short of what only generation
+            // finds (adaptive2d does not run its engine there, slot does not link: a last-resort plunge, say).
+            self->generatedWarnings_.clear();
+            if (*r) {
+                for (const std::string& w : (*r)->warnings)
+                    self->generatedWarnings_ << qs(w);
+            }
             if (jobs == nullptr)
                 return;
             const std::shared_ptr<const cam::Toolpath> path = *r;

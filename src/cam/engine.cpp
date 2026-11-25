@@ -726,11 +726,18 @@ public:
             const std::uint64_t ticket = s_->nextTicket++;
             const Parts parts = parts_;
             const std::string title = "Generate " + snap->cam->operations.at(id).name;
-            JobHandle<ToolpathPtr> job =
-                jobs_.submit<ToolpathPtr>(JobInfo{title, JobPriority::Normal, true},
-                                          [snap, resolver, parts, id, hash](JobContext& ctx) -> Result<ToolpathPtr> {
-                                              return runGenerator(*snap, *resolver, parts, id, hash, ctx);
-                                          });
+            // The job starts by taking the engine's lock once: this function holds it until the job's onProgress
+            // below is attached, and a progress reported before that is lost (Progress::setListener replaces, it does
+            // not replay), which left a blocked generation's status without a progress on a slow machine.
+            std::weak_ptr<Shared> barrier = s_;
+            JobHandle<ToolpathPtr> job = jobs_.submit<ToolpathPtr>(
+                JobInfo{title, JobPriority::Normal, true},
+                [snap, resolver, parts, id, hash, barrier](JobContext& ctx) -> Result<ToolpathPtr> {
+                    if (auto s = barrier.lock()) {
+                        const std::lock_guard<std::mutex> wait(s->mutex);
+                    }
+                    return runGenerator(*snap, *resolver, parts, id, hash, ctx);
+                });
             s_->running[id] = Shared::Running{hash, ticket, job, -1};
             s_->outstanding[ticket] = id;
             std::weak_ptr<Shared> weak = s_;

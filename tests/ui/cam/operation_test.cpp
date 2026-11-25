@@ -2408,6 +2408,188 @@ TEST_CASE("an adaptive2d operation by the panel: a pocket with an island and a s
     }
 }
 
+// After M3 (plunge_entry.h): a pocket no helix or ramp fits, the 11 mm counterbore of plate_counterbore_1 cut with a
+// 10 mm end mill (the tool centre has a disc 1 mm across: the smallest helix is 3 mm, a ramp along a 3 mm ring is
+// shorter than the tool). pocket2d and adaptive2d plunge there with a tool that cuts at its centre, and the warning is
+// in the panel's warnings (amber, OK still allowed) and, once added, under the operation's row in the CAM tree with the
+// amber mark; adaptive2d's check does not run its engine, so its warning comes from the preview's generation
+// (camui::mergedWarnings). The same pocket with a copy of the tool marked as not cutting at its centre is refused, OK
+// blocked. Screenshots: build/shots/leftovers_plunge_{warning_panel,warning_tree,refused}_{dark,light}.png.
+TEST_CASE("a pocket too small for a helix or a ramp: a plunge warned of in the panel and the tree, or refused",
+          "[cam][e2e][plunge]")
+{
+    RAY_REQUIRE_RHI();
+    // plate_counterbore_1 (tools/corpus_gen): an 85 x 55 x 15 plate with four 6.6 mm holes counterbored 11 mm, 6.5
+    // deep.
+    const QString part = QStringLiteral(RAY_CORPUS_DIR "/raycad-synthetic/plate_counterbore_1.stp");
+    const QString endMill10 = QStringLiteral("3f550375-46eb-47d0-9b8c-4fedbcb8466d"); // 10 mm 4FL, centre cutting
+    Window w;
+    w.open(part);
+    w.toWorkspace(ui::kCamWorkspace);
+    addSetup(w);
+
+    // A copy of the 10 mm end mill in My library, marked as not cutting at its centre.
+    lib::LibraryStack* stack = w.host->app()->libraries();
+    const auto roots = stack->roots();
+    std::optional<std::size_t> mine;
+    for (std::size_t i = 0; i < roots.size(); ++i) {
+        if (roots[i].writable)
+            mine = i;
+    }
+    REQUIRE(mine.has_value());
+    const lib::Tool* mill = stack->tool(ToolId{Uuid::fromString(endMill10.toStdString())});
+    REQUIRE(mill != nullptr);
+    REQUIRE(mill->cutsAtCentre());
+    lib::Tool noCentre = *mill;
+    noCentre.id = ToolId{Uuid::generate()};
+    noCentre.name = "Plunge test 10 mm end mill, no centre cutting";
+    noCentre.centreCutting = false;
+    REQUIRE_FALSE(noCentre.cutsAtCentre());
+    const QString noCentreId = QString::fromStdString(noCentre.id.value.toString());
+    {
+        const QString dir = QString::fromStdString(roots[*mine].dir) + QStringLiteral("/tools");
+        REQUIRE(QDir().mkpath(dir));
+        QFile f(dir + QStringLiteral("/") + noCentreId + QStringLiteral(".tool.json"));
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray::fromStdString(api::cam_tools::toolJson(noCentre)));
+    }
+
+    // A counterbore's floor: an up-facing planar face below the plate's top.
+    const auto pickFloor = [&] {
+        const kernel::Shape& shape = w.host->scene()->body(0)->shape;
+        const Box3 b = kernel::bounds(shape);
+        std::optional<std::uint32_t> floor;
+        Vec3 at{};
+        for (std::uint32_t i = 0; i < shape.count(kernel::SubKind::Face) && !floor; ++i) {
+            const kernel::SubId f{kernel::SubKind::Face, i};
+            const auto info = kernel::surfaceInfo(shape, f);
+            const auto s = kernel::faceSample(shape, f);
+            if (info && s && info->type == kernel::SurfaceType::Plane && s->normal.z > 0.999 &&
+                info->bounds.max.z < b.max.z - 1e-6 && info->bounds.min.z > b.min.z + 1e-6) {
+                floor = i;
+                at = s->point;
+            }
+        }
+        REQUIRE(floor.has_value());
+        w.host->selection()->applyClick(
+            render::PickHit{w.host->scene()->itemForBody(0), kernel::SubKind::Face, *floor, at, 0}, Qt::NoModifier);
+        QCoreApplication::processEvents();
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->picks().size() == 1; }, kTimeoutMs));
+    };
+    const QString plunged = QStringLiteral("Plunges straight down at ");
+    const QString advice = QStringLiteral("no helix or ramp fits there. Check that the tool cuts at its centre");
+    const auto plungeWarning = [&](const QStringList& list) {
+        for (const QString& s : list) {
+            if (s.contains(plunged) && s.contains(advice))
+                return s;
+        }
+        return QString();
+    };
+    const auto saveBothThemes = [&](const QString& name) {
+        const QString dir = QStringLiteral(RAY_SHOTS_DIR);
+        QDir().mkpath(dir);
+        const QString was = w.host->theme()->property("mode").toString();
+        for (const char* mode : {"dark", "light"}) {
+            w.host->theme()->setProperty("mode", QLatin1String(mode));
+            w.sendMouse(QEvent::MouseMove, QPointF(w.window()->width() / 2.0, w.window()->height() - 4.0), Qt::NoButton,
+                        Qt::NoButton);
+            QTest::qWait(300);
+            w.grab().save(QDir(dir).filePath(name + QStringLiteral("_%1.png").arg(QLatin1String(mode))), "PNG");
+        }
+        w.host->theme()->setProperty("mode", was);
+    };
+
+    for (const QString& type : {QStringLiteral("pocket2d"), QStringLiteral("adaptive2d")}) {
+        INFO("type " << type.toStdString());
+        newOperation(w, 0, type);
+        REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+        chooseTool(w, endMill10, QStringLiteral("10 mm 4FL"));
+        pickFloor();
+        w.click(QStringLiteral("operationUseCalculated"));
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+        w.previewed("ok");
+        REQUIRE(w.op()->previewToolpath() != nullptr);
+        const cam::Toolpath& tp = *w.op()->previewToolpath();
+        CHECK(std::any_of(tp.moves.begin(), tp.moves.end(),
+                          [](const cam::Move& m) { return m.role == cam::MoveRole::Plunge; }));
+        QStringList generated;
+        for (const std::string& s : tp.warnings)
+            generated << QString::fromStdString(s);
+        REQUIRE_FALSE(plungeWarning(generated).isEmpty());
+        // In the panel: listed with the other warnings, amber, and OK is not blocked.
+        REQUIRE(QTest::qWaitFor([&] { return !plungeWarning(w.op()->warnings()).isEmpty(); }, kTimeoutMs));
+        const QString warning = plungeWarning(w.op()->warnings());
+        CHECK(warning == plungeWarning(generated));
+        const QStringList shownWarnings = w.op()->warnings();
+        CHECK(shownWarnings.count(warning) == 1); // the check's and the generation's, listed once
+        const int at = static_cast<int>(shownWarnings.indexOf(warning));
+        QQuickItem* label = w.shown(QStringLiteral("operationWarning.%1").arg(at));
+        CHECK(label->property("text").toString() == warning);
+        CHECK(w.op()->errors().isEmpty());
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->canCommit(); }, kTimeoutMs));
+        REQUIRE(
+            QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Ready: OK adds the operation"); }, 10000));
+        w.view()->fitAll();
+        w.inView(label);
+        QTest::qWait(200);
+        if (type == QStringLiteral("pocket2d"))
+            saveBothThemes(QStringLiteral("leftovers_plunge_warning_panel"));
+
+        // OK: up to date, and the tree has the warning under the row, with the amber mark.
+        const QString id = w.op()->operationId();
+        w.click(QStringLiteral("operationOk"));
+        REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, kTimeoutMs));
+        const int row = w.tree()->rowOf(id);
+        REQUIRE(row >= 0);
+        w.waitStatus(row, "upToDate");
+        REQUIRE(QTest::qWaitFor(
+            [&] { return w.tree()->get(row).value(QStringLiteral("warnings")).toString().contains(warning); },
+            kTimeoutMs));
+        CHECK(w.tree()->get(row).value(QStringLiteral("statusText")).toString() == QStringLiteral("Up to date"));
+        CHECK(w.tree()->get(row).value(QStringLiteral("message")).toString().isEmpty());
+        QQuickItem* details = w.shown(QStringLiteral("camRowDetails.%1").arg(row));
+        CHECK(details->property("text").toString().contains(warning));
+        CHECK(w.shown(QStringLiteral("camRowWarning.%1").arg(row))->isVisible());
+        // The setup's row shows none (its badge is its operations' worst status).
+        CHECK(w.tree()->get(0).value(QStringLiteral("warnings")).toString().isEmpty());
+    }
+    w.view()->fitAll();
+    w.settle();
+    saveBothThemes(QStringLiteral("leftovers_plunge_warning_tree"));
+
+    // The tool that does not cut at its centre: refused, with the reason, and OK blocked.
+    for (const QString& type : {QStringLiteral("pocket2d"), QStringLiteral("adaptive2d")}) {
+        INFO("type " << type.toStdString() << ", a tool that does not cut at its centre");
+        newOperation(w, 0, type);
+        REQUIRE(QTest::qWaitFor([&] { return pickerList(w)->count() > 0; }, 10000));
+        chooseTool(w, noCentreId, QStringLiteral("plunge test"));
+        pickFloor();
+        w.click(QStringLiteral("operationUseCalculated"));
+        REQUIRE(QTest::qWaitFor([&] { return w.op()->feedsState() == QStringLiteral("calculated"); }, 5000));
+        // Both name the cause: "the tool does not cut at its centre, so it cannot plunge" (pocket2d from linking,
+        // adaptive2d after the entries it tried).
+        const QLatin1String cause("does not cut at its centre, so it cannot plunge");
+        const bool refused = QTest::qWaitFor(
+            [&] {
+                return !w.op()->previewBusy() && !w.op()->errors().isEmpty() &&
+                       w.op()->errors().join(QLatin1Char(' ')).contains(cause);
+            },
+            kTimeoutMs);
+        INFO("errors: " << w.op()->errors().join(QStringLiteral(" | ")).toStdString());
+        REQUIRE(refused);
+        CHECK(plungeWarning(w.op()->warnings()).isEmpty());
+        CHECK_FALSE(w.op()->canCommit());
+        REQUIRE(QTest::qWaitFor([&] { return statusLine(w) == QStringLiteral("Fix the error above first"); }, 10000));
+        if (type == QStringLiteral("pocket2d")) {
+            w.inView(w.shown(QStringLiteral("operationOk")));
+            saveBothThemes(QStringLiteral("leftovers_plunge_refused"));
+        }
+        w.click(QStringLiteral("operationCancel"));
+        REQUIRE(QTest::qWaitFor([&] { return !w.op()->active(); }, 5000));
+    }
+    w.checkNoWarnings();
+}
+
 // ---------- After M3: the gaps left in the panel, closed ----------
 // Screenshots with RAY_T045_SHOTS set: gaps_<n>_<what>_dark, the window in the dark theme.
 namespace {

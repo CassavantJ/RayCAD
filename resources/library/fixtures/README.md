@@ -9,6 +9,9 @@ machined. A shop can put its own vise or fixture plate into its shared library's
 |-|-|-|
 | `generic-vise-6in.step` | `Generic 6 in vise`, `Generic 6 in vise moving jaw` | A plain milling vise of the 6 inch class: base, fixed jaw and screw as one body; the moving jaw as a body of its own, 2 in open |
 | `generic-parallels-1x6in.step` | `Generic parallel 1/8 x 1 x 6 in A`, `... B` | A pair of parallels, 1/8 x 1 x 6 in |
+| `generic-parallels-1.25x6in.step` | `Generic parallel 1/8 x 1-1/4 x 6 in A`, `... B` | A pair of parallels, 1/8 x 1-1/4 x 6 in |
+| `generic-parallels-1.5x6in.step` | `Generic parallel 1/8 x 1-1/2 x 6 in A`, `... B` | A pair of parallels, 1/8 x 1-1/2 x 6 in |
+| `generic-parallels-1.625x6in.step` | `Generic parallel 1/8 x 1-5/8 x 6 in A`, `... B` | A pair of parallels, 1/8 x 1-5/8 x 6 in |
 
 Frame of the vise (mm): X along the jaws, Y along the screw (the moving jaw opens towards +Y), Z up. The floor between
 the jaws, where parallels stand, is z = 0; the fixed jaw's clamping face is the plane y = 0, looking +Y, centred on
@@ -26,6 +29,15 @@ other. It names the bodies the file imports as and gives the sizes that needs, i
 |-|-|
 | `generic-vise-6in.json` | `"kind": "vise"`, the body and the moving jaw by name, `jawLength` 152.4, `jawHeight` 44.45, `maxOpening` 270 |
 | `generic-parallels-1x6in.json` | `"kind": "parallels"`, the two bodies by name, `height` 25.4, `thickness` 3.175 |
+| `generic-parallels-1.25x6in.json` | the same, `height` 31.75 |
+| `generic-parallels-1.5x6in.json` | the same, `height` 38.1 |
+| `generic-parallels-1.625x6in.json` | the same, `height` 41.275 |
+
+The parallels' heights are common shop steps (1/8 in apart in a parallel set) from 1 in up to the tallest whose top
+still lies at least 3 mm below the vise's 1-3/4 in jaws (1-5/8 in: 3.175 mm below); a 1-3/4 in pair would be level with
+the jaws' top and leave nothing for them to hold. When the stock's top ends below the jaws' top, "Place on stock" names
+the library pair that would put it at or above them with at least 3 mm still in the jaws (else the one that brings it
+nearest, keeping those 3 mm); it suggests only, and changes no fixture.
 
 The generic vise's `maxOpening` is where its moving jaw (60 thick) reaches the front end of its base (y = 330): a
 property of this generic model, not of any product. A shop's own vise can have a description of its own when its model
@@ -34,7 +46,7 @@ is drawn in the same frame (`src/api/include/ray_api/cam_fixtures.h` gives the f
 ## How they were made
 
 They are original, simple, generic shapes drawn for RayCAD from round numbers of the size class (jaws 6 in wide and
-1.75 in tall; parallels 1/8 x 1 x 6 in): boxes and one cylinder built with RayCAD's own kernel (`kernel::makeBox`,
+1.75 in tall; parallels 1/8 in thick, 6 in long and 1, 1-1/4, 1-1/2 or 1-5/8 in tall): boxes and one cylinder built with RayCAD's own kernel (`kernel::makeBox`,
 `kernel::makeCylinder`, `kernel::boolean`) and written with `kernel::exportStep` (AP214, millimetres). No vendor's model,
 drawing, catalogue, dimension table, name or trade dress was used or consulted. The source is
 `tests/unit/cam/fixture_models.h`; the test `ray_cam_fixture_tests` ("the shipped fixture models are the shapes built in

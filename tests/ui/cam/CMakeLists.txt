@@ -145,6 +145,22 @@ set_property(TARGET ray_ui_cam_unit_tests PROPERTY FOLDER "tests")
 add_test(NAME ray_ui_cam_unit_tests COMMAND ray_ui_cam_unit_tests)
 ray_test_runtime_path(ray_ui_cam_unit_tests QT)
 
+# The Simulate panel's slow-seek line from a real run (after T-074): a finishing-heavy program on a real document run
+# through api::cam_sim::SimSession at the High and Medium presets' cells, the line made by camui::slowSeekText from the
+# run's own seek report. No window. About 2.5 GB and under a minute in Release: slow tier, and bench (its High line
+# rests on a seek estimate, a wall-clock measurement), in tests/tiers.cmake.
+add_executable(ray_ui_cam_slow_seek_tests sim_slow_seek_test.cpp)
+target_link_libraries(ray_ui_cam_slow_seek_tests PRIVATE ray_ui ray_api ray_render ray_store ray_doc ray_cam ray_sim
+    ray_post ray_naming ray_kernel ray_lib ray_core Qt6::Core Catch2::Catch2WithMain)
+target_include_directories(ray_ui_cam_slow_seek_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/ui" "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/src/doc" "${CMAKE_SOURCE_DIR}/tests/unit/doc" "${CMAKE_SOURCE_DIR}/tests/unit/core_jobs"
+    "${CMAKE_SOURCE_DIR}/tests/unit/cam")
+target_compile_definitions(ray_ui_cam_slow_seek_tests PRIVATE RAY_DOC_KERNEL_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/unit/kernel/data")
+set_property(TARGET ray_ui_cam_slow_seek_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_ui_cam_slow_seek_tests COMMAND ray_ui_cam_slow_seek_tests)
+set_tests_properties(ray_ui_cam_slow_seek_tests PROPERTIES TIMEOUT 1800)
+ray_test_runtime_path(ray_ui_cam_slow_seek_tests QT)
+
 # Operation templates (task T-057): the template panel and the CAM tree's template buttons in the real window, as the
 # flow tests do. Its screenshots go to build/shots/t057_*.png.
 add_executable(ray_ui_cam_templates_tests templates_test.cpp)

@@ -336,6 +336,40 @@ ViseFit fitVise(const Box3& s, Grip grip, const ViseModel& vise, const Parallels
     return f;
 }
 
+std::optional<ParallelsSuggestion> tallerParallels(const ViseFit& fit, const ViseModel& vise,
+                                                   const ParallelsModel* current,
+                                                   const std::vector<ParallelsModel>& pairs)
+{
+    if (!(fit.jawAboveStock > kLevelTolMm)) {
+        return std::nullopt;
+    }
+    const double now = current != nullptr ? current->height : 0.0;
+    std::optional<ParallelsSuggestion> above, nearest;
+    for (std::size_t i = 0; i < pairs.size(); ++i) {
+        const ParallelsModel& p = pairs[i];
+        if (!(p.height > now + kLevelTolMm) || fit.opening + kLevelTolMm < 2 * p.thickness) {
+            continue;
+        }
+        // The stock's bottom on the pair's top: the jaws' top jawHeight above the floor, the pair's height below it.
+        ParallelsSuggestion s;
+        s.index = i;
+        s.jawAboveStock = vise.jawHeight - p.height - fit.height;
+        s.gripDepth = std::min(vise.jawHeight - p.height, fit.height);
+        s.aboveJaws = s.jawAboveStock <= kLevelTolMm;
+        if (s.gripDepth + kLevelTolMm < kMinGripMm) {
+            continue;
+        }
+        if (s.aboveJaws) {
+            if (!above || p.height < pairs[above->index].height) {
+                above = s;
+            }
+        } else if (!nearest || p.height > pairs[nearest->index].height) {
+            nearest = s;
+        }
+    }
+    return above ? above : nearest;
+}
+
 FreeMove freeMove(const Xform& x)
 {
     const double* m = x.m;

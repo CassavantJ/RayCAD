@@ -19,6 +19,8 @@ add_library(ray_kernel STATIC
     boolean_internal.h boolean_history.cpp boolean.cpp
     sweep_internal.h sweep_profile.cpp sweep.cpp
     blend.cpp
+    directedit_internal.h directedit_analysis.cpp directedit.cpp directedit_fault.cpp
+    directedit_testing.h directedit_testing.cpp
     slice_internal.h slice_curves.cpp slice.cpp slice_corner.cpp)
 ray_module(ray_kernel DETERMINISTIC)
 target_link_libraries(ray_kernel PRIVATE ray_core ${RAY_OCCT_TOOLKITS})

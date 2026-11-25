@@ -193,6 +193,9 @@ endif()
 # 120 s in Release, past its 900 s limit in Debug). Every test's timeout (the CTest presets' 300 s when it sets none)
 # is RAY_DEBUG_TIMEOUT_FACTOR times longer in the Debug configuration; Release and RelWithDebInfo keep theirs. A
 # timeout is a guard against hangs, not a performance budget: the benchmarks check their budgets themselves.
+# A sanitizer build (RAY_SANITIZE: linux-clang-asan, linux-clang-tsan) instruments every memory access of our code and
+# gets the same factor in every configuration: under ASan on the 4-processor CI runner ray_cam_link_tests,
+# ray_cam_pocket2d_tests and ray_cam_adaptive2d_tests passed their 300 s (run 45528384533).
 set(RAY_DEBUG_TIMEOUT_FACTOR 4)
 function(ray_debug_timeouts dir)
     get_property(_tests DIRECTORY "${dir}" PROPERTY TESTS)
@@ -200,6 +203,9 @@ function(ray_debug_timeouts dir)
         get_property(_timeout TEST "${_test}" DIRECTORY "${dir}" PROPERTY TIMEOUT)
         if(NOT _timeout)
             set(_timeout 300)
+        endif()
+        if(RAY_SANITIZE)
+            math(EXPR _timeout "${_timeout} * ${RAY_DEBUG_TIMEOUT_FACTOR}")
         endif()
         math(EXPR _debug "${_timeout} * ${RAY_DEBUG_TIMEOUT_FACTOR}")
         set_property(TEST "${_test}" DIRECTORY "${dir}" PROPERTY TIMEOUT

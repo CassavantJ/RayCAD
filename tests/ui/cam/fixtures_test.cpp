@@ -31,6 +31,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QImage>
@@ -45,6 +46,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -599,6 +601,116 @@ TEST_CASE("the fixtures panel places the vise on the setup's stock in one step",
     w.fixtures()->cancel();
     w.idle();
     w.checkNoWarnings();
+}
+
+// After T-077: the 10 mm plate on the 1 in parallels sits 9.05 below the jaws' top, so Place on stock names the library
+// pair that would bring it above them (the 1-1/2 in: 6.35 held, the top 3.65 above), and changes nothing else. In a
+// fresh document the vise and that pair from the library, Place on stock recognises the pair (any library pair in the
+// setup, not only the 1 in) and stands the plate on it: its top above the jaws, no warning. Screenshots:
+// build/shots/leftovers_taller_parallels_{suggested,placed}_{dark,light}.png.
+TEST_CASE("Place on stock suggests taller parallels for a thin plate and stands it on them", "[ui][cam][fixtures]")
+{
+    RAY_REQUIRE_RHI();
+    QString suggested;
+    for (int round = 0; round < 2; ++round) {
+        INFO("round " << round);
+        Window w;
+        w.open(kPlate); // 120 x 80 x 10
+        const BodyId plate = w.host->scene()->body(0)->id;
+        const Box3 part = w.boxOf(plate);
+        REQUIRE(part.max.z - part.min.z == Catch::Approx(10).margin(1e-6));
+        const lib::MachineDef* m = w.host->app()->libraries()->machine(MachineId{Uuid::fromString(kVmc)});
+        REQUIRE(m != nullptr);
+        (void)w.invokeResult("cam.setup.add", R"({"id":")" + kSetup + R"(","name":"Op 1 - top","partBodies":[")" +
+                                                  plate.value.toString() + R"("],"machine":")" + kVmc +
+                                                  R"(","library":{"machines":[)" + api::cam_setup::machineJson(*m) +
+                                                  "]}}");
+        w.toWorkspace(1);
+        REQUIRE(QTest::qWaitFor([&] { return w.tree()->setupCount() == 1; }, kTimeoutMs));
+        w.key(Qt::Key_F, Qt::ShiftModifier);
+        REQUIRE(QTest::qWaitFor([&] { return w.fixtures()->shown(); }, 5000));
+        const QVariantList library = w.fixtures()->library();
+        const auto add = [&](const QString& name, int fixturesAfter) {
+            int index = -1;
+            for (int i = 0; i < library.size(); ++i) {
+                if (library[i].toMap().value(QStringLiteral("name")).toString() == name)
+                    index = i;
+            }
+            INFO("library item " << name.toStdString());
+            REQUIRE(index >= 0);
+            w.shown(QStringLiteral("fixturesLibrary"))->setProperty("currentIndex", index);
+            w.click(QStringLiteral("fixturesAdd"));
+            REQUIRE(QTest::qWaitFor(
+                [&] { return w.fixtures()->fixtures().size() == fixturesAfter && !w.fixtures()->placing().isEmpty(); },
+                kTimeoutMs));
+            w.idle();
+            w.fixtures()->cancel();
+            w.idle();
+        };
+        // Every library pair is listed.
+        for (const char* name : {"Generic parallels 1x6in", "Generic parallels 1.25x6in", "Generic parallels 1.5x6in",
+                                 "Generic parallels 1.625x6in"}) {
+            CHECK(std::any_of(library.begin(), library.end(), [&](const QVariant& v) {
+                return v.toMap().value(QStringLiteral("name")).toString() == QLatin1String(name);
+            }));
+        }
+        add(QStringLiteral("Generic vise 6in"), 2);
+        const QString pairName = round == 0 ? QStringLiteral("Generic parallels 1x6in") : suggested;
+        REQUIRE_FALSE(pairName.isEmpty());
+        add(pairName, 4);
+        const std::size_t undoBefore = w.document()->undoCount();
+        w.click(QStringLiteral("fixturePlaceOnStock"));
+        REQUIRE(QTest::qWaitFor(
+            [&] { return !w.fixtures()->placingOnStock() && !w.fixtures()->stockStatus().isEmpty(); }, kTimeoutMs));
+        w.idle();
+        const QString message = w.fixtures()->stockMessage();
+        INFO(message.toStdString());
+        CHECK(w.document()->undoCount() == undoBefore + 1);
+        CHECK(transformCount(*w.document()->state()) == 4); // the vise, its jaw and the pair: nothing swapped
+        CHECK(setupOf(*w.document()->state()).fixtureBodies.size() == 4);
+        const BodyId jaw = w.bodyNamed("Generic 6 in vise moving jaw");
+        // The pair in the setup, whichever it is, under the plate.
+        std::vector<BodyId> pair;
+        for (const doc::Body& b : w.document()->state()->bodies) {
+            if (b.name.rfind("Generic parallel 1/8 x ", 0) == 0)
+                pair.push_back(b.id);
+        }
+        REQUIRE(pair.size() == 2);
+        for (const BodyId& b : pair)
+            CHECK(w.boxOf(b).max.z == Catch::Approx(part.min.z).margin(1e-5));
+        const double height = part.min.z - w.boxOf(pair[0]).min.z;
+        CHECK_THAT(message.toStdString(),
+                   ContainsSubstring("The stock stands on the parallels (" + pairName.toStdString() + ")"));
+        if (round == 0) {
+            // On the 1 in pair: the jaws 9.05 above the plate's top, and the pair that would fix it named.
+            CHECK(height == Catch::Approx(25.4).margin(1e-5));
+            CHECK(w.fixtures()->stockStatus() == QStringLiteral("warning"));
+            CHECK_THAT(message.toStdString(), ContainsSubstring("above the stock's top"));
+            const QRegularExpressionMatch match =
+                QRegularExpression(QStringLiteral("Taller parallels \\(([^)]+)\\) would bring the stock top above the "
+                                                  "jaws\\."))
+                    .match(message);
+            REQUIRE(match.hasMatch());
+            suggested = match.captured(1);
+            CHECK(suggested == QStringLiteral("Generic parallels 1.5x6in"));
+            CHECK(w.boxOf(jaw).max.z == Catch::Approx(part.max.z + 9.05).margin(1e-5));
+            w.view()->fitAll();
+            w.idle();
+            w.shotsBothThemes(QStringLiteral("leftovers_taller_parallels_suggested"));
+        } else {
+            // On the suggested pair: the plate's top 3.65 above the jaws, 6.35 held, no warning and no suggestion.
+            CHECK(height == Catch::Approx(38.1).margin(1e-5));
+            CHECK(w.fixtures()->stockStatus() == QStringLiteral("ok"));
+            CHECK(message.indexOf(QStringLiteral("parallels (")) == message.lastIndexOf(QStringLiteral("parallels (")));
+            CHECK_FALSE(message.contains(QStringLiteral("Taller parallels")));
+            CHECK(w.boxOf(jaw).max.z == Catch::Approx(part.max.z - 3.65).margin(1e-5));
+            CHECK(w.boxOf(jaw).max.z - part.min.z == Catch::Approx(6.35).margin(1e-5));
+            w.view()->fitAll();
+            w.idle();
+            w.shotsBothThemes(QStringLiteral("leftovers_taller_parallels_placed"));
+        }
+        w.checkNoWarnings();
+    }
 }
 
 int main(int argc, char** argv)

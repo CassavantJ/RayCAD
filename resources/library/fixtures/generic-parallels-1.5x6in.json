@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "kind": "parallels",
+  "bodies": ["Generic parallel 1/8 x 1-1/2 x 6 in A", "Generic parallel 1/8 x 1-1/2 x 6 in B"],
+  "height": 38.1,
+  "thickness": 3.175
+}

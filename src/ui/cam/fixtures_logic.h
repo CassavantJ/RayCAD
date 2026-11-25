@@ -64,4 +64,11 @@ struct LibraryFixture {
 };
 std::vector<LibraryFixture> libraryFixtures(const std::vector<std::pair<std::string, std::string>>& roots);
 
+// After T-077: Place on stock's suggestion when the stock's top ends below the jaws' (api::cam_fixtures::
+// tallerParallels), naming the library pair `pair` (its title in the library list): "Taller parallels (<pair>) would
+// bring the stock top above the jaws." ("Parallels (...)" when the stock stands on the vise's floor), or, when no pair
+// gets it there, "... would bring the stock top to <below> below the jaws' top." (`below` a length as the panel shows
+// it).
+QString tallerParallelsText(const QString& pair, bool onParallels, bool aboveJaws, const QString& below);
+
 } // namespace ray::ui::camui

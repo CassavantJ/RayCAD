@@ -42,7 +42,9 @@ set(RAY_SLOW_TESTS
     ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
     ray_bench_adaptive_review # docs/reports/adaptive.md rebuilt and compared (T-062)
     ray_render_backplot_cost  # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
-    ray_render_stock_cost)    # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
+    ray_render_stock_cost     # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
+    ray_ui_cam_slow_seek_tests  # the Simulate panel's slow-seek line from a real High run (2.5 GB, about 50 s)
+    ray_kernel_directedit_corpus) # T-080: the direct-edit rates on the S9 set: 70 s alone, 112 s in a parallel ctest
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
@@ -53,7 +55,8 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout3
     ray_naming_random_holdout4
     ray_naming_random_holdout5
-    ray_naming_random_holdout6)
+    ray_naming_random_holdout6
+    ray_kernel_directedit_corpus) # T-080: 1,337 edits on unoptimised OpenCASCADE, many past their time limit
 
 # Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
 # against about a minute in Release): the S4 scenarios, at the naming level and as document features (and, below, the
@@ -94,14 +97,20 @@ set(RAY_DEBUG_HEAVY_TESTS
     # 20-minute timeout) and adaptive2d's property tests on their quick seeds (24 minutes).
     ray_cam_link_tests
     ray_cam_adaptive2d_tests
-    ray_cam_invariants_adaptive2d)
+    ray_cam_invariants_adaptive2d
+    # The 2D pocket suite: past its 20-minute timeout in MSVC Debug on the runner (run 45528384530); 4.4 minutes in GCC
+    # Debug there.
+    ray_cam_pocket2d_tests)
 
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property
 # tests of every operation type on their large seed sets passed their 2-hour timeout under ASan even on 32 hardware
-# threads (30 minutes in Release at most).
+# threads (30 minutes in Release at most). The adaptive engine's slow acceptance (S5 pockets, 32-run determinism) took
+# 45 minutes single-threaded under ASan on the runner (run 45528384533; about 5 minutes in a GCC Release build here).
 set(RAY_SANITIZER_HEAVY_TESTS
-    ray_cam_invariants_slow)
+    ray_cam_invariants_slow
+    ray_cam_adaptive_slow
+    ray_kernel_directedit_corpus) # T-080: 1,337 Defeaturing and boolean edits, each with a 20 s limit
 
 # Tests whose pass or fail is a wall-clock budget, set for a developer's machine (PLAN.md section 9 rows, UI-thread
 # gaps, benchmarks): every <test>_wallclock split below (RAY_WALLCLOCK_SPLITS) and these. They get the label bench, which
@@ -111,7 +120,8 @@ set(RAY_SANITIZER_HEAVY_TESTS
 set(RAY_BENCH_TESTS
     ray_sketch_drag_bench    # the median drag step under 16 ms
     ray_store_bench          # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
-    ray_sim_simulator_bench) # T-072: simulation run and seek times per tier (section 9)
+    ray_sim_simulator_bench # T-072: simulation run and seek times per tier (section 9)
+    ray_ui_cam_slow_seek_tests) # the slow-seek line at High needs the run's seek estimate over 100 ms (no time limit)
 
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
@@ -132,7 +142,8 @@ set(RAY_TEST_PROCESSORS
     ray_doc_s4_revolve=7        # 6.8
     ray_doc_s4_hole=6           # 6.4
     ray_kernel_blend_stress=2   # 2.0 (8 threads that mostly wait on each other)
-    ray_cam_carried_tiers=4)    # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
+    ray_cam_carried_tiers=4     # 3.8 (T-075: BP1 nine times over, on 1, 4 and 16 workers)
+    ray_kernel_directedit_corpus=8) # T-080: 8 workers over the S9 set
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those
 # cases out ("~[wallclock]"); here a test <test>_wallclock runs just them ("[wallclock]"), alone, with the suite's
