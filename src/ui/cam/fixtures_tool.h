@@ -35,7 +35,10 @@
 //                by its mate to the fixed jaw with the opening as the gap: ordinary placements, editable with Place
 //                afterwards. One cam.batch command (one undo step), which also makes them fixtures of the setup when
 //                they were not. Worked out once: a later change of the stock does not move them (the panel says so; run
-//                it again). The result or why not: stockMessage, stockStatus ("ok", "warning", "failed"). The placement
+//                it again). The result or why not: stockMessage, stockStatus ("ok", "warning", "failed"). Any library
+//                pair of parallels the setup has is used; when the stock's top ends below the jaws' top, the message
+//                names the library pair that would raise it (api::cam_fixtures::tallerParallels), and changes no
+//                fixture (after T-077). The placement
 //                editor also shows tiltX and tiltY (degrees about model X and Y, without a mate), which this sets for a
 //                setup whose Z is not model +Z.
 // Fixtures are never machining geometry: the operation panel refuses picks on them, and so do the CAM commands and the
@@ -53,6 +56,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 #include <QtCore/QTimer>
 #include <QtCore/QVariantList>
 #include <QtCore/QVariantMap>
@@ -200,6 +204,7 @@ private:
         std::optional<api::cam_fixtures::ParallelsModel> parallelsModel;
         std::vector<BodyId> parallels;
         QString name;
+        QString parallelsName; // the pair's title in the library list (after T-077)
     };
     std::optional<ViseChoice> chooseVise(const doc::DocState& state) const;
     void setStockStatus(const QString& status, const QString& message);
@@ -269,6 +274,7 @@ private:
 
     // On stock.
     std::vector<api::cam_fixtures::FixtureModel> models_; // the libraries' fixture descriptions
+    QStringList modelTitles_; // parallel: each one's title in the library list (after T-077, for the suggestion)
     QString grip_ = QStringLiteral("shorter");
     bool placingOnStock_ = false;
     QString stockMessage_, stockStatus_;

@@ -16,6 +16,9 @@
 // is still none); on the vise's floor, the jaws 24.45 above the stock, the
 // holder at the front wall overhangs the moving jaw: HolderHitsFixture on it. The fixture solids the simulator gets are
 // where the placement put them.
+// After T-077: every shipped parallels description agrees with its bars and stands at least kMinGripMm below the jaws'
+// top; the fit on each pair; the taller pair suggested for thin stock (tallerParallels); each taller pair placed by the
+// action under the block raises no setup event and no motion event.
 #include "engine_test_util.h"
 #include "fixture_models.h"
 #include "parametric_test_util.h"
@@ -38,6 +41,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <thread>
@@ -401,6 +405,122 @@ TEST_CASE("the shipped vise and parallels descriptions agree with the shipped sh
     CHECK_FALSE(cf::parseFixtureModel(R"({"schema":1,"kind":"clamp"})"));
 }
 
+// After T-077: the taller pairs. Each description names the bodies its STEP file has and gives their height and
+// thickness; the heights are the library's steps, 1/8 in apart, each below the jaws' top by at least kMinGripMm.
+TEST_CASE("every shipped parallels description agrees with its shapes, and stands below the jaws' top",
+          "[cam][fixtures][place][parallels]")
+{
+    const cf::ViseModel vise = shipped("generic-vise-6in.json").vise;
+    std::vector<double> heights;
+    for (const fm::ParallelsFile& file : fm::kParallelsFiles) {
+        const std::string json =
+            std::string(file.fileName).replace(std::string(file.fileName).rfind(".step"), 5, ".json");
+        INFO(json);
+        const cf::FixtureModel m = shipped(json);
+        REQUIRE(m.kind == cf::FixtureModel::Kind::Parallels);
+        const std::vector<fm::NamedShape> shapes = file.make();
+        REQUIRE(shapes.size() == 2);
+        CHECK(m.parallels.bodies == std::vector<std::string>{shapes[0].name, shapes[1].name});
+        CHECK(shapes[0].name == "Generic parallel 1/8 x " + fm::inchesText(file.eighths) + " x 6 in A");
+        CHECK(m.parallels.height == Catch::Approx(file.eighths * fm::kIn / 8).margin(1e-9));
+        CHECK(m.parallels.thickness == Catch::Approx(fm::kParallelThickness).margin(1e-9));
+        for (const fm::NamedShape& s : shapes) {
+            // Plain bars, 1/8 x height x 6 in, on the floor against the jaws (fixture_models.h).
+            const Box3 b = boxOf(s.shape);
+            CHECK(b.max.x - b.min.x == Catch::Approx(fm::kParallelLength).margin(1e-6));
+            CHECK(b.max.y - b.min.y == Catch::Approx(m.parallels.thickness).margin(1e-6));
+            CHECK(b.min.z == Catch::Approx(0).margin(1e-6));
+            CHECK(b.max.z == Catch::Approx(m.parallels.height).margin(1e-6));
+            CHECK(s.shape.count(kernel::SubKind::Face) == 6);
+        }
+        CHECK(m.parallels.height <= vise.jawHeight - cf::kMinGripMm);
+        heights.push_back(m.parallels.height);
+    }
+    CHECK(heights == std::vector<double>{25.4, 31.75, 38.1, 41.275});
+    CHECK(fm::inchesText(8) == "1");
+    CHECK(fm::inchesText(10) == "1-1/4");
+    CHECK(fm::inchesText(12) == "1-1/2");
+    CHECK(fm::inchesText(13) == "1-5/8");
+    // 1-3/4 in would be level with the jaws' top: nothing for them to hold.
+    CHECK(14 * fm::kIn / 8 == Catch::Approx(vise.jawHeight).margin(1e-9));
+}
+
+// The fit on each pair, and the pair Place on stock suggests (cf::tallerParallels) when the stock's top ends below the
+// jaws': at least kMinGripMm held, the top at or above the jaws' where a pair allows it, the lowest such pair.
+TEST_CASE("the fit on each pair, and the taller pair suggested for thin stock", "[cam][fixtures][place][parallels]")
+{
+    const cf::ViseModel vise = shipped("generic-vise-6in.json").vise;
+    std::vector<cf::ParallelsModel> pairs;
+    for (const fm::ParallelsFile& file : fm::kParallelsFiles) {
+        const std::string json =
+            std::string(file.fileName).replace(std::string(file.fileName).rfind(".step"), 5, ".json");
+        pairs.push_back(shipped(json).parallels);
+    }
+    REQUIRE(pairs.size() == 4);
+    // 10 mm plate, 120 x 80: on each pair the floor is the pair's height below the stock; the jaws hold what is left of
+    // 44.45 above the floor.
+    const Box3 plate{{0, 0, -10}, {120, 80, 0}};
+    const double want[][2] = {// jaws above the stock's top, held
+                              {44.45 - 25.4 - 10, 10},
+                              {44.45 - 31.75 - 10, 10},
+                              {44.45 - 38.1 - 10, 44.45 - 38.1},
+                              {44.45 - 41.275 - 10, 44.45 - 41.275}};
+    for (std::size_t i = 0; i < pairs.size(); ++i) {
+        INFO("pair " << pairs[i].height);
+        const cf::ViseFit f = cf::fitVise(plate, cf::Grip::Shorter, vise, &pairs[i]);
+        CHECK(f.floorZ == Catch::Approx(-10 - pairs[i].height));
+        CHECK(f.jawAboveStock == Catch::Approx(want[i][0]));
+        CHECK(f.gripDepth == Catch::Approx(want[i][1]));
+    }
+
+    // On the 1 in pair the jaws stand 9.05 above the plate: the 1-1/2 in pair puts its top 3.65 above the jaws with
+    // 6.35 held (the 1-5/8 in would too, holding less; the 1-1/4 in leaves it 2.7 below).
+    cf::ViseFit f = cf::fitVise(plate, cf::Grip::Shorter, vise, &pairs[0]);
+    auto s = cf::tallerParallels(f, vise, &pairs[0], pairs);
+    REQUIRE(s);
+    CHECK(s->index == 2);
+    CHECK(s->aboveJaws);
+    CHECK(s->gripDepth == Catch::Approx(6.35));
+    CHECK(s->jawAboveStock == Catch::Approx(-3.65));
+    // The same from the floor (no parallels), and from the 1-1/4 in pair.
+    s = cf::tallerParallels(cf::fitVise(plate, cf::Grip::Shorter, vise, nullptr), vise, nullptr, pairs);
+    REQUIRE(s);
+    CHECK(s->index == 2);
+    s = cf::tallerParallels(cf::fitVise(plate, cf::Grip::Shorter, vise, &pairs[1]), vise, &pairs[1], pairs);
+    REQUIRE(s);
+    CHECK(s->index == 2);
+    // On the suggested pair the top is above the jaws: nothing more to suggest.
+    CHECK_FALSE(cf::tallerParallels(cf::fitVise(plate, cf::Grip::Shorter, vise, &pairs[2]), vise, &pairs[2], pairs));
+
+    // 5 mm sheet: only the 1-5/8 in pair holds 3 mm with the top above the jaws (3.175 held, top 1.825 above).
+    const Box3 sheet{{0, 0, -5}, {120, 80, 0}};
+    s = cf::tallerParallels(cf::fitVise(sheet, cf::Grip::Shorter, vise, &pairs[0]), vise, &pairs[0], pairs);
+    REQUIRE(s);
+    CHECK(s->index == 3);
+    CHECK(s->aboveJaws);
+    CHECK(s->gripDepth == Catch::Approx(3.175));
+    // 3.1 mm sheet: no pair puts its top above the jaws with 3 mm held; the 1-5/8 in brings it nearest (0.075 below),
+    // holding 3.1.
+    const Box3 thin{{0, 0, -3.1}, {120, 80, 0}};
+    s = cf::tallerParallels(cf::fitVise(thin, cf::Grip::Shorter, vise, &pairs[0]), vise, &pairs[0], pairs);
+    REQUIRE(s);
+    CHECK(s->index == 3);
+    CHECK_FALSE(s->aboveJaws);
+    CHECK(s->jawAboveStock == Catch::Approx(44.45 - 41.275 - 3.1));
+    CHECK(s->gripDepth == Catch::Approx(3.1));
+    // 2 mm sheet: no pair holds 3 mm of it.
+    const Box3 foil{{0, 0, -2}, {120, 80, 0}};
+    CHECK_FALSE(cf::tallerParallels(cf::fitVise(foil, cf::Grip::Shorter, vise, &pairs[0]), vise, &pairs[0], pairs));
+    // A stock whose top is above the jaws already: nothing.
+    const Box3 block{{0, 0, -30}, {120, 80, 0}};
+    CHECK_FALSE(cf::tallerParallels(cf::fitVise(block, cf::Grip::Shorter, vise, &pairs[0]), vise, &pairs[0], pairs));
+    // On the tallest pair already: none is taller.
+    CHECK_FALSE(cf::tallerParallels(cf::fitVise(thin, cf::Grip::Shorter, vise, &pairs[3]), vise, &pairs[3], pairs));
+    // A stock narrower than two parallels side by side gets none.
+    const Box3 strip{{0, 0, -10}, {120, 6, 0}};
+    CHECK_FALSE(cf::tallerParallels(cf::fitVise(strip, cf::Grip::Shorter, vise, nullptr), vise, nullptr, pairs));
+}
+
 TEST_CASE("the fit: the grip, the floor, the parallels, the opening and its limit", "[cam][fixtures][place]")
 {
     const cf::ViseModel vise = shipped("generic-vise-6in.json").vise;
@@ -724,8 +844,9 @@ std::string describe(const std::vector<sim::SimEvent>& events)
 }
 
 // The block of fixture_verify_test.cpp (100 x 60 x 20, a 60 x 20 pocket 12 deep at y 6..26), its stock the block; the
-// vise placed on the stock (on the parallels or not); the pocket generated and checked.
-Checked checkedJob(bool parallels)
+// vise placed on the stock (on the parallels or not: the 1 in pair, or after T-077 `pair`); the pocket generated and
+// checked.
+Checked checkedJob(bool parallels, const fm::ParallelsFile& pair = fm::kParallelsFiles[0])
 {
     Shop shop;
     std::shared_ptr<cam::OperationRegistry> types = std::make_shared<cam::OperationRegistry>();
@@ -740,11 +861,11 @@ Checked checkedJob(bool parallels)
         dt::sketchProps(R"({"datum":")" + dt::uuid('f', 4) + R"("})", dt::SketchJson().rect(1, 20, 6, 80, 26))));
     shop.run(dt::addFeature("extrude", 6, dt::extrudeProps(5, "12", "cut", 'b', R"(,"direction":"reverse")")));
     shop.import("generic-vise-6in.step", 7);
-    shop.import("generic-parallels-1x6in.step", 8);
+    shop.import(pair.fileName, 8);
     shop.vise = shop.named("Generic 6 in vise");
     shop.jaw = shop.named("Generic 6 in vise moving jaw");
-    shop.parA = shop.named("Generic parallel 1/8 x 1 x 6 in A");
-    shop.parB = shop.named("Generic parallel 1/8 x 1 x 6 in B");
+    shop.parA = shop.named(pair.make()[0].name);
+    shop.parB = shop.named(pair.make()[1].name);
     shop.rebuild();
     shop.run(ct::command("cam.library.embed", ct::library(toolItem(), ct::holderJson(1), machineItem())));
     shop.run(
@@ -760,7 +881,16 @@ Checked checkedJob(bool parallels)
                         R"(","stickOut":14},"cutting":{"rpm":8000,"feedCut":1200,"feedPlunge":400,"feedRamp":900},)"
                         R"("heights":{"clearance":15,"retract":5,"feedPlane":2,"top":0,"bottom":0},"geometry":[)" +
                         naming::toJson(shop.ref(ct::body('b'), floor)) + R"(],"params":{"stepdown":4}})"));
-    const cf::PlacePlan plan = shop.place(1, cf::Grip::Shorter, parallels);
+    cf::PlaceRequest rq = shop.request(1, cf::Grip::Shorter, parallels);
+    if (parallels) {
+        std::string json = pair.fileName;
+        rq.parallelsModel = shipped(json.replace(json.rfind(".step"), 5, ".json")).parallels;
+    }
+    auto planned = cf::planViseOnStock(rq);
+    INFO((planned ? std::string() : planned.error().message));
+    REQUIRE(planned);
+    shop.apply(*planned);
+    const cf::PlacePlan plan = *planned;
 
     Checked out;
     out.fit = plan.fit;
@@ -860,5 +990,30 @@ TEST_CASE("the safety checks see the vise placed on the stock; jaws on the stock
             }
         }
         CHECK(holderHits >= 1);
+    }
+}
+
+// After T-077: each taller pair placed by the action under the same block (20 tall). The parallels' tops on the
+// stock's bottom, the jaws' tops the pair's height less 44.45 above it; the setup checks (src/sim/verify_setup) find
+// nothing (the jaws and the parallels touch the stock, nothing overlaps), and neither do the motion checks (the jaws
+// are lower than on the 1 in pair, which already raised nothing).
+TEST_CASE("each taller pair placed on the stock: no setup event, no motion event", "[cam][fixtures][place][parallels]")
+{
+    for (std::size_t k = 1; k < std::size(fm::kParallelsFiles); ++k) {
+        const fm::ParallelsFile& pair = fm::kParallelsFiles[k];
+        const double height = pair.eighths * fm::kIn / 8;
+        INFO(pair.fileName);
+        const Checked on = checkedJob(true, pair);
+        INFO(describe(on.events) << describe(on.setup));
+        REQUIRE(on.fixtureBoxes.size() == 4);
+        CHECK(on.fit.floorZ == Catch::Approx(-20 - height).margin(1e-9));
+        CHECK(on.fit.gripDepth == Catch::Approx(44.45 - height).margin(1e-9));
+        CHECK(on.fixtureBoxes[0].max.z == Catch::Approx(-20).margin(1e-4)); // parallel A under the stock
+        CHECK(on.fixtureBoxes[1].max.z == Catch::Approx(-20).margin(1e-4)); // parallel B
+        CHECK(on.fixtureBoxes[0].min.z == Catch::Approx(-20 - height).margin(1e-4));
+        CHECK(on.fixtureBoxes[3].max.z == Catch::Approx(-20 - height + 44.45).margin(1e-4)); // the moving jaw's top
+        CHECK(on.setup.empty());
+        CHECK(on.setupStats.capped == 0);
+        CHECK(on.events.empty());
     }
 }
