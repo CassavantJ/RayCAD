@@ -1153,7 +1153,7 @@ TEST_CASE("The size of a reference's JSON form with and without pick-time eviden
         const kernel::Shape& shape = imported->bodies.front().shape;
         const naming::ElementMap map = naming::nameImported(featureIdOf("I"), shape);
         auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), map, shape}});
-        std::size_t n = 0, with = 0, without = 0, most = 0, neighbours = 0;
+        std::size_t n = 0, with = 0, without = 0, most = 0, neighbours = 0, outlines = 0, outlineBytes = 0;
         for (const SubKind kind : {SubKind::Face, SubKind::Edge, SubKind::Vertex})
             for (std::uint32_t i = 0; i < shape.count(kind); ++i) {
                 const naming::TopoRef ref = resolver->makeRef(testBody(), SubId{kind, i});
@@ -1162,7 +1162,15 @@ TEST_CASE("The size of a reference's JSON form with and without pick-time eviden
                 naming::TopoRef bare = ref;
                 bare.territory = naming::Territory{};
                 bare.pickNeighbours.clear();
+                bare.outline = naming::PickOutline{};
                 const std::size_t a = naming::toJson(ref).size(), b = naming::toJson(bare).size();
+                if (ref.outline.known()) {
+                    naming::TopoRef noOutline = ref;
+                    noOutline.outline = naming::PickOutline{};
+                    ++outlines;
+                    outlineBytes += a - naming::toJson(noOutline).size();
+                    CHECK(ref.outline.chords.size() <= naming::kMaxOutlineChords);
+                }
                 ++n;
                 with += a;
                 without += b;
@@ -1172,5 +1180,7 @@ TEST_CASE("The size of a reference's JSON form with and without pick-time eviden
         std::printf("%s: %zu references, mean %.0f bytes with evidence (%.1f neighbours), %.0f without, largest %zu\n",
                     file, n, static_cast<double>(with) / n, static_cast<double>(neighbours) / n,
                     static_cast<double>(without) / n, most);
+        std::printf("  %zu planar faces with an outline, mean %.0f bytes of it\n", outlines,
+                    outlines == 0 ? 0.0 : static_cast<double>(outlineBytes) / static_cast<double>(outlines));
     }
 }

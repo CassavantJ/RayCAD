@@ -38,6 +38,9 @@ set(RAY_SLOW_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6
     ray_naming_random_directedit # T-081b: 1,000 sequences with direct edits
+    ray_naming_random_directedit_sorted   # and its holdout blocks
+    ray_naming_random_directedit_holdout1
+    ray_naming_random_directedit_holdout2
     ray_naming_random_perturbed
     ray_sketch_drag_agreement
     ray_cam_invariants_slow   # the property tests of every operation type on their large seed sets (T-058)
@@ -60,6 +63,9 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout5
     ray_naming_random_holdout6
     ray_naming_random_directedit
+    ray_naming_random_directedit_sorted
+    ray_naming_random_directedit_holdout1
+    ray_naming_random_directedit_holdout2
     ray_naming_random_perturbed
     ray_kernel_directedit_corpus # T-080: 1,337 edits on unoptimised OpenCASCADE, many past their time limit
     ray_kernel_directedit_nist)
@@ -144,6 +150,9 @@ set(RAY_TEST_PROCESSORS
     ray_naming_random_holdout5=8
     ray_naming_random_holdout6=8
     ray_naming_random_directedit=8
+    ray_naming_random_directedit_sorted=8
+    ray_naming_random_directedit_holdout1=8
+    ray_naming_random_directedit_holdout2=8
     ray_naming_random_perturbed=8
     ray_naming_s4=7             # 7.0
     ray_naming_random_smoke=5   # 4.8

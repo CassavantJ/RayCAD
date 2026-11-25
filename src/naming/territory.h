@@ -86,6 +86,16 @@ private:
 std::vector<PickNeighbour> pickNeighboursOf(const ElementMap& map, const kernel::Shape& shape, kernel::SubId sub,
                                             const TerritoryCache& territories);
 
+// The outline of planar face `face` (naming.h PickOutline); empty when it has none. Deterministic; never throws.
+PickOutline pickOutlineOf(const kernel::Shape& shape, kernel::SubId face);
+
+// Of the face pieces of a Split, those that do not lie wholly outside `outline` on its plane: a piece whose every
+// territory point lies on the outline's plane and outside it by more than its slack (plus kOnTolerance) is dropped,
+// but only while at least one piece has a territory point inside it (else the picked face moved, and nothing is
+// concluded). Pieces without territory are kept. Never throws.
+std::vector<kernel::SubId> piecesInsideOutline(const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces,
+                                               const PickOutline& outline);
+
 // The box of element `sub` as a territory would record it (no points made). nullopt when unreadable.
 std::optional<Box3> elementBox(const kernel::Shape& shape, kernel::SubId sub);
 
