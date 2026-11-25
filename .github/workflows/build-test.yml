@@ -220,7 +220,7 @@ jobs:
             RAYCAD_NAMING_PROBE="$spec" "$bin" "[.naming-probe]" 2>&1 | grep -E "^probe |FAILED|replay failure" || true
           done
           echo "== 8:18 of the main block, verbose"
-          RAYCAD_NAMING_ONLY=8:18 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random]" 2>&1 | tail -n 120 || true
+          RAYCAD_NAMING_ONLY=8:18 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random]" 2>&1 || true
           echo "== 3:1 of holdout 6, verbose"
           RAYCAD_NAMING_ONLY=3:1 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random-holdout6]" 2>&1 | tail -n 120 || true
           echo "== cos and sin taken (function, argument bits, result bits)"

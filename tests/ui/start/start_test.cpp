@@ -686,7 +686,9 @@ TEST_CASE("a file another session has open opens read-only and says who holds it
     INFO(text.toStdString());
     CHECK(text.contains(w.session()->lockHolder()));
     CHECK(text.contains(w.session()->lockSince()));
-    CHECK(w.scene()->bodyCount() == 1);
+    // The body reaches the scene after the build: waitSettled() also holds with no body yet (CI run 45646624932,
+    // GCC Debug).
+    CHECK(QTest::qWaitFor([&] { return w.scene()->bodyCount() == 1; }, kOpenTimeoutMs));
     w.shot("read-only-dark");
 
     // Save cannot write the locked file: it offers Save As; the notice's button does too.
