@@ -2,6 +2,8 @@
 // the public kernel queries, owners for imported faces added.
 #include "oracle.h"
 
+#include <ray/core.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -158,7 +160,7 @@ double normAng(double x)
 bool insideLoop(const Loop& l, double u, double v)
 {
     if (l.ents.size() == 1 && l.ents[0].k == 'C')
-        return std::hypot(u - l.ents[0].cx, v - l.ents[0].cy) <= l.ents[0].r;
+        return dmath::hypot(u - l.ents[0].cx, v - l.ents[0].cy) <= l.ents[0].r;
     bool in = false; // polygon of the chords
     for (const Ent& e : l.ents) {
         if ((e.y0 > v) != (e.y1 > v)) {
@@ -173,7 +175,7 @@ bool insideLoop(const Loop& l, double u, double v)
         if (e.k != 'A')
             continue;
         const double cr = (e.x1 - e.x0) * (v - e.y0) - (e.y1 - e.y0) * (u - e.x0);
-        if (cr <= 0 && std::hypot(u - e.cx, v - e.cy) <= e.r)
+        if (cr <= 0 && dmath::hypot(u - e.cx, v - e.cy) <= e.r)
             return true;
     }
     return false;
@@ -183,16 +185,16 @@ double distEnt(const Ent& e, double u, double v)
     if (e.k == 'L') {
         const double dx = e.x1 - e.x0, dy = e.y1 - e.y0, len2 = dx * dx + dy * dy;
         const double t = std::clamp(((u - e.x0) * dx + (v - e.y0) * dy) / len2, 0.0, 1.0);
-        return std::hypot(u - (e.x0 + t * dx), v - (e.y0 + t * dy));
+        return dmath::hypot(u - (e.x0 + t * dx), v - (e.y0 + t * dy));
     }
-    const double rr = std::hypot(u - e.cx, v - e.cy);
+    const double rr = dmath::hypot(u - e.cx, v - e.cy);
     if (e.k == 'C')
         return std::abs(rr - e.r);
-    const double a0 = std::atan2(e.y0 - e.cy, e.x0 - e.cx), a1 = std::atan2(e.y1 - e.cy, e.x1 - e.cx);
-    const double a = std::atan2(v - e.cy, u - e.cx);
+    const double a0 = dmath::atan2(e.y0 - e.cy, e.x0 - e.cx), a1 = dmath::atan2(e.y1 - e.cy, e.x1 - e.cx);
+    const double a = dmath::atan2(v - e.cy, u - e.cx);
     if (normAng(a - a0) <= normAng(a1 - a0))
         return std::abs(rr - e.r);
-    return std::min(std::hypot(u - e.x0, v - e.y0), std::hypot(u - e.x1, v - e.y1));
+    return std::min(dmath::hypot(u - e.x0, v - e.y0), dmath::hypot(u - e.x1, v - e.y1));
 }
 double distLoop(const Loop& l, double u, double v)
 {
@@ -411,7 +413,7 @@ Vec3 projectAny(const Carrier& c, const Vec3& p)
         return norm(off) > 0 ? add(ring, mul(unit(off), c.r2)) : p;
     }
     // Cone: the nearest point of the generator line through (q0, q1) and (q2, q3) in the (rho, z) half-plane.
-    const double dr = c.q[2] - c.q[0], dz = c.q[3] - c.q[1], len = std::hypot(dr, dz);
+    const double dr = c.q[2] - c.q[0], dz = c.q[3] - c.q[1], len = dmath::hypot(dr, dz);
     if (!(len > 0))
         return p;
     const double t = ((rho - c.q[0]) * dr + (z - c.q[1]) * dz) / (len * len);
@@ -464,7 +466,7 @@ Carrier importCarrier(const kernel::SurfaceInfo& info, const kernel::Mesh& mesh,
         c.a = axis;
         c.q[0] = info.radius;
         c.q[1] = 0;
-        c.q[2] = info.radius + std::tan(info.semiAngle);
+        c.q[2] = info.radius + dmath::tan(info.semiAngle);
         c.q[3] = 1;
         break;
     }
@@ -482,7 +484,7 @@ Carrier importCarrier(const kernel::SurfaceInfo& info, const kernel::Mesh& mesh,
         for (const Vec3& x : fm->nodes) {
             const Vec3 d = sub(x, c.p);
             const double z = dot(d, c.a);
-            minor.push_back(std::hypot(norm(sub(d, mul(c.a, z))) - c.r, z));
+            minor.push_back(dmath::hypot(norm(sub(d, mul(c.a, z))) - c.r, z));
         }
         if (!minor.empty()) {
             std::nth_element(minor.begin(), minor.begin() + static_cast<std::ptrdiff_t>(minor.size() / 2), minor.end());
@@ -576,11 +578,11 @@ double Carrier::dist(const Vec3& x) const
         return norm(sub(d, mul(a, z))) - r;
     case K::Torus: {
         const double rho = norm(sub(d, mul(a, z)));
-        return std::hypot(rho - r, z) - r2;
+        return dmath::hypot(rho - r, z) - r2;
     }
     case K::Cone: {
         const double rho = norm(sub(d, mul(a, z)));
-        const double dr = q[2] - q[0], dz = q[3] - q[1], len = std::hypot(dr, dz);
+        const double dr = q[2] - q[0], dz = q[3] - q[1], len = dmath::hypot(dr, dz);
         return ((rho - q[0]) * dz - (z - q[1]) * dr) / len;
     }
     case K::Sphere:
@@ -787,7 +789,7 @@ Owners buildOwners(const Script& script)
                     o.key = f.id + "/s" + std::to_string(e.tag);
                     o.cat = hole ? "hole wall" : cut ? "cut wall" : "boss/base side";
                     if (e.k == 'L') {
-                        const double len = std::hypot(e.x1 - e.x0, e.y1 - e.y0);
+                        const double len = dmath::hypot(e.x1 - e.x0, e.y1 - e.y0);
                         const double tx = (e.x1 - e.x0) / len, ty = (e.y1 - e.y0) / len;
                         const double ox = cut ? -ty : ty, oy = cut ? tx : -tx;
                         o.c.oriented = true;
@@ -807,8 +809,8 @@ Owners buildOwners(const Script& script)
                         o.c.a = fr.n;
                         o.c.r = e.r;
                         o.c.sigma = cut ? -1 : +1;
-                        const double a0 = std::atan2(e.y0 - e.cy, e.x0 - e.cx);
-                        const double span = e.k == 'C' ? 2 * kPi : normAng(std::atan2(e.y1 - e.cy, e.x1 - e.cx) - a0);
+                        const double a0 = dmath::atan2(e.y0 - e.cy, e.x0 - e.cx);
+                        const double span = e.k == 'C' ? 2 * kPi : normAng(dmath::atan2(e.y1 - e.cy, e.x1 - e.cx) - a0);
                         o.in = [=](const Vec3& p, double m) {
                             double u = 0, v = 0, h = 0;
                             local(p, u, v, h);
@@ -816,7 +818,7 @@ Owners buildOwners(const Script& script)
                                 return false;
                             if (e.k == 'C')
                                 return true;
-                            const double a = normAng(std::atan2(v - e.cy, u - e.cx) - a0), ma = m / e.r;
+                            const double a = normAng(dmath::atan2(v - e.cy, u - e.cx) - a0), ma = m / e.r;
                             return a <= span + ma || a >= 2 * kPi - ma;
                         };
                     }
@@ -2842,8 +2844,15 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             if (sibling.pts.empty())
                 continue;
             const double tol = anchorTolerance(x.kind, unmovedMap(pick.baseline->of(x.kind)[s], sibling));
+            // A sibling that was a sliver at pick time has no interior for an overlap to share: an element not over
+            // the mapped pick that holds (on, not inside) nearly all of the mapped sliver continues it. (holdout5 15:0
+            // with RAYCAD_NAMING_PERTURB=1: a piece of an import face a hair wide at pick time, beside a boss, became a
+            // band 0.1 mm wide when the boss was resized; it continues that piece, not the picked one across the boss.)
+            const bool sliverThen = sliver(pick.baseline->of(x.kind)[s], x.kind);
             for (std::size_t i = 0; i < x.logical.size(); ++i)
-                if (x.claimed[i] == 0 && overlap(N[x.logical[i]], sibling, x.kind, tol))
+                if (x.claimed[i] == 0 &&
+                    (overlap(N[x.logical[i]], sibling, x.kind, tol) ||
+                     (sliverThen && x.anchored[i] == 0 && shareOn(sibling, N[x.logical[i]], x.kind) >= 0.9)))
                     x.claimed[i] = 1;
         }
     }

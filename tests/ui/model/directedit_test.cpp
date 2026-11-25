@@ -983,6 +983,16 @@ TEST_CASE("the reference review after edits that break CAM references; one actio
     REQUIRE(QTest::qWaitFor([&] { return !w.review()->highlightPending(); }, kTimeoutMs));
     CHECK(w.review()->highlighted().empty()); // nothing to point at now
     CHECK(w.review()->beforeDrawn());         // where it was
+    {
+        // Only the list scrolls: the footer (the out-of-date toolpaths and their one action) stays whole in the panel.
+        QQuickItem* panel = w.shown(QStringLiteral("referenceReview"));
+        QQuickItem* button = w.shown(QStringLiteral("referenceRegenerate"));
+        const QRectF inPanel = button->mapRectToItem(panel, QRectF(0, 0, button->width(), button->height()));
+        CHECK(inPanel.top() >= 0);
+        CHECK(inPanel.bottom() <= panel->height());
+        QQuickItem* list = w.shown(QStringLiteral("referenceReviewList"));
+        CHECK(list->mapRectToItem(panel, QRectF(0, 0, list->width(), list->height())).bottom() <= inPanel.top());
+    }
     w.shotsBothThemes("t083_review_broken");
 
     // 4. Re-picked: the top face in its place, through the operation's edit (one undo step); the operation recovers.
