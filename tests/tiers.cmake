@@ -37,6 +37,7 @@ set(RAY_SLOW_TESTS
     ray_naming_random_holdout4
     ray_naming_random_holdout5
     ray_naming_random_holdout6
+    ray_naming_random_directedit # T-081b: 1,000 sequences with direct edits
     ray_sketch_drag_agreement
     ray_cam_invariants_slow   # the property tests of every operation type on their large seed sets (T-058)
     ray_cam_adaptive_slow     # the adaptive engine's acceptance on the S5 pockets, 32-run determinism (T-060)
@@ -56,6 +57,7 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_holdout4
     ray_naming_random_holdout5
     ray_naming_random_holdout6
+    ray_naming_random_directedit
     ray_kernel_directedit_corpus) # T-080: 1,337 edits on unoptimised OpenCASCADE, many past their time limit
 
 # Quick tests that take over 20 minutes each in an MSVC Debug build (measured 25 to 28 minutes on 32 hardware threads,
@@ -136,6 +138,7 @@ set(RAY_TEST_PROCESSORS
     ray_naming_random_holdout4=8
     ray_naming_random_holdout5=8
     ray_naming_random_holdout6=8
+    ray_naming_random_directedit=8
     ray_naming_s4=7             # 7.0
     ray_naming_random_smoke=5   # 4.8
     ray_doc_s4=6                # 6.0

@@ -13,6 +13,15 @@
 //    every picked target and a TopoRef is made of each; while replaying (an edited script), each TopoRef is
 //    resolved, judged by the oracle, and the edges of every usable() answer are blended. With none usable the
 //    feature fails, as it would in the product.
+//  - Edit (task T-081b): a direct edit of the faces of its target owners (oracle.h EditSpec). While authoring, or
+//    while replaying an edit that was not in the baseline (no picks recorded for it), the faces of every target are
+//    picked by the oracle (each must be described by its target alone) and a TopoRef is made of each; while replaying
+//    a recorded edit, each TopoRef is resolved and judged like a blend pick, and the edit runs only if every answer
+//    is Exact (a Split or Merged face would make the edit move or remove more than its targets, which the oracle's
+//    model of the edit does not describe). The kernel call (deleteFaces, offsetFaces, resizeHole, unifySameDomain)
+//    has a time limit (RAYCAD_NAMING_EDIT_LIMIT_S, default 60 s); then measureEdit fills in what it did from the
+//    shapes, and a result the oracle cannot describe fails the feature (the body stays as it was). The result is
+//    named by propagate() with the kernel's history, the body's map and shape as the one input.
 // A failing feature is skipped and recorded in Build::failed; later features continue on the body.
 #pragma once
 #include "oracle.h"
@@ -94,6 +103,16 @@ public:
     // Replay: picks the oracle could not vouch for when they were made (resolved and used, not judged).
     int unjudgedPicks() const { return unjudgedPicks_; }
     std::size_t lineageEvents() const { return lineage_; }
+    // The features that built, in order, as built: a direct edit with what measureEdit found it did. The oracle's
+    // owners of the built shape are buildOwners(builtScript()) (for a script without direct edits the same as
+    // buildOwners(builtOnly(script, builder))).
+    const Script& builtScript() const { return builtFeatures_; }
+    // Direct edits that failed because the kernel call ran past its time limit (included in failed()).
+    int editTimeouts() const { return editTimeouts_; }
+    // What became of every direct edit applied, as "<role>: <outcome>" -> count; outcomes: "applied", "kernel
+    // refused" (KernelFailure or InvalidArgument), "time limit", "not modelled" (measureEdit), "pick not Exact",
+    // "no target face", "other" (sampling or naming failed).
+    const std::map<std::string, int>& editCounts() const { return editCounts_; }
     // Every map the build produced, serialised, in order (for determinism checks).
     const std::vector<std::vector<std::byte>>& history() const { return history_; }
     void keepHistory(bool on) { keepHistory_ = on; }
@@ -101,7 +120,10 @@ public:
 private:
     bool sweep(const Feature& f);
     bool blend(const Feature& f);
+    bool edit(Feature& f); // fills f.edit's measured fields
     Script builtFeatures_;
+    int editTimeouts_ = 0;
+    std::map<std::string, int> editCounts_;
     void record(naming::NamingOutput out, const kernel::Shape& shape);
 
     Mode mode_;

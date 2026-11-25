@@ -86,6 +86,13 @@
 //    without an anchor).
 //  - Only the carriers listed above. A blend between faces that are not plane/plane or plane/coaxial cylinder has
 //    no owner, so its faces cannot be described and are never used as references; scripts avoid them.
+//  - Direct edits (T-081b, EditSpec) are modelled on the owners: removed, moved along their normal, or given another
+//    radius, with what each removed (or kept) measured from the shapes before and after the edit, never from its
+//    history. A face the edit made that lies on no owner (the side of a push/pull slab where a neighbour is not square
+//    to the moved face, the step at the bottom of a widened blind hole) is described by nothing, as any new face is.
+//    The reach over which faces around a removed face may grow is generous (each removed face's middle box
+//    dimension): a face of another owner on the same carrier within that reach would be taken for a continuation only
+//    if it also lies where the picked one was or is connected to such a piece.
 //
 // STRICT MODE. RAYCAD_ORACLE_STRICT=<list> restores the spike's strictness for the loosenings kept since: "nodes"
 // (every node within tolerance), "band" (separators apply everywhere). The tests print which is active. Measured on
@@ -155,7 +162,7 @@ struct Frame {
     Vec3 yd() const { return cross(n, xd); }
     Vec3 at(double u, double v, double w = 0) const { return add(add(add(o, mul(xd, u)), mul(yd(), v)), mul(n, w)); }
 };
-enum class FType { Import, Sweep, Fillet, Chamfer };
+enum class FType { Import, Sweep, Fillet, Chamfer, Edit };
 enum class BOp { New, Join, Cut };
 // A logical edge to blend: where owner `a` meets owner `b`. `convex` says on which side the material is.
 // `picked` targets are picked by the user; the others are blended by tangent propagation and listed so the
@@ -204,11 +211,36 @@ struct ImportBase {
 // Analyses an imported shape once: carrier and fine mesh of every face. KernelFailure if the kernel fails.
 Result<std::shared_ptr<const ImportBase>> analyseImport(const kernel::Shape& shape);
 
+// A direct edit (task T-081b: kernel deleteFaces, offsetFaces, resizeHole, unifySameDomain) of the logical faces
+// `targets` (owner keys). Its owners (buildOwners) follow from geometry alone, never from the kernel's history:
+//  - Delete: the owners in `removed` are gone. Every other owner's extent also takes in the ground the removed faces
+//    left (within each removed face's reach of its mesh as it was: the hole a face grows over when a hole, pocket or
+//    blend is removed, the corner a removed fillet rounded).
+//  - Offset: each target (a plane with a known outward normal) is moved `amount` along its outward normal (positive
+//    adds material, as kernel::offsetFaces), its extent with it. Faces around it are not extended: where they now
+//    run on over ground nobody held, the merged rule's new territory covers it (expect).
+//  - Resize: each owner in `resized` (the bore: cylinders on one axis and radius) gets radius `amount`, its extent
+//    carried radially. The faces around it are not extended, as for an offset.
+//  - Unify: no owner changes; a face that unification made of two is described by both owners (merged).
+// The measured fields are filled by measureEdit when the edit is built, from the shapes before and after it: which
+// owners had a face before and have none after (Delete), which faces of the bore changed radius (Resize). The edit's
+// own picks are the faces of its targets (TopoRefs, harness.h).
+enum class EKind { Delete, Offset, Resize, Unify };
+struct EditSpec {
+    EKind kind = EKind::Delete;
+    std::vector<std::string> targets;
+    double amount = 0;
+    std::vector<std::string> removed;                  // Delete (measured)
+    std::vector<std::shared_ptr<const FaceMesh>> fill; // Delete (measured): the removed faces' meshes, before the edit
+    std::vector<double> fillReach;                     // parallel to fill: how far a face around may run on over it
+    std::vector<std::string> resized;                  // Resize (measured)
+};
+
 struct Feature {
     std::string id;
     FType type = FType::Sweep;
     BOp op = BOp::New;
-    std::string role; // "import", "extrude", "hole", "fillet", "chamfer"
+    std::string role; // "import", "extrude", "hole", "fillet", "chamfer", or a direct edit's
     Frame frame;
     std::vector<Loop> loops; // each loop is its own region; Cut extrudes along -n, New and Join along +n
     double dist = 0;
@@ -216,6 +248,7 @@ struct Feature {
     double size = 0; // fillet radius, chamfer distance
     bool suppressed = false;
     std::shared_ptr<const ImportBase> base; // Import
+    EditSpec edit;                          // Edit
 };
 using Script = std::vector<Feature>;
 
@@ -241,6 +274,9 @@ struct Owners {
     // as large as the corner arc it rounds). The kernel may build that surface or another one; where no element of the
     // edited shape fits a description using such an owner, its continuation cannot be told (expect: noAnchor).
     std::set<std::string> degenerate;
+    // A direct edit changed an imported face (Feature::edit): the imported base solid is no longer material that stays
+    // where it was (mapElement).
+    bool importEdited = false;
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);
@@ -338,6 +374,16 @@ bool coincidesWithAnother(const TruthDesc& d, SubId s, const Owners& owners, con
 // The edges of the shape on the logical edge `target`, each with its own description.
 std::vector<std::pair<std::uint32_t, TruthDesc>> pickTarget(const Target& target, const Owners& owners,
                                                             const Samples& samples);
+
+// The faces of the shape that lie on owner `key` (its carrier, type and material side, inside its extent, from 2 % of
+// their area), by geometry alone; empty if the owner does not exist.
+std::vector<std::uint32_t> facesOn(const std::string& key, const Owners& owners, const Samples& samples);
+
+// Fills the measured fields of direct edit `f` (EditSpec) from the shape before it (`before`, built from the script
+// `built` of the features before it) and after it. Geometry only. Returns why the oracle cannot describe the result
+// (a picked face still there, a face away from the picked ones gone, a bore face not at its new radius, a moved face
+// not where it was moved to), or an empty string.
+std::string measureEdit(Feature& f, const Script& built, const Samples& before, const Samples& after);
 
 // Unjudged: a non-Broken answer to a reference whose continuation the oracle cannot tell (gated by the tests).
 enum class Verdict { Correct, BrokenGone, Missed, Unjudged, WrongOther, WrongIncomplete, WrongGhost, WrongSilentMerge };

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -623,6 +624,107 @@ Result<std::shared_ptr<const ImportBase>> analyseImport(const kernel::Shape& sha
 }
 
 // ---------------------------------------------------------------- owners from the script
+namespace {
+
+// A direct edit's change to the owners (oracle.h EditSpec).
+void applyEdit(Owners& O, const Feature& f)
+{
+    const EditSpec& e = f.edit;
+    std::set<std::string> touched;
+    auto touch = [&](const std::string& key) {
+        touched.insert(key);
+        if (const Owner* o = O.get(key); o != nullptr && o->cat == "imported face")
+            O.importEdited = true;
+    };
+    auto reindex = [&] {
+        O.ix.clear();
+        for (std::size_t i = 0; i < O.v.size(); ++i)
+            O.ix[O.v[i].key] = static_cast<int>(i);
+    };
+    switch (e.kind) {
+    case EKind::Delete: {
+        const std::vector<std::string>& gone = e.removed.empty() ? e.targets : e.removed;
+        const std::set<std::string> drop(gone.begin(), gone.end());
+        for (const std::string& key : drop)
+            touch(key);
+        std::vector<Owner> kept;
+        for (Owner& o : O.v)
+            if (drop.count(o.key) == 0)
+                kept.push_back(std::move(o));
+        O.v = std::move(kept);
+        reindex();
+        if (!e.fill.empty()) {
+            const auto fill = e.fill;
+            const auto reach = e.fillReach;
+            for (Owner& o : O.v) {
+                const auto old = o.in;
+                o.in = [old, fill, reach](const Vec3& p, double m) {
+                    if (old(p, m))
+                        return true;
+                    for (std::size_t i = 0; i < fill.size() && i < reach.size(); ++i) {
+                        const double limit = reach[i] + m;
+                        if (fill[i] && fill[i]->distanceWithin(p, limit) <= limit)
+                            return true;
+                    }
+                    return false;
+                };
+            }
+        }
+        break;
+    }
+    case EKind::Offset:
+        for (const std::string& key : e.targets) {
+            const auto it = O.ix.find(key);
+            if (it == O.ix.end())
+                continue;
+            Owner& o = O.v[static_cast<std::size_t>(it->second)];
+            touch(key);
+            if (o.c.k != Carrier::K::Plane || !o.c.oriented) {
+                O.undescribable.insert(key);
+                continue;
+            }
+            const Vec3 t = mul(o.c.a, e.amount);
+            o.c.p = add(o.c.p, t);
+            const auto old = o.in;
+            o.in = [old, t](const Vec3& p, double m) { return old(sub(p, t), m); };
+        }
+        break;
+    case EKind::Resize:
+        for (const std::string& key : e.resized.empty() ? e.targets : e.resized) {
+            const auto it = O.ix.find(key);
+            if (it == O.ix.end())
+                continue;
+            Owner& o = O.v[static_cast<std::size_t>(it->second)];
+            touch(key);
+            if (o.c.k != Carrier::K::Cyl || !(e.amount > 0)) {
+                O.undescribable.insert(key);
+                continue;
+            }
+            const Carrier c0 = o.c;
+            o.c.r = e.amount;
+            const auto old = o.in;
+            // The extent carried radially: a point at the new radius is inside where the point at the old radius was.
+            o.in = [old, c0](const Vec3& p, double m) {
+                const Vec3 d = sub(p, c0.p);
+                const double z = dot(d, c0.a);
+                const Vec3 radial = sub(d, mul(c0.a, z));
+                const double rho = norm(radial);
+                const Vec3 q = rho > 1e-12 ? add(add(c0.p, mul(c0.a, z)), mul(radial, c0.r / rho)) : p;
+                return old(q, m);
+            };
+        }
+        break;
+    case EKind::Unify:
+        break;
+    }
+    // A sweep with an edited face is no longer the sweep the script describes: its volume is not what it moved or
+    // kept (mapElement).
+    for (const std::string& key : touched)
+        O.sweeps.erase(key.substr(0, key.find('/')));
+}
+
+} // namespace
+
 Owners buildOwners(const Script& script)
 {
     static std::atomic<std::uint64_t> serials{0};
@@ -729,6 +831,8 @@ Owners buildOwners(const Script& script)
                     addOwner(std::move(o));
                 }
             }
+        } else if (f.type == FType::Edit) {
+            applyEdit(O, f);
         } else {
             const bool fillet = f.type == FType::Fillet;
             for (std::size_t k = 0; k < f.targets.size(); ++k) {
@@ -1129,6 +1233,18 @@ std::string explain(const TruthDesc& d, const Owners& ow, const Samples& smp, lo
         if (sepsOk(all, p))
             ++sepOk;
     out += " all seps ok " + std::to_string(sepOk) + "/" + std::to_string(es.pts.size());
+    // An edge or vertex: which owners of the description each of its own faces lies on (each constraint needs a face).
+    if (d.kind != SubKind::Face) {
+        out += "; its faces:";
+        for (const std::uint32_t f : smp.facesOf[d.kind == SubKind::Edge ? 1 : 0][static_cast<std::size_t>(x)]) {
+            out += " " + std::to_string(f) + "(";
+            const ElemSamples& face = smp.of(SubKind::Face)[f];
+            for (const Owner& o : ow.v)
+                if (typeMatches(o.c, face) && nodesOn(o.c, face.nodes, tolFor(SubKind::Face).node))
+                    out += o.key + " ";
+            out += ")";
+        }
+    }
     return out;
 }
 
@@ -1353,6 +1469,120 @@ std::vector<std::pair<std::uint32_t, TruthDesc>> pickTarget(const Target& t, con
         out.push_back({e, x});
     }
     return out;
+}
+
+std::vector<std::uint32_t> facesOn(const std::string& key, const Owners& ow, const Samples& smp)
+{
+    if (ow.get(key) == nullptr)
+        return {};
+    TruthDesc d;
+    d.kind = SubKind::Face;
+    d.cons.push_back(Constraint{{key}, {}});
+    d.ok = true;
+    return evalTruth(d, ow, smp).elems;
+}
+
+std::string measureEdit(Feature& f, const Script& built, const Samples& before, const Samples& after)
+{
+    EditSpec& e = f.edit;
+    const Owners O0 = buildOwners(built);
+    auto withEdit = [&] {
+        Script s = built;
+        s.push_back(f);
+        return buildOwners(s);
+    };
+    switch (e.kind) {
+    case EKind::Delete: {
+        e.removed.clear();
+        e.fill.clear();
+        e.fillReach.clear();
+        std::set<std::uint32_t> gone, start;
+        std::map<std::uint32_t, std::string> ownerOf;
+        for (const Owner& o : O0.v) {
+            const std::vector<std::uint32_t> was = facesOn(o.key, O0, before);
+            if (was.empty() || !facesOn(o.key, O0, after).empty())
+                continue;
+            e.removed.push_back(o.key);
+            const bool target = std::find(e.targets.begin(), e.targets.end(), o.key) != e.targets.end();
+            for (const std::uint32_t x : was) {
+                gone.insert(x);
+                ownerOf.emplace(x, o.key);
+                if (target)
+                    start.insert(x);
+            }
+        }
+        for (const std::string& t : e.targets)
+            if (std::find(e.removed.begin(), e.removed.end(), t) == e.removed.end())
+                return "the picked face " + t + " is still there";
+        // Every face that went must be one of the picked ones or reach them through faces that went (the rest of a
+        // hole's stack): a face that disappeared elsewhere is not something the model describes.
+        std::set<std::uint32_t> reached = start;
+        std::vector<std::uint32_t> todo(start.begin(), start.end());
+        while (!todo.empty()) {
+            const std::uint32_t x = todo.back();
+            todo.pop_back();
+            for (std::uint32_t edge = 0; edge < before.facesOf[1].size(); ++edge) {
+                const auto& fs = before.facesOf[1][edge];
+                if (std::find(fs.begin(), fs.end(), x) == fs.end())
+                    continue;
+                for (const std::uint32_t y : fs)
+                    if (gone.count(y) != 0 && reached.insert(y).second)
+                        todo.push_back(y);
+            }
+        }
+        for (const std::uint32_t x : gone)
+            if (reached.count(x) == 0)
+                return "face " + std::to_string(x) + " of " + ownerOf[x] + ", away from the picked faces, is gone too";
+        for (const std::uint32_t x : gone) {
+            const ElemSamples& es = before.of(SubKind::Face)[x];
+            if (!es.mesh)
+                continue;
+            std::array<double, 3> dims{es.boxMax.x - es.boxMin.x, es.boxMax.y - es.boxMin.y,
+                                       es.boxMax.z - es.boxMin.z};
+            std::sort(dims.begin(), dims.end());
+            e.fill.push_back(es.mesh);
+            e.fillReach.push_back(dims[1] + 0.1);
+        }
+        return {};
+    }
+    case EKind::Offset: {
+        const Owners O1 = withEdit();
+        for (const std::string& t : e.targets) {
+            if (O1.undescribable.count(t) != 0)
+                return "the moved face " + t + " is not a plane with a known outward normal";
+            if (facesOn(t, O1, after).empty())
+                return "the moved face " + t + " is not where it was moved to";
+        }
+        return {};
+    }
+    case EKind::Resize: {
+        e.resized.clear();
+        const Owner* T = e.targets.empty() ? nullptr : O0.get(e.targets.front());
+        if (T == nullptr || T->c.k != Carrier::K::Cyl)
+            return "the picked face is not a cylinder";
+        for (const Owner& o : O0.v) {
+            if (o.c.k != Carrier::K::Cyl || o.c.sigma != T->c.sigma ||
+                std::abs(o.c.r - T->c.r) > 1e-5 * std::max(1.0, T->c.r) || norm(cross(o.c.a, T->c.a)) > 1e-7)
+                continue;
+            const Vec3 d = sub(o.c.p, T->c.p);
+            if (norm(sub(d, mul(T->c.a, dot(d, T->c.a)))) > 1e-5)
+                continue;
+            if (facesOn(o.key, O0, before).empty() || !facesOn(o.key, O0, after).empty())
+                continue;
+            e.resized.push_back(o.key);
+        }
+        if (std::find(e.resized.begin(), e.resized.end(), T->key) == e.resized.end())
+            return "the picked bore face " + T->key + " is still at its old radius";
+        const Owners O1 = withEdit();
+        for (const std::string& r : e.resized)
+            if (facesOn(r, O1, after).empty())
+                return "bore face " + r + " is not at the new radius";
+        return {};
+    }
+    case EKind::Unify:
+        return {};
+    }
+    return {};
 }
 
 const char* verdictName(Verdict v)
@@ -2014,7 +2244,9 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
     // join the edit did not touch. A point there does not depend on the moved sweep (T-081a holdout3 18:7: a slot's
     // edge running through a boss and the imported part it was joined into; where the slot crosses the part, the
     // edge stays when the boss moves).
-    const bool keptImport = before.import != nullptr && before.import == after.import;
+    // (Not after a direct edit of an imported face: the imported solid is then not the material that is there.)
+    const bool keptImport = before.import != nullptr && before.import == after.import && !before.importEdited &&
+                            !after.importEdited;
     auto inKeptMaterial = [&](const Vec3& p) {
         for (const Feature* g : keptMaterial)
             if (insideSweep(*g, p, kAnchorTolerance))
@@ -2399,6 +2631,35 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         x.expected = TruthEval{};
         x.expected.elems = {static_cast<std::uint32_t>(x.congruentIndex)};
         return x;
+    }
+    // A vertex where two pieces of one logical face met another face, the pieces since joined into one face (a later
+    // boolean's unification, a direct edit's: T-081b directedit 7:0, 4:1), nothing it depends on moved, and the one
+    // vertex congruent in place with it lies on every logical face of its description: it is still where those faces
+    // meet, and continues the pick. (Each face of a description needs a face of its own, so the description itself no
+    // longer fits it: the two pieces are one face now. A point holds nothing more than it did: not merged.)
+    if (x.kind == SubKind::Vertex && !x.moved && x.congruentIndex >= 0 &&
+        !x.inLogical(static_cast<std::uint32_t>(x.congruentIndex))) {
+        TruthDesc joined = withoutSeparators(d);
+        std::vector<Constraint> distinct;
+        for (const Constraint& c : joined.cons) {
+            std::vector<std::string> alts = c.alts;
+            std::sort(alts.begin(), alts.end());
+            bool seen = false;
+            for (const Constraint& k : distinct)
+                seen = seen || k.alts == alts;
+            if (!seen)
+                distinct.push_back(Constraint{alts, {}});
+        }
+        if (distinct.size() < joined.cons.size()) {
+            joined.cons = distinct;
+            const TruthEval fits = evalTruth(joined, now, smp);
+            if (std::binary_search(fits.elems.begin(), fits.elems.end(),
+                                   static_cast<std::uint32_t>(x.congruentIndex))) {
+                x.expected = TruthEval{};
+                x.expected.elems = {static_cast<std::uint32_t>(x.congruentIndex)};
+                return x;
+            }
+        }
     }
     if (x.strict.elems.empty())
         return x;

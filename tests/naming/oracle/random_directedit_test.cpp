@@ -1,0 +1,1015 @@
+// Randomised edit sequences with direct edits (task T-081b acceptance): the T-081a randomised test (random_test.cpp)
+// extended with the T-080 direct edits. Each sequence imports one of the same 20 corpus parts and builds 3 to 5 random
+// steps, a third of them direct edits interleaved with the T-094/T-095 operations (cut, boss, fillet, chamfer): delete a
+// hole (the part's own or a cut's), delete a pocket, delete a fillet or chamfer (a blend feature's, or a run of the
+// part's own rounds), resize a hole, push/pull a flat face (sometimes exactly to the level of another face on the same
+// side, so the two unify), merge faces on one surface. It records every element the oracle can vouch for as a
+// reference, makes one to three random edits (the T-081a script edits, which then replay the direct edits in the
+// history through their own face references, or a further direct edit appended to the part), rebuilds, and judges every
+// reference and every replayed pick (blends' edges, direct edits' faces) with the full oracle, whose model of a direct
+// edit (oracle.h EditSpec) uses geometry only. A direct edit the kernel refuses (KernelFailure, InvalidArgument), runs
+// past its time limit, or whose result the oracle cannot describe is a skipped step, counted by kind and outcome.
+//
+// The generator below repeats the T-081a one (random_test.cpp: same splitmix64 conversions, profiles, cuts, bosses and
+// blends) on purpose, on its own seeds: the T-081a blocks keep their seeds and sequences unchanged.
+//
+// Gates, as the T-081a holdout blocks: zero wrong-element resolutions, every mutant caught, no usable Repaired, no
+// injectivity violation, every new-territory acceptance and congruence conflict on the reviewed lists, and every
+// answer not judged on the reviewed list (tests/naming/oracle/reviewed_unjudged.txt, keys "directedit ...").
+// RAYCAD_NAMING_ONLY=<part>:<sequence> runs one sequence; RAYCAD_NAMING_TRACE=<file> writes one line per sequence (the
+// Windows and Linux runs are compared on it).
+#include <catch2/catch_test_macros.hpp>
+
+#include "harness.h"
+
+#include <shape_testing.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <string>
+#include <thread>
+
+using namespace ray;
+using namespace ray::naming_oracle;
+
+namespace {
+
+constexpr double kPi = 3.141592653589793238462643383279502884;
+constexpr int kSequencesPerPart = 50;
+constexpr int kSmokePerPart = 2;
+
+const char* const kParts[] = {
+    "raycad-synthetic/block_blind_holes_1.stp",
+    "raycad-synthetic/chamfer_block_2.stp",
+    "raycad-synthetic/circular_pocket_1.stp",
+    "raycad-synthetic/closed_pocket_3.stp",
+    "raycad-synthetic/fillet_block_1.stp",
+    "raycad-synthetic/fixture_plate_1.stp",
+    "raycad-synthetic/flange_bolt_circle_1.stp",
+    "raycad-synthetic/keyway_tslot_1.stp",
+    "raycad-synthetic/l_bracket_1.stp",
+    "raycad-synthetic/manifold_block_1.stp",
+    "raycad-synthetic/open_pocket_step_1.stp",
+    "raycad-synthetic/plate_counterbore_1.stp",
+    "raycad-synthetic/plate_countersink_1.stp",
+    "raycad-synthetic/plate_thru_holes_1.stp",
+    "raycad-synthetic/rib_plate_1.stp",
+    "raycad-synthetic/slot_through_1.stp",
+    "raycad-synthetic/thin_wall_box_1.stp",
+    "nist-pmi/nist_ftc_11_asme1_rb_geometry.stp",
+    "nist-d2mi/827-9999-905.stp",
+    "nist-pmi/nist_ctc_01_asme1_rd_geometry.stp",
+};
+constexpr int kPartCount = static_cast<int>(sizeof(kParts) / sizeof(kParts[0]));
+
+// ---------------------------------------------------------------- the T-081a generator (random_test.cpp)
+struct Rng {
+    std::uint64_t s;
+    std::uint64_t next()
+    {
+        std::uint64_t z = (s += 0x9E3779B97F4A7C15ull);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    }
+    double uniform(double a, double b) { return a + (b - a) * static_cast<double>(next() >> 11) * 0x1.0p-53; }
+    std::size_t below(std::size_t n) { return n == 0 ? 0 : static_cast<std::size_t>(next() % n); }
+    bool chance(double p) { return uniform(0, 1) < p; }
+};
+
+struct Part {
+    std::string path;
+    std::shared_ptr<const ImportBase> base;
+    std::shared_ptr<const Samples> samples;
+    double size = 0; // bounding box diagonal
+    std::string error;
+};
+
+Part loadPart(const std::string& relative)
+{
+    Part part;
+    part.path = relative;
+    JobContext ctx;
+    auto imported = kernel::importStep(std::string(RAY_CORPUS_DIR) + "/" + relative, kernel::ImportOptions{}, ctx);
+    if (!imported || imported->bodies.empty()) {
+        part.error = imported ? "no body" : imported.error().message;
+        return part;
+    }
+    const kernel::Shape shape = imported->bodies.front().shape;
+    auto base = analyseImport(shape);
+    auto samples = sampleShape(shape);
+    if (!base || !samples) {
+        part.error = !base ? base.error().message : samples.error().message;
+        return part;
+    }
+    part.base = *base;
+    part.samples = *samples;
+    const Box3 b = kernel::bounds(shape);
+    part.size = norm(sub(b.max, b.min));
+    return part;
+}
+
+Ent lineEnt(double x0, double y0, double x1, double y1, std::uint64_t tag)
+{
+    Ent e;
+    e.k = 'L';
+    e.x0 = x0;
+    e.y0 = y0;
+    e.x1 = x1;
+    e.y1 = y1;
+    e.tag = tag;
+    return e;
+}
+Ent arcEnt(double x0, double y0, double x1, double y1, double cx, double cy, double r, std::uint64_t tag)
+{
+    Ent e = lineEnt(x0, y0, x1, y1, tag);
+    e.k = 'A';
+    e.cx = cx;
+    e.cy = cy;
+    e.r = r;
+    return e;
+}
+
+Loop randomProfile(Rng& rng, double s)
+{
+    Loop l;
+    l.id = 1;
+    const double w = s * rng.uniform(0.6, 1.4), h = s * rng.uniform(0.6, 1.4);
+    switch (rng.below(4)) {
+    case 0:
+        l.ents = {lineEnt(-w / 2, -h / 2, w / 2, -h / 2, 1), lineEnt(w / 2, -h / 2, w / 2, h / 2, 2),
+                  lineEnt(w / 2, h / 2, -w / 2, h / 2, 3), lineEnt(-w / 2, h / 2, -w / 2, -h / 2, 4)};
+        break;
+    case 1: {
+        Ent e;
+        e.k = 'C';
+        e.r = s / 2;
+        e.tag = 1;
+        e.x0 = e.x1 = e.r;
+        l.ents = {e};
+        break;
+    }
+    case 2: {
+        const double r = h / 3, x = w / 2;
+        l.ents = {lineEnt(-x, -r, x, -r, 1), arcEnt(x, -r, x, r, x, 0, r, 2), lineEnt(x, r, -x, r, 3),
+                  arcEnt(-x, r, -x, -r, -x, 0, r, 4)};
+        break;
+    }
+    default: {
+        const double r = std::min(w, h) * 0.2, x0 = -w / 2, x1 = w / 2, y0 = -h / 2, y1 = h / 2;
+        l.ents = {lineEnt(x0 + r, y0, x1 - r, y0, 1), arcEnt(x1 - r, y0, x1, y0 + r, x1 - r, y0 + r, r, 5),
+                  lineEnt(x1, y0 + r, x1, y1 - r, 2), arcEnt(x1, y1 - r, x1 - r, y1, x1 - r, y1 - r, r, 6),
+                  lineEnt(x1 - r, y1, x0 + r, y1, 3), arcEnt(x0 + r, y1, x0, y1 - r, x0 + r, y1 - r, r, 7),
+                  lineEnt(x0, y1 - r, x0, y0 + r, 4), arcEnt(x0, y0 + r, x0 + r, y0, x0 + r, y0 + r, r, 8)};
+        break;
+    }
+    }
+    return l;
+}
+
+double profileWidth(const Loop& l)
+{
+    double lo = 1e300, hi = -1e300;
+    for (const Ent& e : l.ents) {
+        if (e.k == 'C') {
+            lo = std::min(lo, e.cx - e.r);
+            hi = std::max(hi, e.cx + e.r);
+        } else {
+            lo = std::min({lo, e.x0, e.x1});
+            hi = std::max({hi, e.x0, e.x1});
+        }
+    }
+    return hi - lo;
+}
+
+std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rng, const std::string& id, bool cut)
+{
+    std::vector<std::uint32_t> planar;
+    const auto& faces = smp.of(SubKind::Face);
+    for (std::uint32_t i = 0; i < faces.size(); ++i)
+        if (faces[i].type == static_cast<int>(kernel::SurfaceType::Plane) && faces[i].pts.size() >= 3)
+            planar.push_back(i);
+    if (planar.empty())
+        return std::nullopt;
+    const ElemSamples& f = faces[planar[rng.below(planar.size())]];
+    const Vec3 point = f.pts[rng.below(f.pts.size())];
+    const Vec3 n = unit(f.nrm);
+    const Vec3 e = std::abs(n.x) <= std::abs(n.y) && std::abs(n.x) <= std::abs(n.z) ? Vec3{1, 0, 0}
+                   : std::abs(n.y) <= std::abs(n.z)                                 ? Vec3{0, 1, 0}
+                                                                                    : Vec3{0, 0, 1};
+    const Vec3 x0 = unit(cross(e, n)), y0 = cross(n, x0);
+    const double a = rng.uniform(0, kPi);
+    Frame fr;
+    fr.n = n;
+    fr.xd = add(mul(x0, std::cos(a)), mul(y0, std::sin(a)));
+    fr.o = point;
+    const double extent = norm(sub(f.boxMax, f.boxMin));
+    const double s = std::clamp(extent * rng.uniform(0.1, 0.35), 0.8, 40.0);
+    Feature feat;
+    feat.id = id;
+    feat.type = FType::Sweep;
+    feat.op = cut ? BOp::Cut : BOp::Join;
+    feat.frame = fr;
+    feat.loops = {randomProfile(rng, s)};
+    feat.role = cut && feat.loops[0].ents.size() == 1 ? "hole" : "extrude";
+    feat.dist = cut ? (rng.chance(0.3) ? 2.0 * partSize : partSize * rng.uniform(0.04, 0.3))
+                    : partSize * rng.uniform(0.04, 0.25);
+    return feat;
+}
+
+std::optional<bool> convexity(const Owner& A, const ElemSamples& edge, const ElemSamples& faceB)
+{
+    if (edge.nodes.empty() || faceB.pts.empty())
+        return std::nullopt;
+    const Vec3 m = edge.nodes[edge.nodes.size() / 2];
+    Vec3 nA;
+    if (A.c.k == Carrier::K::Plane) {
+        nA = A.c.a;
+    } else if (A.c.k == Carrier::K::Cyl) {
+        const Vec3 d = sub(m, A.c.p);
+        nA = mul(unit(sub(d, mul(A.c.a, dot(d, A.c.a)))), static_cast<double>(A.c.sigma));
+    } else {
+        return std::nullopt;
+    }
+    double best = 1e300;
+    Vec3 q{};
+    for (const Vec3& p : faceB.pts) {
+        const double d = norm(sub(p, m));
+        if (d > 1e-3 && d < best) {
+            best = d;
+            q = p;
+        }
+    }
+    const double s = dot(nA, unit(sub(q, m)));
+    if (std::abs(s) < 0.05)
+        return std::nullopt;
+    return s < 0;
+}
+
+std::optional<Feature> proposeBlend(const Script& built, const Samples& smp, Rng& rng, const std::string& id,
+                                    bool fillet)
+{
+    const Owners owners = buildOwners(built);
+    const TruthBuilder tb(owners, smp);
+    const auto& edges = smp.of(SubKind::Edge);
+    std::vector<std::pair<std::uint32_t, Target>> candidates;
+    for (std::uint32_t e = 0; e < edges.size(); ++e) {
+        const auto& fs = smp.facesOf[1][e];
+        if (fs.size() != 2 || edges[e].nodes.empty())
+            continue;
+        const TruthDesc& da = tb.faceDescriptions()[fs[0]];
+        const TruthDesc& db = tb.faceDescriptions()[fs[1]];
+        if (!da.ok || !db.ok || da.cons[0].alts.size() != 1 || db.cons[0].alts.size() != 1)
+            continue;
+        const Owner* A = owners.get(da.cons[0].alts[0]);
+        if (A == nullptr || da.cons[0].alts[0] == db.cons[0].alts[0])
+            continue;
+        const auto convex = convexity(*A, edges[e], smp.of(SubKind::Face)[fs[1]]);
+        if (!convex)
+            continue;
+        const Target t{da.cons[0].alts[0], db.cons[0].alts[0], *convex, true};
+        if (canBlend(owners, t, fillet))
+            candidates.push_back({e, t});
+    }
+    if (candidates.empty())
+        return std::nullopt;
+    Feature f;
+    f.id = id;
+    f.type = fillet ? FType::Fillet : FType::Chamfer;
+    f.role = fillet ? "fillet" : "chamfer";
+    f.targets = {candidates[rng.below(candidates.size())].second};
+    f.size = rng.uniform(0.3, 1.2);
+    return f;
+}
+
+// ---------------------------------------------------------------- direct edits
+// The kinds, by the role the edit gets (its feature role in the names it makes, and its bucket in the counts).
+const char* const kEditRoles[] = {"delete_hole", "delete_pocket", "delete_fillet", "resize_hole", "offset_face",
+                                  "unify"};
+
+// The faces of `key` on the shape, each described by that owner alone (what an edit's pick needs); empty if any face
+// on it is not.
+std::vector<std::uint32_t> ownFaces(const std::string& key, const Owners& owners, const TruthBuilder& tb,
+                                    const Samples& smp)
+{
+    std::vector<std::uint32_t> out = facesOn(key, owners, smp);
+    for (const std::uint32_t f : out) {
+        const TruthDesc& d = tb.faceDescriptions()[f];
+        if (!d.ok || d.cons.size() != 1 || d.cons[0].alts != std::vector<std::string>{key})
+            return {};
+    }
+    return out;
+}
+
+bool isHole(const Owner& o)
+{
+    return o.c.k == Carrier::K::Cyl && o.c.oriented && o.c.sigma < 0;
+}
+
+// A random direct edit of the shape `smp` samples, built by `built`; nullopt if the kind drawn has no candidate.
+std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& shape, const Samples& smp,
+                                   double partSize, Rng& rng, const std::string& id)
+{
+    const Owners owners = buildOwners(built);
+    const TruthBuilder tb(owners, smp);
+    Feature f;
+    f.id = id;
+    f.type = FType::Edit;
+    const std::size_t roll = rng.below(100);
+    std::vector<std::string> keys; // candidate owners, in owner order
+    if (roll < 22) {
+        f.role = "delete_hole";
+        f.edit.kind = EKind::Delete;
+        for (const Owner& o : owners.v)
+            if (isHole(o) && !ownFaces(o.key, owners, tb, smp).empty())
+                keys.push_back(o.key);
+        if (keys.empty())
+            return std::nullopt;
+        f.edit.targets = {keys[rng.below(keys.size())]};
+        return f;
+    }
+    if (roll < 32) {
+        // A cut that is not a hole: all its faces still on the shape.
+        f.role = "delete_pocket";
+        f.edit.kind = EKind::Delete;
+        std::vector<std::vector<std::string>> pockets;
+        for (const auto& [sid, sweep] : owners.sweeps) {
+            if (sweep.op != BOp::Cut || sweep.role == "hole")
+                continue;
+            std::vector<std::string> faces;
+            bool ok = true;
+            for (const Owner& o : owners.v)
+                if (o.key.compare(0, sid.size() + 1, sid + "/") == 0) {
+                    if (!facesOn(o.key, owners, smp).empty()) {
+                        ok = ok && !ownFaces(o.key, owners, tb, smp).empty();
+                        faces.push_back(o.key);
+                    }
+                }
+            if (ok && !faces.empty())
+                pockets.push_back(faces);
+        }
+        if (pockets.empty())
+            return std::nullopt;
+        f.edit.targets = pockets[rng.below(pockets.size())];
+        return f;
+    }
+    if (roll < 47) {
+        // A blend: a fillet or chamfer feature's face, or a run of the part's own rounds (kernel::blendRun picks the run,
+        // as the UI does).
+        f.role = "delete_fillet";
+        f.edit.kind = EKind::Delete;
+        std::vector<std::vector<std::string>> runs;
+        for (const Owner& o : owners.v)
+            if ((o.cat == "fillet face" || o.cat == "chamfer face") && !ownFaces(o.key, owners, tb, smp).empty())
+                runs.push_back({o.key});
+        const auto& faces = smp.of(SubKind::Face);
+        std::set<std::string> seen;
+        for (std::uint32_t i = 0; i < faces.size(); ++i) {
+            const TruthDesc& d = tb.faceDescriptions()[i];
+            if (!d.ok || d.cons.size() != 1 || d.cons[0].alts.size() != 1 || seen.count(d.cons[0].alts[0]) != 0)
+                continue;
+            const Owner* o = owners.get(d.cons[0].alts[0]);
+            if (o == nullptr || o->cat != "imported face")
+                continue;
+            const std::vector<SubId> run = kernel::blendRun(shape, SubId{SubKind::Face, i});
+            if (run.empty())
+                continue;
+            std::set<std::string> keys2;
+            bool ok = true;
+            for (const SubId& r : run) {
+                const TruthDesc& dr = tb.faceDescriptions()[r.index];
+                ok = ok && dr.ok && dr.cons.size() == 1 && dr.cons[0].alts.size() == 1;
+                if (ok)
+                    keys2.insert(dr.cons[0].alts[0]);
+            }
+            for (const std::string& k : keys2)
+                ok = ok && !ownFaces(k, owners, tb, smp).empty();
+            seen.insert(keys2.begin(), keys2.end());
+            if (ok && !keys2.empty())
+                runs.push_back(std::vector<std::string>(keys2.begin(), keys2.end()));
+        }
+        if (runs.empty())
+            return std::nullopt;
+        f.edit.targets = runs[rng.below(runs.size())];
+        return f;
+    }
+    if (roll < 65) {
+        f.role = "resize_hole";
+        f.edit.kind = EKind::Resize;
+        for (const Owner& o : owners.v)
+            if (isHole(o) && !ownFaces(o.key, owners, tb, smp).empty())
+                keys.push_back(o.key);
+        if (keys.empty())
+            return std::nullopt;
+        const Owner& o = *owners.get(keys[rng.below(keys.size())]);
+        f.edit.targets = {o.key};
+        const double k = rng.chance(0.5) ? rng.uniform(1.1, 1.5) : rng.uniform(0.6, 0.9);
+        f.edit.amount = std::max(0.3, o.c.r * k);
+        return f;
+    }
+    if (roll < 95) {
+        // A flat face that is its owner's only face: pushed out or pulled in, sometimes exactly to the level of another
+        // face of the same outward normal (they unify).
+        f.role = "offset_face";
+        f.edit.kind = EKind::Offset;
+        for (const Owner& o : owners.v)
+            if (o.c.k == Carrier::K::Plane && o.c.oriented && ownFaces(o.key, owners, tb, smp).size() == 1)
+                keys.push_back(o.key);
+        if (keys.empty())
+            return std::nullopt;
+        const Owner& o = *owners.get(keys[rng.below(keys.size())]);
+        f.edit.targets = {o.key};
+        std::vector<double> levels;
+        for (const Owner& p : owners.v)
+            if (&p != &o && p.c.k == Carrier::K::Plane && p.c.oriented && dot(p.c.a, o.c.a) > 1 - 1e-9 &&
+                !facesOn(p.key, owners, smp).empty()) {
+                const double d = dot(sub(p.c.p, o.c.p), o.c.a);
+                if (std::abs(d) > 0.05 && std::abs(d) < 0.3 * partSize)
+                    levels.push_back(d);
+            }
+        if (!levels.empty() && rng.chance(0.3))
+            f.edit.amount = levels[rng.below(levels.size())];
+        else
+            f.edit.amount = (rng.chance(0.5) ? 1.0 : -1.0) * partSize * rng.uniform(0.005, 0.06);
+        return f;
+    }
+    f.role = "unify";
+    f.edit.kind = EKind::Unify;
+    return f;
+}
+
+// ---------------------------------------------------------------- one sequence
+struct SequenceResult {
+    Tally tally;
+    JudgeLog log;
+    std::string edit;
+    int ops = 0;
+    int refused = 0;
+    long refs = 0;
+    std::map<std::string, int> excluded;
+    std::map<std::string, int> editCounts; // authoring and replay, "<role>: <outcome>"
+    int timeouts = 0;
+    int replayFailures = 0;
+    bool skipped = false;
+    std::string skipReason;
+};
+
+struct SequenceOptions {
+    std::uint64_t seedBase = 0xD1EC7000ull;
+    std::string keyPrefix = "directedit ";
+};
+
+// One random edit of `edited` (the import, at 0, is never edited), as in T-081a, or a direct edit appended. Returns it
+// in words.
+std::string randomEdit(Script& edited, const Part& part, const Builder& baseline, const Samples& now, Rng& rng,
+                       int& inserted)
+{
+    std::vector<std::size_t> sweeps, blends, edits;
+    for (std::size_t i = 1; i < edited.size(); ++i)
+        (edited[i].type == FType::Sweep ? sweeps : edited[i].type == FType::Edit ? edits : blends).push_back(i);
+    const std::size_t roll = rng.below(100);
+    if (roll < 45) {
+        auto f = proposeEdit(baseline.builtScript(), baseline.shape(), now, part.size, rng,
+                             "D" + std::to_string(++inserted));
+        if (!f)
+            return "no-op";
+        edited.push_back(*f);
+        return "apply " + f->role + " " + f->id;
+    }
+    if (roll < 52 && !edits.empty()) {
+        Feature& f = edited[edits[rng.below(edits.size())]];
+        if (f.edit.kind == EKind::Offset || f.edit.kind == EKind::Resize) {
+            f.edit.amount *= rng.uniform(0.5, 1.5);
+            return "change amount of " + f.id;
+        }
+        return "no-op";
+    }
+    if (roll < 67 && !sweeps.empty()) {
+        Feature& f = edited[sweeps[rng.below(sweeps.size())]];
+        const std::size_t kind = rng.below(4);
+        if (kind == 0) {
+            f.frame.o = add(f.frame.o, mul(f.frame.xd, profileWidth(f.loops[0])));
+            return "move " + f.id + " by its width";
+        }
+        if (kind == 1) {
+            const double a = rng.uniform(0, 2 * kPi), d = profileWidth(f.loops[0]) * rng.uniform(0.1, 1.2);
+            f.frame.o = add(f.frame.o, add(mul(f.frame.xd, d * std::cos(a)), mul(f.frame.yd(), d * std::sin(a))));
+            return "move " + f.id;
+        }
+        if (kind == 2) {
+            const double k = rng.uniform(0.6, 1.5);
+            for (Ent& e : f.loops[0].ents) {
+                e.x0 *= k;
+                e.y0 *= k;
+                e.x1 *= k;
+                e.y1 *= k;
+                e.cx *= k;
+                e.cy *= k;
+                e.r *= k;
+            }
+            return "resize " + f.id;
+        }
+        f.dist *= rng.uniform(0.4, 2.0);
+        return "change depth of " + f.id;
+    }
+    if (roll < 74 && !blends.empty()) {
+        Feature& f = edited[blends[rng.below(blends.size())]];
+        f.size *= rng.uniform(0.5, 1.8);
+        return "change size of " + f.id;
+    }
+    if (roll < 83 && edited.size() > 1) {
+        const std::size_t i = 1 + rng.below(edited.size() - 1);
+        edited[i].suppressed = true;
+        return "suppress " + edited[i].id;
+    }
+    if (roll < 92) {
+        auto f = proposeSweep(*part.samples, part.size, rng, "X" + std::to_string(++inserted), true);
+        if (!f)
+            return "no-op";
+        const std::size_t at = 1 + rng.below(edited.size());
+        edited.insert(edited.begin() + static_cast<std::ptrdiff_t>(at), *f);
+        return "insert cut " + f->id + " at " + std::to_string(at);
+    }
+    if (edited.size() > 2) {
+        const std::size_t i = 1 + rng.below(edited.size() - 2);
+        std::swap(edited[i], edited[i + 1]);
+        return "swap " + edited[i + 1].id + " and " + edited[i].id;
+    }
+    return "no-op";
+}
+
+void addCounts(std::map<std::string, int>& into, const Builder& b)
+{
+    for (const auto& [k, n] : b.editCounts())
+        into[k] += n;
+}
+
+SequenceResult runSequence(const Part& part, int partIndex, int seq, const SequenceOptions& opt)
+{
+    SequenceResult out;
+    Rng rng{opt.seedBase + static_cast<std::uint64_t>(partIndex) * 1000003ull + static_cast<std::uint64_t>(seq)};
+    for (int i = 0; i < 4; ++i)
+        rng.next();
+    const std::string label = opt.keyPrefix + part.path + " #" + std::to_string(seq);
+
+    Feature import;
+    import.id = "I";
+    import.type = FType::Import;
+    import.role = "import";
+    import.base = part.base;
+    Script script{import};
+    FeatRefs picks;
+    Builder b(Mode::Author, picks);
+    b.apply(import);
+    const int want = 3 + static_cast<int>(rng.below(3));
+    for (int attempt = 0; out.ops < want && attempt < 20; ++attempt) {
+        auto smp = sampleShape(b.shape());
+        if (!smp)
+            break;
+        const std::string id = "R" + std::to_string(out.ops + 1);
+        const std::size_t roll = rng.below(100);
+        std::optional<Feature> f;
+        if (roll < 27)
+            f = proposeSweep(**smp, part.size, rng, id, true);
+        else if (roll < 40)
+            f = proposeSweep(**smp, part.size, rng, id, false);
+        else if (roll < 66)
+            f = proposeBlend(b.builtScript(), **smp, rng, id, roll < 53);
+        else
+            f = proposeEdit(b.builtScript(), b.shape(), **smp, part.size, rng, id);
+        if (!f)
+            continue;
+        const int before = b.built();
+        b.apply(*f);
+        if (b.built() > before) {
+            script.push_back(*f);
+            ++out.ops;
+        } else {
+            ++out.refused;
+        }
+    }
+    addCounts(out.editCounts, b);
+    out.timeouts += b.editTimeouts();
+    if (out.ops == 0) {
+        out.skipped = true;
+        out.skipReason = "no feature could be added";
+        return out;
+    }
+    auto smp0 = sampleShape(b.shape());
+    if (!smp0) {
+        out.skipped = true;
+        out.skipReason = "sampling the baseline failed";
+        return out;
+    }
+    const auto owners0 = std::make_shared<const Owners>(buildOwners(b.builtScript()));
+    const std::vector<Ref> refs = recordReferences(b, owners0, *smp0, &out.excluded);
+    out.refs = static_cast<long>(refs.size());
+
+    Script edited = script;
+    const std::size_t edits = rng.chance(0.35) ? 2 + rng.below(2) : 1;
+    int inserted = 0;
+    for (std::size_t k = 0; k < edits; ++k)
+        out.edit += (k == 0 ? "" : "; ") + randomEdit(edited, part, b, **smp0, rng, inserted);
+
+    Builder replay(Mode::Replay, picks);
+    for (const Feature& f : edited)
+        replay.apply(f);
+    addCounts(out.editCounts, replay);
+    out.timeouts += replay.editTimeouts();
+    out.replayFailures = static_cast<int>(replay.failed().size());
+    auto smp1 = sampleShape(replay.shape());
+    if (!smp1) {
+        out.skipped = true;
+        out.skipReason = "sampling the replay failed";
+        return out;
+    }
+    const Owners owners1 = buildOwners(replay.builtScript());
+    out.log.maxWrongs = std::getenv("RAYCAD_NAMING_ONLY") != nullptr ? 100000 : 20;
+    judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
+    if ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
+        auto describe = [](const Script& s) {
+            std::string text;
+            char buf[400];
+            for (const Feature& f : s) {
+                if (f.type == FType::Sweep)
+                    std::snprintf(buf, sizeof buf,
+                                  "    %s%s %s o=(%.3f %.3f %.3f) n=(%.3f %.3f %.3f) %zu curves width %.3f dist %.3f\n",
+                                  f.id.c_str(), f.suppressed ? " (suppressed)" : "", f.op == BOp::Cut ? "cut" : "join",
+                                  f.frame.o.x, f.frame.o.y, f.frame.o.z, f.frame.n.x, f.frame.n.y, f.frame.n.z,
+                                  f.loops[0].ents.size(), profileWidth(f.loops[0]), f.dist);
+                else if (f.type == FType::Import)
+                    std::snprintf(buf, sizeof buf, "    %s import\n", f.id.c_str());
+                else if (f.type == FType::Edit) {
+                    std::string t;
+                    for (const std::string& k : f.edit.targets)
+                        t += " " + k;
+                    std::snprintf(buf, sizeof buf, "    %s%s %s%s amount %.3f\n", f.id.c_str(),
+                                  f.suppressed ? " (suppressed)" : "", f.role.c_str(), t.c_str(), f.edit.amount);
+                } else
+                    std::snprintf(buf, sizeof buf, "    %s%s %s %s/%s size %.3f\n", f.id.c_str(),
+                                  f.suppressed ? " (suppressed)" : "", f.role.c_str(), f.targets[0].a.c_str(),
+                                  f.targets[0].b.c_str(), f.size);
+                text += buf;
+            }
+            return text;
+        };
+        out.log.wrongs.insert(out.log.wrongs.begin(),
+                              "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
+        for (const std::string& fail : replay.failed())
+            out.log.wrongs.push_back("  replay failure: " + fail);
+    }
+    return out;
+}
+
+unsigned workerCount()
+{
+    if (const char* n = std::getenv("RAYCAD_NAMING_WORKERS"))
+        return static_cast<unsigned>(std::clamp(std::atoi(n), 1, 64));
+    return std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
+}
+
+std::vector<Part> loadParts()
+{
+    std::vector<Part> parts(kPartCount);
+    std::atomic<int> next{0};
+    std::vector<std::thread> threads;
+    for (unsigned t = 0; t < workerCount(); ++t)
+        threads.emplace_back([&] {
+            for (int i = next++; i < kPartCount; i = next++)
+                parts[static_cast<std::size_t>(i)] = loadPart(kParts[i]);
+        });
+    for (std::thread& t : threads)
+        t.join();
+    return parts;
+}
+
+struct BlockResult {
+    Tally total;
+    long judged = 0, replaced = 0, ops = 0, refused = 0, replayFailures = 0, refs = 0, timeouts = 0;
+    std::vector<int> shortParts;
+    std::map<std::string, long> skipped;
+    std::map<std::string, long> excluded;
+    std::map<std::string, long> edits;
+    std::map<std::string, long> editCounts;
+};
+
+// The kind of a recorded edit in words: its text without feature ids and numbers.
+std::string editKind(const std::string& text)
+{
+    std::string kind, word;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == ' ') {
+            const bool id = word.size() >= 2 && (word[0] == 'R' || word[0] == 'X' || word[0] == 'D') &&
+                            std::isdigit(static_cast<unsigned char>(word[1])) != 0;
+            const bool number = !word.empty() && std::isdigit(static_cast<unsigned char>(word[0])) != 0;
+            if (!word.empty() && !id && !number)
+                kind += (kind.empty() ? "" : " ") + word;
+            word.clear();
+        } else {
+            word += text[i];
+        }
+    }
+    return kind;
+}
+
+BlockResult runBlock(const char* title, const std::vector<Part>& parts, int perPart, const SequenceOptions& opt)
+{
+    int onlyPart = -1, onlySeq = -1;
+    if (const char* only = std::getenv("RAYCAD_NAMING_ONLY"))
+        if (std::sscanf(only, "%d:%d", &onlyPart, &onlySeq) != 2)
+            onlyPart = onlySeq = -1;
+    struct Job {
+        int part, seq;
+    };
+    std::map<std::pair<int, int>, SequenceResult> results;
+    std::vector<int> nextSeq(kPartCount, 0), judged(kPartCount, 0);
+    const bool progress = std::getenv("RAYCAD_NAMING_PROGRESS") != nullptr;
+    for (bool first = true;; first = false) {
+        std::vector<Job> jobs;
+        if (onlyPart >= 0) {
+            if (!first)
+                break;
+            for (int s = 0; s < (onlySeq < 0 ? perPart : 1); ++s)
+                jobs.push_back({onlyPart, onlySeq < 0 ? s : onlySeq});
+        } else {
+            for (int p = 0; p < kPartCount; ++p)
+                for (int k = judged[static_cast<std::size_t>(p)];
+                     k < perPart && nextSeq[static_cast<std::size_t>(p)] < 4 * perPart; ++k)
+                    jobs.push_back({p, nextSeq[static_cast<std::size_t>(p)]++});
+        }
+        if (jobs.empty())
+            break;
+        std::vector<SequenceResult> out(jobs.size());
+        std::atomic<std::size_t> next{0};
+        std::mutex lock;
+        std::size_t done = 0;
+        std::vector<std::thread> threads;
+        for (unsigned t = 0; t < workerCount(); ++t)
+            threads.emplace_back([&] {
+                for (std::size_t i = next++; i < jobs.size(); i = next++) {
+                    if (progress)
+                        std::fprintf(stderr, "sequence %d:%d\n", jobs[i].part, jobs[i].seq);
+                    out[i] = runSequence(parts[static_cast<std::size_t>(jobs[i].part)], jobs[i].part, jobs[i].seq, opt);
+                    if (progress)
+                        std::fprintf(stderr, "finished %d:%d\n", jobs[i].part, jobs[i].seq);
+                    const std::lock_guard<std::mutex> guard(lock);
+                    if (++done % 100 == 0)
+                        std::printf("  %zu of %zu sequences\n", done, jobs.size());
+                }
+            });
+        for (std::thread& t : threads)
+            t.join();
+        for (std::size_t i = 0; i < jobs.size(); ++i) {
+            if (!out[i].skipped)
+                ++judged[static_cast<std::size_t>(jobs[i].part)];
+            results[{jobs[i].part, jobs[i].seq}] = std::move(out[i]);
+        }
+    }
+
+    BlockResult r;
+    std::printf("\n%s (oracle: %s)\n| part | judged | replaced | steps | refs judged | Exact %% | Split %% | Merged %% | "
+                "Repaired %% | Broken %% | gone / missed | exists: E+S+M %% | WRONG | not judged |\n"
+                "|-|-|-|-|-|-|-|-|-|-|-|-|-|-|\n",
+                title, strictnessName().c_str());
+    for (int p = 0; p < kPartCount; ++p) {
+        Tally t;
+        long n = 0, o = 0, replaced = 0;
+        for (const auto& [job, res] : results) {
+            if (job.first != p)
+                continue;
+            // Every direct edit tried counts, judged sequence or not.
+            for (const auto& [k, c] : res.editCounts)
+                r.editCounts[k] += c;
+            r.timeouts += res.timeouts;
+            if (res.skipped) {
+                ++replaced;
+                ++r.skipped[res.skipReason];
+                continue;
+            }
+            ++n;
+            o += res.ops;
+            r.refused += res.refused;
+            r.replayFailures += res.replayFailures;
+            r.refs += res.refs;
+            for (const auto& [why, k] : res.excluded)
+                r.excluded[why] += k;
+            std::size_t count = 0;
+            for (std::size_t from = 0; from <= res.edit.size(); ++count) {
+                std::size_t to = res.edit.find("; ", from);
+                if (to == std::string::npos)
+                    to = res.edit.size();
+                ++r.edits["edit: " + editKind(res.edit.substr(from, to - from))];
+                from = to + 2;
+            }
+            ++r.edits["sequences with " + std::to_string(count) + " edit(s)"];
+            t.merge(res.tally);
+        }
+        if (n == 0 && replaced == 0)
+            continue;
+        if (onlyPart < 0 && n < perPart)
+            r.shortParts.push_back(p);
+        r.judged += n;
+        r.replaced += replaced;
+        r.ops += o;
+        r.total.merge(t);
+        std::printf("| %s | %ld | %ld | %ld | %ld | %s | %s | %s | %s | %s | %ld / %ld | %s | %ld | %ld |\n", kParts[p],
+                    n, replaced, o, t.n, percent(t.state[0], t.n).c_str(), percent(t.state[1], t.n).c_str(),
+                    percent(t.state[2], t.n).c_str(), percent(t.state[3], t.n).c_str(),
+                    percent(t.state[4], t.n).c_str(), t.verdict[static_cast<std::size_t>(Verdict::BrokenGone)],
+                    t.verdict[static_cast<std::size_t>(Verdict::Missed)], percent(t.existingOk, t.existing).c_str(),
+                    t.wrong(), t.unjudged());
+    }
+    for (const auto& [job, res] : results)
+        for (const std::string& w : res.log.wrongs)
+            std::printf("  [%d:%d %s] %s\n", job.first, job.second, res.edit.c_str(), w.c_str());
+    for (const auto& [job, res] : results)
+        for (const std::string& n : res.log.notes)
+            std::printf("  [%d:%d %s] %s\n", job.first, job.second, res.edit.c_str(), n.c_str());
+    if (const char* trace = std::getenv("RAYCAD_NAMING_TRACE"))
+        if (std::FILE* f = std::fopen(trace, "w")) {
+            for (const auto& [job, res] : results) {
+                std::fprintf(f, "%d:%d ops %d refs %ld edit [%s] n %ld states", job.first, job.second, res.ops,
+                             res.refs, res.edit.c_str(), res.tally.n);
+                for (const long s : res.tally.state)
+                    std::fprintf(f, " %ld", s);
+                std::fprintf(f, " verdicts");
+                for (const long v : res.tally.verdict)
+                    std::fprintf(f, " %ld", v);
+                std::fprintf(f, " replayfail %d skipped %d edits", res.replayFailures, res.skipped ? 1 : 0);
+                for (const auto& [k, c] : res.editCounts)
+                    std::fprintf(f, " [%s %d]", k.c_str(), c);
+                std::fprintf(f, "\n");
+            }
+            std::fclose(f);
+        }
+    if (const char* trace = std::getenv("RAYCAD_NAMING_VERDICTS"))
+        if (std::FILE* f = std::fopen(trace, "w")) {
+            for (const auto& [job, res] : results)
+                for (const std::string& line : res.log.trace)
+                    std::fprintf(f, "%s\n", line.c_str());
+            std::fclose(f);
+        }
+
+    std::printf("\n%s: %ld sequences judged, %ld replaced (", title, r.judged, r.replaced);
+    for (const auto& [why, n] : r.skipped)
+        std::printf(" %s: %ld;", why.c_str(), n);
+    std::printf(" ), parts short of %d judged: %zu\n", perPart, r.shortParts.size());
+    std::printf("  %ld steps (%ld proposals refused while authoring, dropped), %ld feature failures on replay, %ld "
+                "references recorded\n",
+                r.ops, r.refused, r.replayFailures, r.refs);
+    std::printf("  direct edits by kind and outcome (authoring and replay, every sequence run; %ld past the time "
+                "limit):\n",
+                r.timeouts);
+    for (const char* role : kEditRoles) {
+        long attempted = 0, applied = 0;
+        std::string detail;
+        for (const auto& [k, c] : r.editCounts)
+            if (k.compare(0, std::strlen(role) + 2, std::string(role) + ": ") == 0) {
+                attempted += c;
+                if (k.substr(std::strlen(role) + 2) == "applied")
+                    applied += c;
+                detail += " " + k.substr(std::strlen(role) + 2) + " " + std::to_string(c) + ";";
+            }
+        std::printf("    %s: %ld attempted, %ld applied (%s )\n", role, attempted, applied, detail.c_str());
+    }
+    std::printf("  baseline elements that are not references:\n");
+    for (const auto& [why, n] : r.excluded)
+        std::printf("    %s: %ld\n", why.c_str(), n);
+    std::printf("  edits:\n");
+    for (const auto& [what, n] : r.edits)
+        std::printf("    %s: %ld\n", what.c_str(), n);
+    printTally(title, r.total);
+    return r;
+}
+
+void checkGates(const BlockResult& r, int perPart)
+{
+    if (std::getenv("RAYCAD_NAMING_ONLY") == nullptr) {
+        CHECK(r.judged == static_cast<long>(perPart) * kPartCount);
+        CHECK(r.shortParts.empty());
+    }
+    const Tally& t = r.total;
+    CHECK(t.mutantsCaught() == t.mutantsMade());
+    CHECK(t.repairedUsable == 0);
+    CHECK(t.selfCheckFailures == 0);
+    CHECK(t.injectivity == 0);
+    CHECK(t.unjudged() == t.unjudgedReviewed);
+    CHECK(t.accepted == t.acceptedReviewed);
+    CHECK(t.conflicts == t.conflictsReviewed);
+    REQUIRE(t.wrong() == 0);
+}
+
+void checkNoFault(std::uint64_t before)
+{
+    const std::uint64_t faults = kernel::testing::structuredExceptions() - before;
+    INFO("access violations or other faults raised inside the geometry kernel and swallowed: " << faults);
+    CHECK(faults == 0);
+}
+
+} // namespace
+
+TEST_CASE("1,000 randomised sequences with direct edits on 20 corpus parts: no reference resolves to a wrong element",
+          "[random-directedit]")
+{
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    const BlockResult r = runBlock("Randomised with direct edits", parts, kSequencesPerPart, SequenceOptions{});
+    checkNoFault(guardBefore);
+    checkGates(r, kSequencesPerPart);
+}
+
+// The quick tier's share of the block above: its first kSmokePerPart judged sequences of every part, on the same
+// seeds, with the same gates.
+TEST_CASE("Smoke: the first 2 randomised sequences with direct edits of every part", "[random-directedit-smoke]")
+{
+    static_assert(kSmokePerPart < kSequencesPerPart);
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    const BlockResult r = runBlock("Randomised with direct edits, smoke", parts, kSmokePerPart, SequenceOptions{});
+    checkNoFault(guardBefore);
+    checkGates(r, kSmokePerPart);
+}
+
+// ---------------------------------------------------------------- oracle refinements on the sequences that showed them
+namespace {
+
+struct Looked {
+    std::string id;
+    Answer answer = Answer::Broken;
+    std::vector<std::uint32_t> elements;
+    Judgement judgement;
+    Judgement other; // the oracle's verdict on another element answered Exact
+};
+
+// Replays sequence `seq` of part `partIndex` of the block and looks at the references `ids`: the resolver's answer and
+// its verdict, and the verdict on an Exact answer of another element of the same kind.
+std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids)
+{
+    const Part part = loadPart(kParts[partIndex]);
+    REQUIRE(part.base != nullptr);
+    std::vector<Looked> out;
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners& now, const Samples& samples) {
+        if (std::find(ids.begin(), ids.end(), id) == ids.end())
+            return;
+        Looked l;
+        l.id = id;
+        l.answer = rr.answer;
+        for (const SubId& s : res.elements)
+            l.elements.push_back(s.index);
+        l.judgement = rr.judgement;
+        const Expectation x = expect(ref.record, now, samples);
+        const std::uint32_t got = l.elements.empty() ? 0 : l.elements.front();
+        l.other = judgeAnswer(x, ref.record, now, samples, Answer::Exact, {got == 0 ? 1u : got - 1});
+        out.push_back(std::move(l));
+    });
+    const SequenceResult r = runSequence(part, partIndex, seq, SequenceOptions{});
+    setInspector({});
+    CHECK_FALSE(r.skipped);
+    CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("Oracle (directedit 7:0, 4:1): a vertex where two pieces of a blend met a face, the pieces since joined, "
+          "continues the pick",
+          "[naming][directedit][oracle-gate]")
+{
+    // keyway_tslot_1 #0 and fillet_block_1 #1: a fillet round a boss side or a hole wall is in two pieces that meet the
+    // side at a vertex; a push/pull elsewhere on the part (its boolean unifies same-domain faces) joins the two pieces
+    // into one face. The vertex stays where it was, on the side and the fillet, and keeps its name. Before the
+    // refinement the oracle expected nothing (the description wants a face of its own for each piece) and called the
+    // resolver's Exact a ghost. Negative: another vertex answered Exact is wrong.
+    const std::vector<std::pair<int, std::string>> cases{
+        {7, "directedit raycad-synthetic/keyway_tslot_1.stp #0|vertex 0"},
+        {4, "directedit raycad-synthetic/fillet_block_1.stp #1|vertex 15"}};
+    for (const auto& [partIndex, id] : cases) {
+        const int seq = id.find("#0|") != std::string::npos ? 0 : 1;
+        const std::vector<Looked> looked = replayAndLook(partIndex, seq, {id});
+        REQUIRE(looked.size() == 1);
+        INFO(id << ": " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == Answer::Exact);
+        CHECK(looked[0].judgement.verdict == Verdict::Correct);
+        CHECK(isWrong(looked[0].other.verdict));
+    }
+}

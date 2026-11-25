@@ -16,7 +16,9 @@ set_property(TARGET ray_naming_harness PROPERTY FOLDER "tests")
 add_executable(ray_naming_oracle_tests
     s4_test.cpp
     random_test.cpp
-    acceptance_test.cpp)
+    acceptance_test.cpp
+    directedit_test.cpp
+    random_directedit_test.cpp)
 target_link_libraries(ray_naming_oracle_tests PRIVATE ray_naming_harness ray_naming_oracle ray_naming ray_kernel
     ray_core Catch2::Catch2WithMain)
 target_compile_definitions(ray_naming_oracle_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
@@ -73,3 +75,13 @@ set_tests_properties(ray_naming_random_holdout5 PROPERTIES TIMEOUT 7200)
 add_test(NAME ray_naming_random_holdout6 COMMAND ray_naming_oracle_tests "[random-holdout6]")
 ray_test_runtime_path(ray_naming_random_holdout6)
 set_tests_properties(ray_naming_random_holdout6 PROPERTIES TIMEOUT 7200)
+# T-081b: references through the T-080 direct edits. The scripted scenarios (quick), the first 2 randomised sequences
+# with direct edits of every part (quick), and the block of 1,000 such sequences (slow).
+add_test(NAME ray_naming_directedit COMMAND ray_naming_oracle_tests "[directedit]")
+ray_test_runtime_path(ray_naming_directedit)
+add_test(NAME ray_naming_random_directedit_smoke COMMAND ray_naming_oracle_tests "[random-directedit-smoke]")
+ray_test_runtime_path(ray_naming_random_directedit_smoke)
+set_tests_properties(ray_naming_random_directedit_smoke PROPERTIES TIMEOUT 1800)
+add_test(NAME ray_naming_random_directedit COMMAND ray_naming_oracle_tests "[random-directedit]")
+ray_test_runtime_path(ray_naming_random_directedit)
+set_tests_properties(ray_naming_random_directedit PROPERTIES TIMEOUT 7200)

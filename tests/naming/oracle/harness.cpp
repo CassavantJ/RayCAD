@@ -2,12 +2,18 @@
 #include "harness.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iterator>
+#include <mutex>
 #include <set>
+#include <span>
+#include <thread>
 
 namespace ray::naming_oracle {
 
@@ -189,6 +195,15 @@ void Builder::apply(const Feature& f)
     case FType::Chamfer:
         ok = blend(f);
         break;
+    case FType::Edit: {
+        Feature measured = f;
+        if (edit(measured)) {
+            ++built_;
+            builtIds_.insert(f.id);
+            builtFeatures_.push_back(std::move(measured));
+        }
+        return;
+    }
     }
     if (ok) {
         ++built_;
@@ -318,6 +333,146 @@ bool Builder::blend(const Feature& f)
         return false;
     }
     record(std::move(*named), op->shape);
+    return true;
+}
+
+namespace {
+
+// The time limit of one direct edit's kernel call (RAYCAD_NAMING_EDIT_LIMIT_S).
+std::chrono::seconds editLimit()
+{
+    if (const char* text = std::getenv("RAYCAD_NAMING_EDIT_LIMIT_S"))
+        if (const int s = std::atoi(text); s > 0)
+            return std::chrono::seconds(s);
+    return std::chrono::seconds(60);
+}
+
+// Runs `call` with a JobContext that is cancelled after `limit`; `timedOut` says whether it was.
+Result<kernel::OpResult> withLimit(const std::function<Result<kernel::OpResult>(JobContext&)>& call,
+                                   std::chrono::seconds limit, bool& timedOut)
+{
+    CancelSource source;
+    JobContext ctx;
+    ctx.cancel = source.token();
+    std::mutex lock;
+    std::condition_variable wake;
+    bool done = false;
+    timedOut = false;
+    std::thread watchdog([&] {
+        std::unique_lock<std::mutex> guard(lock);
+        if (!wake.wait_for(guard, limit, [&] { return done; }))
+            timedOut = source.cancel();
+    });
+    Result<kernel::OpResult> out = call(ctx);
+    {
+        const std::lock_guard<std::mutex> guard(lock);
+        done = true;
+    }
+    wake.notify_all();
+    watchdog.join();
+    return out;
+}
+
+} // namespace
+
+bool Builder::edit(Feature& f)
+{
+    if (!have_)
+        return false;
+    const bool pickNow = mode_ == Mode::Author || refs_.find(f.id) == refs_.end();
+    auto fail = [&](const char* outcome, const std::string& message) {
+        ++editCounts_[f.role + ": " + outcome];
+        failed_.push_back(f.id + ": " + message);
+        if (pickNow)
+            refs_.erase(f.id);
+        return false;
+    };
+    const auto ownersAt = std::make_shared<const Owners>(buildOwners(builtFeatures_));
+    const Owners& owners = *ownersAt;
+    auto samples = sampleShape(shape_);
+    if (!samples)
+        return fail("other", "sampling failed: " + samples.error().message);
+    auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), map_, shape_}});
+    std::set<std::uint32_t> faces;
+    if (f.edit.kind != EKind::Unify) {
+        if (pickNow) {
+            auto& picks = refs_[f.id];
+            picks.clear();
+            const TruthBuilder tb(owners, **samples);
+            for (std::size_t k = 0; k < f.edit.targets.size(); ++k)
+                for (const std::uint32_t face : facesOn(f.edit.targets[k], owners, **samples)) {
+                    const SubId s{SubKind::Face, face};
+                    const TruthDesc d = tb.describe(s);
+                    if (!d.ok || d.cons.size() != 1 || d.cons[0].alts != std::vector<std::string>{f.edit.targets[k]})
+                        return fail("no target face", "face " + std::to_string(face) + " of " + f.edit.targets[k] +
+                                                           " is not described by it alone");
+                    picks.push_back({k, resolver->makeRef(testBody(), s), PickRecord{s, d, *samples, ownersAt}});
+                    faces.insert(face);
+                }
+            if (faces.empty())
+                return fail("no target face", "no face of the edit's targets");
+        } else {
+            const auto& recorded = refs_.find(f.id)->second;
+            bool exact = !recorded.empty();
+            for (const Pick& p : recorded) {
+                const naming::Resolved r = resolver->resolve(p.ref);
+                if (p.record.truth.ok)
+                    picks_.push_back({f.id, p.target, p.record.base.index, r,
+                                      judgeReference(p.record, owners, **samples, r, "pick: ")});
+                else
+                    ++unjudgedPicks_;
+                exact = exact && r.state == naming::ResolveState::Exact;
+                for (const SubId& s : r.elements)
+                    if (s.kind == SubKind::Face)
+                        faces.insert(s.index);
+            }
+            if (!exact || faces.empty())
+                return fail("pick not Exact", "a face it edits did not resolve Exact");
+        }
+    }
+    std::vector<SubId> picked;
+    for (const std::uint32_t s : faces)
+        picked.push_back(SubId{SubKind::Face, s});
+    const kernel::Shape input = shape_;
+    const EditSpec spec = f.edit;
+    bool timedOut = false;
+    auto op = withLimit(
+        [&](JobContext& ctx) -> Result<kernel::OpResult> {
+            switch (spec.kind) {
+            case EKind::Delete:
+                return kernel::deleteFaces(input, picked, ctx);
+            case EKind::Offset:
+                return kernel::offsetFaces(input, picked, spec.amount, ctx);
+            case EKind::Resize:
+                return kernel::resizeHole(input, picked.front(), 2.0 * spec.amount, ctx);
+            case EKind::Unify:
+                break;
+            }
+            return kernel::unifySameDomain(input, ctx);
+        },
+        editLimit(), timedOut);
+    if (!op) {
+        if (timedOut) {
+            ++editTimeouts_;
+            return fail("time limit", "past the time limit: " + op.error().message);
+        }
+        const bool refused =
+            op.error().code == ErrorCode::KernelFailure || op.error().code == ErrorCode::InvalidArgument;
+        return fail(refused ? "kernel refused" : "other", op.error().message);
+    }
+    auto after = sampleShape(op->shape);
+    if (!after)
+        return fail("other", "sampling the result failed: " + after.error().message);
+    if (const std::string why = measureEdit(f, builtFeatures_, **samples, **after); !why.empty())
+        return fail("not modelled", "the oracle cannot describe the result: " + why);
+    const std::array<const naming::ElementMap*, 1> maps{&map_};
+    const std::array<const kernel::Shape*, 1> shapes{&shape_};
+    const naming::NamingInput in{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
+    auto named = naming::propagate(in);
+    if (!named)
+        return fail("other", "naming failed: " + named.error().message);
+    record(std::move(*named), op->shape);
+    ++editCounts_[f.role + ": applied"];
     return true;
 }
 
