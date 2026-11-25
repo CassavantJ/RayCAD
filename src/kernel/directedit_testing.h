@@ -94,6 +94,17 @@ public:
     DirectEditFault& operator=(const DirectEditFault&) = delete;
 };
 
+// While one lives, direct edits report the face history OpenCASCADE gave, without demoting the images that look the
+// other way or share no ground with their old face (directedit.cpp demoteReversedImages): to show that a test of
+// that demotion meets a case of it.
+class RawDirectEditHistory {
+public:
+    RawDirectEditHistory();
+    ~RawDirectEditHistory();
+    RawDirectEditHistory(const RawDirectEditHistory&) = delete;
+    RawDirectEditHistory& operator=(const RawDirectEditHistory&) = delete;
+};
+
 // Joins the kernel threads that abandoned (cancelled) direct edits are still finishing on, and how many are running
 // (io_internal.h: direct edits share the import threads).
 void waitForAbandonedEdits();

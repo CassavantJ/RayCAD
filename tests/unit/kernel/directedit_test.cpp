@@ -10,6 +10,7 @@
 #include <shape_testing.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -205,6 +206,210 @@ TEST_CASE("deleteFaces reports no face Modified into a face that looks the other
                   0.0);
         }
     }
+}
+
+namespace {
+
+// A shape saved with kernel::serialize in tests/unit/kernel/data.
+Shape savedShape(const char* name)
+{
+    const std::string path = std::string(RAY_KERNEL_TEST_DATA_DIR) + "/" + name;
+    std::FILE* in = std::fopen(path.c_str(), "rb");
+    INFO(path);
+    REQUIRE(in != nullptr);
+    std::vector<std::byte> bytes;
+    for (int ch = std::fgetc(in); ch != EOF; ch = std::fgetc(in))
+        bytes.push_back(static_cast<std::byte>(ch));
+    std::fclose(in);
+    return take(deserialize(bytes));
+}
+
+// Whether two faces share ground, told from their meshes (independently of the kernel's own test): a triangle centre
+// of either within 0.01 mm of a triangle of the other.
+struct Triangle {
+    std::array<Vec3, 3> p;
+};
+
+std::vector<Triangle> trianglesOf(const Mesh& mesh, SubId face)
+{
+    std::vector<Triangle> out;
+    for (const FaceRange& r : mesh.faces) {
+        if (r.face != face)
+            continue;
+        for (std::uint32_t k = r.firstIndex; k + 2 < r.firstIndex + r.indexCount; k += 3) {
+            Triangle t;
+            for (std::uint32_t j = 0; j < 3; ++j) {
+                const std::uint32_t v = mesh.indices[k + j];
+                t.p[j] = Vec3{mesh.positions[3 * v], mesh.positions[3 * v + 1], mesh.positions[3 * v + 2]};
+            }
+            out.push_back(t);
+        }
+    }
+    return out;
+}
+
+Vec3 minus(const Vec3& a, const Vec3& b)
+{
+    return Vec3{a.x - b.x, a.y - b.y, a.z - b.z};
+}
+double dotOf(const Vec3& a, const Vec3& b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+Vec3 along(const Vec3& o, const Vec3& d, double t)
+{
+    return Vec3{o.x + t * d.x, o.y + t * d.y, o.z + t * d.z};
+}
+
+// Distance from p to triangle t (the closest point by its Voronoi regions).
+double distanceToTriangle(const Vec3& p, const Triangle& t)
+{
+    const Vec3 ab = minus(t.p[1], t.p[0]), ac = minus(t.p[2], t.p[0]), ap = minus(p, t.p[0]);
+    auto length = [](const Vec3& v) {
+        return std::sqrt(dotOf(v, v));
+    };
+    const double d1 = dotOf(ab, ap), d2 = dotOf(ac, ap);
+    if (d1 <= 0 && d2 <= 0)
+        return length(ap);
+    const Vec3 bp = minus(p, t.p[1]);
+    const double d3 = dotOf(ab, bp), d4 = dotOf(ac, bp);
+    if (d3 >= 0 && d4 <= d3)
+        return length(bp);
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0)
+        return length(minus(p, along(t.p[0], ab, d1 / (d1 - d3))));
+    const Vec3 cp = minus(p, t.p[2]);
+    const double d5 = dotOf(ab, cp), d6 = dotOf(ac, cp);
+    if (d6 >= 0 && d5 <= d6)
+        return length(cp);
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0)
+        return length(minus(p, along(t.p[0], ac, d2 / (d2 - d6))));
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0)
+        return length(minus(p, along(t.p[1], minus(t.p[2], t.p[1]), (d4 - d3) / ((d4 - d3) + (d5 - d6)))));
+    const double denom = 1.0 / (va + vb + vc);
+    return length(minus(p, along(along(t.p[0], ab, vb * denom), ac, vc * denom)));
+}
+
+bool anyCentreOn(const std::vector<Triangle>& a, const std::vector<Triangle>& b)
+{
+    for (const Triangle& t : a) {
+        const Vec3 c{(t.p[0].x + t.p[1].x + t.p[2].x) / 3, (t.p[0].y + t.p[1].y + t.p[2].y) / 3,
+                     (t.p[0].z + t.p[1].z + t.p[2].z) / 3};
+        for (const Triangle& u : b)
+            if (distanceToTriangle(c, u) <= 0.01)
+                return true;
+    }
+    return false;
+}
+
+Mesh meshOf(const Shape& shape)
+{
+    JobContext ctx;
+    return take(tessellate(shape, MeshOptions{0.005, 0.1}, ctx));
+}
+
+bool shareGround(const Mesh& a, SubId fa, const Mesh& b, SubId fb)
+{
+    const std::vector<Triangle> ta = trianglesOf(a, fa), tb = trianglesOf(b, fb);
+    return anyCentreOn(ta, tb) || anyCentreOn(tb, ta);
+}
+
+// The (source, image) pairs of `op`'s Modified face entries that share no ground (meshes).
+std::vector<std::pair<std::uint32_t, std::uint32_t>> imagesApart(const Shape& input, const OpResult& op)
+{
+    const Mesh before = meshOf(input), after = meshOf(op.shape);
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
+    for (const HistoryEntry& e : op.history.entries) {
+        if (e.relation != Relation::Modified || e.source.kind != SubKind::Face)
+            continue;
+        for (const SubId& r : e.results)
+            if (!shareGround(before, e.source, after, r))
+                out.emplace_back(e.source.index, r.index);
+    }
+    return out;
+}
+
+// Is face `image` of `op` among the Modified results of input face `source`?
+bool modifiedTo(const OpResult& op, std::uint32_t source, std::uint32_t image)
+{
+    for (const HistoryEntry& e : op.history.entries)
+        if (e.inputIndex == 0 && e.source == SubId{SubKind::Face, source} && e.relation == Relation::Modified)
+            return std::find(e.results.begin(), e.results.end(), SubId{SubKind::Face, image}) != e.results.end();
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("deleteFaces reports no face Modified into a face that shares no ground with it", "[kernel][directedit]")
+{
+    // T-081b (naming through direct edits): the input of one pocket removal in the randomised naming block, saved as it
+    // was (data/directedit_pocket_image_apart.rbrep): a block whose top (z 18) cuts had left in pieces. Removing the
+    // pocket (faces 1 and 3), Defeaturing lists two pieces of the top, at x 85.5..100 and 65..81, as Modified into the
+    // whole top and also into a piece at x 0..32, which shares no ground with either. That piece is not what they
+    // became: a reference to one of them would resolve to it.
+    const Shape block = savedShape("directedit_pocket_image_apart.rbrep");
+    const std::vector<SubId> pocket{SubId{SubKind::Face, 1}, SubId{SubKind::Face, 3}};
+    {
+        // OpenCASCADE's own history has such images (else this test would not test the rule).
+        testing::RawDirectEditHistory raw;
+        const OpResult as = take(deleting(block, pocket));
+        CHECK_FALSE(imagesApart(block, as).empty());
+    }
+    const OpResult out = take(deleting(block, pocket));
+    checkValidResult(out, block);
+    for (const auto& [source, image] : imagesApart(block, out)) {
+        INFO("face " << source << " Modified to face " << image);
+        CHECK(false);
+    }
+    // Both are still Modified, into the whole top.
+    CHECK(primary(out, SubId{SubKind::Face, 9}) == Relation::Modified);
+    CHECK(primary(out, SubId{SubKind::Face, 11}) == Relation::Modified);
+}
+
+TEST_CASE("deleteFaces keeps a blend face that a removal rebuilt unchanged as its own image", "[kernel][directedit]")
+{
+    // T-081b: the input of one hole removal in the randomised naming block (data/directedit_bspline_blend_kept.rbrep).
+    // Defeaturing rebuilds the small B-spline blend face 2 unchanged (same area, centroid and box). Measuring a point
+    // inside one on the other did not converge, and the "no shared ground" rule took the face for one apart from
+    // itself: its reference broke. Every face that is still there, unchanged, must be Modified to itself.
+    const Shape body = savedShape("directedit_bspline_blend_kept.rbrep");
+    const OpResult out = take(deleting(body, {SubId{SubKind::Face, 26}}));
+    checkValidResult(out, body);
+    int unchanged = 0;
+    for (std::uint32_t i = 0; i < body.count(SubKind::Face); ++i) {
+        const SurfaceInfo a = take(surfaceInfo(body, SubId{SubKind::Face, i}));
+        for (std::uint32_t j = 0; j < out.shape.count(SubKind::Face); ++j) {
+            const SurfaceInfo b = take(surfaceInfo(out.shape, SubId{SubKind::Face, j}));
+            if (a.type != b.type || std::abs(a.area - b.area) > 1e-9 * std::max(1.0, a.area) ||
+                !close(a.centroid, b.centroid, 1e-9) || !close(a.bounds.min, b.bounds.min, 1e-9) ||
+                !close(a.bounds.max, b.bounds.max, 1e-9))
+                continue;
+            ++unchanged;
+            INFO("face " << i << " is unchanged as face " << j);
+            CHECK(modifiedTo(out, i, j));
+        }
+    }
+    CHECK(take(surfaceInfo(body, SubId{SubKind::Face, 2})).type == SurfaceType::Bspline);
+    CHECK(unchanged > 10);
+}
+
+TEST_CASE("deleteFaces keeps a face a removal trimmed on one side and extended on the other as its image",
+          "[kernel][directedit]")
+{
+    // T-081b: the input of one fillet removal in the randomised naming block (data/directedit_fillet_removal_overlap
+    // .rbrep). Removing the fillet (face 1) trims the cylinder face 0 on one side and runs it on over the fillet's
+    // ground on the other: its image, face 9, shares half of its ground, but the middles of the two faces each lie on
+    // ground the other does not have, and the "no shared ground" rule, which tried those two points only, took 9 for a
+    // face apart from 0. No image may share no ground with its face, and none that does is taken away.
+    const Shape body = savedShape("directedit_fillet_removal_overlap.rbrep");
+    const OpResult out = take(deleting(body, {SubId{SubKind::Face, 1}}));
+    checkValidResult(out, body);
+    CHECK(take(surfaceInfo(body, SubId{SubKind::Face, 0})).type == SurfaceType::Cylinder);
+    CHECK(shareGround(meshOf(body), SubId{SubKind::Face, 0}, meshOf(out.shape), SubId{SubKind::Face, 9}));
+    CHECK(modifiedTo(out, 0, 9));
+    CHECK(imagesApart(body, out).empty());
 }
 TEST_CASE("deleteFaces fills a closed pocket", "[kernel][directedit]")
 {

@@ -18,7 +18,7 @@ using json::Value;
 constexpr std::string_view kKnownKeys[] = {"bodies", "fileHash",   "format",      "options",
                                            "role",   "sourceFile", "sourceUnits", "warnings"};
 constexpr std::string_view kOptionKeys[] = {"heal", "sew", "sewTolerance"};
-constexpr std::string_view kBodyKeys[] = {"blob", "color", "id", "name"};
+constexpr std::string_view kBodyKeys[] = {"blob", "color", "id", "name", "names"};
 
 class Reader {
 public:
@@ -224,6 +224,13 @@ Status readBodies(const Reader& r, const Value& props, bool strict, ImportProps&
             return tl::unexpected(blob.error());
         }
         b.blob = *blob;
+        if (body.find("names") != nullptr) { // T-084: the names carried over from the revision it replaced
+            auto names = r.hash(body, "names", at + ".names");
+            if (!names) {
+                return tl::unexpected(names.error());
+            }
+            b.names = *names;
+        }
         for (const ImportBody& other : list) {
             if (other.id == b.id) {
                 return r.error(at + ".id", "is used by another body of this import");
@@ -405,10 +412,14 @@ std::string writeImportProps(const ImportProps& p)
             for (const float c : b.color) {
                 color.push_back(colorValue(c));
             }
-            bodies.push_back(Value::object({{"blob", text(b.blob.hex())},
-                                            {"color", Value::array(std::move(color))},
-                                            {"id", text(b.id.value.toString())},
-                                            {"name", text(b.name)}}));
+            Value::Object body{{"blob", text(b.blob.hex())},
+                               {"color", Value::array(std::move(color))},
+                               {"id", text(b.id.value.toString())},
+                               {"name", text(b.name)}};
+            if (b.names) {
+                body.push_back({"names", text(b.names->hex())});
+            }
+            bodies.push_back(Value::object(std::move(body)));
         }
         members.push_back({"bodies", Value::array(std::move(bodies))});
     }

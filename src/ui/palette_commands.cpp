@@ -390,6 +390,8 @@ const std::vector<UiCommand>& allUiCommands()
         out.insert(out.end(), directEdit.begin(), directEdit.end());
         const std::span<const UiCommand> references = referenceUiCommands(); // T-083
         out.insert(out.end(), references.begin(), references.end());
+        const std::span<const UiCommand> replaceImport = replaceUiCommands(); // T-084
+        out.insert(out.end(), replaceImport.begin(), replaceImport.end());
         return out;
     }();
     return all;

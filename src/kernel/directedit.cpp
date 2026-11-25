@@ -46,8 +46,8 @@
 // Defeaturing lists as an old face's Modified image but that lies on the old face's surface looking the other way (the
 // cap it puts on what is left of a hole, on the plane of a counterbore floor that is now inside the material) is not
 // that face, nor is an image that shares no ground with the old face: either is Generated from it, and the old
-// face Deleted if nothing else is its image. The same holds for the faces a push/pull or a resize does not move (a
-// small face that a push/pull's boolean listed as Modified into a face 4 mm away). T-081b: naming would otherwise
+// face Deleted if nothing else is its image. The same holds for the faces a push/pull or a resize does not move.
+// T-081b: naming would otherwise
 // resolve a reference to the floor to a face on the other side of the material, or a reference to a fillet to a face
 // somewhere else.
 //
@@ -73,6 +73,7 @@
 #include <BRepBuilderAPI_MakeShape.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -96,6 +97,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Iterator.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Pnt2d.hxx>
 #include <gp_Vec.hxx>
 
 #include <algorithm>
@@ -115,6 +117,11 @@ namespace ray::kernel {
 
 namespace detail {
 std::atomic<int>& directEditFaultRequests() noexcept
+{
+    static std::atomic<int> count{0};
+    return count;
+}
+std::atomic<int>& rawDirectEditHistory() noexcept
 {
     static std::atomic<int> count{0};
     return count;
@@ -407,15 +414,63 @@ bool looksTheOtherWay(const TopoDS_Face& source, const TopoDS_Face& image)
     return own.Dot(normal) < 0.0;
 }
 
-// Is `point` on `face` (within the tolerance of the "point on the result" checks)? May throw.
-bool onFace(const TopoDS_Face& face, const gp_Pnt& point)
+// Is `point` on `face` (within `tolerance`; by default that of the "point on the result" checks)? May throw.
+bool onFace(const TopoDS_Face& face, const gp_Pnt& point, double tolerance = kOnTolerance)
 {
     BRepExtrema_DistShapeShape measure(BRepBuilderAPI_MakeVertex(point).Vertex(), face);
-    return measure.IsDone() && measure.NbSolution() > 0 && measure.Value() < kOnTolerance;
+    return measure.IsDone() && measure.NbSolution() > 0 && measure.Value() < tolerance;
 }
 
-// Does face `image` share no ground with face `source`: their boxes (with the tolerance) do not meet, or neither face
-// holds a point inside the other? False when that cannot be told (no interior point). May throw.
+// How close a point inside one face must come to the other for the two to share ground (mm): far below any feature,
+// above what the distance to a B-spline face is measured to.
+constexpr double kSharedGroundTolerance = 1e-3;
+
+// Is `point` on `face` within `tolerance`, measured two ways: the distance to the face, or a foot on the face's
+// surface whose parameters lie inside the face (the distance to a B-spline face can miss a point on it: T-081b, a
+// blend face a push/pull's boolean rebuilt unchanged). May throw.
+bool onFaceEitherWay(const TopoDS_Face& face, const gp_Pnt& point, double tolerance)
+{
+    if (onFace(face, point, tolerance))
+        return true;
+    const occ::handle<Geom_Surface> surface = BRep_Tool::Surface(face);
+    if (surface.IsNull())
+        return false;
+    GeomAPI_ProjectPointOnSurf projection(point, surface);
+    if (!projection.IsDone())
+        return false;
+    for (int i = 1; i <= projection.NbPoints(); ++i) {
+        if (projection.Distance(i) > tolerance)
+            continue;
+        double u = 0.0, v = 0.0;
+        projection.Parameters(i, u, v);
+        BRepClass_FaceClassifier classifier(face, gp_Pnt2d(u, v), 1e-7);
+        if (classifier.State() == TopAbs_IN || classifier.State() == TopAbs_ON)
+            return true;
+    }
+    return false;
+}
+
+// Points inside `face`, spread over its parameter range (a 5 x 5 grid; those the face's outline holds). May throw.
+std::vector<gp_Pnt> interiorPoints(const TopoDS_Face& face)
+{
+    static constexpr std::array<double, 5> kGrid{0.1, 0.3, 0.5, 0.7, 0.9};
+    std::vector<gp_Pnt> out;
+    for (const double a : kGrid)
+        for (const double b : kGrid) {
+            gp_Pnt p;
+            gp_Dir n;
+            if (detail::facePointAt(face, a, b, p, n))
+                out.push_back(p);
+        }
+    return out;
+}
+
+// Does face `image` share no ground with face `source`: their boxes (with the tolerance) do not meet, or no point
+// inside either face lies on the other? A point inside each (the first the parameter grid gives) settles most pairs;
+// only then are the points spread over each face tried (a removal trims a face on one side and extends it on the
+// other: the two middles may both lie on ground the other face has not; T-081b, a fillet removal). False when that
+// cannot be told: no point inside a face, or one that is not measured on its own face (the distance to a B-spline
+// face may not converge: T-081b, a blend face rebuilt unchanged was taken for one apart from itself). May throw.
 bool liesApart(const TopoDS_Face& source, const TopoDS_Face& image)
 {
     Bnd_Box a, b;
@@ -429,9 +484,19 @@ bool liesApart(const TopoDS_Face& source, const TopoDS_Face& image)
         return true;
     gp_Pnt p, q;
     gp_Dir n;
-    if (!detail::interiorPoint(image, p, n) || onFace(source, p))
+    if (!detail::interiorPoint(image, p, n) || !detail::interiorPoint(source, q, n))
         return false;
-    return detail::interiorPoint(source, q, n) && !onFace(image, q);
+    if (onFaceEitherWay(source, p, kSharedGroundTolerance) || onFaceEitherWay(image, q, kSharedGroundTolerance))
+        return false;
+    if (!onFaceEitherWay(image, p, kSharedGroundTolerance) || !onFaceEitherWay(source, q, kSharedGroundTolerance))
+        return false;
+    for (const gp_Pnt& r : interiorPoints(image))
+        if (onFaceEitherWay(source, r, kSharedGroundTolerance))
+            return false;
+    for (const gp_Pnt& r : interiorPoints(source))
+        if (onFaceEitherWay(image, r, kSharedGroundTolerance))
+            return false;
+    return true;
 }
 
 // See "HISTORY": Defeaturing may close what is left of a cavity with the surface of a face that is no longer on the
@@ -439,12 +504,14 @@ bool liesApart(const TopoDS_Face& source, const TopoDS_Face& image)
 // counterbore floor, looking down; the floor, which looked up, is inside the material now), and its history then
 // lists that face as the old face's Modified image. It may also list as an old face's image a face on its surface
 // that shares no ground with it (a fillet along a removed pocket's edge, gone, and its surface run on elsewhere; a
-// piece of a wall\n// listed as the image of the piece beside it). Neither is the old face (a removal does not move
-// faces: an image keeps some of its ground): such an image is reported Generated from it, and the old face Deleted when
+// piece of a wall listed as the image of the piece beside it). Neither is the old face (a removal does not move faces:
+// an image keeps some of its ground): such an image is reported Generated from it, and the old face Deleted when
 // nothing else is its image. `history` holds the caller's SubIds of `input`.
 void demoteReversedImages(ShapeHistory& history, const Shape& input, const Shape& result,
                           std::span<const int> moved = {})
 {
+    if (detail::rawDirectEditHistory().load(std::memory_order_relaxed) > 0)
+        return;
     const detail::ShapeIndex& inFaces = input.impl->subs[detail::kindSlot(SubKind::Face)];
     const detail::ShapeIndex& outFaces = result.impl->subs[detail::kindSlot(SubKind::Face)];
     std::vector<HistoryEntry> generated;

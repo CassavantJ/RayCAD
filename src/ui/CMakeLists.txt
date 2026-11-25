@@ -137,6 +137,7 @@ set(RAY_UI_QML_FILES
     qml/model/DirectEditPanel.qml # T-083
     qml/model/DirectEditLayer.qml
     qml/panels/ReferenceReview.qml
+    qml/model/ReplaceImport.qml # T-084
     qml/cam/SetupPanel.qml
     qml/cam/CamTree.qml
     qml/cam/SchemaForm.qml
@@ -206,6 +207,8 @@ qt_add_qml_module(ray_ui
         model/directedit_tool.cpp
         model/directedit_review.h
         model/directedit_review.cpp
+        model/replace_import.h # T-084
+        model/replace_import.cpp
         cam/setup_tool.h
         cam/setup_tool.cpp
         cam/setup_tree.h

@@ -4,6 +4,10 @@
 // the first rules resolved 17 of 33,785 references to a wrong element; these gave 0 on the same scenarios.
 // Amended after the T-081a gate (PLAN.md 0.6): pick-time evidence in TopoRef, its JSON form, input shapes in
 // NamingInput, and Resolved::postableWithoutReview.
+// Amended by T-084 (replace imported geometry): a second rematchImported that also takes the shape the old map was
+// made for, so that "unchanged" is decided by geometry, and the rules of both written down. Additive.
+// Amended by T-081b (naming through direct edits): TopoRef::outline, an optional planar face's pick-time outline, and
+// its JSON member; additive (a reference without it resolves as before).
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -95,8 +99,24 @@ Result<NamingOutput> propagate(const NamingInput&);
 // sub-shape order (PLAN.md 3.3 rule 5), plus fingerprint.
 ElementMap nameImported(FeatureId importFeature, const kernel::Shape&);
 // Re-import or replace-geometry: match old names to the new shape by fingerprint + adjacency.
+// The map names every element of `replacement`. An element that is UNCHANGED (the same geometry as exactly one old
+// element, and no other element of either shape is) holds that element's names, so a reference to it resolves Exact.
+// An element that CHANGED (it lies on the carrier of old elements and shares ground with them: a face that grew, shrank,
+// became one with others or was cut in pieces) holds a new name of its own and the old names (or, for pieces, "split"
+// names made from them), so a reference resolves Merged or Split, checked against its pick-time evidence like after any
+// model edit, never Exact. Anything else is NEW (a new name only) or REMOVED (its names are gone: Broken). A new name
+// never equals an old one. Nothing is guessed: two candidates that cannot be told apart are both unmatched.
+// lineage: Merged (old name -> every name of the element now holding it), Split (old name -> the pieces' names),
+// Deleted (old name held by nothing now). unmatched: every old name that is not on an unchanged element, sorted.
+// This form has no old geometry: an element is unchanged when its fingerprint and its neighbours' match one to one,
+// and nothing is reported as changed. src/naming/rematch.h has the rules in full.
 struct RematchResult { ElementMap map; std::vector<LineageEvent> lineage; std::vector<Hash256> unmatched; };
 RematchResult rematchImported(const ElementMap& old, FeatureId importFeature, const kernel::Shape& replacement);
+// The same with `oldShape`, the shape `old` was made for (T-084): unchanged is then decided by geometry (carrier,
+// boundary and points on each other within 1e-3 mm), and changed elements are found. No rigid move of the whole part is
+// looked for: a part that moved has moved faces. The form to use when the old shape is at hand.
+RematchResult rematchImported(const ElementMap& old, const kernel::Shape& oldShape, FeatureId importFeature,
+                              const kernel::Shape& replacement);
 
 // ---- References held by features, CAM operations, measurements, PMI ----
 
@@ -134,6 +154,20 @@ struct PickNeighbour {
     Territory territory;
 };
 
+// The outline of a picked PLANAR face at pick time (T-081b round 2): its boundary as chords on its plane, unordered
+// (a point of the plane is inside when a ray from it crosses an odd number of chords). A line edge is one chord; an
+// arc is cut into equal chords, at least 4, sharing what is left of kMaxOutlineChords once every line has its one.
+// Quantised like Territory; each chord carries how far it may lie from the boundary it stands for (0 for a line, the
+// sagitta for an arc's chord), so a point near a line is judged exactly and near an arc within that. Empty when
+// the face is not planar, has an edge that is neither a line nor an arc, or more edges than kMaxOutlineChords / 4
+// arcs allow: such a pick has no outline evidence and resolves as references made before the outline existed. About
+// 200 bytes of JSON for a rectangle, 1 to 3 kB for a face with holes; never more than kMaxOutlineChords chords.
+inline constexpr std::size_t kMaxOutlineChords = 96;
+struct PickOutline {
+    std::vector<std::array<std::int64_t, 7>> chords; // (x0, y0, z0, x1, y1, z1, slack) in quanta
+    bool known() const { return !chords.empty(); }
+};
+
 struct TopoRef {
     BodyId body;
     kernel::SubKind kind;
@@ -152,10 +186,12 @@ struct TopoRef {
     //    are gone (the pieces joined where it now is), and Broken when a recorded sibling moved differently from it
     //    (they slid instead of moving together: which is which cannot be told);
     //  - Split pieces that together do not fit in the picked element's box (translated), or one of which covers a
-    //    neighbour's territory, are Broken.
+    //    neighbour's territory, are Broken; and a Split face piece that lies wholly outside the picked face's
+    //    outline on its plane is not a piece (ground the picked face never had, past a bound that moved).
     // An element that merely grew into territory nobody recorded (a dimension change) stays Exact.
     Territory territory;                 // the picked element's own
     std::vector<PickNeighbour> pickNeighbours;
+    PickOutline outline;                 // a planar face's (T-081b round 2)
 };
 
 // ---- The JSON form of a TopoRef ----
@@ -170,13 +206,14 @@ struct TopoRef {
 //    "kind": "face" | "edge" | "vertex",       required
 //    "names": ["<64 hex>", ...],               required, at least one
 //    "neighbourNames": [...], "splitParents": [...],
+//    "outline": {"chords": [[x0, y0, z0, x1, y1, z1, slack], ...]},   optional, in quanta
 //    "pickNeighbours": [{"names": [...], "relation": "sibling" | "carrier", "territory": T}, ...],   optional
 //    "repairConfirmed": bool,
 //    "territory": T}                           optional
 // where T = {"box": [xmin, ymin, zmin, xmax, ymax, zmax], "measure": n, "points": [[x, y, z], ...]} in quanta.
 // Every integer is a JSON number, or a decimal string when beyond +-2^53. toJson writes every member (empty arrays
-// included) except territory and pickNeighbours, which it writes only when the territory is known / the list is not
-// empty, so a reference made without evidence is written exactly as references were before the evidence existed.
+// included) except territory, pickNeighbours and outline, which it writes only when the territory or the outline is
+// known / the list is not empty, so a reference made without evidence is written exactly as references were before the evidence existed.
 std::string toJson(const TopoRef&);
 // Reads the JSON form. Every member but body, kind and names is optional; unknown members are refused. Errors are
 // InvalidArgument, with the problem in `message` ("must list at least one name") and the member in context[0]

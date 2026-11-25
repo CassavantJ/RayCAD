@@ -174,8 +174,9 @@ struct Tally {
     long noAnchor = 0;                       // references whose continuation the oracle cannot tell (any answer)
     long crossings = 0, crossingsAtSeam = 0; // references whose E the sliding-crossing rule told (any answer)
     long accepted = 0, acceptedReviewed = 0; // new-territory acceptances, and of them those on the reviewed list
-    long conflicts = 0;                      // the one congruent-in-place element is not E, nothing moved, and the
-                        // answer was judged correct (gated: oracle and resolver may share an error)
+    long acceptedNewGround = 0; // flagged answers accepted by the new-ground rule (oracle.cpp newGroundRule)
+    long conflicts = 0;         // the one congruent-in-place element is not E, nothing moved, and the
+                                // answer was judged correct (gated: oracle and resolver may share an error)
     long conflictsReviewed = 0;
     long unjudgedReviewed = 0;  // not-judged answers on the reviewed list (reviewed_unjudged.txt)
     long conflictsOther = 0;    // the same with a Broken or wrong answer (counted: no answer was accepted)

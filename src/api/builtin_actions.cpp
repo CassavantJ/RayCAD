@@ -6,6 +6,7 @@
 #include "cam_post_actions.h"
 #include "cam_template_actions.h"
 #include "measure_actions.h"
+#include "replace_import_actions.h"
 #include "schema.h"
 
 #include "../doc/features/hole_standards.h"
@@ -134,6 +135,10 @@ constexpr CommandText kCommandTexts[] = {
     {"body.set", "Edit Body", "Changes a body's name, role, colour or visibility"},
     {"document.import", "Add Import Feature",
      "Adds a prepared import feature and its bodies (file.import reads the file and does this)"},
+    // T-084
+    {"feature.import.replace", "Replace Imported Geometry",
+     "Puts prepared new-revision geometry and names into an import feature (file.replaceImport reads the file and "
+     "does this)"},
     // The parametric features (T-096): props are checked against the type's schema; an edit replaces the props it
     // names (null removes an optional one).
     {"feature.datum_plane.add", "Datum Plane", "Adds a plane offset from a principal plane, a datum or a planar face",
@@ -1101,6 +1106,11 @@ Status registerBuiltinActions(AppImpl& app)
         return st;
     }
     if (st = addBlendRunAction(app); !st) { // T-082
+        return st;
+    }
+
+    // ---- replacing an imported part with a new revision (T-084) ----
+    if (st = registerReplaceImportActions(app); !st) {
         return st;
     }
 

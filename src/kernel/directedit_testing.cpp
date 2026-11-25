@@ -648,6 +648,16 @@ std::vector<std::string> validityFaults(const Shape& shape, int limit)
     return lines ? *lines : std::vector<std::string>{"(the check failed: " + lines.error().message + ")"};
 }
 
+RawDirectEditHistory::RawDirectEditHistory()
+{
+    detail::rawDirectEditHistory().fetch_add(1, std::memory_order_relaxed);
+}
+
+RawDirectEditHistory::~RawDirectEditHistory()
+{
+    detail::rawDirectEditHistory().fetch_sub(1, std::memory_order_relaxed);
+}
+
 void waitForAbandonedEdits()
 {
     detail::waitForIoThreads();

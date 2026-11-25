@@ -85,7 +85,37 @@ set_tests_properties(ray_naming_random_directedit_smoke PROPERTIES TIMEOUT 1800)
 add_test(NAME ray_naming_random_directedit COMMAND ray_naming_oracle_tests "[random-directedit]")
 ray_test_runtime_path(ray_naming_random_directedit)
 set_tests_properties(ray_naming_random_directedit PROPERTIES TIMEOUT 7200)
+# Holdout blocks with direct edits (the generator that picks faces by geometry), each first run once, unseen: the block
+# on the main block's seeds (first run, unseen, in T-081b round 1), then blocks on new seeds (from round 2).
+add_test(NAME ray_naming_random_directedit_sorted COMMAND ray_naming_oracle_tests "[random-directedit-sorted]")
+ray_test_runtime_path(ray_naming_random_directedit_sorted)
+set_tests_properties(ray_naming_random_directedit_sorted PROPERTIES TIMEOUT 7200)
+add_test(NAME ray_naming_random_directedit_holdout1 COMMAND ray_naming_oracle_tests "[random-directedit-holdout1]")
+ray_test_runtime_path(ray_naming_random_directedit_holdout1)
+set_tests_properties(ray_naming_random_directedit_holdout1 PROPERTIES TIMEOUT 7200)
+add_test(NAME ray_naming_random_directedit_holdout2 COMMAND ray_naming_oracle_tests "[random-directedit-holdout2]")
+ray_test_runtime_path(ray_naming_random_directedit_holdout2)
+set_tests_properties(ray_naming_random_directedit_holdout2 PROPERTIES TIMEOUT 7200)
 # The fifth block's seeds with every cos and sin of the inputs moved by a few ulp, as another platform's libm can give.
 add_test(NAME ray_naming_random_perturbed COMMAND ray_naming_oracle_tests "[random-perturbed]")
 ray_test_runtime_path(ray_naming_random_perturbed)
 set_tests_properties(ray_naming_random_perturbed PROPERTIES TIMEOUT 7200)
+
+# T-084: the rematch oracle (kernel and core only, like the oracle above: it cannot use the naming code it judges) and
+# the revision pairs it judges (rematchImported: a part's STEP replaced by a new revision).
+add_library(ray_rematch_oracle STATIC rematch_oracle.h rematch_oracle.cpp)
+target_link_libraries(ray_rematch_oracle PUBLIC ray_kernel ray_core)
+set_property(TARGET ray_rematch_oracle PROPERTY FOLDER "tests")
+add_executable(ray_naming_rematch_tests rematch_pairs_test.cpp)
+target_link_libraries(ray_naming_rematch_tests PRIVATE ray_rematch_oracle ray_naming ray_kernel ray_core
+    Catch2::Catch2WithMain)
+target_compile_definitions(ray_naming_rematch_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus")
+set_property(TARGET ray_naming_rematch_tests PROPERTY FOLDER "tests")
+# In three processes of about half a minute each in Release (together about 100 s): the pairs on parts built here, and
+# the pairs on NIST parts in two halves.
+add_test(NAME ray_naming_rematch_pairs COMMAND ray_naming_rematch_tests "[rematch-pairs]~[nist-a]~[nist-b]")
+add_test(NAME ray_naming_rematch_pairs_nist_a COMMAND ray_naming_rematch_tests "[rematch-pairs][nist-a]")
+add_test(NAME ray_naming_rematch_pairs_nist_b COMMAND ray_naming_rematch_tests "[rematch-pairs][nist-b]")
+foreach(_test IN ITEMS ray_naming_rematch_pairs ray_naming_rematch_pairs_nist_a ray_naming_rematch_pairs_nist_b)
+    ray_test_runtime_path(${_test})
+endforeach()

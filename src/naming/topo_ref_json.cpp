@@ -68,6 +68,23 @@ void writeTerritory(std::string& out, const Territory& t)
     out += "]}";
 }
 
+void writeOutline(std::string& out, const PickOutline& o)
+{
+    out += "{\"chords\":[";
+    for (std::size_t i = 0; i < o.chords.size(); ++i) {
+        if (i > 0)
+            out += ',';
+        out += '[';
+        for (std::size_t j = 0; j < 7; ++j) {
+            if (j > 0)
+                out += ',';
+            writeInteger(out, o.chords[i][j]);
+        }
+        out += ']';
+    }
+    out += "]}";
+}
+
 const char* kindName(kernel::SubKind kind)
 {
     switch (kind) {
@@ -403,6 +420,34 @@ Result<std::vector<Hash256>> readHashes(const Node& object, std::string_view key
     return out;
 }
 
+Result<PickOutline> readOutline(const Node& v, const std::string& field)
+{
+    if (v.type != Node::Type::Object)
+        return fieldError(field, "must be a JSON object");
+    if (auto ok = onlyKeys(v, {"chords"}, field + "."); !ok)
+        return tl::unexpected(ok.error());
+    PickOutline o;
+    const Node* chords = v.find("chords");
+    const char* bad = "must be an array of chords, each seven whole numbers";
+    if (chords == nullptr || chords->type != Node::Type::Array)
+        return fieldError(field + ".chords", bad);
+    if (chords->items.size() > kMaxOutlineChords)
+        return fieldError(field + ".chords", "must hold at most " + std::to_string(kMaxOutlineChords) + " chords");
+    for (const Node& c : chords->items) {
+        if (c.type != Node::Type::Array || c.items.size() != 7)
+            return fieldError(field + ".chords", bad);
+        std::array<std::int64_t, 7> q{};
+        for (std::size_t i = 0; i < 7; ++i) {
+            const auto n = wholeNumber(c.items[i]);
+            if (!n || (i == 6 && *n < 0))
+                return fieldError(field + ".chords", bad);
+            q[i] = *n;
+        }
+        o.chords.push_back(q);
+    }
+    return o;
+}
+
 Result<Territory> readTerritory(const Node& v, const std::string& field)
 {
     if (v.type != Node::Type::Object)
@@ -494,6 +539,10 @@ std::string toJson(const TopoRef& ref)
     writeHashes(out, ref.names);
     out += ",\"neighbourNames\":";
     writeHashes(out, ref.neighbourNames);
+    if (ref.outline.known()) {
+        out += ",\"outline\":";
+        writeOutline(out, ref.outline);
+    }
     if (!ref.pickNeighbours.empty()) {
         out += ",\"pickNeighbours\":[";
         for (std::size_t i = 0; i < ref.pickNeighbours.size(); ++i) {
@@ -531,7 +580,7 @@ Result<TopoRef> topoRefFromJson(std::string_view json)
         return tl::unexpected(
             Error{ErrorCode::InvalidArgument, "must be a reference to a face, edge or vertex (a JSON object)", {}});
     if (auto ok = onlyKeys(root,
-                           {"ambiguous", "body", "families", "hint", "kind", "names", "neighbourNames",
+                           {"ambiguous", "body", "families", "hint", "kind", "names", "neighbourNames", "outline",
                             "pickNeighbours", "repairConfirmed", "splitParents", "territory"},
                            "");
         !ok)
@@ -637,6 +686,12 @@ Result<TopoRef> topoRefFromJson(std::string_view json)
         if (!territory)
             return tl::unexpected(territory.error());
         out.territory = std::move(*territory);
+    }
+    if (const Node* o = root.find("outline")) {
+        auto outline = readOutline(*o, "outline");
+        if (!outline)
+            return tl::unexpected(outline.error());
+        out.outline = std::move(*outline);
     }
     if (const Node* list = root.find("pickNeighbours")) {
         if (list->type != Node::Type::Array)

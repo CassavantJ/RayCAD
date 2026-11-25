@@ -3,9 +3,11 @@
 //
 // Building, per body (in parallel through IJobSystem::parallelChunks when the rebuilder offers a job system; the
 // result is assembled in body order, so it never depends on the worker count):
-//   restore:  RebuildContext::blob(blob) -> verify BLAKE3 -> kernel::deserialize -> naming::nameImported;
+//   restore:  RebuildContext::blob(blob) -> verify BLAKE3 -> kernel::deserialize -> the body's names;
 //   re-import (no stored bodies, or a stored object is missing): hashFile == fileHash -> kernel::importStep or
-//             importIges -> naming::nameImported.
+//             importIges -> the body's names.
+// The body's names (T-084): the element map stored with the body ("names", written by feature.import.replace) when it
+// can be read and fits the shape, else naming::nameImported (with a warning when stored names could not be used).
 #include "import_feature.h"
 
 #include "import_props.h"
@@ -77,6 +79,13 @@ Result<naming::ElementMap> nameBody(const FeatureId& feature, const kernel::Shap
     return map;
 }
 
+// The body's names when it has stored ones (importedBodyMap), else nameBody; the warning goes to `warnings`.
+Result<naming::ElementMap> namesOfBody(const FeatureId& feature, const kernel::Shape& shape, const ImportBody& body,
+                                       RebuildContext& ctx, std::optional<std::string>& warning)
+{
+    return importedBodyMap(feature, shape, body, [&](const Hash256& hash) { return ctx.blob(hash); }, warning);
+}
+
 // A shape in the form a restore gives: deserialize(serialize(shape)), and its BREP bytes. Then the stored object,
 // the restored shape and a re-imported shape all have the same bytes and contentHash(). (This round trip was added
 // when kernel::serialize was not yet canonical on the first round trip for bodies placed by a STEP assembly; the
@@ -115,6 +124,7 @@ Result<FeatureOutput> restore(const Feature& feature, const ImportProps& props, 
 {
     const std::vector<ImportBody>& bodies = *props.bodies;
     std::vector<std::optional<BodyUpdate>> slots(bodies.size());
+    std::vector<std::optional<std::string>> notes(bodies.size());
     auto done = forEach(bodies.size(), jobs, ctx.job, [&](std::size_t i) -> Status {
         const ImportBody& body = bodies[i];
         auto bytes = ctx.blob(body.blob);
@@ -134,7 +144,7 @@ Result<FeatureOutput> restore(const Feature& feature, const ImportProps& props, 
             return failure(shape.error().code,
                            "The stored geometry of body '" + body.name + "' cannot be read: " + shape.error().message);
         }
-        auto map = nameBody(feature.id, *shape, body.name);
+        auto map = namesOfBody(feature.id, *shape, body, ctx, notes[i]);
         if (!map) {
             return tl::unexpected(map.error());
         }
@@ -149,6 +159,11 @@ Result<FeatureOutput> restore(const Feature& feature, const ImportProps& props, 
         out.bodies.push_back(std::move(*slot));
     }
     out.warnings = props.warnings;
+    for (const auto& note : notes) {
+        if (note) {
+            out.warnings.push_back(*note);
+        }
+    }
     importCounters().restores.fetch_add(1, std::memory_order_relaxed);
     return out;
 }
@@ -186,6 +201,7 @@ Result<FeatureOutput> reimport(const Feature& feature, const ImportProps& props,
                              {}});
     }
     std::vector<std::optional<BodyUpdate>> slots(fileBodies.size());
+    std::vector<std::optional<std::string>> notes(fileBodies.size());
     JobContext nameCtx{ctx.job.cancel, ctx.job.progress.sub(0.10)};
     auto done = forEach(fileBodies.size(), jobs, nameCtx, [&](std::size_t i) -> Status {
         const kernel::ImportedBody& body = fileBodies[i];
@@ -194,7 +210,8 @@ Result<FeatureOutput> reimport(const Feature& feature, const ImportProps& props,
         if (!shape) {
             return tl::unexpected(shape.error());
         }
-        auto map = nameBody(feature.id, shape->shape, name);
+        auto map = props.bodies ? namesOfBody(feature.id, shape->shape, (*props.bodies)[i], ctx, notes[i])
+                                : nameBody(feature.id, shape->shape, name);
         if (!map) {
             return tl::unexpected(map.error());
         }
@@ -218,6 +235,11 @@ Result<FeatureOutput> reimport(const Feature& feature, const ImportProps& props,
     } else {
         out.warnings = std::move(imported->warnings);
     }
+    for (const auto& note : notes) {
+        if (note) {
+            out.warnings.push_back(*note);
+        }
+    }
     for (auto& slot : slots) {
         out.bodies.push_back(std::move(*slot));
     }
@@ -238,7 +260,7 @@ constexpr std::string_view kPropsSchema =
     R"("id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},)"
     R"("name":{"type":"string","minLength":1},)"
     R"("color":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"number","minimum":0,"maximum":1}},)"
-    R"("blob":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}},)"
+    R"("blob":{"type":"string","pattern":"^[0-9a-f]{64}$"},"names":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}},)"
     R"("warnings":{"type":"array","items":{"type":"string"}}}})";
 
 class ImportFeatureType final : public IFeatureType, public detail::BodyDeclaration {
@@ -290,6 +312,67 @@ public:
 };
 
 } // namespace
+
+Result<kernel::ImportResult> importSourceFile(const std::string& path, ImportFormat format,
+                                              const kernel::ImportOptions& options, JobContext& ctx)
+{
+    return importFile(path, format, options, ctx);
+}
+
+Result<StoredBody> storedForm(const kernel::Shape& shape, const std::string& bodyName)
+{
+    auto stored = canonical(shape, bodyName);
+    if (!stored) {
+        return tl::unexpected(stored.error());
+    }
+    return StoredBody{std::move(stored->shape), std::move(stored->bytes)};
+}
+
+Hash256 objectHash(std::span<const std::byte> bytes)
+{
+    return blake3(bytes);
+}
+
+bool mapFits(const naming::ElementMap& map, const kernel::Shape& shape)
+{
+    std::size_t count = 0;
+    for (const kernel::SubKind kind : {kernel::SubKind::Vertex, kernel::SubKind::Edge, kernel::SubKind::Face}) {
+        for (std::uint32_t i = 0; i < shape.count(kind); ++i) {
+            if (map.namesOf(kernel::SubId{kind, i}).empty()) {
+                return false;
+            }
+            ++count;
+        }
+    }
+    return map.size() == count;
+}
+
+Result<naming::ElementMap> importedBodyMap(const FeatureId& feature, const kernel::Shape& shape, const ImportBody& body,
+                                           const std::function<Result<std::vector<std::byte>>(const Hash256&)>& object,
+                                           std::optional<std::string>& warning)
+{
+    if (body.names) {
+        std::string why;
+        auto bytes = object(*body.names);
+        if (!bytes) {
+            why = bytes.error().code == ErrorCode::NotFound ? "they are missing" : bytes.error().message;
+        } else if (blake3(*bytes) != *body.names) {
+            why = "they are damaged";
+        } else {
+            auto map = naming::ElementMap::deserialize(*bytes);
+            if (!map) {
+                why = map.error().message;
+            } else if (!mapFits(*map, shape)) {
+                why = "they do not fit its geometry";
+            } else {
+                return std::move(*map);
+            }
+        }
+        warning = "The names kept for body '" + body.name + "' from the revision it replaced cannot be used (" + why +
+                  "); its faces were named afresh, and references to it may need review.";
+    }
+    return nameBody(feature, shape, body.name);
+}
 
 ImportCounters& importCounters()
 {
@@ -477,6 +560,9 @@ std::vector<Hash256> referencedObjects(const DocState& state)
             }
             for (const features::ImportBody& body : *props->bodies) {
                 out.push_back(body.blob);
+                if (body.names) {
+                    out.push_back(*body.names);
+                }
             }
         }
         std::sort(out.begin(), out.end());

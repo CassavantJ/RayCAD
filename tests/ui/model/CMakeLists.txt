@@ -7,7 +7,8 @@
 # ray_ui_model_tests_wallclock (tests/tiers.cmake).
 find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui Qml Quick Test)
 
-add_executable(ray_ui_model_tests model_test.cpp directedit_test.cpp directedit_unit_test.cpp)
+add_executable(ray_ui_model_tests model_test.cpp directedit_test.cpp directedit_unit_test.cpp
+    replace_import_test.cpp) # T-084
 target_link_libraries(ray_ui_model_tests PRIVATE ray_ui ray_render ray_api Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
                                                  Qt6::Test Catch2::Catch2)
 # T-083: the kernel's S9 cases of a corpus part find the slow fillet deletion (src/kernel/directedit_testing.h).
@@ -20,9 +21,11 @@ target_compile_definitions(ray_ui_model_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SO
                                                       RAY_CORPUS_ROOT_DIR="${CMAKE_SOURCE_DIR}/tests/corpus")
 set_property(TARGET ray_ui_model_tests PROPERTY FOLDER "tests")
 
-add_test(NAME ray_ui_model_tests COMMAND ray_ui_model_tests "~[wallclock]~[directedit]")
+add_test(NAME ray_ui_model_tests COMMAND ray_ui_model_tests "~[wallclock]~[directedit]~[replaceimport]")
 add_test(NAME ray_ui_directedit_tests COMMAND ray_ui_model_tests "[directedit]~[wallclock]~[scale]")
-foreach(_test IN ITEMS ray_ui_model_tests ray_ui_directedit_tests)
+# T-084: the replace dialog and its summary (replace_import_test.cpp).
+add_test(NAME ray_ui_replace_import_tests COMMAND ray_ui_model_tests "[replaceimport]~[wallclock]")
+foreach(_test IN ITEMS ray_ui_model_tests ray_ui_directedit_tests ray_ui_replace_import_tests)
     set_tests_properties(${_test} PROPERTIES TIMEOUT 900)
     # Catch2 exits with 4 when every test case skipped (no QRhi scene graph): CTest then reports the test as skipped.
     set_tests_properties(${_test} PROPERTIES SKIP_RETURN_CODE 4)

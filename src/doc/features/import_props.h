@@ -20,6 +20,9 @@ struct ImportBody {
     std::string name;
     std::array<float, 4> color{};
     Hash256 blob; // BLAKE3 of the body's kernel::serialize bytes (== Shape::contentHash())
+    // T-084: the body's element map (naming::ElementMap::serialize bytes, by BLAKE3) when the import replaced an
+    // earlier revision (feature.import.replace): the names rematchImported carried over. nullopt: nameImported.
+    std::optional<Hash256> names;
 };
 
 struct ImportProps {

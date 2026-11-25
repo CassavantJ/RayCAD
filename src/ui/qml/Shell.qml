@@ -343,6 +343,7 @@ FocusScope {
         }
         // T-083: the reference review (panels/References.qml), bottom right, made the first time it is shown.
         Loader {
+            id: referenceReviewLoader
             objectName: "referenceReviewLoader"
             z: 1
             anchors.right: parent.right
@@ -355,6 +356,27 @@ FocusScope {
             height: item ? Math.min(parent.height * 0.6, item.implicitHeight) : 0
             sourceComponent: Component {
                 ReferenceReview {}
+            }
+        }
+        // T-084: the replace dialog and its change summary (model/ReplaceImport.qml), top right, made when first shown.
+        Loader {
+            objectName: "replaceImportLoader"
+            z: 1
+            anchors.right: parent.right
+            anchors.top: selectionFilterBar.visible ? selectionFilterBar.bottom : parent.top
+            anchors.topMargin: Theme.spacingS
+            property bool used: Replacement.shown
+            onUsedChanged: if (used) used = true // stays once made
+            active: used
+            visible: Replacement.shown && Session.hasDocument
+            width: item ? Math.min(parent.width - 2 * Theme.spacingL, item.implicitWidth) : 0
+            // Above the reference review when both are shown (the summary hands over to it).
+            height: item ? Math.min(Math.max(parent.height * 0.3, (referenceReviewLoader.visible
+                                                                   ? referenceReviewLoader.y - Theme.spacingS
+                                                                   : parent.height - Theme.spacingL) - y),
+                                    item.implicitHeight) : 0
+            sourceComponent: Component {
+                ReplaceImport {}
             }
         }
 
