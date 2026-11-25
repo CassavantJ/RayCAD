@@ -45,6 +45,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -517,6 +518,9 @@ struct SequenceResult {
     int replayFailures = 0;
     bool skipped = false;
     std::string skipReason;
+    // For evidence (the [.evidence] test): the shapes the references were made on and resolved on, and the scripts.
+    kernel::Shape baselineShape, replayShape;
+    std::string scriptText, editedText, replayText;
 };
 
 struct SequenceOptions {
@@ -724,7 +728,11 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
     const Owners owners1 = buildOwners(replay.builtScript());
     out.log.maxWrongs = std::getenv("RAYCAD_NAMING_ONLY") != nullptr ? 100000 : 20;
     judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
-    if ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
+    out.baselineShape = b.shape();
+    out.replayShape = replay.shape();
+    const bool evidence = std::getenv("RAYCAD_EVIDENCE_DIR") != nullptr;
+    if (evidence ||
+        ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)) {
         auto describe = [](const Script& s) {
             std::string text;
             char buf[400];
@@ -751,6 +759,12 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
             }
             return text;
         };
+        out.scriptText = describe(script);
+        out.editedText = describe(edited);
+        for (const std::string& fail : replay.failed())
+            out.replayText += "  replay failure: " + fail + "\n";
+        for (const std::string& id : replay.builtIds())
+            out.replayText += " " + id;
         out.log.wrongs.insert(out.log.wrongs.begin(),
                               "  script:\n" + describe(script) + "  edited:\n" + describe(edited));
         for (const std::string& fail : replay.failed())
@@ -1533,4 +1547,198 @@ TEST_CASE("debug: abandoned direct edits stop", "[.debug-cancel]")
     std::printf("no edit thread left %.1f s after the sequence ended (%d still running)\n",
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - done).count(),
                 kernel::testing::runningEditThreads());
+}
+
+// ---------------------------------------------------------------- evidence for an independent review
+namespace {
+
+std::string describeElement(const kernel::Shape& s, SubId e)
+{
+    char buf[700];
+    if (e.kind == SubKind::Face) {
+        const auto i = kernel::surfaceInfo(s, e);
+        if (!i)
+            return "face " + std::to_string(e.index) + ": unreadable";
+        std::snprintf(buf, sizeof buf,
+                      "face %u: surface type %d (0 plane, 1 cylinder, 2 cone, 3 sphere, 4 torus, 5 B-spline, 6 other), "
+                      "origin (%.6f %.6f %.6f), axis (%.6f %.6f %.6f), radius %.6f, semi-angle %.6f, face reversed %d; "
+                      "area %.6f mm^2, centroid (%.6f %.6f %.6f), box (%.6f %.6f %.6f)-(%.6f %.6f %.6f)",
+                      e.index, static_cast<int>(i->type), i->origin.x, i->origin.y, i->origin.z, i->axis.x, i->axis.y,
+                      i->axis.z, i->radius, i->semiAngle, i->reversed ? 1 : 0, i->area, i->centroid.x, i->centroid.y,
+                      i->centroid.z, i->bounds.min.x, i->bounds.min.y, i->bounds.min.z, i->bounds.max.x,
+                      i->bounds.max.y, i->bounds.max.z);
+        return buf;
+    }
+    if (e.kind == SubKind::Edge) {
+        const auto i = kernel::curveInfo(s, e);
+        if (!i)
+            return "edge " + std::to_string(e.index) + ": unreadable";
+        std::snprintf(
+            buf, sizeof buf,
+            "edge %u: curve type %d (0 line, 1 circle, 2 ellipse, 3 B-spline, 4 other), start (%.6f %.6f %.6f), "
+            "end (%.6f %.6f %.6f), centre (%.6f %.6f %.6f), axis (%.6f %.6f %.6f), radius %.6f, length %.6f mm, "
+            "closed %d",
+            e.index, static_cast<int>(i->type), i->start.x, i->start.y, i->start.z, i->end.x, i->end.y, i->end.z,
+            i->center.x, i->center.y, i->center.z, i->axis.x, i->axis.y, i->axis.z, i->radius, i->length,
+            i->closed ? 1 : 0);
+        return buf;
+    }
+    const auto p = kernel::vertexPoint(s, e);
+    if (!p)
+        return "vertex " + std::to_string(e.index) + ": unreadable";
+    std::snprintf(buf, sizeof buf, "vertex %u: point (%.6f %.6f %.6f)", e.index, p->x, p->y, p->z);
+    return buf;
+}
+
+std::string boxOfSamples(const ElemSamples& s)
+{
+    char buf[200];
+    std::snprintf(buf, sizeof buf, "sample box (%.6f %.6f %.6f)-(%.6f %.6f %.6f)", s.boxMin.x, s.boxMin.y, s.boxMin.z,
+                  s.boxMax.x, s.boxMax.y, s.boxMax.z);
+    return buf;
+}
+
+void writeFile(const std::filesystem::path& p, const std::string& text)
+{
+    std::FILE* f = std::fopen(p.string().c_str(), "wb");
+    REQUIRE(f != nullptr);
+    std::fwrite(text.data(), 1, text.size(), f);
+    std::fclose(f);
+}
+
+void writeShape(const std::filesystem::path& dir, const std::string& stem, const kernel::Shape& s)
+{
+    const std::vector<std::byte> bytes = kernel::serialize(s);
+    std::FILE* f = std::fopen((dir / (stem + ".rbrep")).string().c_str(), "wb");
+    REQUIRE(f != nullptr);
+    std::fwrite(bytes.data(), 1, bytes.size(), f);
+    std::fclose(f);
+    JobContext ctx;
+    const std::array<kernel::Shape, 1> one{s};
+    CHECK(kernel::exportStep((dir / (stem + ".step")).string(), one, ctx).has_value());
+}
+
+} // namespace
+
+// RAYCAD_LOOK=<part>:<seq>, RAYCAD_LOOK_SORTED, RAYCAD_LOOK_SEED=<hex>, RAYCAD_LOOK_ID=<the reference id's end, such
+// as "#18|face 10">, RAYCAD_EVIDENCE_DIR=<folder>: the evidence for one judged reference, for a reviewer who has not
+// seen the author's reasoning (T-081b round 2): the shapes before and after (kernel serialisation and STEP), the
+// elements, the pick-time evidence, the scripts, and the two claims.
+TEST_CASE("evidence: one judged reference of one sequence, written out", "[.evidence]")
+{
+    int part = 0, seq = 0;
+    if (const char* only = std::getenv("RAYCAD_LOOK"))
+        std::sscanf(only, "%d:%d", &part, &seq);
+    const char* want = std::getenv("RAYCAD_LOOK_ID");
+    const char* out = std::getenv("RAYCAD_EVIDENCE_DIR");
+    REQUIRE(want != nullptr);
+    REQUIRE(out != nullptr);
+    const std::string suffix = want;
+    const Part pt = loadPart(kParts[part]);
+    struct Seen {
+        bool found = false;
+        std::string id, names, verdict, resolver, oracle, description, explanation;
+        SubKind kind = SubKind::Face;
+        std::uint32_t pick = 0;
+        std::vector<std::uint32_t> answer, expected;
+        naming::Territory territory;
+        naming::PickOutline outline;
+        ElemSamples picked;
+        std::vector<std::pair<std::uint32_t, ElemSamples>> nowSamples;
+    } seen;
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners& now, const Samples& samples) {
+        if (id.size() < suffix.size() || id.compare(id.size() - suffix.size(), suffix.size(), suffix) != 0)
+            return;
+        seen.found = true;
+        seen.id = id;
+        seen.names = ref.names;
+        seen.kind = ref.record.base.kind;
+        seen.pick = ref.record.base.index;
+        seen.picked = ref.record.picked();
+        seen.territory = ref.ref.territory;
+        seen.outline = ref.ref.outline;
+        for (const SubId& s : res.elements)
+            seen.answer.push_back(s.index);
+        seen.expected = rr.expected;
+        seen.verdict = verdictName(rr.judgement.verdict);
+        std::string els;
+        for (const std::uint32_t e : seen.answer)
+            els += " " + std::to_string(e);
+        static const char* const states[] = {"Exact", "Split", "Merged", "Repaired", "Broken"};
+        seen.resolver = std::string(states[static_cast<int>(res.state)]) + " {" + els + " }: " + res.reason;
+        std::string ex;
+        for (const std::uint32_t e : rr.expected)
+            ex += " " + std::to_string(e);
+        seen.oracle = "{" + ex + " }" + (rr.merged ? " (larger than described: merged)" : "") +
+                      (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") +
+                      (rr.crossing.empty() ? "" : " (sliding crossing: " + rr.crossing + ")");
+        seen.description = explain(ref.record.truth, *ref.record.owners, *ref.record.baseline,
+                                   static_cast<long>(ref.record.base.index));
+        std::set<std::uint32_t> all(seen.answer.begin(), seen.answer.end());
+        all.insert(rr.expected.begin(), rr.expected.end());
+        for (const std::uint32_t e : all) {
+            seen.explanation += "  element " + std::to_string(e) + " against the description, owners now: " +
+                                explain(ref.record.truth, now, samples, static_cast<long>(e)) + "\n";
+            seen.nowSamples.emplace_back(e, samples.of(seen.kind)[e]);
+        }
+    });
+    SequenceOptions look;
+    look.byIndex = std::getenv("RAYCAD_LOOK_SORTED") == nullptr;
+    if (const char* s = std::getenv("RAYCAD_LOOK_SEED"))
+        look.seedBase = std::strtoull(s, nullptr, 16);
+    const SequenceResult r = runSequence(pt, part, seq, look);
+    setInspector({});
+    REQUIRE(seen.found);
+    const std::filesystem::path dir(out);
+    std::filesystem::create_directories(dir);
+    writeShape(dir, "before", r.baselineShape);
+    writeShape(dir, "after", r.replayShape);
+
+    const char* kindName = seen.kind == SubKind::Face ? "face" : seen.kind == SubKind::Edge ? "edge" : "vertex";
+    std::string elements = std::string("Indices are SubIds (") + kindName +
+                           " order of the kernel's canonical traversal) of the shapes written beside this file.\n\n"
+                           "PICKED (in before.*): " +
+                           describeElement(r.baselineShape, SubId{seen.kind, seen.pick}) + "; " +
+                           boxOfSamples(seen.picked) + "\n\nAFTER (in after.*):\n";
+    for (const auto& [e, s] : seen.nowSamples) {
+        const bool inAnswer = std::find(seen.answer.begin(), seen.answer.end(), e) != seen.answer.end();
+        const bool inExpected = std::find(seen.expected.begin(), seen.expected.end(), e) != seen.expected.end();
+        elements += std::string("  [") + (inAnswer ? "resolver" : "") + (inAnswer && inExpected ? ", " : "") +
+                    (inExpected ? "oracle" : "") + "] " + describeElement(r.replayShape, SubId{seen.kind, e}) + "; " +
+                    boxOfSamples(s) + "\n";
+    }
+    elements += "\nPICK-TIME EVIDENCE recorded in the reference (quanta of 1e-4 mm):\n  territory box (";
+    for (std::size_t i = 0; i < 3; ++i)
+        elements += std::to_string(seen.territory.qMin[i]) + (i < 2 ? " " : ")-(");
+    for (std::size_t i = 0; i < 3; ++i)
+        elements += std::to_string(seen.territory.qMax[i]) + (i < 2 ? " " : "), measure ");
+    elements += std::to_string(seen.territory.qMeasure) + ", points:";
+    for (const auto& p : seen.territory.points)
+        elements += " (" + std::to_string(p[0]) + " " + std::to_string(p[1]) + " " + std::to_string(p[2]) + ")";
+    elements += "\n  outline: " + std::to_string(seen.outline.chords.size()) + " chords (x0 y0 z0 x1 y1 z1 slack)\n";
+    for (const auto& ch : seen.outline.chords) {
+        elements += "   ";
+        for (const std::int64_t v : ch)
+            elements += " " + std::to_string(v);
+        elements += "\n";
+    }
+    writeFile(dir / "elements.txt", elements);
+    writeFile(dir / "operation.txt", "The script the references were made on (before):\n" + r.scriptText +
+                                         "\nThe edit: " + r.edit + "\n\nThe edited script (after):\n" + r.editedText +
+                                         "\nReplay: built" + r.replayText + "\n");
+    writeFile(dir / "claims.md",
+              "# " + seen.id + "\n\nReference names: " + seen.names +
+                  "\n\n"
+                  "**The resolver says** " +
+                  seen.resolver +
+                  "\n\n"
+                  "**The oracle expects** " +
+                  seen.oracle + ", and so judges the resolver's answer: " + seen.verdict +
+                  ".\n\nThe oracle's description of the picked element (its owners at pick time, and how the picked "
+                  "element fits it): " +
+                  seen.description +
+                  "\n\nEach element of either answer against that description, "
+                  "with the owners as the edited script builds them:\n" +
+                  seen.explanation);
 }
