@@ -7,7 +7,8 @@
 // Amended by T-084 (replace imported geometry): a second rematchImported that also takes the shape the old map was
 // made for, so that "unchanged" is decided by geometry, and the rules of both written down. Additive.
 // Amended by T-081b (naming through direct edits): TopoRef::outline, an optional planar face's pick-time outline, and
-// its JSON member; additive (a reference without it resolves as before).
+// its JSON member; additive (a reference without it resolves as before). No format version was bumped (pre-release,
+// as for T-081a's evidence): an older build, which refuses unknown members, cannot read a reference that has one.
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
