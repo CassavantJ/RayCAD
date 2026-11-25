@@ -4,6 +4,7 @@
 // std::map and sorted vectors only.
 #include "../area_depths.h"
 #include "../op_params.h"
+#include "../plunge_entry.h"
 #include "../pocket2d.h" // parsePointList: the pre-drilled points' grammar, shared with the form
 #include "op.h"
 
@@ -1018,6 +1019,11 @@ private:
         } else {
             entry.order = {EntryKind::Helix, EntryKind::Ramp, EntryKind::PreDrill};
         }
+        // After M3 (plunge_entry.h, op.h AT EACH DEPTH): a tool that cuts at its centre plunges into a region nothing
+        // else enters, never with the entry restricted to pre-drilled holes.
+        if (mayPlunge(tool()) && p_.entry != "preDrill") {
+            entry.order.push_back(EntryKind::Plunge);
+        }
         for (const link::PreDrill& h : usable_) {
             entry.preDrills.push_back(ad::PreDrillHole{h.at, h.diameter});
         }
@@ -1210,6 +1216,8 @@ private:
                 pass.helixCentre = r.entry.centre;
             } else if (r.entry.kind == ad::EntryMode::PreDrill) {
                 pass.entryOrder = {EntryKind::PreDrill};
+            } else if (r.entry.kind == ad::EntryMode::Plunge) {
+                pass.entryOrder = {EntryKind::Plunge}; // after M3: where planAdaptive planned it, nowhere else
             }
         }
         return {};
@@ -1223,7 +1231,9 @@ private:
         o.retract = stockTop_ + toNm(h.retract);
         o.feedPlane = stockTop_ + toNm(h.feedPlane);
         o.toolRadius = r_;
-        o.centreCutting = false;
+        // After M3: linking plunges only the passes planAdaptive entered by a plunge (their own entryOrder); the
+        // order below has no plunge.
+        o.centreCutting = mayPlunge(tool());
         o.feeds = feeds_;
         o.feeds.leadIn = o.feeds.leadOut = o.feeds.link = 0;
         o.maxStayDown = 4 * r_;

@@ -8,6 +8,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,8 +34,9 @@ lib::Tool camEndMill(double diameter)
 {
     lib::Tool t = endMill(diameter, 25, 65);
     t.shoulderLength = 25;
-    // Stated not to cut at its centre (the operations plan as if it did not: pocket2d, slot, adaptive2d, ... link with
-    // centreCutting false), so a straight plunge into material by any of them would still be an event here.
+    // Stated not to cut at its centre (none of the goldens above plunges into material: pocket2d, slot and adaptive2d
+    // plunge only as a last resort, after M3, the *_plunge goldens below), so a straight plunge into material by any of
+    // them would still be an event here.
     t.centreCutting = false;
     return t;
 }
@@ -98,6 +100,53 @@ TEST_CASE("generated toolpaths raise no events", "[sim][verify]")
                         << " deferred\n"
                         << describe(ev));
             CHECK(ev.empty());
+        }
+    }
+}
+
+TEST_CASE("the last-resort plunges of pocket2d, slot and adaptive2d: no event with a tool that cuts at its centre, an "
+          "event with one that does not",
+          "[sim][verify]")
+{
+    // After M3 (src/cam/ops/plunge_entry.h): the goldens of the three operations' straight plunges where no helix or
+    // ramp fits, generated with an end mill whose entry says nothing (its type's default: it cuts at its centre).
+    struct PlungeCase {
+        const char* name;
+        Box3 stock;
+        double toolDiameter;
+        std::size_t plunges;
+    };
+    const PlungeCase cases[] = {
+        {"pocket2d_plunge", box(0, 0, 0, 60, 40, 15), 6, 2},
+        {"slot_plunge", box(0, 0, 0, 40, 30, 12), 8, 3},
+        {"adaptive2d_plunge", box(0, 0, 0, 40, 30, 15), 6, 2},
+    };
+    for (const PlungeCase& c : cases) {
+        const auto path = golden(c.name);
+        std::size_t plunges = 0;
+        for (const cam::Move& m : path->moves) {
+            plunges += m.role == cam::MoveRole::Plunge ? 1 : 0;
+        }
+        CHECK(plunges == c.plunges);
+        for (const std::optional<bool> centre :
+             {std::optional<bool>{}, std::optional<bool>{true}, std::optional<bool>{false}}) {
+            lib::Tool tool = camEndMill(c.toolDiameter);
+            tool.centreCutting = centre;
+            Program p;
+            p.stock = boxSoup(c.stock);
+            p.machine = camMachine();
+            p.op(path, tool);
+            const std::vector<SimEvent> ev = verify(p);
+            INFO(c.name << ", centre cutting " << (centre ? (*centre ? "stated" : "stated not") : "by default") << "\n"
+                        << describe(ev));
+            if (tool.cutsAtCentre()) {
+                CHECK(ev.empty());
+            } else {
+                REQUIRE_FALSE(ev.empty());
+                for (const SimEvent& e : ev) {
+                    CHECK(e.kind == EventKind::PlungeWithNonCentreCutting);
+                }
+            }
         }
     }
 }

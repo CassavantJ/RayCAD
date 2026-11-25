@@ -38,8 +38,10 @@
 //   helices        helixDiameter and helixMinDiameter (percent of D, rounded half to even to the nanometre);
 //   entry order    entry "helix": helix, ramp, pre-drilled hole; "ramp": ramp, helix, pre-drilled hole; "preDrill":
 //                  pre-drilled holes only (planAdaptive's order and fall-back; a region with area already cleared,
-//                  an open pocket's outside, is entered from it whatever the order). Never a plunge: flat and bull
-//                  nose end mills are taken as not cutting at their centre.
+//                  an open pocket's outside, is entered from it whatever the order). After M3 (plunge_entry.h):
+//                  "helix" and "ramp" end with a plunge when the tool cuts at its centre (Tool::cutsAtCentre()), so a
+//                  region nothing else enters is entered by a straight plunge and cut at full width along its walls
+//                  (entry.h PLUNGE), with a warning; a tool that does not cut at its centre is refused there as before.
 // The minimum cutting radius of PLAN.md's example is not a setting: the engine has no control of the radius its passes
 // turn at (engine_adaptive.cpp), and the operation does not pretend to one.
 //
@@ -74,7 +76,9 @@
 //                 pass of its own, entered by linking's Ramp along it: a zigzag down to depth, then the line at depth
 //                 at the reduced feed), PreDrill (linking's PreDrill at the hole centre; the move from the centre to
 //                 the hole's side is a Link at depth), FromCleared (linking's descent through free area; Stock::cleared
-//                 and the stock outline make an open pocket's outside free).
+//                 and the stock outline make an open pocket's outside free), Plunge (after M3: entryOrder {Plunge},
+//                 linking's straight plunge at the plunge feed; Options::centreCutting is Tool::cutsAtCentre() and
+//                 Options::entryOrder has no plunge, so linking plunges nowhere else).
 // Cut areas (link.h Pass::cutArea; linking's own sweep of a pass of a few metres of fitted arcs takes seconds to
 // minutes: measured 4 to 106 s on S5's islands pocket, against 1 ms for this): the last pass of each depth gives the
 // engine's cleared area of that depth shrunk by kAdaptiveCutAreaMarginNm (the fitted arcs may lie that much inside the
@@ -93,7 +97,7 @@
 // the 99th percentile by length, and the air-cut length (segments estimated under kAdaptiveAirDeg).
 // WARNINGS (Toolpath::warnings), in this order: pre-drilled points in no area; then each kind of engine and entry
 // warning in words for the machinist, with where (X Y) and the depths it happened at (one line for the same warning
-// at several depths).
+// at several depths); linking's; after M3, the straight plunges (plunge_entry.h) and the full-width cut after them.
 // CHECKS (refusals name the cause): the tool (a flat or bull nose end mill with a diameter, flutes at least the
 // stepdown, a shank and holder that clear the stock as in pocket2d.h CHECKS), the spindle (clockwise, within the
 // machine), feeds, heights out of order, a top not above the floor, a selection that is not an up-facing floor, the

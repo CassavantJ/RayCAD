@@ -114,10 +114,13 @@ enum class EntryMode : std::uint8_t {
     FromCleared, // from cleared area: the first path (a lead-in) starts at `start`; centre = start, radius 0
     None,        // not entered (allowUnentered only): the region has no paths
     // Added by T-063 (entry.h; the engine reports them for Input::seeds):
-    Ramp,    // a ramp along the straight line from `centre` to `start` (the region's first path, Role::Ramp), then the
-             // first pass starts at `start`; radius 0
-    PreDrill // into a pre-drilled hole of `radius` about `centre`; the first path starts at `start` (the centre, or a
-             // point in the hole that a tool-down link from the centre reaches)
+    Ramp,     // a ramp along the straight line from `centre` to `start` (the region's first path, Role::Ramp), then the
+              // first pass starts at `start`; radius 0
+    PreDrill, // into a pre-drilled hole of `radius` about `centre`; the first path starts at `start` (the centre, or a
+              // point in the hole that a tool-down link from the centre reaches)
+    // Added after M3 (entry.h, a tool that cuts at its centre, the last resort): a straight plunge at `centre`, where
+    // the first path starts (`start`); radius 0
+    Plunge
 };
 
 struct Input {

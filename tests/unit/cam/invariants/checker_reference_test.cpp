@@ -56,12 +56,16 @@ TEST_CASE("invariants: reference zig-zag facing passes, and its mistakes are cau
     r.z = 0;
     r.stepover = 12.5;
     onlyThis(run(zigzagFace(r), g, tool, c, &h, &m), "coverage");
-    // Overhang taken the wrong way: the plunges that belong outside the stock land on it, a flat end mill's dead
-    // centre on stock.
+    // Overhang taken the wrong way: the plunges that belong outside the stock land on it, the dead centre of a flat end
+    // mill whose entry says it does not cut at its centre on stock (one that says nothing cuts at its centre by its
+    // type's default, after M3).
     r.stepover = 8;
     r.overhang = -7;
-    const auto f = run(zigzagFace(r), g, tool, c, &h, &m);
+    lib::Tool notCentreCutting = tool;
+    notCentreCutting.centreCutting = false;
+    const auto f = run(zigzagFace(r), g, notCentreCutting, c, &h, &m);
     CHECK(has(f, "plunge"));
+    CHECK_FALSE(has(run(zigzagFace(r), g, tool, c, &h, &m), "plunge"));
 }
 
 TEST_CASE("invariants: reference contour passes, and its mistakes are caught", "[cam][invariants][reference]")

@@ -107,7 +107,7 @@ struct Claims {
     AbsHeights heights;                // heights; clearance also bounds the start and end
     Direction direction = Direction::Any;
     double directionBand = 0.5; // a cut is along a wall when the part is within cutting radius + stock to leave + this
-    std::optional<bool> centreCutting; // default: the tool's stated Tool::centreCutting, else centreCuttingByDefault
+    std::optional<bool> centreCutting; // default: Tool::cutsAtCentre() (stated, else the type's default; after M3)
     double deadZoneFraction = 0.25;    // a non-centre-cutting tool cannot cut within this fraction of its radius
     std::optional<double> maxRampAngleDeg, helixMinDiameter, maxEngagementDeg;
     InitialStock initialStock = InitialStock::Box;
@@ -122,7 +122,6 @@ struct Claims {
 
 // The claims every operation shares: spindle and stick-out from the operation, the stock top as the rapid floor.
 Claims claimsFor(const Operation& op, const ResolvedGeometry& geom);
-bool centreCuttingByDefault(lib::ToolType);
 
 struct CheckOptions {
     double partCell = 0.25;   // the part grid, mm

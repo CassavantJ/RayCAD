@@ -42,10 +42,13 @@
 // with stayDownEntry (link.h, added by this task), so from the end of one depth the tool stays in the slot, feeds up
 // to the ramp's top (kRampClearance above that depth) and ramps down into the next (the next pass runs back); links
 // between slots retract to the retract plane. Feeds: ramp feedRamp, descents feedPlunge, links and the feed up 0 =
-// the cut feed.
+// the cut feed. After M3 (plunge_entry.h): entry {Ramp, Plunge} with centreCutting = Tool::cutsAtCentre(), so where no
+// ramp fits (a slot shorter than minRampRun) a tool that cuts at its centre plunges straight down at the pass start (a
+// closed end's centre, or past an open end), each depth from the one above, at feedPlunge, with a warning; one that
+// does not is refused as before, the refusal saying it cannot plunge either.
 //
 // VALIDATE runs the same plan as generate (planSlot) and returns its first error; the plan's warnings go into
-// Toolpath::warnings when generate runs.
+// Toolpath::warnings when generate runs, then linking's, then the plunge warning.
 #pragma once
 
 #include "../geom2d.h"

@@ -61,7 +61,9 @@
 // tangent arc lead-in and lead-out of radius max(r / 2, wallAllowance + 10 um) on the region side (made smaller by
 // linking down to wallAllowance + 2 um if it does not fit the room), so it starts in cleared area.
 // ENTRY (link.h): entry "helix": helix, ramp, pre-drilled point; "ramp": ramp, helix, pre-drilled point; "preDrill":
-// pre-drilled points only. Never a plunge: flat and bull nose end mills are taken as not cutting at their centre. The
+// pre-drilled points only. After M3 (plunge_entry.h), "helix" and "ramp" end with a straight plunge at the pass start
+// (in the room, so the whole tool is inside the region) when the tool cuts at its centre (Tool::cutsAtCentre()): only
+// where none of the others fits, with a warning; a tool that does not cut at its centre is refused there as before. The
 // helix diameter is toNm(D * helixDiameter / 100), tried smaller (link.h) down to round(D * kHelixMinFraction); ramps
 // and helices descend at rampAngle, starting kEntryClearanceNm above the material. Pre-drilled points (WCS mm, the
 // holes at least preDrillDiameter wide and drilled at least to the floor of the pocket they are in): the innermost
@@ -79,8 +81,8 @@
 //
 // VALIDATE runs the checks up to the regions and rooms of every depth (planPocket2d with PlanStage::Regions); check
 // and generate run the whole plan and the linking (pocket2dToolpath), so a refusal from linking reaches the operation
-// panel through check. Warnings (narrow regions, pre-drilled points in no pocket, leads made smaller) go into
-// Toolpath::warnings in that order.
+// panel through check. Warnings (narrow regions, pre-drilled points in no pocket, leads made smaller, straight plunges)
+// go into Toolpath::warnings in that order.
 // DETERMINISM: integer nanometres from the start (geom2d), dmath for the one angle (the nearest point on an arc),
 // stepover and helix diameter rounded half to even once (geom2d::roundNm), caches keyed by integer values in std::map.
 #pragma once
