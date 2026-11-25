@@ -39,12 +39,16 @@
 //   of tiles under the ball's width (a curved surface: no equal tiles to share), each tile over ten or more lines, so
 //   every keyframe pins most of a band and one pass over 220 x 120 mm pins gigabytes. Within High's 2 GB such a
 //   program is thinned and its seeks slow down: the finishing program (a 260 x 160 pocket roughed in twelve 0.5 mm
-//   levels, then three rasters over 220 x 120 mm; 183k moves) thinned twice, worst 312 to 316 ms (before: four times,
-//   0.75 s); the long program thinned three times, worst 0.6 s (before: seven, 4.3 to 5.6 s). Both meet Low's and
-//   Medium's budgets. With no budget (hidden test "... High without a keyframe budget") the finishing program would
-//   pin 4.1 GB and seek within 83 ms; the long program 7.6 GB and still up to 240 ms: its last raster (a 6 mm ball
-//   along X, about 11 mm below the stock top) takes 3 to 6 ns per ray on 8 workers (S6's scallops 1.3 to 1.9), so there
-//   even a keyframe at every spacing is too far apart for 100 ms.
+//   levels, then three rasters over 220 x 120 mm; 183k moves) thinned twice, worst 247 to 298 ms (before the cut's
+//   tasks were parts of strips and the kernels skipped more, tridexel.h: 309 to 360 ms; before tiles: four times,
+//   0.75 s); the long program thinned three times, worst 0.40 to 0.52 s (before: 0.61 to 1.0 s; before tiles: seven,
+//   4.3 to 5.6 s). Both meet Low's and Medium's budgets. Their worst intervals are 190 M rays (finishing) and 380 M
+//   (long) of work at the thinned spacing, at 1.0 to 1.3 ns per ray on 8 workers: thinning, not the cut's speed, puts
+//   them over 100 ms. The run at High on 8 workers: finishing 5.3 to 6.6 s per 100k moves, long 8.1 to 9.1, S6 3.3 to
+//   4.8 (before: 11.7 to 12.1, 12.6, 7.0 to 8.0); with one task per strip a raster's batch kept its work in a few
+//   strips (the hidden test "Simulator stress: profile of the removal" breaks a run down per operation and grid).
+//   Measured before that change, with no budget (hidden test "... High without a keyframe budget") the finishing
+//   program would pin 4.1 GB and seek within 83 ms; the long program 7.6 GB and still up to 240 ms.
 //
 // SEEK. A position (op, move, t01) is: every sub-motion of the moves before it, and of its move the path up to the
 // fraction t01 of its length (zero-length sub-motions at its start included). seek() continues from the current
@@ -189,6 +193,9 @@ struct SimRunInfo {
     std::uint64_t gougeMotionsTested = 0, gougeMotionsFlagged = 0;
     double gougeTolMm = 0; // the tolerance used (raised to kGougeMinTolMm)
     double cellMm = 0;     // SimOptions::resolution
+    // Wall time of the removal's parts (steady clock; diagnostics, nothing else reads them): the batches' cutBatch
+    // calls, and the keyframes (internTiles, the snapshot, the ledger and thinning), of which internTiles.
+    double cutSeconds = 0, keyframeSeconds = 0, internSeconds = 0;
 };
 SimRunInfo simRunInfo(const ISimulator& sim);
 

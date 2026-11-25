@@ -266,12 +266,18 @@ void Simulator::cutRange(std::uint64_t from, std::uint64_t to, std::vector<doubl
 
 void Simulator::takeKeyframe(std::uint64_t motion)
 {
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto since = [](std::chrono::steady_clock::time_point a) {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
+    };
     if (cpu_ && tuning_.internTiles) {
         // The tiles cut since the last keyframe, made one with any equal tile met before (tridexel.h, KEYFRAMES).
         internTiles(*stock_, keyframes_.empty() ? nullptr : keyframes_.back().snap.get());
+        info_.internSeconds += since(t0);
     }
     keyframes_.push_back({motion, stock_->snapshot()});
     if (!cpu_) {
+        info_.keyframeSeconds += since(t0);
         return;
     }
     ledger_.add(*keyframes_.back().snap);
@@ -293,6 +299,7 @@ void Simulator::takeKeyframe(std::uint64_t motion)
         spacingMotions_ *= 2;
         ++info_.thinnings;
     }
+    info_.keyframeSeconds += since(t0);
 }
 
 Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& ctx)
@@ -490,6 +497,7 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
             const auto t0 = std::chrono::steady_clock::now();
             stock_->cutBatch(shape, moves, std::span<double>(removed.data() + i, static_cast<std::size_t>(j - i)));
             batchSeconds.emplace_back(j, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+            info_.cutSeconds += batchSeconds.back().second;
         }
         ++info_.batches;
         sinceKey += rays;

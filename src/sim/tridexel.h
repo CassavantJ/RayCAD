@@ -7,14 +7,24 @@
 // as sorted, disjoint intervals of float depths measured from bounds.min along the ray; two intervals inline in a
 // 20-byte dexel, more in its tile's overflow pool. Parts left shorter than kSliverMm are dropped.
 //
-// STRIPS, TILES AND THREADS. Each grid is split into strips of whole rows: kStripMm of y for the Z grid, kLayerStripMm
-// of z (layers) for the X and Y grids, so that each layer's slice of a move is worked out once. A strip is stored as
-// tiles of kTileCols columns (its rows by kTileCols rays; the unit of copy-on-write, below); every tile place belongs
-// to exactly one strip (the tile there may be shared with other places: SNAPSHOTS). A batch first lists, per strip, the
-// moves whose swept tool reaches it, in program order; then the strips run in parallel (IJobSystem::parallelChunks, one
-// chunk per strip), each applying its moves in order to the dexels of its own tiles only. A dexel's contents therefore
-// depend only on the moves in order: not on the thread count, the batch size, the strip or tile width or how moves are
-// split across calls. Per-move results are merged in integers.
+// STRIPS, PARTS, TILES AND THREADS. Each grid is split into strips of whole rows: kStripMm of y for the Z grid,
+// kLayerStripMm of z (layers) for the X and Y grids, so that each layer's slice of a move is worked out once. A strip
+// is stored as tiles of kTileCols columns (its rows by kTileCols rays; the unit of copy-on-write, below); every tile
+// place belongs to exactly one strip (the tile there may be shared with other places: SNAPSHOTS). A batch first lists,
+// per strip, the moves whose swept tool reaches it, in program order, each with the columns it can reach (padded by a
+// cell); then its TASKS run in parallel (IJobSystem::parallelChunks, one chunk per task). A task is a PART of a strip,
+// kPartTiles of its tiles (the parts its moves reach), and applies the strip's moves that can reach the part's columns,
+// in order, to the dexels of the part's tiles only. Rays do not interact: what a move does to a ray depends only on
+// the move, the ray's place and the ray's own material (each kernel finds a ray's interval from the move and the ray's
+// centre, the rows' and layers' work from the move and the row; a Z tile's top table covers runs inside the tile), and
+// a part is whole tiles, so each tile sees exactly the rays, moves and order it sees with the strip as one task. A
+// dexel's contents therefore depend only on the moves in order: not on the thread count, the batch size, the strip,
+// part or tile width or how moves are split across calls. Per-move results (removed volume, non-cutting hits, dirty
+// display tiles) are integer sums and ors over the tasks, so their order does not matter either. Why parts: a raster
+// along X keeps a batch's moves within a few strips (a 6 mm ball's 512 moves of 1 mm, 0.3 mm apart, reach 7 or 8 of
+// the Z grid's 1 mm strips), so with one task per strip a few tasks held most of a batch and workers idled (measured
+// in the hidden test "Simulator stress: profile of the removal": the largest Z task alone took about half of such a
+// batch's time on 8 workers); a part spreads each strip's work along its length.
 //
 // THE CUT. compileShape (toolshape.h) turns the cutting profile into convex pieces; every ray meets a piece swept along
 // a straight move in one interval, computed in closed form, which is subtracted from the dexel. Arcs are split into
@@ -23,8 +33,15 @@
 // kTopRun rays in a row, the highest material top: a cut that cannot reach below it skips the run (exactly: the same
 // bits as without; most of a pocket's re-sweeps of its own floor). A ray from which a move's interval would take
 // nothing is recognised inline and left alone (cutsInterval; the same bits, and on S6 about a sixth less time in the
-// pocket's re-sweeps, where most lateral rays are such). No call polls a cancel token (the contract passes
-// none): a caller cancels between batches, whose length it chooses.
+// pocket's re-sweeps, where most lateral rays are such). Three more skips of the same kind, each leaving alone only
+// rays the cut would leave as they are (so the same bits; the margins are far above the rounding they cover): on the
+// Z rays of a move that is not level, a ray whose material top is below the envelope at its distance from the
+// segment itself (not only from its line: most of a short move's reach is past its ends, where the move before cut),
+// and a whole run of kTopRun rays whose top is below the least such bound along the run; on the X and Y rays, a run
+// whose material lies, along the rays, wholly outside the move's reach (Tile::occ: per run, the bins of depth that
+// hold material; the bins are the same in both grids, so a tile of equal dexels may stand in for another). A ball
+// raster's lateral rays at the heights of the shank, which meet only the pocket's walls far along them, are such.
+// No call polls a cancel token (the contract passes none): a caller cancels between batches, whose length it chooses.
 //
 // FLOATING POINT. The module is built with /fp:strict on MSVC (ray_deterministic). tridexel_cut.cpp and toolshape.cpp
 // switch off only FENV_ACCESS and exception semantics (precise mode: no reassociation, no contraction): the same bits
@@ -43,9 +60,10 @@
 // keyframe cost diagnosis"), keyframes 24 M rays of work apart at 0.05 mm: whole strips copied on first touch pinned
 // 16.3 GB over the run, 17 times the 0.97 GB of dexels that actually changed; tiles of 64 columns copied on change pin
 // 1.52 GB (Z 0.78, X 0.31, Y 0.44).
-//   Why results cannot depend on the threads: during a batch a task reads only the tiles at its own strip's places
-// and replaces only their references (the TileRefs in the grid's tile array; a copy, when shared). A tile may sit at
-// places of several strips (internTiles, KEYFRAMES below), so several tasks may read it at once; a task writes to a
+//   Why results cannot depend on the threads: during a batch a task reads only the tiles at its own places (its part
+// of its strip: every tile place belongs to one part of one strip, so to one task) and replaces only their references
+// (the TileRefs in the grid's tile array; a copy, when shared). A tile may sit at places of several strips or parts
+// (internTiles, KEYFRAMES below), so several tasks may read it at once; a task writes to a
 // tile only once it holds the last reference to it, and every other task holding it dropped its reference only in
 // TileRef::mut, after copying it, and reads only its copy from then on. Whether a tile is shared is read once when the
 // task starts (StripTiles): no one can share it anew during a batch (snapshot, clone and internTiles are not called
@@ -80,6 +98,7 @@ namespace ray::sim::detail {
 inline constexpr double kStripMm = 1.0;           // Z grid strips: rows of about this many mm of y
 inline constexpr double kLayerStripMm = 0.5;      // X and Y grid strips: layers of about this many mm of z
 inline constexpr int kTileCols = 64;              // copy-on-write tiles: a strip's rows by this many columns
+inline constexpr int kPartTiles = 4;              // a batch's tasks: parts of a strip of this many tiles
 inline constexpr double kArcTolCells = 0.1;       // chord sagitta of an arc, in cells (of the smallest cell side)
 inline constexpr double kSliverMm = 1e-4;         // a part of an interval shorter than this is dropped by a cut
 inline constexpr double kContactMm = 1e-3;        // overlap with the non-cutting part that counts as contact
@@ -124,6 +143,42 @@ std::uint64_t triDexelMeshTriangles(const IStockModel&, int step);
 // benchmarks (simulator_bench_test.cpp): on one worker a write was measured to cost no more than reading a ray, so the
 // simulator's work measure leaves writes out (simulator.h).
 std::uint64_t triDexelWrites(const IStockModel&);
+// Diagnostics of cutBatch's parallel work (the hidden profile test of simulator_bench_test.cpp). While a probe is set
+// on a model, every batch reports what it ran, timed on the probe's clock (the model reads no clock of its own); no
+// result depends on it. Per task: its grid and strip, the moves it applied, the rays it reached (per row of a move,
+// the rays between the ends of the sweep's cross-section there, before any is skipped), the writes, the tiles it copied
+// on write, and when it started and ended. Per batch: the moves and segments, and the times it began, began and ended
+// its parallel part, and ended.
+struct CutTaskRecord {
+    int grid = 0, strip = 0;
+    int tile0 = 0, tile1 = 0; // the strip's tiles it held
+    std::uint32_t entries = 0;
+    std::uint64_t reached = 0, writes = 0, copies = 0;
+    std::uint64_t start = 0, end = 0;
+};
+struct CutBatchRecord {
+    std::uint32_t moves = 0, segs = 0;
+    std::uint64_t begin = 0, parallelBegin = 0, parallelEnd = 0, end = 0;
+    std::vector<CutTaskRecord> tasks;
+};
+// Per internTiles call: when it began, finished each step (dropping the table's own tiles, listing the tiles changed,
+// hashing them, looking them up, comparing, replacing) and the table's buckets before, the tiles listed and replaced.
+struct InternRecord {
+    std::uint64_t begin = 0, purgedScan = 0, purged = 0, listed = 0, hashed = 0, looked = 0, compared = 0, end = 0;
+    std::uint64_t buckets = 0, freed = 0, items = 0, replaced = 0;
+};
+class CutProbe {
+public:
+    virtual ~CutProbe() = default;
+    virtual std::uint64_t now() = 0; // called from any thread
+    virtual void batch(CutBatchRecord&& record) = 0;
+    virtual void intern(const InternRecord&) {}
+};
+// Sets (null: clears) the probe of a CPU tri-dexel model. Not while a batch runs.
+void setCutProbe(IStockModel& m, CutProbe* probe);
+// Tests and benchmarks: the tiles per part of a strip (STRIPS above) of a CPU tri-dexel model, 0 for kPartTiles; a
+// number at least a strip's tiles makes every strip one task. No result depends on it. Not while a batch runs.
+void setTriDexelPartTiles(IStockModel& m, int tiles);
 
 // KEYFRAMES: two hooks for a caller that keeps snapshots of the model as it is cut (the simulator, simulator.h).
 //   internTiles makes tiles of equal contents one. Every tile of the model that `prev` (the caller's last keyframe;
@@ -134,8 +189,10 @@ std::uint64_t triDexelWrites(const IStockModel&);
 // thousands of equal tiles (every ray holding the same intervals), which then cost one tile in every keyframe that
 // holds them. Called between batches only, like snapshot(); reset() empties the table, which holds its tiles until no
 // one else does (then it lets them go, at the next call). Returns the tiles replaced. A tile the model drops that no
-// one else holds (here and in restore) is kept, up to kTileBinBytes (tridexel_impl.h, TileBin; counted in
-// TriDexelInfo::bytes), to receive the next copies on write instead of being freed and allocated again.
+// one else holds (here, in restore, and those the table lets go) is kept, up to kTileBinBytes (tridexel_impl.h,
+// TileBin; counted in TriDexelInfo::bytes), to receive the next copies on write instead of being freed and allocated
+// again. The table's buckets are looked through in parallel for the tiles it alone holds (InternTable), which before
+// was a walk over a hash map's nodes that took a tenth of the finishing program's run at High (simulator.h).
 //   Why results cannot change: the tile taken holds the same intervals as the one it replaces (a dexel's room in the
 // pool may differ, which no cut's result depends on: subtractInterval grows a dexel only to make room, and fails only
 // at kMaxDexelIntervals intervals whatever its history), and its top table is the same. It is shared, so the first cut
