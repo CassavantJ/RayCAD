@@ -50,20 +50,21 @@ jobs:
             triplet: arm64-osx-dynamic
             qt_arch: clang_64
           # The test preset of each configuration on Linux and macOS (tests/tiers.cmake): Debug runs the quick tier
-          # less the debug-heavy tests, Release every test.
+          # less the debug-heavy tests, Release every test; both leave out the label bench (wall-clock budgets set for
+          # a developer's machine, which the shared runners do not meet reliably; local runs keep them).
           - config: debug
             tests: debug-ci
           - config: release
-            tests: release
+            tests: release-ci
           # Windows also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself
           # rather than through a test preset (an -LE given with --preset was not combined with the preset's own
-          # exclusion): what windows-msvc-debug-ci and windows-msvc-release select, less the label desktop.
+          # exclusion): the same selection as on Linux and macOS, less the label desktop.
           - preset: windows-msvc
             config: debug
-            windows_tests: '-C Debug -L "^quick$" -LE "^(debug-heavy|desktop)$"'
+            windows_tests: '-C Debug -L "^quick$" -LE "^(debug-heavy|bench|desktop)$"'
           - preset: windows-msvc
             config: release
-            windows_tests: '-C Release -LE "^desktop$"'
+            windows_tests: '-C Release -LE "^(bench|desktop)$"'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -173,12 +174,13 @@ jobs:
       # S4 suites, which use more processors than the runner has and so run one at a time. Every Release job runs
       # them. ctest runs one job per processor of the runner; tests with threads of their own take several
       # (PROCESSORS) and timed tests run alone.
-      # Windows leaves out the tests that show a window (label desktop). The runner's one screen is smaller than
-      # their windows (1440 x 900, and up to twice that at the 150 % and 200 % runs): a window cannot be sized as the
-      # test asks (glass: "width 1200" never reached) and clicks land off it, so nearly all of them failed there
-      # (runs 45129357124, 45454955286). Qt's offscreen platform is no way out on Windows: there the window tests
-      # skip their pixel checks like on Linux, and the gallery and two CAM suites then fail on font metrics. They run
-      # on a developer's desktop (tools\verify.cmd, RAY_TEST_SCREEN), and Linux and macOS run them offscreen here.
+      # Windows leaves out the tests that show a window (label desktop): the runner's one screen is smaller than their
+      # windows (1440 x 900, up to twice that at 150 % and 200 %), so windows could not be sized as asked and clicks
+      # missed; nearly all failed (runs 45129357124, 45454955286). Qt's offscreen platform is no way out on Windows (the
+      # gallery and two CAM suites fail on font metrics there). They run locally on every merge (tools\verify.cmd with
+      # RAY_TEST_SCREEN). Linux and macOS still run them here, on the offscreen platform with the software scene graph:
+      # the gallery, start, palette, settings, measure, sketch, CAM tools and setup sheet suites run; those that need a
+      # QRhi (viewport, glass, section, model and most CAM suites) skip, as they say in their output.
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         shell: cmd

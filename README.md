@@ -198,8 +198,10 @@ CI runs the quick tier in Debug and every test in Release and under AddressSanit
 the randomised naming blocks are disabled (they would take hours there); ctest lists them as "Not Run
 (Disabled)". Debug CI also leaves out the tests labelled `debug-heavy` (the four S4 suites, the Release-scale
 benchmarks and others that take 20 minutes or more each in an MSVC Debug build; `tests/tiers.cmake` lists them):
-`ctest --preset <preset>-debug-ci`; Release CI runs them. Windows CI does not run the tests that show a window (label `desktop`): the runner's screen
-is smaller than their windows. Debug and Release run as separate CI jobs. Tests timed against the wall clock (cancel latencies, UI-thread stalls, start-up and drag
+`ctest --preset <preset>-debug-ci`; Release CI runs them. No CI job runs the tests labelled `bench`, whose pass or
+fail is a wall-clock budget (the `[wallclock]` splits and the benchmarks; the shared runners are slower than the
+budgets assume); local runs (`tools\verify.cmd quick` and `full`) do. Windows CI does not run the tests that show a
+window (label `desktop`): the runner's screen is smaller than their windows. Debug and Release run as separate CI jobs. Tests timed against the wall clock (cancel latencies, UI-thread stalls, start-up and drag
 benchmarks) run alone. Tests that show a window take turns (the `desktop` resource lock: windows on one
 desktop share the keyboard focus, the pointer and the screen), and a test that sets the system clipboard
 holds the `clipboard` lock. The tests that show a window are also labelled `desktop`: `ctest --preset <config>-quick

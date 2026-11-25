@@ -1,6 +1,6 @@
 # AddressSanitizer and UndefinedBehaviorSanitizer on Linux (Clang), preset linux-clang-asan.
 # The vcpkg libraries and Qt are not instrumented; RayCAD's own code and the tests are. Every test runs (both tiers,
-# in parallel) except the few labelled sanitizer-heavy (tests/tiers.cmake), which Release runs. The preset builds without precompiled headers (RAY_PCH=OFF), so this job is also the one that proves
+# in parallel) except those labelled sanitizer-heavy or bench (tests/tiers.cmake). The preset builds without precompiled headers (RAY_PCH=OFF), so this job is also the one that proves
 # every source includes what it uses.
 # Needs no secret. Actions are pinned to commit SHAs; the comment gives the release tag.
 name: sanitizers
@@ -110,5 +110,6 @@ jobs:
           QT_QUICK_BACKEND: software
           ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        # Every test but those labelled sanitizer-heavy (tests/tiers.cmake: too slow under ASan for the runner).
-        run: ctest --preset linux-clang-asan -LE sanitizer-heavy --parallel "$(getconf _NPROCESSORS_ONLN)"
+        # Every test but those labelled sanitizer-heavy (too slow under ASan for the runner) and bench (wall-clock
+        # budgets for an optimised build on a developer's machine); tests/tiers.cmake.
+        run: ctest --preset linux-clang-asan -LE "^(sanitizer-heavy|bench)$" --parallel "$(getconf _NPROCESSORS_ONLN)"

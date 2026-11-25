@@ -103,6 +103,16 @@ set(RAY_DEBUG_HEAVY_TESTS
 set(RAY_SANITIZER_HEAVY_TESTS
     ray_cam_invariants_slow)
 
+# Tests whose pass or fail is a wall-clock budget, set for a developer's machine (PLAN.md section 9 rows, UI-thread
+# gaps, benchmarks): every <test>_wallclock split below (RAY_WALLCLOCK_SPLITS) and these. They get the label bench, which
+# the CI jobs leave out: the shared 4-processor runners are slower than the budgets assume and their speed varies.
+# Local runs (tools\verify.cmd quick and full, the -quick and full presets) run them as before; the label changes no
+# tier and no budget.
+set(RAY_BENCH_TESTS
+    ray_sketch_drag_bench    # the median drag step under 16 ms
+    ray_store_bench          # journal append median under 10 ms, loadHead of a 20 MB file under 200 ms
+    ray_sim_simulator_bench) # T-072: simulation run and seek times per tier (section 9)
+
 # Processor slots of the tests that run threads of their own: "<test>=<slots>", about their CPU time over wall time
 # when run alone in Release (measured on 32 hardware threads). The naming blocks run up to 8 workers
 # (RAYCAD_NAMING_WORKERS); the document S4 suites rebuild on the job system. Every other test measured at about one
@@ -238,6 +248,7 @@ foreach(_entry IN LISTS RAY_WALLCLOCK_SPLITS)
     set_property(GLOBAL APPEND PROPERTY RAY_ALL_TESTS "${_suite}_wallclock")
     set_property(GLOBAL PROPERTY "RAY_TEST_DIR_${_suite}_wallclock" "${CMAKE_CURRENT_SOURCE_DIR}")
     list(APPEND RAY_SERIAL_TESTS ${_suite}_wallclock)
+    list(APPEND RAY_BENCH_TESTS ${_suite}_wallclock)
 endforeach()
 get_property(RAY_ALL_TESTS GLOBAL PROPERTY RAY_ALL_TESTS)
 
@@ -282,6 +293,9 @@ foreach(_test IN LISTS RAY_DEBUG_HEAVY_TESTS)
 endforeach()
 foreach(_test IN LISTS RAY_SANITIZER_HEAVY_TESTS)
     ray_tier_set(${_test} APPEND LABELS sanitizer-heavy)
+endforeach()
+foreach(_test IN LISTS RAY_BENCH_TESTS)
+    ray_tier_set(${_test} APPEND LABELS bench)
 endforeach()
 foreach(_entry IN LISTS RAY_TEST_PROCESSORS)
     string(REPLACE "=" ";" _pair "${_entry}")
