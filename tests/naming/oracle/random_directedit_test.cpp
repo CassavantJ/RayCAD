@@ -1316,6 +1316,16 @@ void replayCases(bool keyOnly)
          false,
          {{Answer::Split, {2, 9}}, {Answer::Exact, {9}}, {Answer::Split, {2, 9}, 9}}},
 
+        // The first run of holdout 2 (seeds 0xB2081B00, choices by geometry): the findings resolved in the oracle
+        // (0:18, 7:44 and
+        // 14:34 await the independent review).
+        //  - a blind hole opened up: its flat bottom widens with it, and the rim is where it was (oracle);
+        {9, 35, k + "manifold_block_1.stp #35|edge 54", Answer::Exact, Verdict::Correct, "flat bottom widens", false,
+         0xB2081B00ull},
+        //  - two stretches of a chamfer edge on a resized cut, the mapped pick over both: not judged (oracle).
+        {17, 24, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #24|edge 5", Answer::Exact, Verdict::Unjudged,
+         "sliding stretches", false, 0xB2081B00ull},
+
         // Resolver (propagate_resolve.cpp canContain): a sliver of a boss's cylindrical side, split off by a cut that
         // then moved over it; the rest of the side is whole, but holds none of the sliver: Broken, not Merged.
         {5, 15, k + "fixture_plate_1.stp #15|face 54", Answer::Broken, Verdict::BrokenGone, "piece cut away: resolver",
@@ -1498,6 +1508,7 @@ TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
                 "   answer %u type %d nrm (%.3f %.3f %.3f) sided %d sigma %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
                 s.index, a.type, a.nrm.x, a.nrm.y, a.nrm.z, a.sided ? 1 : 0, a.sigma, a.boxMin.x, a.boxMin.y,
                 a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z);
+            std::printf("   against the owners now: %s\n", explain(ref.record.truth, now, samples, s.index).c_str());
             std::printf("   against the baseline owners: %s\n",
                         explain(ref.record.truth, *ref.record.owners, samples, s.index).c_str());
             // The answer's faces against each owner of the description, now.
