@@ -406,6 +406,7 @@ VerifyInput verifyInputFrom(const SimProgram& p)
         in.fixtures.push_back(&f);
     }
     in.machine = p.machine;
+    in.stockCellMm = p.stockCellMm;
     return in;
 }
 
@@ -415,8 +416,22 @@ Result<std::vector<SimEvent>> verifyProgram(const VerifyInput& in, IJobSystem& j
                                             const VerifyOptions& opts, VerifyStats* statsOut)
 {
     VerifyStats stats;
-    Progress analyticProgress = ctx.progress.sub(0.5);
-    Progress cutProgress = ctx.progress.sub(0.5);
+    Progress setupProgress = ctx.progress.sub(0.04);
+    Progress analyticProgress = ctx.progress.sub(0.48);
+    Progress cutProgress = ctx.progress.sub(0.48);
+    // The setup first (SETUP in verify.h): its events come before every move's.
+    std::vector<SimEvent> setupFound;
+    {
+        JobContext setupCtx{ctx.cancel, setupProgress};
+        OverlapStats overlap;
+        Result<std::vector<SimEvent>> r = setupEvents(in, jobs, setupCtx, &overlap);
+        if (!r) {
+            return tl::unexpected(r.error());
+        }
+        setupFound = std::move(*r);
+        stats.setupPatches = overlap.patches;
+        stats.setupCapped = overlap.capped;
+    }
     const std::vector<Motion> motions = expandMotions(in);
     stats.motions = motions.size();
     std::vector<ToolZones> zones;
@@ -915,8 +930,8 @@ Result<std::vector<SimEvent>> verifyProgram(const VerifyInput& in, IJobSystem& j
         }
         return kindRank(a.kind) < kindRank(b.kind);
     });
-    std::vector<SimEvent> sorted;
-    sorted.reserve(events.size());
+    std::vector<SimEvent> sorted = std::move(setupFound);
+    sorted.reserve(sorted.size() + events.size());
     for (std::size_t e : order) {
         sorted.push_back(std::move(events[e]));
     }

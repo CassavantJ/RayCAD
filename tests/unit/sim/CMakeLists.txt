@@ -20,6 +20,7 @@ add_executable(ray_sim_tests
     verify_tier_test.cpp
     verify_golden_test.cpp
     verify_bench_test.cpp
+    verify_setup_test.cpp # after T-074: fixtures against the part and the stock
     # T-072: the simulator, keyframes and gouges.
     simulator_test_util.h
     simulator_test.cpp

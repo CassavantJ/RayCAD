@@ -230,6 +230,12 @@ Item {
                         text: qsTr("%1. Gouge depths and the stock shown depend on it; the collision checks do not.")
                               .arg(CamSim.resolutionText)
                     }
+                    // When this run's jumps along the timeline will be slower than this computer's tier allows.
+                    Note {
+                        objectName: "simSlowSeek"
+                        visible: CamSim.slowSeekText !== ""
+                        text: CamSim.slowSeekText
+                    }
                 }
 
                 // Visibility.
@@ -320,7 +326,7 @@ Item {
                         radius: Theme.radiusSmall
                         color: current ? Theme.selectionFill : rowArea.containsMouse ? Theme.controlBgHover : "transparent"
                         Accessible.role: Accessible.Button
-                        Accessible.name: modelData.title + ", " + modelData.operation
+                        Accessible.name: modelData.title + ", " + modelData.where
                         Rectangle {
                             id: dot
                             x: Theme.spacingXs
@@ -347,12 +353,13 @@ Item {
                                 text: eventRow.modelData.title
                             }
                             Label {
+                                objectName: "simEventWhere." + eventRow.index
                                 width: parent.width
                                 secondary: true
                                 font: Theme.smallFont
                                 elide: Text.ElideRight
-                                text: qsTr("%1 · move %2 · %3").arg(eventRow.modelData.operation)
-                                                                 .arg(eventRow.modelData.move).arg(eventRow.modelData.time)
+                                // "Face · move 12 · 0:07.4", or "Before the first move · 0:00.0" for the setup's.
+                                text: qsTr("%1 · %2").arg(eventRow.modelData.where).arg(eventRow.modelData.time)
                             }
                             Label {
                                 objectName: "simEventMessage." + eventRow.index

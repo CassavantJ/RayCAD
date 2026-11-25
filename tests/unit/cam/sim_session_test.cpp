@@ -140,8 +140,9 @@ struct Job {
 };
 
 // fixture_verify_test.cpp's document: the part with its pocket, the vise (lowered by `viseZ` after its mate) and its
-// jaw as fixtures, the pocket operation with a 10 mm end mill 14 mm out of a 30 mm holder.
-void buildJob(Job& j, const std::string& viseZ)
+// jaw as fixtures, the pocket operation with a 10 mm end mill 14 mm out of a 30 mm holder. `viseGap` (if given): the
+// fixed jaw's gap from the part's front face (negative: into the part; the moving jaw keeps its 60 mm from it).
+void buildJob(Job& j, const std::string& viseZ, const std::string& viseGap = "")
 {
     j.run(dt::addFeature("sketch", 2, dt::sketchProps(kXY, dt::SketchJson().rect(1, 0, 0, 100, 60))));
     j.run(dt::addFeature("extrude", 3, dt::extrudeProps(2, "20", "new", 'b')));
@@ -177,7 +178,8 @@ void buildJob(Job& j, const std::string& viseZ)
     j.run(ct::command("feature.transform_body.add",
                       R"({"id":")" + dt::uuid('f', 8) + R"(","props":{"body":")" + j.vise.value.toString() +
                           R"(","mate":{"face":)" + naming::toJson(j.ref(j.vise, fixedJaw)) + R"(,"target":)" +
-                          naming::toJson(j.ref(ct::body('b'), front)) + R"(},"z":")" + viseZ + R"("}})"));
+                          naming::toJson(j.ref(ct::body('b'), front)) + R"(},"z":")" + viseZ +
+                          (viseGap.empty() ? std::string() : R"(","gap":")" + viseGap) + R"("}})"));
     j.rebuild();
     const kernel::SubId movingJaw = j.face(j.jaw, {0, -1, 0}, -50.8);
     j.run(ct::command("feature.transform_body.add",
@@ -496,6 +498,105 @@ TEST_CASE("a seeded collision: the run finds it, places it on the timeline and s
     for (const sim::SimEvent& ev : (*t)->events)
         UNSCOPED_INFO(static_cast<int>(ev.kind) << " move " << ev.moveIndex << ": " << ev.message);
     CHECK((*t)->events.empty());
+}
+
+TEST_CASE("the vise's jaw in the part: an event of the setup, first, at the start of the timeline; the twin has none",
+          "[sim][session][setup]")
+{
+    // fixture_verify_test.cpp's job (its seeded holder collision too) with the fixed jaw mated 2 mm into the part's
+    // front face instead of against it.
+    Job j;
+    buildJob(j, "-9.225 mm", "-2 mm");
+    const auto path = j.generate(ct::opId(1));
+    cs::SimSession session(*j.env.jobs);
+    JobContext ctx;
+    auto r = session.run(requestFor(j, j.state->cam->setups.at(0).id, {path}, 0.2), ctx);
+    if (!r) {
+        FAIL("the run failed: " << r.error().message);
+    }
+    const cs::RunResult& res = **r;
+    for (const sim::SimEvent& ev : res.events)
+        UNSCOPED_INFO(static_cast<int>(ev.kind) << " move " << ev.moveIndex << ": " << ev.message);
+    REQUIRE_FALSE(res.events.empty());
+    const sim::SimEvent& e = res.events[0];
+    CHECK(e.kind == sim::EventKind::FixtureHitsPart);
+    CHECK(e.severity == sim::Severity::Error);
+    CHECK(e.moveIndex == sim::kSetupEvent);
+    CHECK(e.operation == OperationId{});
+    CHECK_THAT(e.message, ContainsSubstring("Fixture 1 cuts into the part"));
+    // The part is 0..100 x 0..60 x 0..20 in the model; the jaw is in it up to y = 2.
+    const Vec3 at = apply(res.modelFromWcs, e.position);
+    CHECK(at.y <= 2 + 1e-6);
+    CHECK(at.y >= -1e-6);
+    CHECK(e.amountMm > 0.05);
+    CHECK(e.amountMm <= 2 + 1e-6);
+    // At the start of the timeline, before the first move.
+    REQUIRE(res.places.size() == res.events.size());
+    CHECK(res.places[0].opIndex == 0);
+    CHECK(res.places[0].moveIndex == 0);
+    CHECK(res.places[0].t01 == 0);
+    CHECK(res.places[0].sec == 0);
+    // Only the first is the setup's (the moving jaw stands 2 mm off the part's back; the stock is the part's box).
+    for (std::size_t i = 1; i < res.events.size(); ++i)
+        CHECK(res.events[i].moveIndex != sim::kSetupEvent);
+    // A seek there: the start.
+    auto f = session.seek({res.places[0].opIndex, res.places[0].moveIndex, res.places[0].t01},
+                          cs::MeshAsk{res.first.version, false, 400'000, 0});
+    REQUIRE(f);
+    CHECK(f->position.opIndex == 0);
+    CHECK(f->position.moveIndex == 0);
+    CHECK(f->position.t01 == 0);
+
+    // A setup's event added the tests' way goes first too, ahead of the simulator's own, at the start.
+    cs::RunRequest added = requestFor(j, j.state->cam->setups.at(0).id, {path}, 0.2);
+    added.addedEvents.push_back(sim::SimEvent{sim::EventKind::FixtureHitsStock, sim::Severity::Warning, OperationId{},
+                                              sim::kSetupEvent, Vec3{1, 2, 3}, 0.5, "Added by the test"});
+    cs::SimSession again(*j.env.jobs);
+    auto r2 = again.run(added, ctx);
+    REQUIRE(r2);
+    REQUIRE((*r2)->events.size() == res.events.size() + 1);
+    CHECK((*r2)->events[0].moveIndex == sim::kSetupEvent);
+    CHECK((*r2)->events[1].moveIndex == sim::kSetupEvent);
+    std::size_t addedAt = 0;
+    for (std::size_t i = 0; i < (*r2)->events.size(); ++i) {
+        if ((*r2)->events[i].message == "Added by the test")
+            addedAt = i;
+    }
+    CHECK(addedAt < 2);
+    CHECK((*r2)->places[addedAt].sec == 0);
+
+    // The twin of the acceptance case (the vise's floor below the part, its jaws on the part's sides): none.
+    Job clear;
+    buildJob(clear, "-14.225 mm");
+    const auto twinPath = clear.generate(ct::opId(1));
+    cs::SimSession twin(*clear.env.jobs);
+    auto t = twin.run(requestFor(clear, clear.state->cam->setups.at(0).id, {twinPath}, 0.2), ctx);
+    REQUIRE(t);
+    for (const sim::SimEvent& ev : (*t)->events)
+        CHECK(ev.moveIndex != sim::kSetupEvent);
+}
+
+TEST_CASE("the run's seek report reaches the result; the tests' override replaces it", "[sim][session][seekreport]")
+{
+    Job j;
+    buildJob(j, "-14.225 mm");
+    const auto path = j.generate(ct::opId(1));
+    const SetupId setup = j.state->cam->setups.at(0).id;
+    JobContext ctx;
+    cs::SimSession session(*j.env.jobs);
+    auto r = session.run(requestFor(j, setup, {path}, 0.2), ctx);
+    REQUIRE(r);
+    // A small program at 0.2 mm: its keyframes are not thinned; the estimate is a time.
+    CHECK_FALSE((*r)->seek.thinned);
+    CHECK((*r)->seek.worstSeekMs >= 0);
+    CHECK(std::isfinite((*r)->seek.worstSeekMs));
+    cs::RunRequest request = requestFor(j, setup, {path}, 0.2);
+    request.seekReport = sim::SeekReport{true, 640};
+    cs::SimSession other(*j.env.jobs);
+    auto o = other.run(request, ctx);
+    REQUIRE(o);
+    CHECK((*o)->seek.thinned);
+    CHECK((*o)->seek.worstSeekMs == 640);
 }
 
 TEST_CASE("a setup turned over with its stock from the first: states, the preview from the carried stock, the run",

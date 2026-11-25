@@ -106,6 +106,8 @@ Result<SimProgramData> buildSimProgram(const cam::CamSnapshot& snapshot, const n
         p.modelFromWcs = resolved.modelFromWcs;
         if (resolved.carriedStock) {
             p.stockSolid = *resolved.carriedStock;
+            // The fixture check allows for its cells (sim.h SimProgram::stockCellMm).
+            p.stockCellMm = options.startStock != nullptr ? options.startStock->cellMm : cam::kCarriedStockCellMm;
         } else if (!resolved.stockSolid.isNull()) {
             if (auto st = appendSoup(resolved.stockSolid, nullptr, p.stockSolid, "The stock of " + label(setup), ctx);
                 !st) {

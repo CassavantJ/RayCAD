@@ -4,6 +4,7 @@
 #include "tridexel.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <typeinfo>
 
@@ -130,6 +131,7 @@ public:
     kernel::TriSoup finalStock() const override;
     TimelinePosition position() const override { return pos_; }
     TimelinePosition runEnd() const override { return endPos_; }
+    SeekReport seekReport() const override { return report_; }
 
     void setTuning(const SimTuning& t) { tuning_ = t; }
     SimRunInfo info() const
@@ -185,6 +187,7 @@ private:
     std::uint64_t spacingMotions_ = 0;
     std::uint64_t budget_ = kKeyframeBudgetHighBytes;
     SimRunInfo info_;
+    SeekReport report_;
 
     // Where the stock is now: applied_ sub-motions whole, and when partial_, part of the next one on top of clean_.
     std::uint64_t applied_ = 0;
@@ -210,6 +213,7 @@ void Simulator::clear()
     totalMoves_ = 0;
     modelFromWcs_ = Xform::identity();
     info_ = SimRunInfo{};
+    report_ = SeekReport{};
     applied_ = 0;
     partial_ = false;
     clean_.reset();
@@ -364,7 +368,7 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
     // Events: the checks, then the gouges.
     struct Tagged {
         std::uint32_t op;
-        int group; // 0 the checks, 1 gouges
+        int group; // -1 the setup's (before every move's), 0 the checks, 1 gouges
         SimEvent e;
     };
     std::vector<Tagged> tagged;
@@ -377,6 +381,10 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
         // The checks' events come in operation order; find each one's operation by its id from where the last was.
         std::size_t cursor = 0;
         for (SimEvent& e : *checks) {
+            if (e.moveIndex == kSetupEvent) {
+                tagged.push_back({0, -1, std::move(e)}); // no operation, no move
+                continue;
+            }
             std::size_t k = cursor;
             while (k < ops_.size() && ops_[k].id != e.operation) {
                 ++k;
@@ -403,6 +411,9 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
     }
     info_.gougeTolMm = std::max(opts.gougeTolMm, kGougeMinTolMm);
     std::stable_sort(tagged.begin(), tagged.end(), [](const Tagged& a, const Tagged& b) {
+        if ((a.group < 0) != (b.group < 0)) {
+            return a.group < 0; // the setup's first
+        }
         if (a.op != b.op) {
             return a.op < b.op;
         }
@@ -458,6 +469,8 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
     double sinceKey = 0;
     std::uint64_t i = 0;
     std::vector<IStockModel::CutMove> moves;
+    // The wall time of each batch's cut (its end motion, seconds), for seekReport only: nothing else reads it.
+    std::vector<std::pair<std::uint64_t, double>> batchSeconds;
     while (i < stopMotion_) {
         if (Status s = ctx.cancel.check(); !s) {
             return fail(s.error());
@@ -474,7 +487,9 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
             for (std::uint64_t k = i; k < j; ++k) {
                 moves.push_back({motions_[k].a, motions_[k].b, motions_[k].rapid});
             }
+            const auto t0 = std::chrono::steady_clock::now();
             stock_->cutBatch(shape, moves, std::span<double>(removed.data() + i, static_cast<std::size_t>(j - i)));
+            batchSeconds.emplace_back(j, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
         }
         ++info_.batches;
         sinceKey += rays;
@@ -501,6 +516,22 @@ Status Simulator::run(const SimProgram& p, const SimOptions& opts, JobContext& c
     }
     info_.keyframeRays = spacingRays_;
     info_.cellMm = opts.resolution.cellMm;
+    // The seek report: the longest keyframe interval as the run timed its cutting (batches end at keyframes, so each
+    // batch lies in one interval: the one its end motion closes).
+    report_.thinned = info_.thinnings > 0;
+    {
+        double worst = 0, sum = 0;
+        std::size_t k = 1; // the interval [keyframes_[k - 1], keyframes_[k])
+        for (const auto& [end, sec] : batchSeconds) {
+            while (k + 1 < keyframes_.size() && end > keyframes_[k].motion) {
+                worst = std::max(worst, sum);
+                sum = 0;
+                ++k;
+            }
+            sum += sec;
+        }
+        report_.worstSeekMs = 1000.0 * std::max(worst, sum);
+    }
     applied_ = stopMotion_;
     const Target end = endTarget();
     pos_ = end.pos;

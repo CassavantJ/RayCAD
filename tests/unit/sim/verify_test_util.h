@@ -212,6 +212,10 @@ inline std::string kindName(EventKind k)
         return "ToolTooShort";
     case EventKind::ShankHitsPart:
         return "ShankHitsPart";
+    case EventKind::FixtureHitsPart:
+        return "FixtureHitsPart";
+    case EventKind::FixtureHitsStock:
+        return "FixtureHitsStock";
     }
     return "?";
 }

@@ -396,9 +396,9 @@ Timeline buildTimeline(const sim::SimProgram& program, const cam::CycleTime* est
                 at += own[m] * scale;
                 op.moveEndSec[m] = at;
             }
-            // The events of this operation.
+            // The events of this operation (a setup's event belongs to none: see below).
             for (std::size_t e = 0; e < events.size(); ++e) {
-                if (placed[e] || events[e].operation != op.id)
+                if (placed[e] || events[e].moveIndex == sim::kSetupEvent || events[e].operation != op.id)
                     continue;
                 const std::uint32_t mi =
                     std::min<std::uint32_t>(events[e].moveIndex, static_cast<std::uint32_t>(n - 1));
@@ -420,6 +420,8 @@ Timeline buildTimeline(const sim::SimProgram& program, const cam::CycleTime* est
     if (places != nullptr) {
         for (std::size_t e = 0; e < places->size(); ++e) {
             EventPlace& pl = (*places)[e];
+            if (events[e].moveIndex == sim::kSetupEvent)
+                pl = EventPlace{}; // the setup's: before the first move, at the start
             pl.sec = t.secondsAt({pl.opIndex, pl.moveIndex, pl.t01});
         }
     }
@@ -518,6 +520,7 @@ Result<std::shared_ptr<RunResult>> SimSession::run(const RunRequest& request, Jo
         if (auto st = impl_->simulator->run(program, options, runCtx); !st)
             return tl::unexpected(st.error());
         out->runSec = msSince(t0) / 1000.0;
+        out->seek = request.seekReport ? *request.seekReport : impl_->simulator->seekReport();
         if (auto ok = ctx.cancel.check(); !ok)
             return tl::unexpected(ok.error());
 
@@ -539,6 +542,9 @@ Result<std::shared_ptr<RunResult>> SimSession::run(const RunRequest& request, Jo
             };
             std::stable_sort(out->events.begin(), out->events.end(),
                              [&](const sim::SimEvent& a, const sim::SimEvent& b) {
+                                 const bool sa = a.moveIndex == sim::kSetupEvent, sb = b.moveIndex == sim::kSetupEvent;
+                                 if (sa != sb)
+                                     return sa; // the setup's first, as the simulator lists them
                                  const std::size_t oa = opOf(a), ob = opOf(b);
                                  return oa != ob ? oa < ob : a.moveIndex < b.moveIndex;
                              });

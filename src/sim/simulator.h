@@ -81,7 +81,16 @@
 //
 // EVENTS. The checks' events and the gouges, sorted by operation (program order), move index, then the checks' kinds
 // in their order before Gouge. With SimOptions::stopOnError the removal stops at the end of the IR move of the first
-// Error event, events after that move are dropped, and that move's end is the run's end (runEnd()).
+// Error event, events after that move are dropped, and that move's end is the run's end (runEnd()). The setup's events
+// (verify.h, SETUP: fixtures against the part and the stock; moveIndex kSetupEvent) come before all of them, and
+// stopOnError passes over them: they belong to no move, and the program is worth seeing cut all the same.
+//
+// SEEK REPORT (added after T-074; ISimulator::seekReport). thinned: SimRunInfo::thinnings > 0. worstSeekMs: the run
+// times each batch's cutBatch with the steady clock (nothing else reads those times) and sums them per keyframe
+// interval as the keyframes stand at the end (batches end at keyframes, so a batch lies in one interval); the largest
+// sum is the estimate: a seek to just before a keyframe restores the one before and recuts that interval, the same
+// motions through the same stock model on the same workers. The thinned programs above (finishing, long) are where it
+// passes High's 100 ms.
 //
 // THREADS. One thread at a time calls the non-const functions (run, seek, verifyFast); the const ones may run
 // together, but not during a run or a seek (stock() is the live model). The checks, gouges and cuts use the job system

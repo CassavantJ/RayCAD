@@ -85,6 +85,9 @@ constexpr const char* kTrContext = "ray::ui::SimToolModel";
 // During playback a seek starts at most this often (the render thread packs and uploads what each one changed).
 constexpr int kMinFrameMs = 30;
 constexpr int kTickMs = 16;
+// The mark of a setup's event reaches this far past the overlap's depth (a fixture in the stock: the coloured patch of
+// stock around where it goes in).
+constexpr double kSetupMarkMm = 3.0;
 
 QString trs(const char* text)
 {
@@ -650,6 +653,7 @@ bool SimToolModel::run()
     request.mesh.budget = budget_;
     request.mesh.full = true;
     request.addedEvents = addedEvents_; // tests only
+    request.seekReport = seekReport_;   // tests only
 
     pause();
     clearResult();
@@ -847,6 +851,7 @@ void SimToolModel::clearResult()
     positionSec_ = targetSec_ = 0;
     shownOp_ = -1;
     gcodeLine_ = -1;
+    marks_.clear();
     applyVisibility();
     if (had) {
         emit resultChanged();
@@ -1169,6 +1174,17 @@ void SimToolModel::applyMarks()
         const int e = (from + k) % n;
         const sim::SimEvent& ev = result_->events[static_cast<std::size_t>(e)];
         const cs::EventPlace& pl = result_->places[static_cast<std::size_t>(e)];
+        if (ev.moveIndex == sim::kSetupEvent) {
+            // The setup's (a fixture in the part or the stock): no tool; a box about the point of the overlap, reaching
+            // the stock's surface (the point lies amountMm from the solid it is in) and a little more.
+            const double r = kSetupMarkMm + (std::isfinite(ev.amountMm) ? std::max(0.0, ev.amountMm) : 0.0);
+            render::StockMark mark;
+            mark.box = Box3{{ev.position.x - r, ev.position.y - r, ev.position.z - r},
+                            {ev.position.x + r, ev.position.y + r, ev.position.z + r}};
+            mark.colour = render::Token::SimCollision;
+            shading.marks.push_back(mark);
+            continue;
+        }
         if (pl.opIndex >= result_->tools.size())
             continue;
         const sim::ToolShape& tool = result_->tools[pl.opIndex];
@@ -1189,6 +1205,7 @@ void SimToolModel::applyMarks()
         mark.colour = ev.kind == sim::EventKind::Gouge ? render::Token::SimGouge : render::Token::SimCollision;
         shading.marks.push_back(mark);
     }
+    marks_ = shading.marks;
     v->setStockShading(stockItem_, shading);
 }
 
@@ -1439,8 +1456,9 @@ void SimToolModel::selectEvent(int index)
     requestSeek(sim::TimelinePosition{pl.opIndex, pl.moveIndex, pl.t01});
     applyMarks();
     emit currentEventChanged();
-    // The G-code line at once (the seek may take a moment).
-    if (gcodeState() == QLatin1String("current") && viewer_) {
+    // The G-code line at once (the seek may take a moment); a setup's event has no move, so no line.
+    if (result_->events[static_cast<std::size_t>(index)].moveIndex != sim::kSetupEvent &&
+        gcodeState() == QLatin1String("current") && viewer_) {
         if (const auto section = sectionOf(pl.opIndex)) {
             viewer_->showMove(*section, pl.moveIndex);
             gcodeLine_ = viewer_->currentLine();
@@ -1613,6 +1631,13 @@ QString SimToolModel::resolutionText() const
                                : trs("Stock cells of %1 mm (%2 tier)").arg(cell, tierName_);
 }
 
+QString SimToolModel::slowSeekText() const
+{
+    if (!result_)
+        return {};
+    return camui::slowSeekText(result_->seek.thinned, result_->seek.worstSeekMs, result_->cellMm);
+}
+
 int SimToolModel::errorCount() const
 {
     if (!result_)
@@ -1660,16 +1685,22 @@ QVariantList SimToolModel::events() const
         const sim::SimEvent& e = result_->events[i];
         const cs::EventPlace& pl = result_->places[i];
         const int kind = static_cast<int>(e.kind);
+        const bool setup = e.moveIndex == sim::kSetupEvent;
+        const QString operation =
+            !setup && pl.opIndex < result_->opNames.size() ? qs(result_->opNames[pl.opIndex]) : QString();
+        const int move = setup ? 0 : static_cast<int>(pl.moveIndex) + 1;
         out.push_back(QVariantMap{{QStringLiteral("index"), static_cast<int>(i)},
                                   {QStringLiteral("kind"), kind},
                                   {QStringLiteral("kindName"), QString::fromLatin1(camui::eventKindName(kind))},
                                   {QStringLiteral("severity"), camui::severityKey(severityOf(e.severity))},
                                   {QStringLiteral("title"), camui::eventTitle(kind)},
                                   {QStringLiteral("message"), qs(e.message)},
-                                  {QStringLiteral("operation"),
-                                   pl.opIndex < result_->opNames.size() ? qs(result_->opNames[pl.opIndex]) : QString()},
+                                  {QStringLiteral("operation"), operation},
                                   {QStringLiteral("opIndex"), static_cast<int>(pl.opIndex)},
-                                  {QStringLiteral("move"), static_cast<int>(pl.moveIndex) + 1},
+                                  {QStringLiteral("move"), move},
+                                  {QStringLiteral("setup"), setup},
+                                  {QStringLiteral("where"),
+                                   setup ? trs("Before the first move") : trs("%1 · move %2").arg(operation).arg(move)},
                                   {QStringLiteral("sec"), pl.sec},
                                   {QStringLiteral("time"), camui::formatClock(pl.sec)},
                                   {QStringLiteral("x"), total > 0 ? pl.sec / total : 0.0}});

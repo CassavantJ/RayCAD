@@ -12,7 +12,8 @@
 // wider than the vise opens (the jaw at its widest) and narrower than the parallels (refused).
 // The safety checks (src/sim/verify.h) see the placed vise: a pocket near the stock's front side, the vise closed on
 // the stock standing on parallels: no event at all (the jaws touching the stock, the stock on the parallels are not
-// collisions: the checks test the tool and holder only); on the vise's floor, the jaws 24.45 above the stock, the
+// collisions; since the setup checks of T-074's follow-up test fixtures against the part and the stock too, touching
+// is still none); on the vise's floor, the jaws 24.45 above the stock, the
 // holder at the front wall overhangs the moving jaw: HolderHitsFixture on it. The fixture solids the simulator gets are
 // where the placement put them.
 #include "engine_test_util.h"
@@ -703,6 +704,10 @@ std::string machineItem()
 
 struct Checked {
     std::vector<sim::SimEvent> events;
+    // The setup checks on their own (after T-074: the fixtures against the part and the stock), their work and time.
+    std::vector<sim::SimEvent> setup;
+    sim::detail::OverlapStats setupStats;
+    double setupMs = 0;
     std::vector<Box3> fixtureBoxes; // the fixture solids the simulator gets, in the WCS
     std::vector<BodyId> fixtures;
     cf::ViseFit fit;
@@ -795,6 +800,12 @@ Checked checkedJob(bool parallels)
     auto events = sim::detail::verifyProgram(sim::detail::verifyInputFrom(program), *shop.env.jobs, verifyCtx);
     REQUIRE(events);
     out.events = std::move(*events);
+    const auto t0 = std::chrono::steady_clock::now();
+    auto setup =
+        sim::detail::setupEvents(sim::detail::verifyInputFrom(program), *shop.env.jobs, verifyCtx, &out.setupStats);
+    out.setupMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    REQUIRE(setup);
+    out.setup = std::move(*setup);
     engine.reset();
     return out;
 }
@@ -821,12 +832,24 @@ TEST_CASE("the safety checks see the vise placed on the stock; jaws on the stock
         // Nothing at all: the jaws touching the stock's sides and the stock on the parallels raise no event, and the
         // holder passes over the jaws.
         CHECK(on.events.empty());
+        // The setup checks (after T-074) see the jaws on the stock's (and the part's) sides and the parallels under
+        // them: touching, not overlapping.
+        CHECK(on.setup.empty());
+        CHECK(on.setupStats.capped == 0);
+        WARN("the vise on the parallels, setup checks: " << on.setupStats.triangles << " triangles, "
+                                                         << on.setupStats.patches << " patches, " << on.setupMs
+                                                         << " ms");
     }
     {
         const Checked low = checkedJob(false);
         INFO(describe(low.events));
         REQUIRE(low.fixtureBoxes.size() == 2);
         CHECK(low.fixtureBoxes[1].max.z == Catch::Approx(24.45).margin(1e-4)); // the jaws 24.45 above the stock
+        // On the vise's floor: touching it and the jaws, no setup event.
+        CHECK(low.setup.empty());
+        CHECK(low.setupStats.capped == 0);
+        WARN("the vise on its floor, setup checks: " << low.setupStats.triangles << " triangles, "
+                                                     << low.setupStats.patches << " patches, " << low.setupMs << " ms");
         // The holder over the pocket's front wall overhangs the moving jaw (fixture 2).
         std::size_t holderHits = 0;
         for (const sim::SimEvent& e : low.events) {
