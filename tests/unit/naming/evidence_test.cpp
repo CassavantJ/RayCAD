@@ -109,6 +109,7 @@ TopoRef withoutEvidence(TopoRef ref)
 {
     ref.territory = Territory{};
     ref.pickNeighbours.clear();
+    ref.outline = PickOutline{};
     return ref;
 }
 
@@ -196,6 +197,7 @@ TEST_CASE("The JSON form of a reference round-trips, evidence included", "[namin
         CHECK(back.names == ref.names);
         CHECK(back.territory.points == ref.territory.points);
         CHECK(back.pickNeighbours.size() == ref.pickNeighbours.size());
+        CHECK(back.outline.chords == ref.outline.chords);
         CHECK(r->resolve(back).state == r->resolve(ref).state);
         withNeighbours += ref.pickNeighbours.empty() ? 0 : 1;
     }
@@ -212,6 +214,7 @@ TEST_CASE("A reference in the JSON form written before evidence existed still lo
     const std::string old = toJson(withoutEvidence(ref));
     CHECK(old.find("territory") == std::string::npos);
     CHECK(old.find("pickNeighbours") == std::string::npos);
+    CHECK(old.find("outline") == std::string::npos);
     const std::string prefix = "{\"ambiguous\":[";
     CHECK(old.compare(0, prefix.size(), prefix) == 0);
     const TopoRef back = take(topoRefFromJson(old));
@@ -253,11 +256,75 @@ TEST_CASE("A damaged reference is refused, naming the member", "[naming][evidenc
     CHECK(member(replaced("\"relation\":\"", "\"relation\":\"x")) == "pickNeighbours[0].relation");
     CHECK(member(replaced("\"points\":[[", "\"points\":[[1,2],[", true)) == "territory.points");
     CHECK(member(replaced("\"repairConfirmed\":false", "\"repairConfirmed\":0")) == "repairConfirmed");
+    CHECK(member(replaced("\"chords\":[[", "\"chords\":[[1,2,3,4,5,6],[")) == "outline.chords");
+    CHECK(member(replaced("\"outline\":{", "\"outline\":{\"slack\":1,")) == "outline.slack");
     CHECK(member(replaced("{\"ambiguous\"", "{\"extra\":1,\"ambiguous\"")) == "extra");
     CHECK(member(replaced("\"area\":", "\"area\":1.5,\"x\":")) == "hint.x");
     CHECK(member("{\"body\":\"00000000-0000-0000-0000-000000000000\",\"kind\":\"face\",\"names\":[]}") == "body");
     CHECK_FALSE(topoRefFromJson("{\"body\":").has_value());
     CHECK_FALSE(topoRefFromJson("[]").has_value());
+}
+
+TEST_CASE("A planar face's reference records its outline, within its cap, the same on every platform",
+          "[naming][evidence]")
+{
+    // A 100 x 60 x 20 block with a 10 mm round hole through it (T-081b round 2: TopoRef::outline).
+    Body b = extrude(kBlock, 0, rectangle(0, 0, 100, 60, 1, 1), 20);
+    kernel::ProfileLoop hole{{kernel::ProfileCurve{kernel::ProfileCurve::Kind::Circle, {{30, 30}}, 5.0, true, 31}}, 4};
+    b = boolean(b, kPocket, kernel::BoolOp::Cut, -1, std::move(hole), 22);
+    const auto top = faceAt(b.shape, Vec3{5, 5, 20}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    const TopoRef ref = resolverFor(b)->makeRef(kBody, *top);
+    REQUIRE(ref.outline.known());
+    CHECK(ref.outline.chords.size() <= kMaxOutlineChords);
+    // Four lines (one chord each, no slack) and the hole's circle in the rest of the chords, each within its slack.
+    std::size_t lines = 0;
+    for (const auto& c : ref.outline.chords)
+        lines += c[6] == 0 ? 1 : 0;
+    CHECK(lines == 4);
+    CHECK(ref.outline.chords.size() == 4 + (kMaxOutlineChords - 4));
+    for (const auto& c : ref.outline.chords) {
+        CHECK(c[2] == 200000); // z 20 mm in quanta (1e-4 mm)
+        CHECK(c[5] == 200000);
+        CHECK(c[6] < 100); // under 0.01 mm from the circle
+    }
+    // The same bits on every platform: a hash of the JSON form, compared with the value Windows and Linux both give.
+    const std::string text = toJson(ref);
+    const std::size_t at = text.find("\"outline\":");
+    REQUIRE(at != std::string::npos);
+    const std::string outline = text.substr(at, text.find("]]}", at) + 3 - at);
+    Hasher h;
+    h.str(outline);
+    INFO(outline);
+    CHECK(h.finish().hex().substr(0, 16) == "28887bde1e5e317a");
+    // Edges and vertices, and faces that are not planar, have none.
+    for (const SubId& s : test::allElements(b.shape)) {
+        const TopoRef r = resolverFor(b)->makeRef(kBody, s);
+        if (s.kind != SubKind::Face)
+            CHECK_FALSE(r.outline.known());
+        else if (take(kernel::surfaceInfo(b.shape, s)).type != kernel::SurfaceType::Plane)
+            CHECK_FALSE(r.outline.known());
+    }
+}
+
+TEST_CASE("A planar face with more arcs than the outline cap allows records none, and resolves as before",
+          "[naming][evidence]")
+{
+    // 25 round holes: 4 lines + 25 x 4 chords > kMaxOutlineChords.
+    Body b = extrude(kBlock, 0, rectangle(0, 0, 100, 100, 1, 1), 10);
+    for (int i = 0; i < 5; ++i)
+        for (int j = 0; j < 5; ++j)
+            b = boolean(b, test::featureId(static_cast<std::uint8_t>(100 + 5 * i + j)), kernel::BoolOp::Cut, -1,
+                        kernel::ProfileLoop{
+                            {kernel::ProfileCurve{
+                                kernel::ProfileCurve::Kind::Circle, {{10.0 + 20 * i, 10.0 + 20 * j}}, 2.0, true, 40}},
+                            5},
+                        12);
+    const auto top = faceAt(b.shape, Vec3{1, 1, 10}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    const TopoRef ref = resolverFor(b)->makeRef(kBody, *top);
+    CHECK_FALSE(ref.outline.known());
+    CHECK(ref.territory.known());
 }
 
 TEST_CASE("Resolved: usable for a rebuild, and postable without review", "[naming][evidence]")

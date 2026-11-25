@@ -18,16 +18,29 @@
 // answer not judged on the reviewed list (tests/naming/oracle/reviewed_unjudged.txt, keys "directedit ...").
 // RAYCAD_NAMING_ONLY=<part>:<sequence> runs one sequence; RAYCAD_NAMING_TRACE=<file> writes one line per sequence (the
 // Windows and Linux runs are compared on it).
+//
+// Windows and Linux do not give the same answers per sequence, and nobody should pin cross-platform goldens on these
+// blocks: the requirement is zero wrong answers on each platform. Measured on the 1,000 sequences of the main block
+// (T-081b): 94 sequences differ between the platforms with the generator that picks faces by index, 50 with the one
+// that picks them by geometry (SequenceOptions::byIndex; faces sorted by their rounded boxes). The cause is
+// OpenCASCADE, not the naming code: its booleans and direct edits give a different topology or a different sub-shape
+// order on the two platforms for the same input (a boss joined to a rib plate gives 17 faces on Windows and 16 on
+// Linux, the coplanar start cap unified on one only; an offset boolean lists the split faces the other way round).
+// Picking by index then picks another face, and every later step and reference differs; picking by geometry still
+// differs wherever the topology does. The main block keeps the generator by index (its replays are pinned on it); the
+// holdout blocks use the one by geometry.
 #include <catch2/catch_test_macros.hpp>
 
 #include "harness.h"
 
+#include <directedit_testing.h>
 #include <shape_testing.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -975,7 +988,14 @@ BlockResult runBlock(const char* title, const std::vector<Part>& parts, int perP
     return r;
 }
 
-void checkGates(const BlockResult& r, int perPart)
+// The most answers a holdout block may leave not judged (as random_test.cpp's kUnjudgedBudget, scaled from its 200
+// sequences to these blocks' 1,000).
+constexpr long kHoldoutUnjudgedBudget = 20;
+
+// A holdout block (`holdoutPrefix`, its keys' prefix) is gated as T-081a's: WRONG must be 0 on its first, unseen run;
+// its answers not judged are counted, and must be on the reviewed list once the list has entries for the block, and at
+// most kHoldoutUnjudgedBudget before.
+void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPrefix = {})
 {
     if (std::getenv("RAYCAD_NAMING_ONLY") == nullptr) {
         CHECK(r.judged == static_cast<long>(perPart) * kPartCount);
@@ -986,7 +1006,19 @@ void checkGates(const BlockResult& r, int perPart)
     CHECK(t.repairedUsable == 0);
     CHECK(t.selfCheckFailures == 0);
     CHECK(t.injectivity == 0);
-    CHECK(t.unjudged() == t.unjudgedReviewed);
+    if (holdoutPrefix.empty()) {
+        CHECK(t.unjudged() == t.unjudgedReviewed);
+    } else {
+        long listed = 0;
+        for (const auto& [key, why] : reviewedUnjudged())
+            listed += key.compare(0, holdoutPrefix.size(), holdoutPrefix) == 0 ? 1 : 0;
+        std::printf("%sblock: %ld answers not judged (budget %ld), %ld of them on the reviewed list, which lists %ld "
+                    "for this block\n",
+                    holdoutPrefix.c_str(), t.unjudged(), kHoldoutUnjudgedBudget, t.unjudgedReviewed, listed);
+        CHECK(t.unjudged() <= kHoldoutUnjudgedBudget);
+        if (listed > 0)
+            CHECK(t.unjudged() == t.unjudgedReviewed);
+    }
     CHECK(t.accepted == t.acceptedReviewed);
     CHECK(t.conflicts == t.conflictsReviewed);
     REQUIRE(t.wrong() == 0);
@@ -1033,9 +1065,9 @@ TEST_CASE("Smoke: the first 2 randomised sequences with direct edits of every pa
 
 // The same seeds with the generator choosing by geometry instead of by index (SequenceOptions::byIndex false): other
 // sequences, closer to being the same on Windows and Linux (on the T-081b run 50 of 1,000 differed between the two,
-// against 94 by index). Hidden: it was run as an unseen check while the block above was being fixed, and not all of its
-// findings are resolved (see the T-081b report); run it with "[.random-directedit-sorted]".
-TEST_CASE("Unseen: 1,000 randomised sequences with direct edits, choices by geometry", "[.random-directedit-sorted]")
+// against 94 by index). First run as an unseen check while the block above was being fixed (T-081b round 1: 9 wrong
+// answers, each resolved in round 2); a regression block now, gated as a holdout.
+TEST_CASE("Holdout: 1,000 randomised sequences with direct edits, choices by geometry", "[random-directedit-sorted]")
 {
     const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
@@ -1049,7 +1081,39 @@ TEST_CASE("Unseen: 1,000 randomised sequences with direct edits, choices by geom
     const BlockResult r =
         runBlock("Randomised with direct edits, choices by geometry", parts, kSequencesPerPart, sorted);
     checkNoFault(guardBefore);
-    checkGates(r, kSequencesPerPart);
+    checkGates(r, kSequencesPerPart, sorted.keyPrefix);
+}
+// Holdouts with direct edits, choices by geometry: each block's seeds were first run once, unseen, on Windows and on
+// Linux after the fixes the block before it showed (T-081b round 2), and are kept as regression blocks.
+namespace {
+void runHoldout(const char* title, std::uint64_t seedBase, const std::string& prefix)
+{
+    const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
+    const std::vector<Part> parts = loadParts();
+    for (const Part& p : parts) {
+        INFO(p.path << ": " << p.error);
+        REQUIRE(p.base != nullptr);
+    }
+    SequenceOptions opt;
+    opt.byIndex = false;
+    opt.seedBase = seedBase;
+    opt.keyPrefix = prefix;
+    const BlockResult r = runBlock(title, parts, kSequencesPerPart, opt);
+    checkNoFault(guardBefore);
+    checkGates(r, kSequencesPerPart, prefix);
+}
+} // namespace
+
+TEST_CASE("Direct-edit holdout 1: 1,000 sequences, choices by geometry, seeds first run in T-081b round 2",
+          "[random-directedit-holdout1]")
+{
+    runHoldout("Direct-edit holdout 1", 0xA81B7000ull, "directedit-holdout1 ");
+}
+
+TEST_CASE("Direct-edit holdout 2: 1,000 sequences, choices by geometry, seeds first run in T-081b round 2",
+          "[random-directedit-holdout2]")
+{
+    runHoldout("Direct-edit holdout 2", 0xB2081B00ull, "directedit-holdout2 ");
 }
 // ---------------------------------------------------------------- oracle refinements on the sequences that showed them
 namespace {
@@ -1059,18 +1123,28 @@ struct Looked {
     Answer answer = Answer::Broken;
     std::vector<std::uint32_t> elements;
     Judgement judgement;
-    Judgement other; // the oracle's verdict on another element answered Exact
+    Judgement other;               // the oracle's verdict on another element answered Exact
+    std::vector<Judgement> probes; // the oracle's verdicts on the answers asked for (replayAndLook probes)
+};
+
+struct Probe {
+    Answer answer;
+    std::vector<std::uint32_t> elements;
+    long offCarrier = -1; // replace this element of elements by the nearest element off the picked one's carriers
 };
 
 // Replays sequence `seq` of part `partIndex` of the block and looks at the references `ids`: the resolver's answer and
 // its verdict, and the verdict on an Exact answer of another element of the same kind.
-std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids, bool byIndex = true)
+std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids, bool byIndex = true,
+                                  std::uint64_t seedBase = 0, const std::vector<Probe>& probes = {})
 {
     const Part part = loadPart(kParts[partIndex]);
     REQUIRE(part.base != nullptr);
     std::vector<Looked> out;
     SequenceOptions legacy;
     legacy.byIndex = byIndex;
+    if (seedBase != 0)
+        legacy.seedBase = seedBase;
     setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
                      const Owners& now, const Samples& samples) {
         if (std::find(ids.begin(), ids.end(), id) == ids.end())
@@ -1084,6 +1158,36 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
         const Expectation x = expect(ref.record, now, samples);
         const std::uint32_t got = l.elements.empty() ? 0 : l.elements.front();
         l.other = judgeAnswer(x, ref.record, now, samples, Answer::Exact, {got == 0 ? 1u : got - 1});
+        for (const Probe& p : probes) {
+            std::vector<std::uint32_t> els = p.elements;
+            if (p.offCarrier >= 0) {
+                const auto& N = samples.of(ref.record.base.kind);
+                auto centre = [](const ElemSamples& s) {
+                    Vec3 m{0, 0, 0};
+                    for (const Vec3& q : s.pts)
+                        m = Vec3{m.x + q.x / s.pts.size(), m.y + q.y / s.pts.size(), m.z + q.z / s.pts.size()};
+                    return m;
+                };
+                const Vec3 at = centre(N[static_cast<std::size_t>(p.offCarrier)]);
+                long best = -1;
+                double dBest = 1e300;
+                for (std::uint32_t e = 0; e < N.size(); ++e) {
+                    if (N[e].pts.empty() || x.inLogical(e))
+                        continue;
+                    const Vec3 m = centre(N[e]);
+                    const double d =
+                        (m.x - at.x) * (m.x - at.x) + (m.y - at.y) * (m.y - at.y) + (m.z - at.z) * (m.z - at.z);
+                    if (d < dBest) {
+                        dBest = d;
+                        best = e;
+                    }
+                }
+                for (std::uint32_t& e : els)
+                    if (static_cast<long>(e) == p.offCarrier && best >= 0)
+                        e = static_cast<std::uint32_t>(best);
+            }
+            l.probes.push_back(judgeAnswer(x, ref.record, now, samples, p.answer, els));
+        }
         out.push_back(std::move(l));
     });
     const SequenceResult r = runSequence(part, partIndex, seq, legacy);
@@ -1107,7 +1211,10 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         Answer answer;
         Verdict verdict;
         const char* about;
-        bool byIndex = true; // found with the generator's first version (SequenceOptions::byIndex)
+        bool byIndex = true;       // found with the generator's first version (SequenceOptions::byIndex)
+        std::uint64_t seed = 0;    // another block's seeds (SequenceOptions::seedBase)
+        bool newGround = false;    // accepted by the new-ground rule (oracle.cpp newGroundRule)
+        std::vector<Probe> wrongs; // answers the oracle must still judge wrong (the relaxed rule's negatives)
     };
     const std::string k = "directedit raycad-synthetic/";
     const std::vector<Case> cases{
@@ -1115,10 +1222,113 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         // looking down; that cap was the floor's Modified image, and the floor resolved Exact to it (a ghost).
         {5, 43, k + "fixture_plate_1.stp #43|face 23", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
         {9, 13, k + "manifold_block_1.stp #13|face 19", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
-        // Kernel (liesApart): a fillet along a removed pocket's edge, its surface run on elsewhere; that face was the
-        // fillet's Modified image, and the fillet resolved Exact to it, away from where it was picked.
-        {9, 43, k + "manifold_block_1.stp #43|face 2", Answer::Broken, Verdict::BrokenGone, "image apart: kernel",
+
+        // The first run of holdout 1 (seeds 0xA81B7000, choices by geometry): its six wrong answers, each with the
+        // answers the relaxed rule must still call wrong.
+        //  - remnants: a push/pull pulled the separating face away, leaving two strips of the pick (oracle);
+        {15,
+         12,
+         k + "slot_through_1.stp #12|face 8",
+         Answer::Split,
+         Verdict::Correct,
+         "remnants of the pick",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {22}}, {Answer::Split, {22, 28, 14}}}},
+        //  - remnants: a boss's start cap and its fillet's edge, bounded by a cut that moved away (oracle);
+        //    (its fillet's edge, a replayed pick, is judged in the block itself)
+        {17,
+         10,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #10|face 7",
+         Answer::Split,
+         Verdict::Correct,
+         "remnants of a bounded pick",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {11}}, {Answer::Exact, {17}}}},
+        //  - two vertices 3 um apart, the mapped pick on one (oracle);
+        {17,
+         7,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 39",
+         Answer::Exact,
+         Verdict::Correct,
+         "vertex the mapped pick lies on",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Exact, {30}}}},
+        {17,
+         7,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 42",
+         Answer::Exact,
+         Verdict::Correct,
+         "vertex the mapped pick lies on",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Exact, {34}}}},
+        //  - an arc piece past the seam vertex, inside where the cut that ended the picked arc was: past the pick's
+        //    old end, not its continuation (oracle); with another piece's arc, or that piece alone, still wrong;
+        {3,
+         31,
+         k + "closed_pocket_3.stp #31|edge 37",
+         Answer::Merged,
+         Verdict::Correct,
+         "past the pick's old end",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {40, 43}}, {Answer::Split, {40, 42}}, {Answer::Exact, {42}}}},
+        //  - a sliver of new ground on the top face where the moved cut used to be, cut off and joined to the face's
+        //    split family, lies outside the picked face's outline at pick time (TopoRef::outline): not a piece
+        //    (resolver: piecesInsideOutline); the old answer with it, the sliver alone, and the sliver swapped for a
+        //    face off the top, all wrong;
+        {14,
+         49,
+         k + "rib_plate_1.stp #49|face 39",
+         Answer::Split,
+         Verdict::Correct,
+         "split piece outside the pick-time outline: resolver",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Split, {2, 9}}, {Answer::Exact, {9}}, {Answer::Split, {2, 9}, 9}}},
+
+        // Resolver (propagate_resolve.cpp canContain): a sliver of a boss's cylindrical side, split off by a cut that
+        // then moved over it; the rest of the side is whole, but holds none of the sliver: Broken, not Merged.
+        {5, 15, k + "fixture_plate_1.stp #15|face 54", Answer::Broken, Verdict::BrokenGone, "piece cut away: resolver",
          false},
+
+        // The hidden block's findings (choices by geometry), each resolved in the oracle:
+        //  - an edge moved only because a direct edit moved the separator that cut it off: still in place;
+        {13, 31, k + "plate_thru_holes_1.stp #31|edge 47", Answer::Exact, Verdict::Correct, "separator moved by edit",
+         false},
+        //  - a new coplanar face beside the pick, the pick moved only by a separator a direct edit moved;
+        {17, 27, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #27|face 17", Answer::Exact, Verdict::Correct,
+         "new piece, separator moved by edit", false},
+        //  - the faces around a pushed face run on over the slab it swept (an edge there);
+        {18, 20, "directedit nist-d2mi/827-9999-905.stp #20|edge 22", Answer::Merged, Verdict::Correct,
+         "slab of a push", false},
+        //  - an edge between two pieces of a torus, the pieces joined: the torus's seam, in place;
+        {18, 41, "directedit nist-d2mi/827-9999-905.stp #41|edge 94", Answer::Exact, Verdict::Correct,
+         "seam of joined pieces", false},
+        //  - a face that holds the pick, none of its own samples inside the pick's extent;
+        {19, 48, "directedit nist-pmi/nist_ctc_01_asme1_rd_geometry.stp #48|face 117", Answer::Merged, Verdict::Correct,
+         "sparse samples", false},
+        //  - a piece beside the pick that overlaps no baseline element by more than its boundary;
+        {14, 42, k + "rib_plate_1.stp #42|face 1", Answer::Exact, Verdict::Correct, "new piece overlap", false},
+        //  - an edge between two pieces of one bore (described by that face twice): the bore's other split lines fit
+        //    that description too, but only the pieces on the pick continue it;
+        {6, 7, k + "flange_bolt_circle_1.stp #7|edge 15", Answer::Split, Verdict::Correct, "other split lines", false},
+        //  - the tuned block, after the oracle changes above: a chamfer corner on a rib's end face, which the end
+        //  face's
+        //    extent held only by a push/pull's fill, that push/pull suppressed: not judged (reviewed);
+        {14, 0, k + "rib_plate_1.stp #0|vertex 7", Answer::Exact, Verdict::Unjudged, "ground only an edit's fill gave"},
+        //  - a fillet the kernel rebuilt as a B-spline at its new size: not judged (reviewed);
+        {18, 35, "directedit nist-d2mi/827-9999-905.stp #35|vertex 0", Answer::Exact, Verdict::Unjudged,
+         "blend built as a B-spline", false},
         // A vertex where two pieces of a blend met a face, the pieces joined by a later push/pull's boolean.
         {7, 0, k + "keyway_tslot_1.stp #0|vertex 0", Answer::Exact, Verdict::Correct, "joined blend pieces"},
         {4, 1, k + "fillet_block_1.stp #1|vertex 15", Answer::Exact, Verdict::Correct, "joined blend pieces"},
@@ -1138,12 +1348,12 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         // Not judged (each on reviewed_unjudged.txt): the pick and another piece mapped onto one place; merged only for
         // an element that cannot be mapped; the owner gone while an element holds all of the pick's ground.
         {6, 3, k + "flange_bolt_circle_1.stp #3|edge 23", Answer::Split, Verdict::Unjudged, "shared anchor"},
-        {11, 17, k + "plate_counterbore_1.stp #17|face 17", Answer::Exact, Verdict::Unjudged, "merge unknown"},
+
         {17, 20, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #20|face 13", Answer::Merged, Verdict::Unjudged,
          "owner gone, ground held"},
     };
     for (const Case& c : cases) {
-        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex);
+        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex, c.seed, c.wrongs);
         INFO(c.id << " (" << c.about << ")");
         REQUIRE(looked.size() == 1);
         INFO("verdict " << verdictName(looked[0].judgement.verdict));
@@ -1151,24 +1361,42 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         CHECK(looked[0].judgement.verdict == c.verdict);
         if (c.verdict == Verdict::Correct || c.verdict == Verdict::BrokenGone)
             CHECK(isWrong(looked[0].other.verdict));
+        CHECK(looked[0].judgement.newGround.empty() == !c.newGround);
+        REQUIRE(looked[0].probes.size() == c.wrongs.size());
+        for (std::size_t i = 0; i < c.wrongs.size(); ++i) {
+            INFO("negative " << i << ": " << verdictName(looked[0].probes[i].verdict));
+            CHECK(isWrong(looked[0].probes[i].verdict));
+        }
     }
 }
 
-TEST_CASE("Oracle (directedit 7:12, 15:46): a removal that leaves part of a removed face is not modelled",
+TEST_CASE("Oracle (directedit 7:12, 15:46; hidden 6:47): edits the oracle's model does not describe are not modelled",
           "[naming][directedit][oracle-gate]")
 {
     // keyway_tslot_1 #12: deleting a hole whose mouth chamfer Defeaturing extends into a cone where the bore was;
     // slot_through_1 #46: deleting an arc wall of a cut leaves a remnant of its straight wall. Which logical face such
     // a face continues is not what the oracle's model of a removal says, so the step is skipped (counted), not judged.
-    for (const auto& [part, seq] : std::vector<std::pair<int, int>>{{7, 12}, {15, 46}}) {
-        const Part pt = loadPart(kParts[part]);
+    // flange_bolt_circle_1 #47 of the hidden block (choices by geometry): pushing the bottom face that a boss's start
+    // cap had been unified into (by the boss's own join) moves the cap's ground too; the model of an offset moves only
+    // its targets, so the step is not modelled.
+    struct Case {
+        int part, seq;
+        bool byIndex;
+        const char* outcome;
+    };
+    const std::vector<Case> cases{
+        {7, 12, true, "delete_hole: not modelled (a removed face is still there in part)"},
+        {15, 46, true, "delete_hole: not modelled (a removed face is still there in part)"},
+        {6, 47, false, "offset_face: not modelled (another face's ground may be on the moved plane)"}};
+    for (const Case& c : cases) {
+        const Part pt = loadPart(kParts[c.part]);
         REQUIRE(pt.base != nullptr);
-        SequenceOptions legacy;
-        legacy.byIndex = true;
-        const SequenceResult r = runSequence(pt, part, seq, legacy);
-        INFO(kParts[part] << " #" << seq);
+        SequenceOptions opt;
+        opt.byIndex = c.byIndex;
+        const SequenceResult r = runSequence(pt, c.part, c.seq, opt);
+        INFO(kParts[c.part] << " #" << c.seq);
         CHECK_FALSE(r.skipped);
-        const auto it = r.editCounts.find("delete_hole: not modelled (a removed face is still there in part)");
+        const auto it = r.editCounts.find(c.outcome);
         CHECK((it != r.editCounts.end() && it->second >= 1));
         CHECK(r.tally.wrong() == 0);
     }
@@ -1180,10 +1408,49 @@ TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
         std::sscanf(only, "%d:%d", &part, &seq);
     const Part pt = loadPart(kParts[part]);
     setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
-                     const Owners&, const Samples& samples) {
-        if (!isWrong(rr.judgement.verdict))
+                     const Owners& now, const Samples& samples) {
+        // RAYCAD_LOOK_ID=<text>: every reference whose id ends with it, whatever its verdict, briefly.
+        if (const char* want = std::getenv("RAYCAD_LOOK_ID");
+            want != nullptr && id.size() >= std::strlen(want) &&
+            id.compare(id.size() - std::strlen(want), std::string::npos, want) == 0) {
+            std::string els;
+            for (const SubId& s : res.elements)
+                els += " " + std::to_string(s.index);
+            std::printf("LOOK outline %zu chords\n", ref.ref.outline.chords.size());
+            std::printf("LOOK %s: names %s; answer %d {%s }, verdict %s; desc %s\n", id.c_str(), ref.names.c_str(),
+                        static_cast<int>(rr.answer), els.c_str(), verdictName(rr.judgement.verdict),
+                        explain(ref.record.truth, *ref.record.owners, *ref.record.baseline,
+                                static_cast<long>(ref.record.base.index))
+                            .c_str());
+        }
+        // RAYCAD_LOOK_UNJUDGED: the answers not judged too.
+        if (!isWrong(rr.judgement.verdict) &&
+            !(rr.judgement.verdict == Verdict::Unjudged && std::getenv("RAYCAD_LOOK_UNJUDGED") != nullptr))
             return;
         const ElemSamples& p = ref.record.picked();
+        {
+            // The pieces of the logical element at pick time (the description without its separators).
+            TruthDesc whole = ref.record.truth;
+            whole.seps.clear();
+            for (Constraint& c : whole.cons)
+                c.seps.clear();
+            for (const std::uint32_t e : evalTruth(whole, *ref.record.owners, *ref.record.baseline).elems) {
+                const ElemSamples& b = ref.record.baseline->of(ref.record.truth.kind)[e];
+                std::printf(
+                    "%s: baseline piece b%u%s type %d nrm (%.3f %.3f %.3f) box (%.3f %.3f %.3f)-(%.3f %.3f %.3f) "
+                    "n%zu\n",
+                    id.c_str(), e, e == ref.record.base.index ? " (the pick)" : "", b.type, b.nrm.x, b.nrm.y, b.nrm.z,
+                    b.boxMin.x, b.boxMin.y, b.boxMin.z, b.boxMax.x, b.boxMax.y, b.boxMax.z, b.pts.size());
+                bool moved = false;
+                const ElemSamples m = mapElement(*ref.record.baseline, SubId{ref.record.truth.kind, e},
+                                                 ref.record.truth, *ref.record.owners, now, moved);
+                for (const SubId& s : res.elements)
+                    std::printf(
+                        "    mapped b%u: %zu samples, %.0f %% of them on answer %u, %.0f %% of the answer on it\n", e,
+                        m.pts.size(), 100.0 * shareOnElement(m, samples.of(s.kind)[s.index], s.kind), s.index,
+                        100.0 * shareOnElement(samples.of(s.kind)[s.index], m, s.kind));
+            }
+        }
         std::printf("%s: picked type %d nrm (%.3f %.3f %.3f) sided %d sigma %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
                     id.c_str(), p.type, p.nrm.x, p.nrm.y, p.nrm.z, p.sided ? 1 : 0, p.sigma, p.boxMin.x, p.boxMin.y,
                     p.boxMin.z, p.boxMax.x, p.boxMax.y, p.boxMax.z);
@@ -1195,10 +1462,51 @@ TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
                 a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z);
             std::printf("   against the baseline owners: %s\n",
                         explain(ref.record.truth, *ref.record.owners, samples, s.index).c_str());
+            // The answer's faces against each owner of the description, now.
+            if (s.kind != SubKind::Face)
+                for (const std::uint32_t f : samples.facesOf[s.kind == SubKind::Edge ? 1 : 0][s.index])
+                    for (const Constraint& c : ref.record.truth.cons)
+                        for (const std::string& alt : c.alts) {
+                            TruthDesc d;
+                            d.kind = SubKind::Face;
+                            d.cons.push_back(Constraint{{alt}, {}});
+                            const ElemSamples& fs = samples.of(SubKind::Face)[f];
+                            std::printf("     face %u type %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f) vs %s\n", f,
+                                        fs.type, fs.boxMin.x, fs.boxMin.y, fs.boxMin.z, fs.boxMax.x, fs.boxMax.y,
+                                        fs.boxMax.z, explain(d, now, samples, f).c_str());
+                        }
         }
     });
-    const SequenceResult r = runSequence(pt, part, seq, SequenceOptions{});
+    // RAYCAD_LOOK_SEED=<hex seed base>: another block's seeds; RAYCAD_LOOK_SORTED: choices by geometry.
+    SequenceOptions look;
+    look.byIndex = std::getenv("RAYCAD_LOOK_SORTED") == nullptr;
+    if (const char* seed = std::getenv("RAYCAD_LOOK_SEED"))
+        look.seedBase = std::strtoull(seed, nullptr, 16);
+    const SequenceResult r = runSequence(pt, part, seq, look);
     setInspector({});
     for (const std::string& w : r.log.wrongs)
         std::printf("%s\n", w.c_str());
+}
+
+// Diagnosis: how long a direct edit abandoned at its time limit goes on running on its kernel thread. RAYCAD_LOOK as
+// above; prints, after the sequence, how long until no abandoned edit thread is left.
+TEST_CASE("debug: abandoned direct edits stop", "[.debug-cancel]")
+{
+    int part = 0, seq = 0;
+    if (const char* only = std::getenv("RAYCAD_LOOK"))
+        std::sscanf(only, "%d:%d", &part, &seq);
+    const Part pt = loadPart(kParts[part]);
+    SequenceOptions look;
+    look.byIndex = std::getenv("RAYCAD_LOOK_SORTED") == nullptr;
+    const auto start = std::chrono::steady_clock::now();
+    const SequenceResult r = runSequence(pt, part, seq, look);
+    const auto done = std::chrono::steady_clock::now();
+    std::printf("sequence %.1f s, %d past the time limit; edit threads running at its end: %d\n",
+                std::chrono::duration<double>(done - start).count(), r.timeouts, kernel::testing::runningEditThreads());
+    while (kernel::testing::runningEditThreads() > 0 &&
+           std::chrono::steady_clock::now() - done < std::chrono::minutes(15))
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::printf("no edit thread left %.1f s after the sequence ended (%d still running)\n",
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - done).count(),
+                kernel::testing::runningEditThreads());
 }

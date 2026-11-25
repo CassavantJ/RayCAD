@@ -442,6 +442,16 @@ DirectEditFault::~DirectEditFault()
     detail::directEditFaultRequests().store(0, std::memory_order_relaxed);
 }
 
+RawDirectEditHistory::RawDirectEditHistory()
+{
+    detail::rawDirectEditHistory().fetch_add(1, std::memory_order_relaxed);
+}
+
+RawDirectEditHistory::~RawDirectEditHistory()
+{
+    detail::rawDirectEditHistory().fetch_sub(1, std::memory_order_relaxed);
+}
+
 void waitForAbandonedEdits()
 {
     detail::waitForIoThreads();

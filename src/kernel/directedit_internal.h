@@ -139,6 +139,8 @@ bool interiorPoint(const TopoDS_Face& face, gp_Pnt& point, gp_Dir& normal);
 // Standard_Failure elsewhere, where nothing could catch a real fault (directedit_fault.cpp).
 std::atomic<int>& directEditFaultRequests() noexcept;
 void raiseTestFault();
+// Tests only (testing::RawDirectEditHistory): while above 0, demoteReversedImages leaves the history as OCCT gave it.
+std::atomic<int>& rawDirectEditHistory() noexcept;
 
 // Distance along `axis` and from `axis`.
 double axialParameter(const gp_Ax1& axis, const gp_Pnt& point);

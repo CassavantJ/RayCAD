@@ -222,7 +222,8 @@ std::optional<bool> insidePlanarFace(const kernel::Shape& shape, SubId face, con
 // the rest of the element is left whole. This keeps Merged to elements of the same type on the same carrier, at
 // least as large, with the picked element's position on them. Only planes, cylinders, lines and full circles
 // are checked; anything else is not given Merged.
-bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, const Fingerprint& hint)
+bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, const Fingerprint& hint,
+                const Territory& territory)
 {
     const Fingerprint fc = map.fingerprintOf(c);
     if (fc.surface != hint.surface || std::llabs(fc.qRadius - hint.qRadius) > 10)
@@ -254,7 +255,21 @@ bool canContain(const ElementMap& map, const kernel::Shape& shape, SubId c, cons
         if (info->type == kernel::SurfaceType::Cylinder) {
             const double along = dot(d, axis);
             const Vec3 radial{d.x - along * axis.x, d.y - along * axis.y, d.z - along * axis.z};
-            return norm(radial) <= info->radius + kContainTolerance;
+            const double rho = norm(radial);
+            if (rho > info->radius + kContainTolerance)
+                return false;
+            // On the face, not merely inside its box (T-081b sorted block 5:15: a sliver of a boss's side beside a cut,
+            // the cut moved over it, the rest of the side whole): the picked centroid moved out onto the cylinder lies
+            // on it, or a point of the picked territory does (a piece whose centroid falls outside its own outline).
+            // A centroid on the axis (a whole ring) tells no place; the box test stands.
+            if (rho <= kContainTolerance)
+                return true;
+            const double k = info->radius / rho;
+            const Vec3 onCylinder{info->origin.x + along * axis.x + k * radial.x,
+                                  info->origin.y + along * axis.y + k * radial.y,
+                                  info->origin.z + along * axis.z + k * radial.z};
+            const Probe probe(shape, c);
+            return probe.on(onCylinder, kContainTolerance) || (territory.known() && probe.count(territory) > 0);
         }
         return false;
     }
@@ -824,6 +839,8 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 return broken("Part of the picked element no longer exists.");
             return std::nullopt; // the Exact stage's business
         }
+        // A face piece wholly outside the picked face's outline at pick time is not a piece (TopoRef::outline).
+        elements = piecesInsideOutline(shape, elements, ref.outline);
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
         if (!facePiecesStayInside(map, shape, elements, ref))
@@ -865,6 +882,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 std::erase_if(elements, [&](const SubId& s) { return zeroMeasure(shape, s, ref.hint); });
                 if (elements.empty())
                     continue;
+                elements = piecesInsideOutline(shape, elements, ref.outline);
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||
@@ -873,7 +891,8 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 return make(ResolveState::Split, std::move(elements));
             }
             if (!wasAlone && members.size() == 1 && ref.kind != SubKind::Vertex &&
-                canContain(map, shape, elements.front(), ref.hint) && surroundedLikePick(elements.front()))
+                canContain(map, shape, elements.front(), ref.hint, ref.territory) &&
+                surroundedLikePick(elements.front()))
                 return make(ResolveState::Merged, std::move(elements));
         }
     }
@@ -892,7 +911,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
         }
         if (everyParent && !parents.shared && !parents.split && !parents.uncertain && parents.elements.size() == 1) {
             const SubId c = *parents.elements.begin();
-            if (c.kind == ref.kind && canContain(map, shape, c, ref.hint) && surroundedLikePick(c))
+            if (c.kind == ref.kind && canContain(map, shape, c, ref.hint, ref.territory) && surroundedLikePick(c))
                 return make(ResolveState::Merged, {c});
         }
     }
