@@ -1,5 +1,6 @@
 // The command handler registry (document_impl.h).
 #include "commands.h"
+#include "replace_import.h"
 
 #include "../document_impl.h"
 #include "../features/datum_plane_feature.h"
@@ -86,6 +87,9 @@ Status registerBuiltinCommands(CommandRegistry& registry)
             }
         }
         if (auto added = registry.add(features::makeImportCommandHandler()); !added) { // document.import (T-010)
+            return added;
+        }
+        if (auto added = registry.add(commands::makeReplaceImportCommandHandler()); !added) { // T-084
             return added;
         }
         // The parametric features (task T-096): feature.<type>.add / .edit, and the sketch editing commands.

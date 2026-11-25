@@ -4,6 +4,8 @@
 // the first rules resolved 17 of 33,785 references to a wrong element; these gave 0 on the same scenarios.
 // Amended after the T-081a gate (PLAN.md 0.6): pick-time evidence in TopoRef, its JSON form, input shapes in
 // NamingInput, and Resolved::postableWithoutReview.
+// Amended by T-084 (replace imported geometry): a second rematchImported that also takes the shape the old map was
+// made for, so that "unchanged" is decided by geometry, and the rules of both written down. Additive.
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -95,8 +97,24 @@ Result<NamingOutput> propagate(const NamingInput&);
 // sub-shape order (PLAN.md 3.3 rule 5), plus fingerprint.
 ElementMap nameImported(FeatureId importFeature, const kernel::Shape&);
 // Re-import or replace-geometry: match old names to the new shape by fingerprint + adjacency.
+// The map names every element of `replacement`. An element that is UNCHANGED (the same geometry as exactly one old
+// element, and no other element of either shape is) holds that element's names, so a reference to it resolves Exact.
+// An element that CHANGED (it lies on the carrier of old elements and shares ground with them: a face that grew, shrank,
+// became one with others or was cut in pieces) holds a new name of its own and the old names (or, for pieces, "split"
+// names made from them), so a reference resolves Merged or Split, checked against its pick-time evidence like after any
+// model edit, never Exact. Anything else is NEW (a new name only) or REMOVED (its names are gone: Broken). A new name
+// never equals an old one. Nothing is guessed: two candidates that cannot be told apart are both unmatched.
+// lineage: Merged (old name -> every name of the element now holding it), Split (old name -> the pieces' names),
+// Deleted (old name held by nothing now). unmatched: every old name that is not on an unchanged element, sorted.
+// This form has no old geometry: an element is unchanged when its fingerprint and its neighbours' match one to one,
+// and nothing is reported as changed. src/naming/rematch.h has the rules in full.
 struct RematchResult { ElementMap map; std::vector<LineageEvent> lineage; std::vector<Hash256> unmatched; };
 RematchResult rematchImported(const ElementMap& old, FeatureId importFeature, const kernel::Shape& replacement);
+// The same with `oldShape`, the shape `old` was made for (T-084): unchanged is then decided by geometry (carrier,
+// boundary and points on each other within 1e-3 mm), and changed elements are found. No rigid move of the whole part is
+// looked for: a part that moved has moved faces. The form to use when the old shape is at hand.
+RematchResult rematchImported(const ElementMap& old, const kernel::Shape& oldShape, FeatureId importFeature,
+                              const kernel::Shape& replacement);
 
 // ---- References held by features, CAM operations, measurements, PMI ----
 

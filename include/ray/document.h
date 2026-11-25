@@ -2,6 +2,8 @@
 // Module: src/doc   Depends on: core, kernel, naming, sketch, cam (data types only)
 // Status: PLAN DRAFT. Amended by T-032: CAM state is stored (StateObjects), the CAM commands are built in, and
 // camSnapshot gives the CAM engine its view of a snapshot.
+// Amended by T-084 (replace imported geometry): an import body may name its element map ("names"), and the command
+// feature.import.replace is built in. Comments only; no declaration changed.
 //
 // Model: the document is a chain of immutable snapshots (DocState). The UI thread owns the
 // "current" pointer. Commands produce a new snapshot; workers read snapshots freely without locks.
@@ -268,7 +270,7 @@ private:
     std::map<std::string, std::unique_ptr<ICommandHandler>, std::less<>> handlers_;
 };
 // Registers feature.add, feature.edit, feature.remove, feature.reorder, feature.suppress, feature.rollback,
-// param.set, body.set and document.import, and the CAM commands cam.setup.*, cam.operation.* and cam.library.embed
+// param.set, body.set, document.import and feature.import.replace (T-084), and the CAM commands cam.setup.*, cam.operation.* and cam.library.embed
 // (task T-032). Their argument objects are described by argsSchemaJson().
 Status registerBuiltinCommands(CommandRegistry&);
 // A registry holding just the built-in commands; null only when memory runs out.
@@ -361,13 +363,21 @@ std::unique_ptr<Document> makeDocument(IUiDispatcher& dispatcher, IJobSystem& jo
 //    "options": {"heal": "none" | "reader" | "full", "sew": true, "sewTolerance": 0.001},   (optional; defaults)
 //    "role": "part" | "fixture",                                                          (optional; "part")
 //    "sourceUnits": "inch" | "metric",                                                    (optional; informational)
-//    "bodies": [{"id": "<uuid>", "name": "...", "color": [r, g, b, a], "blob": "<BREP object hash>"}],  (optional)
+//    "bodies": [{"id": "<uuid>", "name": "...", "color": [r, g, b, a], "blob": "<BREP object hash>",
+//                "names": "<element map object hash>"}],                                    (optional; "names" too)
 //    "warnings": ["..."]}                                                                 (optional)
 // With "bodies" the stored BREP objects are the source of truth: the rebuild reads them through
 // RebuildContext::blob and never needs the file. If an object is missing, it re-imports the file (its hash must
 // equal fileHash and it must give the same number of bodies) and warns where the geometry differs from the
 // stored copy. Without "bodies" it imports the file on every cache miss, with body ids importedBodyId(feature, i).
-// Every body is named with naming::nameImported(feature id, shape). The stored warnings are reported again.
+// Every body is named with naming::nameImported(feature id, shape), unless it names an element map object ("names":
+// naming::ElementMap::serialize bytes, written by feature.import.replace with the names naming::rematchImported carried
+// over from the revision it replaced): that map is used when it can be read and names exactly the body's elements,
+// else nameImported with a warning. The stored warnings are reported again. referencedObjects lists "names" objects too.
+// Replacing the file with a new revision (T-084): "feature.import.replace" {"id": "<import feature>", "props": {...}}
+// puts new props (same bodies and role; new file, hash, units, warnings, blobs and names) on the import feature as one
+// undo step. Its objects and props are prepared on a worker from the new file, as an import's are (src/doc/commands/
+// replace_import.h; the api action file.replaceImport does both steps).
 //
 // How an import enters a document (UI thread, after a worker ran prepareImport):
 //   1. prepareImport(request, ctx) on a worker: hashes and imports the file, serialises every body;

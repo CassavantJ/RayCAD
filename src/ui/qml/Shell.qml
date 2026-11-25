@@ -357,6 +357,23 @@ FocusScope {
                 ReferenceReview {}
             }
         }
+        // T-084: the replace dialog and its change summary (model/ReplaceImport.qml), top right, made when first shown.
+        Loader {
+            objectName: "replaceImportLoader"
+            z: 1
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: Theme.spacingL
+            property bool used: Replacement.shown
+            onUsedChanged: if (used) used = true // stays once made
+            active: used
+            visible: Replacement.shown && Session.hasDocument
+            width: item ? Math.min(parent.width - 2 * Theme.spacingL, item.implicitWidth) : 0
+            height: item ? Math.min(parent.height * (References.shown ? 0.38 : 0.6), item.implicitHeight) : 0
+            sourceComponent: Component {
+                ReplaceImport {}
+            }
+        }
 
         // T-019: someone else holds the document's write lock.
         ReadOnlyNotice {

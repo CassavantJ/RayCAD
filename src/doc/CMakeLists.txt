@@ -7,6 +7,8 @@ add_library(ray_doc STATIC
     commands/model_commands.cpp
     commands/param_commands.cpp
     commands/registry.cpp
+    commands/replace_import.h # T-084: feature.import.replace and prepareReplaceImport
+    commands/replace_import.cpp
     doc_module.cpp
     document.cpp
     expr.cpp

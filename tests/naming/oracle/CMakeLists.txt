@@ -89,3 +89,16 @@ set_tests_properties(ray_naming_random_directedit PROPERTIES TIMEOUT 7200)
 add_test(NAME ray_naming_random_perturbed COMMAND ray_naming_oracle_tests "[random-perturbed]")
 ray_test_runtime_path(ray_naming_random_perturbed)
 set_tests_properties(ray_naming_random_perturbed PROPERTIES TIMEOUT 7200)
+
+# T-084: the rematch oracle (kernel and core only, like the oracle above: it cannot use the naming code it judges) and
+# the revision pairs it judges (rematchImported: a part's STEP replaced by a new revision).
+add_library(ray_rematch_oracle STATIC rematch_oracle.h rematch_oracle.cpp)
+target_link_libraries(ray_rematch_oracle PUBLIC ray_kernel ray_core)
+set_property(TARGET ray_rematch_oracle PROPERTY FOLDER "tests")
+add_executable(ray_naming_rematch_tests rematch_pairs_test.cpp)
+target_link_libraries(ray_naming_rematch_tests PRIVATE ray_rematch_oracle ray_naming ray_kernel ray_core
+    Catch2::Catch2WithMain)
+target_compile_definitions(ray_naming_rematch_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus")
+set_property(TARGET ray_naming_rematch_tests PROPERTY FOLDER "tests")
+add_test(NAME ray_naming_rematch_pairs COMMAND ray_naming_rematch_tests "[rematch-pairs]")
+ray_test_runtime_path(ray_naming_rematch_pairs)
