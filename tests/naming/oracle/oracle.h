@@ -494,6 +494,9 @@ struct Expectation {
     // logical element's parts continues the pick cannot be told either: any other answer inside the logical element is
     // not judged (T-081b directedit 6:3: a cut moved across a hole, its wall's two crossings with the hole wall).
     bool sharedAnchor = false;
+    // Every carrier of the description is as it was at pick time (only separators or bounding features moved): the
+    // picked element's ground is where it was (T-081b round 2: remnants, and the new-ground rule's coverage).
+    bool inPlace = false;
     bool inLogical(std::uint32_t e) const;
     bool isAnchored(std::uint32_t e) const;
     bool isClaimed(std::uint32_t e) const;
@@ -505,6 +508,7 @@ struct Judgement {
     Verdict verdict = Verdict::Correct;
     bool unjudged = false; // a non-Broken answer to a reference whose continuation cannot be told
     std::string accepted;  // non-empty: accepted by the new-territory rule (why, in words)
+    std::string newGround; // non-empty: a flagged answer accepted by the new-ground rule (judgeAnswer; why, in words)
     bool twin = false;     // Exact on one of coincident vertices (Expectation::twins)
 };
 Judgement judgeAnswer(const Expectation& e, const PickRecord& pick, const Owners& now, const Samples& samples,

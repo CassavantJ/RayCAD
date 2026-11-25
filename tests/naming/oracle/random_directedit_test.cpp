@@ -1109,6 +1109,12 @@ TEST_CASE("Direct-edit holdout 1: 1,000 sequences, choices by geometry, seeds fi
 {
     runHoldout("Direct-edit holdout 1", 0xA81B7000ull, "directedit-holdout1 ");
 }
+
+TEST_CASE("Direct-edit holdout 2: 1,000 sequences, choices by geometry, seeds first run in T-081b round 2",
+          "[random-directedit-holdout2]")
+{
+    runHoldout("Direct-edit holdout 2", 0xB2081B00ull, "directedit-holdout2 ");
+}
 // ---------------------------------------------------------------- oracle refinements on the sequences that showed them
 namespace {
 
@@ -1118,17 +1124,27 @@ struct Looked {
     std::vector<std::uint32_t> elements;
     Judgement judgement;
     Judgement other; // the oracle's verdict on another element answered Exact
+    std::vector<Judgement> probes; // the oracle's verdicts on the answers asked for (replayAndLook probes)
+};
+
+struct Probe {
+    Answer answer;
+    std::vector<std::uint32_t> elements;
+    long offCarrier = -1; // replace this element of elements by the nearest element off the picked one's carriers
 };
 
 // Replays sequence `seq` of part `partIndex` of the block and looks at the references `ids`: the resolver's answer and
 // its verdict, and the verdict on an Exact answer of another element of the same kind.
-std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids, bool byIndex = true)
+std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids, bool byIndex = true,
+                                  std::uint64_t seedBase = 0, const std::vector<Probe>& probes = {})
 {
     const Part part = loadPart(kParts[partIndex]);
     REQUIRE(part.base != nullptr);
     std::vector<Looked> out;
     SequenceOptions legacy;
     legacy.byIndex = byIndex;
+    if (seedBase != 0)
+        legacy.seedBase = seedBase;
     setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
                      const Owners& now, const Samples& samples) {
         if (std::find(ids.begin(), ids.end(), id) == ids.end())
@@ -1142,6 +1158,35 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
         const Expectation x = expect(ref.record, now, samples);
         const std::uint32_t got = l.elements.empty() ? 0 : l.elements.front();
         l.other = judgeAnswer(x, ref.record, now, samples, Answer::Exact, {got == 0 ? 1u : got - 1});
+        for (const Probe& p : probes) {
+            std::vector<std::uint32_t> els = p.elements;
+            if (p.offCarrier >= 0) {
+                const auto& N = samples.of(ref.record.base.kind);
+                auto centre = [](const ElemSamples& s) {
+                    Vec3 m{0, 0, 0};
+                    for (const Vec3& q : s.pts)
+                        m = Vec3{m.x + q.x / s.pts.size(), m.y + q.y / s.pts.size(), m.z + q.z / s.pts.size()};
+                    return m;
+                };
+                const Vec3 at = centre(N[static_cast<std::size_t>(p.offCarrier)]);
+                long best = -1;
+                double dBest = 1e300;
+                for (std::uint32_t e = 0; e < N.size(); ++e) {
+                    if (N[e].pts.empty() || x.inLogical(e))
+                        continue;
+                    const Vec3 m = centre(N[e]);
+                    const double d = (m.x - at.x) * (m.x - at.x) + (m.y - at.y) * (m.y - at.y) + (m.z - at.z) * (m.z - at.z);
+                    if (d < dBest) {
+                        dBest = d;
+                        best = e;
+                    }
+                }
+                for (std::uint32_t& e : els)
+                    if (static_cast<long>(e) == p.offCarrier && best >= 0)
+                        e = static_cast<std::uint32_t>(best);
+            }
+            l.probes.push_back(judgeAnswer(x, ref.record, now, samples, p.answer, els));
+        }
         out.push_back(std::move(l));
     });
     const SequenceResult r = runSequence(part, partIndex, seq, legacy);
@@ -1166,6 +1211,9 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         Verdict verdict;
         const char* about;
         bool byIndex = true; // found with the generator's first version (SequenceOptions::byIndex)
+        std::uint64_t seed = 0; // another block's seeds (SequenceOptions::seedBase)
+        bool newGround = false; // accepted by the new-ground rule (oracle.cpp newGroundRule)
+        std::vector<Probe> wrongs; // answers the oracle must still judge wrong (the relaxed rule's negatives)
     };
     const std::string k = "directedit raycad-synthetic/";
     const std::vector<Case> cases{
@@ -1173,6 +1221,27 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         // looking down; that cap was the floor's Modified image, and the floor resolved Exact to it (a ghost).
         {5, 43, k + "fixture_plate_1.stp #43|face 23", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
         {9, 13, k + "manifold_block_1.stp #13|face 19", Answer::Broken, Verdict::BrokenGone, "reversed cap: kernel"},
+
+        // The first run of holdout 1 (seeds 0xA81B7000, choices by geometry): its six wrong answers, each with the
+        // answers the relaxed rule must still call wrong.
+        //  - remnants: a push/pull pulled the separating face away, leaving two strips of the pick (oracle);
+        {15, 12, k + "slot_through_1.stp #12|face 8", Answer::Split, Verdict::Correct, "remnants of the pick", false,
+         0xA81B7000ull, false, {{Answer::Split, {22}}, {Answer::Split, {22, 28, 14}}}},
+        //  - remnants: a boss's start cap and its fillet's edge, bounded by a cut that moved away (oracle);
+        //    (its fillet's edge, a replayed pick, is judged in the block itself)
+        {17, 10, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #10|face 7", Answer::Split, Verdict::Correct,
+         "remnants of a bounded pick", false, 0xA81B7000ull, false, {{Answer::Split, {11}}, {Answer::Exact, {17}}}},
+        //  - two vertices 3 um apart, the mapped pick on one (oracle);
+        {17, 7, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 39", Answer::Exact, Verdict::Correct,
+         "vertex the mapped pick lies on", false, 0xA81B7000ull, false, {{Answer::Exact, {30}}}},
+        {17, 7, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #7|vertex 42", Answer::Exact, Verdict::Correct,
+         "vertex the mapped pick lies on", false, 0xA81B7000ull, false, {{Answer::Exact, {34}}}},
+        //  - new ground in a flagged answer: an arc past a seam left out, a disconnected sliver of the top taken in
+        //    (accepted, counted); with the extra piece on another element's ground or another carrier, still wrong;
+        {3, 31, k + "closed_pocket_3.stp #31|edge 37", Answer::Merged, Verdict::Correct, "new ground left out", false,
+         0xA81B7000ull, true, {{Answer::Split, {40, 43}}, {Answer::Exact, {40}}}},
+        {14, 49, k + "rib_plate_1.stp #49|face 39", Answer::Split, Verdict::Correct, "new ground taken in", false,
+         0xA81B7000ull, true, {{Answer::Split, {2, 9}, 9}, {Answer::Exact, {9}}}},
 
         // Resolver (propagate_resolve.cpp canContain): a sliver of a boss's cylindrical side, split off by a cut that
         // then moved over it; the rest of the side is whole, but holds none of the sliver: Broken, not Merged.
@@ -1231,7 +1300,7 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
          "owner gone, ground held"},
     };
     for (const Case& c : cases) {
-        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex);
+        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex, c.seed, c.wrongs);
         INFO(c.id << " (" << c.about << ")");
         REQUIRE(looked.size() == 1);
         INFO("verdict " << verdictName(looked[0].judgement.verdict));
@@ -1239,6 +1308,12 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
         CHECK(looked[0].judgement.verdict == c.verdict);
         if (c.verdict == Verdict::Correct || c.verdict == Verdict::BrokenGone)
             CHECK(isWrong(looked[0].other.verdict));
+        CHECK(looked[0].judgement.newGround.empty() == !c.newGround);
+        REQUIRE(looked[0].probes.size() == c.wrongs.size());
+        for (std::size_t i = 0; i < c.wrongs.size(); ++i) {
+            INFO("negative " << i << ": " << verdictName(looked[0].probes[i].verdict));
+            CHECK(isWrong(looked[0].probes[i].verdict));
+        }
     }
 }
 

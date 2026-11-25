@@ -2707,6 +2707,28 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         }
     }
     const TruthEval L = evalTruth(withoutSeparators(d), now, smp);
+    // Every carrier of the description as it was at pick time: the picked element did not move, only what bounds it.
+    x.inPlace = true;
+    for (const Constraint& c : d.cons)
+        for (const std::string& alt : c.alts) {
+            const Owner* o0 = pick.owners->get(alt);
+            const Owner* o1 = now.get(alt);
+            x.inPlace = x.inPlace && o0 != nullptr && o1 != nullptr && !carrierChanged(o0->c, o1->c);
+        }
+    // REMNANTS. Moved only because a separator or a bounding feature moved, its own carriers as they were: an element on
+    // those carriers lying all but 10 % on the picked element where it was is ground the pick had and kept, whichever
+    // side of a moved separator it now lies (T-081b holdout1 15:12: a push/pull pulled the separating face away but
+    // left two strips of the pick, where it did not extend an angled neighbour; 17:10: the start cap of a boss a moved
+    // cut had bounded). The map, which moves such an element with what bounds it, would place it elsewhere.
+    std::set<std::uint32_t> remnants;
+    if (x.moved && x.inPlace && x.kind != SubKind::Vertex)
+        for (const std::uint32_t e : L.elems) {
+            if (N[e].pts.empty() || sliver(N[e], x.kind) || shareOn(N[e], pick.picked(), x.kind) < 0.9)
+                continue;
+            remnants.insert(e);
+            if (!std::binary_search(x.strict.elems.begin(), x.strict.elems.end(), e))
+                x.strict.elems.insert(std::lower_bound(x.strict.elems.begin(), x.strict.elems.end(), e), e);
+        }
     std::set_union(L.elems.begin(), L.elems.end(), x.strict.elems.begin(), x.strict.elems.end(),
                    std::back_inserter(x.logical));
     // The logical element is gone with its owner (a feature suppressed, a face a direct edit removed), yet an element
@@ -2802,8 +2824,9 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     x.component = componentsOf(x.logical, x.kind, smp);
     x.anchored.resize(x.logical.size(), 0);
     for (std::size_t i = 0; i < x.logical.size(); ++i)
-        x.anchored[i] = !x.mapped.pts.empty() && (containers.count(x.logical[i]) != 0 ||
-                                                  overlap(N[x.logical[i]], x.mapped, x.kind, pickTol))
+        x.anchored[i] = (remnants.count(x.logical[i]) != 0 ||
+                         (!x.mapped.pts.empty() && (containers.count(x.logical[i]) != 0 ||
+                                                    overlap(N[x.logical[i]], x.mapped, x.kind, pickTol))))
                             ? 1
                             : 0;
     if (x.weak) {
@@ -3214,6 +3237,24 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 x.mergeUnknown = true;
                 x.sharedAnchor = true;
             }
+    // Two vertices of the logical element both near the mapped pick (the ends of an edge a few micrometres long, both
+    // on the description's faces: T-081b holdout1 17:7), and the mapped pick on exactly one of them: a vertex continues
+    // as one vertex, the one it lies on.
+    if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2 && !x.mapped.pts.empty()) {
+        std::vector<std::uint32_t> on;
+        bool othersApart = true;
+        for (const std::uint32_t e : x.expected.elems) {
+            const double dist = N[e].nodes.empty() ? 1e300 : norm(sub(N[e].nodes.front(), x.mapped.pts.front()));
+            if (dist <= kExactVertexTolerance)
+                on.push_back(e);
+            else
+                othersApart = othersApart && dist > 2 * kExactVertexTolerance;
+        }
+        if (on.size() == 1 && othersApart) {
+            x.expected = TruthEval{};
+            x.expected.elems = on;
+        }
+    }
     if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
         x.twins = true;
         const Vec3 p = N[x.expected.elems.front()].nodes.front();
@@ -3422,8 +3463,90 @@ bool newTerritory(const Expectation& x, const PickRecord& pick, const Owners& no
 
 } // namespace
 
+namespace {
+
+// NEW GROUND (T-081b round 2). Territory that did not exist at pick time and lies on the picked element's own carriers
+// (an element of its logical element) is neither required nor forbidden in a flagged answer (Split or Merged): a
+// person reviews every flagged answer before a toolpath can be posted, and sees an extra sliver of the same face.
+// Accepted when (a) the answer holds all the picked ground that survives (the mapped pick, or the pick in place when
+// its carriers did not move: Expectation::inPlace), and some of it; (b) every element of the answer that is not
+// expected is on the picked element's own carriers and on no ground another element held at pick time; (c) the
+// answer is flagged. Never for an Exact answer. Returns why, or nothing.
+std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Samples& smp, Answer answer,
+                          const std::vector<std::uint32_t>& X)
+{
+    if ((answer != Answer::Split && answer != Answer::Merged) || X.empty() || !x.noAnchor.empty())
+        return {};
+    const SubKind kind = x.kind;
+    const auto& N = smp.of(kind);
+    const auto& B = pick.baseline->of(kind);
+    const double tol = overlapTolerance(kind);
+    const std::vector<std::uint32_t>& E = x.expected.elems;
+    auto covers = [&](const ElemSamples& P) {
+        std::size_t onX = 0, onAny = 0;
+        for (const Vec3& p : P.pts) {
+            bool inX = false;
+            for (const std::uint32_t e : X)
+                inX = inX || nearElement(p, N[e], kind, tol);
+            bool inAny = inX;
+            for (std::uint32_t e = 0; e < N.size() && !inAny; ++e)
+                inAny = !N[e].pts.empty() && nearElement(p, N[e], kind, tol);
+            onX += inX ? 1 : 0;
+            onAny += inAny ? 1 : 0;
+        }
+        return onX > 0 && static_cast<double>(onX) >= 0.98 * static_cast<double>(onAny);
+    };
+    // The pick in place when only what bounds it moved (the map moves such a pick with what bounds it), else mapped.
+    if (!covers(x.inPlace && x.moved ? pick.picked() : x.mapped))
+        return {};
+    std::size_t extras = 0;
+    for (const std::uint32_t e : X) {
+        if (std::binary_search(E.begin(), E.end(), e))
+            continue;
+        if (!x.inLogical(e))
+            return {};
+        for (const Vec3& p : N[e].pts)
+            for (std::uint32_t i = 0; i < B.size(); ++i)
+                if (i != pick.base.index && sameSheet(N[e], B[i], kind) && nearElement(p, B[i], kind, tol))
+                    return {};
+        ++extras;
+    }
+    std::size_t missing = 0;
+    for (const std::uint32_t e : E)
+        missing += std::binary_search(X.begin(), X.end(), e) ? 0 : 1;
+    return std::string(answerName(answer)) + " " + listOf(X) + " where the oracle expects " + listOf(E) + ": " +
+           std::to_string(extras) + " more on new ground of the picked element's carriers, " + std::to_string(missing) +
+           " expected left out that hold none of the surviving picked ground";
+}
+
+Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp,
+                    Answer answer, std::vector<std::uint32_t> X);
+
+} // namespace
+
 Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp,
                       Answer answer, std::vector<std::uint32_t> X)
+{
+    Judgement j = judgeCore(x, pick, now, smp, answer, X);
+    if (isWrong(j.verdict)) {
+        std::sort(X.begin(), X.end());
+        X.erase(std::unique(X.begin(), X.end()), X.end());
+        bool valid = true;
+        for (const std::uint32_t e : X)
+            valid = valid && e < smp.of(x.kind).size();
+        if (valid)
+            if (std::string why = newGroundRule(x, pick, smp, answer, X); !why.empty()) {
+                j.verdict = Verdict::Correct;
+                j.newGround = std::move(why);
+            }
+    }
+    return j;
+}
+
+namespace {
+
+Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp,
+                    Answer answer, std::vector<std::uint32_t> X)
 {
     Judgement j;
     std::sort(X.begin(), X.end());
@@ -3505,5 +3628,7 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
         j.verdict = Verdict::Correct;
     return j;
 }
+
+} // namespace
 
 } // namespace ray::naming_oracle

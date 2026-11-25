@@ -93,3 +93,6 @@ set_tests_properties(ray_naming_random_directedit_sorted PROPERTIES TIMEOUT 7200
 add_test(NAME ray_naming_random_directedit_holdout1 COMMAND ray_naming_oracle_tests "[random-directedit-holdout1]")
 ray_test_runtime_path(ray_naming_random_directedit_holdout1)
 set_tests_properties(ray_naming_random_directedit_holdout1 PROPERTIES TIMEOUT 7200)
+add_test(NAME ray_naming_random_directedit_holdout2 COMMAND ray_naming_oracle_tests "[random-directedit-holdout2]")
+ray_test_runtime_path(ray_naming_random_directedit_holdout2)
+set_tests_properties(ray_naming_random_directedit_holdout2 PROPERTIES TIMEOUT 7200)

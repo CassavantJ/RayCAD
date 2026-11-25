@@ -87,7 +87,7 @@ Hash256 loopTagParent(std::uint64_t loopTag);
 // piece must also not meet a face, not around the picked element, of a feature that had a face around it (it would
 // lie beyond a boundary the picked element had: facePiecesStayInside). A Merged by the family or split-parent rule
 // onto a planar face needs the picked centroid inside the face's outline, not only its box; onto a cylindrical face,
-// the picked centroid moved out onto the cylinder on the face (unless the centroid is on the axis).
+// the picked centroid moved out onto the cylinder, or a point of the picked territory, on the face.
 // Every edge or vertex answer must also pass onPickedFaces. nullopt means none applies (the caller reports
 // Broken). A name the reference holds that is ambiguous is never followed past the Exact stage (its element
 // could have been a sibling). Never throws.

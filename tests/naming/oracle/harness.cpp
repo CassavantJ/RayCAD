@@ -696,10 +696,49 @@ RefResult judgeReference(const PickRecord& pick, const Owners& now, const Sample
 
     // ---- mutation test of the oracle: mutants of its own expected answer, through the same judge ----
     const std::string cls = prefix + (pick.truth.weak ? "weak: " : "");
-    auto mutant = [&](const std::string& name, Answer a, const std::vector<std::uint32_t>& m) {
-        const Judgement j = judgeAnswer(x, pick, now, smp, a, m);
+    const auto& NN = smp.of(kind);
+    auto mutant = [&](const std::string& name, Answer a, std::vector<std::uint32_t> m) {
+        Judgement j = judgeAnswer(x, pick, now, smp, a, m);
+        std::string suffix;
+        if (!j.newGround.empty()) {
+            // A legitimate answer under the new-ground rule: its negative instead, the extra pieces moved to the nearest
+            // element off the picked element's carriers (or, with no extra piece, the piece holding the most picked
+            // ground left out), which must still be wrong (T-081b round 2).
+            const std::vector<std::uint32_t>& E0 = out.expected;
+            std::vector<std::uint32_t> skip(x.logical.begin(), x.logical.end());
+            skip.insert(skip.end(), m.begin(), m.end());
+            std::sort(skip.begin(), skip.end());
+            skip.erase(std::unique(skip.begin(), skip.end()), skip.end());
+            std::vector<std::uint32_t> neg;
+            bool extra = false;
+            for (const std::uint32_t e : m) {
+                if (!std::binary_search(E0.begin(), E0.end(), e) && x.inLogical(e)) {
+                    extra = true;
+                    if (const long o = nearestElement(NN, kind, centroidOf(NN[e]), skip, -2); o >= 0)
+                        neg.push_back(static_cast<std::uint32_t>(o));
+                } else {
+                    neg.push_back(e);
+                }
+            }
+            if (!extra && !neg.empty()) {
+                std::size_t most = 0;
+                double best = -1.0;
+                for (std::size_t i = 0; i < neg.size(); ++i)
+                    if (const double s = shareOnElement(pick.picked(), NN[neg[i]], kind); s > best) {
+                        best = s;
+                        most = i;
+                    }
+                neg.erase(neg.begin() + static_cast<long>(most));
+            }
+            if (neg.empty())
+                if (const long o = nearestElement(NN, kind, centroidOf(pick.picked()), skip, -2); o >= 0)
+                    neg.push_back(static_cast<std::uint32_t>(o));
+            m = neg;
+            j = judgeAnswer(x, pick, now, smp, a, m);
+            suffix = " (new ground: negative)";
+        }
         RefResult::Mutant mu;
-        mu.cls = cls + name;
+        mu.cls = cls + name + suffix;
         const bool flagged = isWrong(j.verdict) || j.unjudged;
         mu.caught = flagged || !j.accepted.empty();
         mu.byReviewOnly = !flagged && !j.accepted.empty();
@@ -790,6 +829,7 @@ void Tally::merge(const Tally& o)
     crossings += o.crossings;
     crossingsAtSeam += o.crossingsAtSeam;
     accepted += o.accepted;
+    acceptedNewGround += o.acceptedNewGround;
     acceptedReviewed += o.acceptedReviewed;
     conflicts += o.conflicts;
     conflictsReviewed += o.conflictsReviewed;
@@ -889,6 +929,10 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
             ++tally.acceptedReviewed;
         log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
                             (it != reviewedTerritory().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+    }
+    if (!rr.judgement.newGround.empty()) {
+        ++tally.acceptedNewGround;
+        log.notes.push_back("NEW GROUND " + id + ": " + rr.judgement.newGround);
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
@@ -1082,6 +1126,7 @@ void printTally(const char* title, const Tally& t)
     std::printf("  sliding crossings told by the oracle (oracle.h Expectation::crossing): %ld (%ld at a seam, %ld by "
                 "position)\n",
                 t.crossings, t.crossingsAtSeam, t.crossings - t.crossingsAtSeam);
+    std::printf("  accepted with new ground (flagged answers, oracle.cpp newGroundRule): %ld\n", t.acceptedNewGround);
     std::printf("  new-territory acceptances: %ld (%ld on the reviewed list, %ld NOT REVIEWED)\n", t.accepted,
                 t.acceptedReviewed, t.accepted - t.acceptedReviewed);
     std::printf(
