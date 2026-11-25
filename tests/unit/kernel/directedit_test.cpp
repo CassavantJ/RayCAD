@@ -172,6 +172,36 @@ TEST_CASE("deleteFaces removes a counterbored hole whole when only its bore is p
     CHECK(same.shape.contentHash() == out.shape.contentHash());
 }
 
+TEST_CASE("deleteFaces reports no face Modified into a face that looks the other way", "[kernel][directedit]")
+{
+    // T-081b (naming through direct edits): a counterbored hole with a small second hole started at the counterbore
+    // floor, cutting into the bore's side. Removing the counterbore wall closes the counterbore; where the floor was
+    // over air (the bore's and the small hole's openings) the solid gets a new face on the floor's plane looking down,
+    // the cap of what is left of the holes. That face is not the floor (the floor looked up, with material under it;
+    // the floor itself is now inside the material), so it must not be the floor's Modified image: a reference to the
+    // floor would resolve to a face on the other side of the material.
+    const Shape block = cut(counterboredBlock(), take(makeCylinder({20, 18.9, -1}, {0, 0, 1}, 1.4, 8.0)));
+    const std::vector<SubId> counterbore = facesOf(block, SurfaceType::Cylinder, 5.0);
+    REQUIRE(counterbore.size() == 1);
+    const auto result = deleting(block, counterbore);
+    REQUIRE(result.has_value());
+    const OpResult& out = *result;
+    checkValidResult(out, block);
+    for (const HistoryEntry& e : out.history.entries) {
+        if (e.relation != Relation::Modified || e.source.kind != SubKind::Face)
+            continue;
+        const FaceSample before = take(faceSample(block, e.source));
+        if (take(surfaceInfo(block, e.source)).type != SurfaceType::Plane)
+            continue;
+        for (const SubId& r : e.results) {
+            const FaceSample after = take(faceSample(out.shape, r));
+            INFO("face " << e.source.index << " Modified to face " << r.index);
+            CHECK(before.normal.x * after.normal.x + before.normal.y * after.normal.y +
+                      before.normal.z * after.normal.z >
+                  0.0);
+        }
+    }
+}
 TEST_CASE("deleteFaces fills a closed pocket", "[kernel][directedit]")
 {
     const Shape block = pocketBlock();

@@ -42,7 +42,11 @@
 // faces of the tool that end up on the result (a prism's sides, a sleeve's rims), where no input face already accounts
 // for them, are Generated from the edge of the moved face they were swept from, or from the edited hole face. The tool
 // itself never appears as an input. Deleted faces are Deleted. An unchanged element is listed as Modified to its SubId
-// in the result (the normalisation every kernel history follows; SubIds are not kept across shapes).
+// in the result (the normalisation every kernel history follows; SubIds are not kept across shapes). A face that
+// Defeaturing lists as an old face's Modified image but that lies on the old face's surface looking the other way (the
+// cap it puts on what is left of a hole, on the plane of a counterbore floor that is now inside the material) is not
+// that face: it is Generated from it, and the old face Deleted if nothing else is its image (T-081b; naming would
+// otherwise resolve a reference to the floor to a face on the other side of the material).
 //
 // CANCEL AND ABANDON. Defeaturing can run for minutes on some fillets (S9: over 150 s) and polls OCCT's progress hook
 // rarely (S9: up to 9.4 s from cancel to return). So every direct edit runs its OCCT work on a kernel-owned thread
@@ -72,6 +76,9 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <GeomLProp_SLProps.hxx>
+#include <Geom_Surface.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Precision.hxx>
 #include <ShapeAnalysis_Shell.hxx>
@@ -370,6 +377,65 @@ ShapeHistory rewriteToolHistory(ShapeHistory body, const ShapeHistory& boolean, 
     return body;
 }
 
+// Does face `image` lie on the surface of face `source` looking the other way (its material on the other side)?
+// False when that cannot be told (no interior point, a point off the surface, no normal there). May throw.
+bool looksTheOtherWay(const TopoDS_Face& source, const TopoDS_Face& image)
+{
+    gp_Pnt point;
+    gp_Dir normal;
+    if (!detail::interiorPoint(image, point, normal))
+        return false;
+    const occ::handle<Geom_Surface> surface = BRep_Tool::Surface(source);
+    if (surface.IsNull())
+        return false;
+    GeomAPI_ProjectPointOnSurf projection(point, surface);
+    if (!projection.IsDone() || projection.NbPoints() == 0 || projection.LowerDistance() > kOnTolerance)
+        return false;
+    double u = 0.0, v = 0.0;
+    projection.LowerDistanceParameters(u, v);
+    GeomLProp_SLProps props(surface, u, v, 1, Precision::Confusion());
+    if (!props.IsNormalDefined())
+        return false;
+    gp_Dir own = props.Normal();
+    if (source.Orientation() == TopAbs_REVERSED)
+        own.Reverse();
+    return own.Dot(normal) < 0.0;
+}
+
+// See "HISTORY": Defeaturing may close what is left of a cavity with the surface of a face that is no longer on the
+// body, the new face looking the other way (removing a counterbore's wall caps the bore with the plane of the
+// counterbore floor, looking down; the floor, which looked up, is inside the material now), and its history then
+// lists that face as the old face's Modified image. It is not the old face: such an image is reported Generated from
+// it, and the old face Deleted when nothing else is its image. `history` holds the caller's SubIds of `input`.
+void demoteReversedImages(ShapeHistory& history, const Shape& input, const Shape& result)
+{
+    const detail::ShapeIndex& inFaces = input.impl->subs[detail::kindSlot(SubKind::Face)];
+    const detail::ShapeIndex& outFaces = result.impl->subs[detail::kindSlot(SubKind::Face)];
+    std::vector<HistoryEntry> generated;
+    for (HistoryEntry& e : history.entries) {
+        if (e.inputIndex != 0 || e.source.kind != SubKind::Face || e.relation != HistoryEntry::Relation::Modified)
+            continue;
+        const TopoDS_Face source = TopoDS::Face(inFaces.FindKey(static_cast<int>(e.source.index) + 1));
+        std::vector<SubId> kept, reversed;
+        for (const SubId& r : e.results) {
+            const bool other =
+                r.kind == SubKind::Face &&
+                looksTheOtherWay(source, TopoDS::Face(outFaces.FindKey(static_cast<int>(r.index) + 1)));
+            (other ? reversed : kept).push_back(r);
+        }
+        if (reversed.empty())
+            continue;
+        e.results = std::move(kept);
+        if (e.results.empty())
+            e.relation = HistoryEntry::Relation::Deleted;
+        generated.push_back({HistoryEntry::Relation::Generated, 0, e.source, std::move(reversed)});
+    }
+    if (generated.empty())
+        return;
+    history.entries.insert(history.entries.end(), generated.begin(), generated.end());
+    canonicalise(history);
+}
+
 // The result faces of the tool face `toolFace` (its Modified entry in a boolean's history).
 std::vector<SubId> toolImages(const ShapeHistory& boolean, SubId toolFace)
 {
@@ -578,6 +644,7 @@ DeleteOutcome defeature(const Shape& input, const std::vector<int>& faces, const
     out.history = detail::buildHistory(maker, inputs, out.shape);
     if (auto mapped = detail::remapSources(out.history, 0, *copy, where); !mapped)
         return fail(Why::Invalid, mapped.error().message);
+    demoteReversedImages(out.history, input, out.shape);
 
     const double change = after - before;
     if (std::abs(change) <= kNoOpRelative * std::max(1.0, std::abs(before)))

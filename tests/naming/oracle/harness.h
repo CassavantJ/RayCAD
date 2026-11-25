@@ -19,9 +19,9 @@
 //    a recorded edit, each TopoRef is resolved and judged like a blend pick, and the edit runs only if every answer
 //    is Exact (a Split or Merged face would make the edit move or remove more than its targets, which the oracle's
 //    model of the edit does not describe). The kernel call (deleteFaces, offsetFaces, resizeHole, unifySameDomain)
-//    has a time limit (RAYCAD_NAMING_EDIT_LIMIT_S, default 60 s); then measureEdit fills in what it did from the
-//    shapes, and a result the oracle cannot describe fails the feature (the body stays as it was). The result is
-//    named by propagate() with the kernel's history, the body's map and shape as the one input.
+//    has a time limit (RAYCAD_NAMING_EDIT_LIMIT_S, default 60 s, 600 s without NDEBUG); then measureEdit fills in what
+//    it did from the shapes, and a result the oracle cannot describe fails the feature (the body stays as it was). The
+//    result is named by propagate() with the kernel's history, the body's map and shape as the one input.
 // A failing feature is skipped and recorded in Build::failed; later features continue on the body.
 #pragma once
 #include "oracle.h"
@@ -110,7 +110,7 @@ public:
     // Direct edits that failed because the kernel call ran past its time limit (included in failed()).
     int editTimeouts() const { return editTimeouts_; }
     // What became of every direct edit applied, as "<role>: <outcome>" -> count; outcomes: "applied", "kernel
-    // refused" (KernelFailure or InvalidArgument), "time limit", "not modelled" (measureEdit), "pick not Exact",
+    // refused" (KernelFailure or InvalidArgument), "time limit", "not modelled (<why>)" (measureEdit), "pick not Exact",
     // "no target face", "other" (sampling or naming failed).
     const std::map<std::string, int>& editCounts() const { return editCounts_; }
     // Every map the build produced, serialised, in order (for determinism checks).

@@ -141,6 +141,7 @@ set(RAY_TEST_PROCESSORS
     ray_naming_random_directedit=8
     ray_naming_s4=7             # 7.0
     ray_naming_random_smoke=5   # 4.8
+    ray_naming_random_directedit_smoke=5 # T-081b, about the same as the T-081a smoke
     ray_doc_s4=6                # 6.0
     ray_doc_s4_revolve=7        # 6.8
     ray_doc_s4_hole=6           # 6.4

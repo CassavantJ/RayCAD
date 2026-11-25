@@ -280,7 +280,8 @@ TEST_CASE("Direct edit: deleting an unrelated fillet leaves every other referenc
 TEST_CASE("Direct edit: resizing a hole that a drilling operation references keeps the reference Exact",
           "[naming][directedit]")
 {
-    // A drilling operation's geometry is the bore wall (cam/templates.h); it posts only what is postable without review.
+    // A drilling operation's geometry is the bore wall (cam/templates.h); it posts only what is postable without
+    // review.
     for (const double radius : {7.0, 3.5}) {
         DYNAMIC_SECTION("to radius " << radius)
         {

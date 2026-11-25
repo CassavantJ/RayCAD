@@ -90,9 +90,11 @@
 //    radius, with what each removed (or kept) measured from the shapes before and after the edit, never from its
 //    history. A face the edit made that lies on no owner (the side of a push/pull slab where a neighbour is not square
 //    to the moved face, the step at the bottom of a widened blind hole) is described by nothing, as any new face is.
-//    The reach over which faces around a removed face may grow is generous (each removed face's middle box
-//    dimension): a face of another owner on the same carrier within that reach would be taken for a continuation only
-//    if it also lies where the picked one was or is connected to such a piece.
+//    The reach over which faces around a removed face may grow is a curved removed face's smallest box dimension (its
+//    hole's diameter, its blend's size), 0.1 mm for a flat one: a face of another owner on the same carrier within
+//    that reach would be taken for a continuation only if it also lies where the picked one was or is connected to
+//    such a piece. A removal that leaves part of a removed face, or a face run on over it, is not modelled
+//    (measureEdit).
 //
 // STRICT MODE. RAYCAD_ORACLE_STRICT=<list> restores the spike's strictness for the loosenings kept since: "nodes"
 // (every node within tolerance), "band" (separators apply everywhere). The tests print which is active. Measured on
@@ -277,6 +279,9 @@ struct Owners {
     // A direct edit changed an imported face (Feature::edit): the imported base solid is no longer material that stays
     // where it was (mapElement).
     bool importEdited = false;
+    // Owners a direct edit removed (EditSpec::removed): their elements are gone, not somewhere the oracle cannot map
+    // them to (TruthBuilder::mappedTo).
+    std::set<std::string> removedByEdit;
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);

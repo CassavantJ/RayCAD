@@ -1,7 +1,7 @@
 // Randomised edit sequences with direct edits (task T-081b acceptance): the T-081a randomised test (random_test.cpp)
 // extended with the T-080 direct edits. Each sequence imports one of the same 20 corpus parts and builds 3 to 5 random
-// steps, a third of them direct edits interleaved with the T-094/T-095 operations (cut, boss, fillet, chamfer): delete a
-// hole (the part's own or a cut's), delete a pocket, delete a fillet or chamfer (a blend feature's, or a run of the
+// steps, a third of them direct edits interleaved with the T-094/T-095 operations (cut, boss, fillet, chamfer): delete
+// a hole (the part's own or a cut's), delete a pocket, delete a fillet or chamfer (a blend feature's, or a run of the
 // part's own rounds), resize a hole, push/pull a flat face (sometimes exactly to the level of another face on the same
 // side, so the two unify), merge faces on one surface. It records every element the oracle can vouch for as a
 // reference, makes one to three random edits (the T-081a script edits, which then replay the direct edits in the
@@ -295,8 +295,8 @@ std::optional<Feature> proposeBlend(const Script& built, const Samples& smp, Rng
 
 // ---------------------------------------------------------------- direct edits
 // The kinds, by the role the edit gets (its feature role in the names it makes, and its bucket in the counts).
-const char* const kEditRoles[] = {"delete_hole", "delete_pocket", "delete_fillet", "resize_hole", "offset_face",
-                                  "unify"};
+const char* const kEditRoles[] = {"delete_hole", "delete_pocket", "delete_fillet",
+                                  "resize_hole", "offset_face",   "unify"};
 
 // The faces of `key` on the shape, each described by that owner alone (what an edit's pick needs); empty if any face
 // on it is not.
@@ -318,8 +318,8 @@ bool isHole(const Owner& o)
 }
 
 // A random direct edit of the shape `smp` samples, built by `built`; nullopt if the kind drawn has no candidate.
-std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& shape, const Samples& smp,
-                                   double partSize, Rng& rng, const std::string& id)
+std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& shape, const Samples& smp, double partSize,
+                                   Rng& rng, const std::string& id)
 {
     const Owners owners = buildOwners(built);
     const TruthBuilder tb(owners, smp);
@@ -365,8 +365,8 @@ std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& sha
         return f;
     }
     if (roll < 47) {
-        // A blend: a fillet or chamfer feature's face, or a run of the part's own rounds (kernel::blendRun picks the run,
-        // as the UI does).
+        // A blend: a fillet or chamfer feature's face, or a run of the part's own rounds (kernel::blendRun picks the
+        // run, as the UI does).
         f.role = "delete_fillet";
         f.edit.kind = EKind::Delete;
         std::vector<std::vector<std::string>> runs;
@@ -591,7 +591,22 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
         if (!f)
             continue;
         const int before = b.built();
+        const std::size_t failedBefore = b.failed().size();
         b.apply(*f);
+        // RAYCAD_NAMING_STEPS: every step proposed while authoring and what became of it (to compare two platforms).
+        if (std::getenv("RAYCAD_NAMING_STEPS") != nullptr) {
+            std::string what = f->id + " " + f->role;
+            for (const std::string& t : f->edit.targets)
+                what += " " + t;
+            for (const Target& t : f->targets)
+                what += " " + t.a + "/" + t.b;
+            char buf[200];
+            std::snprintf(buf, sizeof buf, " amount %.6f size %.6f dist %.6f faces %u", f->edit.amount, f->size,
+                          f->dist, b.shape().count(SubKind::Face));
+            what += buf;
+            what += b.built() > before ? " built" : " refused: " + (b.failed().size() > failedBefore ? b.failed().back() : "");
+            std::printf("  step %s\n", what.c_str());
+        }
         if (b.built() > before) {
             script.push_back(*f);
             ++out.ops;
@@ -778,10 +793,11 @@ BlockResult runBlock(const char* title, const std::vector<Part>& parts, int perP
     }
 
     BlockResult r;
-    std::printf("\n%s (oracle: %s)\n| part | judged | replaced | steps | refs judged | Exact %% | Split %% | Merged %% | "
-                "Repaired %% | Broken %% | gone / missed | exists: E+S+M %% | WRONG | not judged |\n"
-                "|-|-|-|-|-|-|-|-|-|-|-|-|-|-|\n",
-                title, strictnessName().c_str());
+    std::printf(
+        "\n%s (oracle: %s)\n| part | judged | replaced | steps | refs judged | Exact %% | Split %% | Merged %% | "
+        "Repaired %% | Broken %% | gone / missed | exists: E+S+M %% | WRONG | not judged |\n"
+        "|-|-|-|-|-|-|-|-|-|-|-|-|-|-|\n",
+        title, strictnessName().c_str());
     for (int p = 0; p < kPartCount; ++p) {
         Tally t;
         long n = 0, o = 0, replaced = 0;
@@ -1012,4 +1028,33 @@ TEST_CASE("Oracle (directedit 7:0, 4:1): a vertex where two pieces of a blend me
         CHECK(looked[0].judgement.verdict == Verdict::Correct);
         CHECK(isWrong(looked[0].other.verdict));
     }
+}
+
+TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
+{
+    int part = 0, seq = 0;
+    if (const char* only = std::getenv("RAYCAD_LOOK"))
+        std::sscanf(only, "%d:%d", &part, &seq);
+    const Part pt = loadPart(kParts[part]);
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners&, const Samples& samples) {
+        if (!isWrong(rr.judgement.verdict))
+            return;
+        const ElemSamples& p = ref.record.picked();
+        std::printf("%s: picked type %d nrm (%.3f %.3f %.3f) sided %d sigma %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
+                    id.c_str(), p.type, p.nrm.x, p.nrm.y, p.nrm.z, p.sided ? 1 : 0, p.sigma, p.boxMin.x, p.boxMin.y,
+                    p.boxMin.z, p.boxMax.x, p.boxMax.y, p.boxMax.z);
+        for (const SubId& s : res.elements) {
+            const ElemSamples& a = samples.of(s.kind)[s.index];
+            std::printf("   answer %u type %d nrm (%.3f %.3f %.3f) sided %d sigma %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
+                        s.index, a.type, a.nrm.x, a.nrm.y, a.nrm.z, a.sided ? 1 : 0, a.sigma, a.boxMin.x, a.boxMin.y,
+                        a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z);
+            std::printf("   against the baseline owners: %s\n",
+                        explain(ref.record.truth, *ref.record.owners, samples, s.index).c_str());
+        }
+    });
+    const SequenceResult r = runSequence(pt, part, seq, SequenceOptions{});
+    setInspector({});
+    for (const std::string& w : r.log.wrongs)
+        std::printf("%s\n", w.c_str());
 }

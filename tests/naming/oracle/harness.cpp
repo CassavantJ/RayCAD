@@ -338,13 +338,18 @@ bool Builder::blend(const Feature& f)
 
 namespace {
 
-// The time limit of one direct edit's kernel call (RAYCAD_NAMING_EDIT_LIMIT_S).
+// The time limit of one direct edit's kernel call (RAYCAD_NAMING_EDIT_LIMIT_S): 60 s, ten times that in a build
+// without NDEBUG (unoptimised OpenCASCADE).
 std::chrono::seconds editLimit()
 {
     if (const char* text = std::getenv("RAYCAD_NAMING_EDIT_LIMIT_S"))
         if (const int s = std::atoi(text); s > 0)
             return std::chrono::seconds(s);
+#ifdef NDEBUG
     return std::chrono::seconds(60);
+#else
+    return std::chrono::seconds(600);
+#endif
 }
 
 // Runs `call` with a JobContext that is cancelled after `limit`; `timedOut` says whether it was.
@@ -380,7 +385,7 @@ bool Builder::edit(Feature& f)
     if (!have_)
         return false;
     const bool pickNow = mode_ == Mode::Author || refs_.find(f.id) == refs_.end();
-    auto fail = [&](const char* outcome, const std::string& message) {
+    auto fail = [&](const std::string& outcome, const std::string& message) {
         ++editCounts_[f.role + ": " + outcome];
         failed_.push_back(f.id + ": " + message);
         if (pickNow)
@@ -405,7 +410,7 @@ bool Builder::edit(Feature& f)
                     const TruthDesc d = tb.describe(s);
                     if (!d.ok || d.cons.size() != 1 || d.cons[0].alts != std::vector<std::string>{f.edit.targets[k]})
                         return fail("no target face", "face " + std::to_string(face) + " of " + f.edit.targets[k] +
-                                                           " is not described by it alone");
+                                                          " is not described by it alone");
                     picks.push_back({k, resolver->makeRef(testBody(), s), PickRecord{s, d, *samples, ownersAt}});
                     faces.insert(face);
                 }
@@ -463,8 +468,41 @@ bool Builder::edit(Feature& f)
     auto after = sampleShape(op->shape);
     if (!after)
         return fail("other", "sampling the result failed: " + after.error().message);
+    if (std::getenv("RAYCAD_NAMING_EDIT_DEBUG") != nullptr) {
+        std::string text = f.id + " " + f.role + " on faces";
+        for (const SubId& s : picked)
+            text += " " + std::to_string(s.index);
+        for (const std::string& w : op->warnings)
+            text += "\n  warning: " + w;
+        auto face = [](const Samples& smp, SubId s) {
+            const ElemSamples& es = smp.of(s.kind)[s.index];
+            const std::uint32_t i = s.index;
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "%u[t%d n(%.2f %.2f %.2f) (%.2f %.2f %.2f)-(%.2f %.2f %.2f)]", i, es.type,
+                          es.nrm.x, es.nrm.y, es.nrm.z, es.boxMin.x, es.boxMin.y, es.boxMin.z, es.boxMax.x,
+                          es.boxMax.y, es.boxMax.z);
+            return std::string(buf);
+        };
+        for (const kernel::HistoryEntry& e : op->history.entries) {
+            if (e.source.kind != SubKind::Face && (e.source.kind != SubKind::Edge || std::getenv("RAYCAD_NAMING_EDIT_DEBUG")[0] != '2'))
+                continue;
+            const bool same = e.relation == kernel::HistoryEntry::Relation::Modified && e.results.size() == 1 &&
+                              e.results[0] == e.source;
+            if (same)
+                continue;
+            text += "\n  " +
+                    std::string(e.relation == kernel::HistoryEntry::Relation::Modified    ? "Modified "
+                                : e.relation == kernel::HistoryEntry::Relation::Generated ? "Generated "
+                                                                                           : "Deleted ") +
+                    (e.source.kind == SubKind::Edge ? "edge " : "") + face(**samples, e.source) + " ->";
+            for (const SubId& r : e.results)
+                text += " " + face(**after, r);
+        }
+        std::printf("%s\n", text.c_str());
+    }
     if (const std::string why = measureEdit(f, builtFeatures_, **samples, **after); !why.empty())
-        return fail("not modelled", "the oracle cannot describe the result: " + why);
+        return fail("not modelled (" + why.substr(0, why.find(':')) + ")",
+                    "the oracle cannot describe the result: " + why);
     const std::array<const naming::ElementMap*, 1> maps{&map_};
     const std::array<const kernel::Shape*, 1> shapes{&shape_};
     const naming::NamingInput in{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
