@@ -17,6 +17,7 @@
 #include <shape_testing.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -144,9 +145,45 @@ struct Outcome {
                          // "other_error"
     std::string message; // the kernel's message, or the oracle's detail
     double ms = 0.0;
-    double cancelMs = -1.0; // timeout: from the cancel to the call's return
-    bool wrongCode = false; // a failure that is not KernelFailure
+    double cancelMs = -1.0;   // timeout: from the cancel to the call's return
+    bool wrongCode = false;   // a failure that is not KernelFailure
+    std::string historyFault; // a success whose history breaks the kernel.h normalisation (empty: none)
 };
+
+// kernel.h ShapeHistory for a direct edit: only input 0, every input element exactly one Modified or Deleted entry,
+// results inside the result shape; a deleted face Deleted; a resized or moved face Modified (never Deleted plus a
+// face from the tool).
+std::string historyFault(const Shape& input, const testing::DirectEditCase& c, const OpResult& out)
+{
+    std::array<std::vector<int>, 4> primary;
+    for (std::size_t k = 0; k < 4; ++k)
+        primary[k].assign(input.count(static_cast<SubKind>(k)), 0);
+    for (const HistoryEntry& e : out.history.entries) {
+        if (e.inputIndex != 0)
+            return "an entry names input " + std::to_string(e.inputIndex);
+        const auto kind = static_cast<std::size_t>(e.source.kind);
+        if (kind >= 4 || e.source.index >= primary[kind].size())
+            return "an entry names an element the input does not have";
+        for (const SubId& r : e.results)
+            if (r.index >= out.shape.count(r.kind))
+                return "a result is not in the result shape";
+        if (e.relation != HistoryEntry::Relation::Generated)
+            ++primary[kind][e.source.index];
+    }
+    for (const auto& perKind : primary)
+        for (const int n : perKind)
+            if (n != 1)
+                return "an input element has " + std::to_string(n) + " Modified or Deleted entries";
+    const bool deletes = c.edit != testing::DirectEdit::ResizeLarger && c.edit != testing::DirectEdit::ResizeSmaller &&
+                         c.edit != testing::DirectEdit::PushOut && c.edit != testing::DirectEdit::PushIn;
+    for (const SubId& f : c.faces)
+        for (const HistoryEntry& e : out.history.entries)
+            if (e.source == f && e.relation != HistoryEntry::Relation::Generated &&
+                (e.relation == HistoryEntry::Relation::Deleted) != deletes)
+                return std::string("edited face ") + std::to_string(f.index) +
+                       (deletes ? " not Deleted" : " not Modified");
+    return {};
+}
 
 Outcome runCase(const Part& part, const Shape& solid, const testing::DirectEditCase& c, Watchdog& watchdog)
 {
@@ -185,6 +222,8 @@ Outcome runCase(const Part& part, const Shape& solid, const testing::DirectEditC
         const testing::DirectEditVerdict verdict = testing::judgeDirectEdit(solid, c, result->shape);
         o.result = verdict.category == "ok" ? "ok" : "bad_" + verdict.category;
         o.message = verdict.detail;
+        if (o.result == "ok")
+            o.historyFault = historyFault(solid, c, *result);
     } else if (result.error().code == ErrorCode::Cancelled && fired) {
         o.result = "timeout";
         o.cancelMs = std::chrono::duration<double, std::milli>(end - *fired).count();
@@ -385,6 +424,7 @@ TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][d
         CHECK(o.result != "bad_no_op");
         CHECK(o.message.find("wrong direction") == std::string::npos);
         CHECK_FALSE(o.wrongCode);
+        CHECK(o.historyFault.empty());
         if (o.result == "refused") {
             CHECK_FALSE(o.message.empty());
             CHECK(o.message.rfind("The geometry kernel failed:", 0) == std::string::npos);

@@ -50,7 +50,7 @@
 // Error{Cancelled} at once, and the thread stops at OCCT's next poll and throws its result away. Structured exceptions
 // on that thread are caught by guarded() like everywhere else in the kernel. OCCT 8.0.1 ran the face trim of a feature
 // removal without a progress range, so a cancel there waited for the trim to end (237 s on a NIST CTC 05 fillet);
-// ports/opencascade/0011-bopalgo-removefeatures-trim-progress.patch passes the range down.
+// ports/opencascade/0011-bopalgo-removefeatures-cancel.patch passes the range down to the edge/face searches.
 #include "directedit_internal.h"
 
 #include "io_internal.h"

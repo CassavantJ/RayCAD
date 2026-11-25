@@ -20,7 +20,7 @@ vcpkg_from_github(
         0008-chfi3d-initialise-prol.patch # RayCAD: see the header of the patch
         0009-brepmesh-heal-faces-serially.patch # RayCAD: see the header of the patch
         0010-chfi3d-vertex-tolerance-only-on-vertices.patch # RayCAD: see the header of the patch
-        0011-bopalgo-removefeatures-trim-progress.patch # RayCAD: see the header of the patch
+        0011-bopalgo-removefeatures-cancel.patch # RayCAD: see the header of the patch
 )
 
 if (VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")

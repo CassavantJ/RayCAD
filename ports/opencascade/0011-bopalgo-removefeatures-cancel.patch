@@ -1,0 +1,215 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: a cancel reaches the slow parts of BOPAlgo_RemoveFeatures (BRepAlgoAPI_Defeaturing).
+  - FillGap::TrimExtendedFaces passes each face's share of its progress range to FillGap::TrimFace, which passes it
+    to the General Fuse that trims the extended face (aGFTrim.Perform). Before, that General Fuse ran without a range,
+    so its BOPAlgo_PaveFiller never saw a user break.
+  - BOPAlgo_EdgeFace passes its job's range to IntTools_EdgeFace::Perform, which passes it to
+    IntTools_BeanFaceIntersector::Perform (both take an optional Message_ProgressRange now); the bean/face
+    intersector polls it between the steps of its localized and extremum searches and stops, not done, on a break.
+    Before, one edge/face job ran to its end however long it took.
+
+Why: RayCAD runs direct edits on a kernel thread it abandons on cancel, and requires the abandoned OCCT work to stop
+within 10 s (task T-080). Removing fillets of the NIST CTC 05 and CTC 02 test parts (tests/unit/kernel,
+directedit_corpus_test.cpp, the S9 set) spent minutes trimming extended B-spline faces: one went on for 237 s after a
+cancel, sampled with gdb inside FillGap::TrimFace > BOPAlgo_PaveFiller::PerformEF > IntTools_EdgeFace >
+IntTools_BeanFaceIntersector::ComputeLocalized > Extrema_GenExtCS. With the first change it stopped 16 s after the
+cancel, at the end of the edge/face job it was in; the second bounds that by one extremum search. A broken job's
+partial result is never used: BOPAlgo_PaveFiller::PerformEF checks the break after its jobs and the removal ends with
+BOPAlgo_AlertUserBreak, as it already did when the break was seen elsewhere. A run that is not cancelled is unchanged
+(the ranges only report progress and answer the break).
+
+Upstream: not reported.
+
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
+@@ -127,7 +127,8 @@ public:
+         hasTrsf = true;
+       }
+ 
+-      IntTools_EdgeFace::Perform();
++      // RayCAD (patch 0011): the edge/face search polls the job's range, so a cancel stops a long one.
++      IntTools_EdgeFace::Perform(aPS.Next());
+     }
+     catch (Standard_Failure const&)
+     {
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_RemoveFeatures.cxx
+@@ -653,11 +653,12 @@ private: //! @name Private methods performing the operation
+     TopExp::MapShapes(myFeature, TopAbs_EDGE, aFeatureEdgesMap);
+ 
+     Message_ProgressScope aPS(aPSOuter.Next(), "Trimming faces", aNbF);
+-    for (int i = 1; i <= aNbF && aPS.More(); ++i, aPS.Next())
++    for (int i = 1; i <= aNbF && aPS.More(); ++i)
+     {
+       const TopoDS_Face& aFOriginal = TopoDS::Face(theFaceExtFaceMap.FindKey(i));
+       const TopoDS_Face& aFExt      = TopoDS::Face(theFaceExtFaceMap(i));
+-      TrimFace(aFExt, aFOriginal, aFeatureEdgesMap, anEFExtMap, aGFInter);
++      // RayCAD: the trim gets the face's share of the progress range, so a cancel stops it (patch 0011).
++      TrimFace(aFExt, aFOriginal, aFeatureEdgesMap, anEFExtMap, aGFInter, aPS.Next());
+     }
+   }
+ 
+@@ -670,7 +671,8 @@ private: //! @name Private methods performing the operation
+     const NCollection_IndexedDataMap<TopoDS_Shape,
+                                      NCollection_List<TopoDS_Shape>,
+                                      TopTools_ShapeMapHasher>&           theEFExtMap,
+-    BOPAlgo_Builder&                                                     theGFInter)
++    BOPAlgo_Builder&                                                     theGFInter,
++    const Message_ProgressRange&                                         theRange)
+   {
+     // Map all edges of the extended face, to filter the result of trim
+     // from the faces containing these edges
+@@ -729,7 +731,7 @@ private: //! @name Private methods performing the operation
+     aGFTrim.SetRunParallel(myRunParallel);
+     aGFTrim.SetNonDestructive(true);
+ 
+-    aGFTrim.Perform();
++    aGFTrim.Perform(theRange);
+     if (aGFTrim.HasErrors())
+     {
+       return;
+diff --git a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.cxx b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.cxx
+--- a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.cxx
++++ b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.cxx
+@@ -285,10 +285,17 @@ void IntTools_BeanFaceIntersector::SetSurfaceParameters(const double theUMinPara
+ 
+ //=================================================================================================
+ 
+-void IntTools_BeanFaceIntersector::Perform()
++void IntTools_BeanFaceIntersector::Perform(const Message_ProgressRange& theRange)
+ {
+   myIsDone = false;
+   myResults.Clear();
++  // RayCAD (patch 0011): the localized and extremum searches poll the range between their steps.
++  myRange = &theRange;
++  struct ResetRange
++  {
++    const Message_ProgressRange*& myRef;
++    ~ResetRange() { myRef = nullptr; }
++  } aResetRange{myRange};
+ 
+   if (myContext.IsNull())
+   {
+@@ -336,6 +343,10 @@ void IntTools_BeanFaceIntersector::Perform()
+             && (mySurface.NbUKnots() > 2 && mySurface.NbVKnots() > 2)));
+ 
+   bool isLocalized = bLocalize && ComputeLocalized();
++  if (isBroken())
++  {
++    return;
++  }
+ 
+   // Perform real intersection
+   if (!isLocalized)
+@@ -343,6 +354,10 @@ void IntTools_BeanFaceIntersector::Perform()
+     ComputeAroundExactIntersection();
+ 
+     ComputeUsingExtremum();
++    if (isBroken())
++    {
++      return;
++    }
+ 
+     ComputeNearRangeBoundaries();
+   }
+@@ -915,6 +930,10 @@ void IntTools_BeanFaceIntersector::ComputeUsingExtremum()
+ 
+   for (int i = 1; i <= myRangeManager.Length(); i++)
+   {
++    if (isBroken())
++    {
++      return; // RayCAD (patch 0011): Perform() stops after it
++    }
+ 
+     if (myRangeManager.Flag(i) > 0)
+     {
+@@ -1946,6 +1965,10 @@ bool IntTools_BeanFaceIntersector::ComputeLocalized()
+ 
+     for (; anItC.More() && anItS.More(); anItC.Next(), anItS.Next())
+     {
++      if (isBroken())
++      {
++        break; // RayCAD (patch 0011): Perform() stops after it
++      }
+ 
+       IntTools_Range aRangeC(myFirstParameter, myLastParameter);
+ 
+diff --git a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.hxx b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.hxx
+--- a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.hxx
++++ b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_BeanFaceIntersector.hxx
+@@ -32,6 +32,7 @@
+ #include <IntTools_CurveRangeSample.hxx>
+ #include <NCollection_List.hxx>
+ #include <IntTools_SurfaceRangeSample.hxx>
++#include <Message_ProgressRange.hxx>
+ class Geom_Surface;
+ class IntTools_Context;
+ class TopoDS_Edge;
+@@ -131,8 +132,8 @@ public:
+                                             const double theVMinParameter,
+                                             const double theVMaxParameter);
+ 
+-  //! Launches the algorithm
+-  Standard_EXPORT void Perform();
++  //! Launches the algorithm. RayCAD (patch 0011): it stops, not done, once theRange signals a user break.
++  Standard_EXPORT void Perform(const Message_ProgressRange& theRange = Message_ProgressRange());
+ 
+   //! Returns Done/NotDone state of the algorithm.
+   bool IsDone() const { return myIsDone; }
+@@ -210,6 +211,9 @@ private:
+   NCollection_Sequence<IntTools_Range> myResults;
+   bool                                 myIsDone;
+   double                               myMinSqDistance;
++  const Message_ProgressRange*         myRange = nullptr; // RayCAD (patch 0011): set while Perform runs
++
++  bool isBroken() const { return myRange != nullptr && myRange->UserBreak(); }
+ };
+ 
+ #endif // _IntTools_BeanFaceIntersector_HeaderFile
+diff --git a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.cxx b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.cxx
+--- a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.cxx
++++ b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.cxx
+@@ -501,7 +501,7 @@ bool IntTools_EdgeFace::CheckTouch(const IntTools_CommonPrt& aCP, double& aTx)
+ 
+ //=================================================================================================
+ 
+-void IntTools_EdgeFace::Perform()
++void IntTools_EdgeFace::Perform(const Message_ProgressRange& theRange)
+ {
+   int                i, aNb;
+   IntTools_CommonPrt aCommonPrt;
+@@ -567,7 +567,7 @@ void IntTools_EdgeFace::Perform()
+   //
+   anIntersector.SetContext(myContext);
+   //
+-  anIntersector.Perform();
++  anIntersector.Perform(theRange);
+ 
+   if (anIntersector.MinimalSquareDistance() < RealLast())
+   {
+diff --git a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.hxx b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.hxx
+--- a/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.hxx
++++ b/src/ModelingAlgorithms/TKBO/IntTools/IntTools_EdgeFace.hxx
+@@ -29,6 +29,7 @@
+ #include <IntTools_CommonPrt.hxx>
+ #include <NCollection_Sequence.hxx>
+ #include <IntTools_Range.hxx>
++#include <Message_ProgressRange.hxx>
+ class IntTools_Context;
+ class gp_Pnt;
+ class IntTools_CommonPrt;
+@@ -101,8 +102,9 @@ public: //! @name Setters/Getters
+   bool IsCoincidenceCheckedQuickly() { return myQuickCoincidenceCheck; }
+ 
+ public: //! @name Performing the operation
+-  //! Launches the process
+-  Standard_EXPORT void Perform();
++  //! Launches the process. RayCAD (patch 0011): the edge/face search stops, not done, once theRange signals a
++  //! user break.
++  Standard_EXPORT void Perform(const Message_ProgressRange& theRange = Message_ProgressRange());
+ 
+ public: //! @name Checking validity of the intersection
+   //! Returns TRUE if computation was successful.
