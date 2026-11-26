@@ -3035,21 +3035,6 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
 Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
 {
     Expectation x = expectCore(pick, now, smp);
-    // Gone, though an element of the pick's kind lies where the pick was, each on most of the other, its description's
-    // carriers where they were: the description no longer fits it (a face of it outside every owner's extent, as a
-    // blend made smaller leaves the face beside it: Linux review 18:6), and whether it continues the pick cannot be
-    // told from the description (T-081b round 4).
-    if (x.expected.elems.empty() && x.noAnchor.empty() && !mutated("held-in-place") &&
-        !pick.picked().pts.empty() && stillOwners(pick.truth, *pick.owners, now)) {
-        const auto& N = smp.of(x.kind);
-        for (std::uint32_t e = 0; e < N.size(); ++e)
-            if (!N[e].pts.empty() && shareOn(pick.picked(), N[e], x.kind) >= 0.5 &&
-                shareOn(N[e], pick.picked(), x.kind) >= 0.5) {
-                x.noAnchor = "element " + std::to_string(e) +
-                             " lies where the picked element was, but the description no longer fits it";
-                break;
-            }
-    }
     // The structural check applies to the expectation too (round 3): a single expected face that holds none of the
     // picked ground, in place or where the edit's exact map takes it, is not the pick's continuation but another patch
     // of its surface (holdout1 17:10 face 5; T-081a holdout2 11:6 face 24, 13:5 face 19): the pick is gone.
@@ -3420,12 +3405,9 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
     // pick, beside a piece that continues the pick, when nothing moved: a new face next to the picked one on its
     // surface (the side of a push/pull slab flush with it, left a face of its own where the boolean could not merge the
     // two; T-081b directedit 0:19, 17:10). It is new territory, not the picked element's continuation; an answer that
-    // has it too is judged by the new-territory rule (judgeAnswer). Also when something moved but not the picked
-    // element's own carriers (T-081b round 4, Linux holdout2 18:24 face 3: a bore whose ceiling a push/pull raised,
-    // a patch of the bore's cylinder split off in the new ground above it).
-    const bool ownCarriersStill = !mutated("new-pieces-still") && stillOwners(d, *pick.owners, now);
+    // has it too is judged by the new-territory rule (judgeAnswer).
     auto withoutNewPieces = [&](TruthEval& te) {
-        if ((x.moved && !stillByEdit && !ownCarriersStill) || te.elems.size() < 2)
+        if ((x.moved && !stillByEdit) || te.elems.size() < 2)
             return;
         bool anchored = false;
         for (const std::uint32_t e : te.elems)
