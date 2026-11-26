@@ -512,6 +512,10 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
             bool changed = false;
             if (!sameShape) {
                 changed = now > 2.0 * then + kGrowthSlackQuanta || 2.0 * now + kGrowthSlackQuanta < then;
+            } else if (liesOnOutline(shape, element, ref.outline, territories)) {
+                // Still on its own pick-time ground (inside its outline, on its plane): what was picked of it shrank
+                // where it was (a cut took the part its territory points were on), and it did not move.
+                changed = false;
             } else if (std::abs(now - then) <= 0.01 * then + kGrowthSlackQuanta) {
                 // Its area kept within a hundredth: the face moved as a whole, turned or not (a body moved onto a mate,
                 // tests/unit/doc transform_body; a cut's wall through the part moved along itself, holdout1 8:23).

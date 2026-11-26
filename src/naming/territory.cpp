@@ -790,6 +790,50 @@ InPlace stillInPlace(const kernel::Shape& shape, SubId element, const TopoRef& r
     }
 }
 
+bool liesOnOutline(const kernel::Shape& shape, SubId face, const PickOutline& outline,
+                   const TerritoryCache& territories)
+{
+    try {
+        (void)shape;
+        if (face.kind != SubKind::Face || !outline.known())
+            return false;
+        Outline o;
+        const auto start = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][0], outline.chords[i][1], outline.chords[i][2]});
+        };
+        const auto end = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][3], outline.chords[i][4], outline.chords[i][5]});
+        };
+        o.origin = start(0);
+        Vec3 d0{};
+        if (!unitOf(sub(end(0), start(0)), d0))
+            return false;
+        bool plane = false;
+        for (std::size_t i = 1; i < outline.chords.size() && !plane; ++i)
+            plane = unitOf(cross(d0, sub(end(i), start(i))), o.n) || unitOf(cross(d0, sub(end(i), o.origin)), o.n);
+        if (!plane)
+            return false;
+        o.e1 = d0;
+        o.e2 = cross(o.n, o.e1);
+        double planeMargin = kOnTolerance;
+        for (std::size_t i = 0; i < outline.chords.size(); ++i) {
+            const auto a = o.uv(start(i)), b = o.uv(end(i));
+            o.chords.push_back({a[0], a[1], b[0], b[1]});
+            planeMargin =
+                std::max(planeMargin, static_cast<double>(outline.chords[i][6]) / kLengthQuantaPerMm + kOnTolerance);
+        }
+        for (const auto& q : territories.of(face).points) {
+            const Vec3 p = fromQuanta(q);
+            const auto uv = o.uv(p);
+            if (std::abs(o.off(p)) <= planeMargin && o.inside(uv[0], uv[1]))
+                return true;
+        }
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<SubId>& pieces, const Territory& territory)
 {
     try {

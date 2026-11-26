@@ -111,6 +111,11 @@ std::vector<kernel::SubId> otherFacesInsideOutline(const kernel::Shape& shape, k
 enum class InPlace { No, Yes, TookNeighbour };
 InPlace stillInPlace(const kernel::Shape& shape, kernel::SubId element, const TopoRef& ref);
 
+// Does face `face` hold ground the picked face held at pick time: a territory point of it on the plane of `outline`
+// and inside it? False without an outline. Never throws.
+bool liesOnOutline(const kernel::Shape& shape, kernel::SubId face, const PickOutline& outline,
+                   const TerritoryCache& territories);
+
 // Do `pieces` together hold at least half of `territory`'s points (any point on any piece)? True when the territory
 // has no points. Never throws (false on failure).
 bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces, const Territory& territory);
