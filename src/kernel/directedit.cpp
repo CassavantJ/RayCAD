@@ -1196,6 +1196,7 @@ std::optional<bool> cutFallsApart(const Shape& body, const TopoDS_Shape& tool, J
     cut.SetTools(tools);
     cut.SetRunParallel(false);
     cut.SetNonDestructive(true);
+    cut.SetToFillHistory(false); // nothing reads it (and its Debug assertions: boolean_history.cpp localVolumeChange)
     occ::handle<BudgetIndicator> indicator = new BudgetIndicator(ctx.cancel, std::chrono::seconds(5));
     cut.Build(indicator->Start());
     if (!cut.IsDone() || cut.HasErrors())

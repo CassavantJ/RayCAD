@@ -17,6 +17,7 @@
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAbs_SurfaceType.hxx>
+#include <NCollection_List.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -218,9 +219,20 @@ std::optional<double> localVolumeChange(const TopoDS_Shape& before, const TopoDS
     const TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(x0, y0, z0), gp_Pnt(x1, y1, z1)).Shape();
     const auto inside = [&](const TopoDS_Shape& shape) -> std::optional<double> {
         BRepBuilderAPI_Copy copier(shape, false, false);
-        BRepAlgoAPI_Common common(copier.Shape(), box);
+        // Built once (the (object, tool) constructor builds at once, so setting options after it ran the Common twice)
+        // and without a history, which nothing reads here: on some inputs OpenCASCADE's history asserts ("a duplicated
+        // modification of a shape", BRepTools_History::AddModified), and in an MSVC Debug build that assertion is a
+        // modal report box that blocked the test run (T-080 round 4;
+        // tests/unit/kernel/data/boolean_local_volume_*.rbrep).
+        BRepAlgoAPI_Common common;
+        NCollection_List<TopoDS_Shape> arguments, tools;
+        arguments.Append(copier.Shape());
+        tools.Append(box);
+        common.SetArguments(arguments);
+        common.SetTools(tools);
         common.SetRunParallel(false);
         common.SetNonDestructive(true);
+        common.SetToFillHistory(false);
         common.Build();
         if (!common.IsDone() || common.HasErrors())
             return std::nullopt;

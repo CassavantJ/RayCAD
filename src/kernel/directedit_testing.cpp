@@ -289,9 +289,15 @@ std::optional<double> volumeInside(const TopoDS_Shape& shape, const Box3& b)
     const TopoDS_Shape box =
         BRepPrimAPI_MakeBox(gp_Pnt(b.min.x, b.min.y, b.min.z), gp_Pnt(b.max.x, b.max.y, b.max.z)).Shape();
     BRepBuilderAPI_Copy copier(shape, false, false);
-    BRepAlgoAPI_Common common(copier.Shape(), box);
+    BRepAlgoAPI_Common common; // built once and without a history (see boolean_history.cpp localVolumeChange)
+    NCollection_List<TopoDS_Shape> arguments, tools;
+    arguments.Append(copier.Shape());
+    tools.Append(box);
+    common.SetArguments(arguments);
+    common.SetTools(tools);
     common.SetRunParallel(false);
     common.SetNonDestructive(true);
+    common.SetToFillHistory(false);
     common.Build();
     if (!common.IsDone() || common.HasErrors())
         return std::nullopt;
@@ -648,6 +654,7 @@ std::string infeasibleRequest(const Shape& input, const DirectEditCase& c)
             cut.SetTools(tools);
             cut.SetRunParallel(false);
             cut.SetNonDestructive(true);
+            cut.SetToFillHistory(false);
             // At most 60 s: the cut can be as slow as the edit (minutes on NIST CTC 02); undecided counts as feasible.
             occ::handle<Deadline> deadline = new Deadline(std::chrono::seconds(60));
             cut.Build(deadline->Start());

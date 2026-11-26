@@ -77,6 +77,15 @@ foreach(_target IN ITEMS ray_render_tests ray_ui_controls_tests ray_ui_viewport_
     target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support/driver_threads_listener.cpp")
 endforeach()
 
+# ---------- Debug CRT assertions ----------
+# In an MSVC Debug build an OpenCASCADE assertion opens a modal report box and the test waits forever; the tests that
+# run the geometry kernel end at once with the report instead (support/debug_assert_listener.cpp says why). Compiles to
+# nothing outside MSVC Debug.
+foreach(_target IN ITEMS ray_kernel_tests ray_naming_oracle_tests ray_naming_tests ray_naming_rematch_tests
+                         ray_doc_tests ray_doc_s4_tests ray_api_tests)
+    target_sources(${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support/debug_assert_listener.cpp")
+endforeach()
+
 # ---------- The screen the windows go on ----------
 # RAY_TEST_SCREEN (ui/screen/test_screen.h; README, "Which tests to run"): every test that shows a window puts its
 # windows, and those of the raycad.exe it starts, on the screen the variable names instead of the primary one, and

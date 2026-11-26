@@ -1023,6 +1023,27 @@ TEST_CASE("a small push/pull on a large imported body is judged by the volume ne
     }
 }
 
+TEST_CASE("a small union measured inside a box around its tool does not trip an OpenCASCADE assertion",
+          "[kernel][boolean]")
+{
+    // The union of the naming oracle's randomised sequence 3 on keyway_tslot_1 (the inputs as kernel::boolean got
+    // them, data/boolean_local_volume_*.rbrep) changes the body by under 1e-4 of it, so the change is measured inside a
+    // box around the tool (boolean_internal.h LOCAL VOLUME CHANGE). That measurement's BRepAlgoAPI_Common filled a
+    // history nobody reads, and on these shapes OpenCASCADE's history asserts ("a duplicated modification of a shape",
+    // BRepTools_History::AddModified). In an MSVC Debug build the assertion opened a modal report box and the oracle
+    // test waited on it until CI killed it at 1200 s (T-080 round 4); a Release build compiles the report out. The
+    // measurement now builds its Common once and without a history. In a Debug build this test ends the process
+    // (tests/support/debug_assert_listener.cpp) if the assertion comes back. The union itself is refused, as the
+    // sequence's builder saw: the added material only touches the body.
+    const Shape target = loadSavedBody("boolean_local_volume_target.rbrep");
+    const Shape tool = loadSavedBody("boolean_local_volume_tool.rbrep");
+    JobContext ctx;
+    const Result<OpResult> fused = boolean(BoolOp::Union, target, tool, ctx);
+    REQUIRE_FALSE(fused.has_value());
+    CHECK(fused.error().code == ErrorCode::KernelFailure);
+    CHECK(fused.error().message.find("separate solids") != std::string::npos);
+}
+
 TEST_CASE("a push/pull whose result would be an invalid body is refused with a clear message", "[kernel][directedit]")
 {
     // The two feasible requests of the NIST set whose boolean gives an invalid body (T-080 round 2, group C), pinned as
