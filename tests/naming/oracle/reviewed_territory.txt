@@ -1,5 +1,5 @@
 # New-territory acceptances of the naming oracle (oracle.h, NEW TERRITORY) that have been reviewed.
-# One per line: <key> => <one-line justification>. The key is printed by the test ("ACCEPTED <key>: ...").
+# One per line: <key> => <answer signature> => <one-line justification> (T-081b round 5: an answer counts as
+# reviewed only when it matches the signature, harness.h ReviewedEntry; entries whose answer no longer occurs were
+# dropped). The key is printed by the test ("ACCEPTED <key>: ...").
 # The tests fail on any acceptance that is not listed here.
-raycad-synthetic/flange_bolt_circle_1.stp #11|face 6 => R5 (a cut through this face) is suppressed: the face runs on into the volume R5 had cut away, which was empty when the face was picked.
-nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #47|face 5 => after the swap the chamfer R4 comes before the cut it blends and fails: the face runs on over the corner the chamfer had cut away, which was empty when it was picked.

@@ -832,7 +832,8 @@ std::string reviewNote(const ReviewedList& list, const std::string& id, const st
     std::string others;
     const auto [lo, hi] = list.equal_range(id);
     for (auto it = lo; it != hi; ++it)
-        others += (others.empty() ? "" : "; ") + (it->second.answer.empty() ? "(no answer recorded)" : it->second.answer);
+        others +=
+            (others.empty() ? "" : "; ") + (it->second.answer.empty() ? "(no answer recorded)" : it->second.answer);
     return " [NOT REVIEWED; answer " + signature + (others.empty() ? "" : "; listed only for: " + others) + "]";
 }
 

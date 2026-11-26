@@ -868,8 +868,12 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
         // suggestion): neither is ever part of the pick (new ground past its old end is not the pick, another's
         // ground is not its to take). Such pieces are left out and the pieces that hold the moved pick answered,
         // flagged (Split, however many are left).
-        if (std::vector<SubId> kept = piecesInsideMovedPick(map, shape, elements, ref); kept.size() < elements.size())
+        if (std::vector<SubId> kept = piecesInsideMovedPick(map, shape, elements, ref); kept.size() < elements.size()) {
+            if (kept.empty())
+                return broken("The picked element came apart, and no piece lies where it was; whether its feature "
+                              "moved cannot be told (a reference made before feature placements were recorded).");
             elements = std::move(kept);
+        }
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
         if (!facePiecesStayInside(map, shape, elements, ref))
@@ -918,8 +922,11 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                     elements = inside;
                 }
                 if (std::vector<SubId> kept = piecesInsideMovedPick(map, shape, elements, ref);
-                    kept.size() < elements.size())
+                    kept.size() < elements.size()) {
+                    if (kept.empty())
+                        continue;               // no piece where the pick was, its feature's move unknown (as above)
                     elements = std::move(kept); // a piece past the moved pick, left out (as above)
+                }
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||

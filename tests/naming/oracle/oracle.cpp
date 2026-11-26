@@ -3040,6 +3040,8 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
 }
 
 Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
+Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp, Answer answer,
+                    std::vector<std::uint32_t> X);
 
 // Boxes of two elements more than 0.05 mm apart (they cannot share samples).
 bool boxesApart(const ElemSamples& a, const ElemSamples& b)
@@ -3189,7 +3191,11 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         TruthEval kept;
         for (const std::uint32_t e : x.expected.elems) {
             const ElemSamples& es = N[e];
-            bool fresh = !es.pts.empty() && (pastBound(es) || (placed && !holdsPickedGround(es, pick, x, x.kind, now)));
+            // (A piece with any of the pick where it was is never new; nor a sliver, whose overlap with the baseline
+            // cannot be told away from its boundary: review2 18:36 edge 106.)
+            const bool inPlace = shareOn(P, es, x.kind) > 0.0 || shareOn(es, P, x.kind) > 0.0;
+            bool fresh = !es.pts.empty() && !inPlace && !sliver(es, x.kind) &&
+                         (pastBound(es) || (placed && !holdsPickedGround(es, pick, x, x.kind, now)));
             for (std::uint32_t i = 0; fresh && i < B.size(); ++i)
                 if (!B[i].pts.empty() && !boxesApart(es, B[i]) && overlap(es, B[i], x.kind))
                     fresh = false;
@@ -3205,8 +3211,13 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
                     kept.partial.push_back(e);
             kept.merged = !kept.partial.empty();
-            x.expected = kept;
-            x.newPiecesDropped = true;
+            // Only an expectation the judge itself accepts (its best answer judged correct), or the pieces stay.
+            Expectation y = x;
+            y.expected = kept;
+            y.newPiecesDropped = true;
+            const Answer best = kept.elems.size() == 1 ? (kept.merged ? Answer::Merged : Answer::Exact) : Answer::Split;
+            if (judgeCore(y, pick, now, smp, best, kept.elems).verdict == Verdict::Correct)
+                x = y;
         }
     }
     return x;

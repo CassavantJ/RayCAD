@@ -2998,9 +2998,10 @@ TEST_CASE("debug: replay one pinned script", "[.debug-scripted]")
 TEST_CASE("Oracle (round 5): a new piece is never required; an element held in place is never gone",
           "[naming][directedit-replays]")
 {
-    // T-081b round 5, item 3 (the reviewer's round-3 rulings), each with the answer that is right and two that must stay
-    // wrong; the rules' mutation switches (new-piece, held-in-place) fail the right answers.
-    //  a. NEW PIECES ARE NEVER REQUIRED: sorted 17:32 edge 32 (Windows): cut R1 moved by its width, the hole R3 deleted;
+    // T-081b round 5, item 3 (the reviewer's round-3 rulings), each with the answer that is right and two that must
+    // stay wrong; the rules' mutation switches (new-piece, held-in-place) fail the right answers.
+    //  a. NEW PIECES ARE NEVER REQUIRED: sorted 17:32 edge 32 (Windows): cut R1 moved by its width, the hole R3
+    //  deleted;
     //     edge 30 is the moved stretch, edge 31 (0.436 mm, z 0.425 -> 0) runs past where the plane F11 bounded the
     //     pick, holding none of it, on ground no baseline edge held: E {30}. Linux holdout2 18:24 face 3: the bore wall
     //     F1 and F12 (0.26 mm2 at z 0..1.37, on ground that was boss R2's material at pick time): E {1}.

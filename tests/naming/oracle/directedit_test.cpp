@@ -681,9 +681,10 @@ TEST_CASE("Structural check (round 4): an edge moved along its line with its fea
     CHECK(probed == 1);
 }
 
-TEST_CASE("Rotation (round 5, the reviewer's case): a boss turned 90 degrees about a far point is followed, its twin is "
-          "not",
-          "[naming][directedit]")
+TEST_CASE(
+    "Rotation (round 5, the reviewer's case): a boss turned 90 degrees about a far point is followed, its twin is "
+    "not",
+    "[naming][directedit]")
 {
     // The reviewer's round-3 adversarial case (rotation-exact): two equal bosses 10 x 6 on a block; B1 turned 90
     // degrees about a point away from it (its sketch frame's x along y, its origin moved from (15, 25) to (35, 15)), so

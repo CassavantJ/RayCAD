@@ -254,11 +254,12 @@ public:
                 signedDistance = full;
             }
             const double draftAngle = *draft;
-            return buildSweep(f, ctx, props->common, plane, *regions, "extrude",
-                              [&](const kernel::Profile& profile, JobContext& job) {
-                                  return kernel::extrude(profile, signedDistance, draftAngle, job);
-                              },
-                              placement);
+            return buildSweep(
+                f, ctx, props->common, plane, *regions, "extrude",
+                [&](const kernel::Profile& profile, JobContext& job) {
+                    return kernel::extrude(profile, signedDistance, draftAngle, job);
+                },
+                placement);
         } catch (const std::bad_alloc&) {
             return failed(ErrorCode::Internal, featureLabel(f) + ": out of memory");
         } catch (...) {

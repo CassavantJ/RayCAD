@@ -1014,9 +1014,35 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
         // clips otherwise where it is now), which is the pick's (holdout1-tuned 11:36 face 19).
         if (pieces.size() < 2 || !ref.territory.known() || pieces.front().kind != SubKind::Edge)
             return pieces;
-        const KnownMove move = knownMove(map, ref);
-        if (move.kind != KnownMove::Kind::Moved)
+        KnownMove move = knownMove(map, ref);
+        // A reference made before placements were recorded, to an edge of a feature that has one now (T-081b round
+        // 5: an old document's reference): whether that feature moved cannot be told. Pieces wholly outside the pick
+        // as it was are left out; when none is left, the caller answers Broken (review1 1:39 edge 83 without
+        // placements: Split {104, 106} with 106 inside a bore at pick time).
+        bool placedNow = false;
+        // (By the reference's own names and their families, as fillRef records placements: one of their features has
+        // a placement now, so a reference made now would carry it. Not every name of the pieces: an edge of a chamfer
+        // split by a groove has the groove's names too, and a chamfer has no placement: review1 15:10 edge 8.)
+        if (move.kind == KnownMove::Kind::None && ref.placements.empty()) {
+            auto placed = [&](const Hash256& name) {
+                const TopoName* record = map.record(name);
+                return record != nullptr && map.placement(record->origin) != nullptr;
+            };
+            for (const Hash256& name : ref.names)
+                placedNow = placedNow || placed(name);
+            for (const Hash256& family : ref.families)
+                for (const Hash256& member : map.family(family))
+                    placedNow = placedNow || placed(member);
+            // An edge's names come from the boolean that made it; the faces it lay between say whose it was.
+            for (const Hash256& name : ref.neighbourNames)
+                placedNow = placedNow || placed(name);
+        }
+        if (move.kind != KnownMove::Kind::Moved && !placedNow)
             return pieces;
+        if (placedNow) {
+            move.from = Rigid{{1, 0, 0, 0, 1, 0, 0, 0, 1}, Vec3{0, 0, 0}};
+            move.to = move.from;
+        }
         const Box3 was = boxOf(ref.territory);
         const double tol = extentTolerance(was);
         const bool outline = pieces.front().kind == SubKind::Face && ref.outline.known();
@@ -1036,6 +1062,8 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
             if (!outside)
                 kept.push_back(piece);
         }
+        if (placedNow)
+            return kept; // (empty: none lies where the pick was)
         return kept.empty() ? pieces : kept;
     } catch (...) {
         return pieces;
