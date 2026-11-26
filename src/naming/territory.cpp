@@ -834,6 +834,58 @@ bool liesOnOutline(const kernel::Shape& shape, SubId face, const PickOutline& ou
     }
 }
 
+bool insidePickOutline(const PickOutline& outline, const Vec3& p)
+{
+    try {
+        if (!outline.known())
+            return false;
+        Outline o;
+        const auto start = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][0], outline.chords[i][1], outline.chords[i][2]});
+        };
+        const auto end = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][3], outline.chords[i][4], outline.chords[i][5]});
+        };
+        o.origin = start(0);
+        Vec3 d0{};
+        if (!unitOf(sub(end(0), start(0)), d0))
+            return false;
+        bool plane = false;
+        for (std::size_t i = 1; i < outline.chords.size() && !plane; ++i)
+            plane = unitOf(cross(d0, sub(end(i), start(i))), o.n) || unitOf(cross(d0, sub(end(i), o.origin)), o.n);
+        if (!plane)
+            return false;
+        o.e1 = d0;
+        o.e2 = cross(o.n, o.e1);
+        std::vector<double> slack;
+        double planeMargin = kOnTolerance;
+        for (std::size_t i = 0; i < outline.chords.size(); ++i) {
+            const auto a = o.uv(start(i)), b = o.uv(end(i));
+            o.chords.push_back({a[0], a[1], b[0], b[1]});
+            slack.push_back(static_cast<double>(outline.chords[i][6]) / kLengthQuantaPerMm);
+            planeMargin = std::max(planeMargin, slack.back() + kOnTolerance);
+        }
+        if (std::abs(o.off(p)) > planeMargin)
+            return false;
+        const auto uv = o.uv(p);
+        if (o.inside(uv[0], uv[1]))
+            return true;
+        // Outside, but within a chord's slack (plus the on-tolerance) of it: on the boundary.
+        for (std::size_t i = 0; i < o.chords.size(); ++i) {
+            const auto& c = o.chords[i];
+            const double dx = c[2] - c[0], dy = c[3] - c[1];
+            const double l2 = dx * dx + dy * dy;
+            const double t = l2 > 0.0 ? std::clamp(((uv[0] - c[0]) * dx + (uv[1] - c[1]) * dy) / l2, 0.0, 1.0) : 0.0;
+            const double px = c[0] + dx * t - uv[0], py = c[1] + dy * t - uv[1];
+            if (std::sqrt(px * px + py * py) <= slack[i] + kOnTolerance)
+                return true;
+        }
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<SubId>& pieces, const Territory& territory)
 {
     try {

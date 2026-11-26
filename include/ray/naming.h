@@ -9,6 +9,9 @@
 // Amended by T-081b (naming through direct edits): TopoRef::outline, an optional planar face's pick-time outline, and
 // its JSON member; additive (a reference without it resolves as before). No format version was bumped (pre-release,
 // as for T-081a's evidence): an older build, which refuses unknown members, cannot read a reference that has one.
+// Amended by T-081b round 4: feature placements (FeaturePlacement) in NamingInput, ElementMap (element-map format
+// version 2, written only when a map holds one) and TopoRef (its JSON member "placements"), so that a face whose feature
+// was moved is followed by the feature's own move. Additive in the same way.
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -52,6 +55,18 @@ struct Fingerprint {
     bool matches(const Fingerprint&) const;                 // tolerance compare: 1e-3 mm on centroid, 1e-7 relative on area
 };
 
+// Where a feature placed what it made (T-081b round 4): the rigid transform from the feature's own frame (a sketch's
+// plane: x along its x direction, z along its normal, the origin at its origin) to the model, row-major 3x4 like Xform,
+// quantised: the rotation's nine entries to 1e-9, the translation (q[3], q[7], q[11]) to 1e-4 mm like Territory. Made
+// with placementOf(); compare two with samePlacement(), never with ==.
+struct FeaturePlacement {
+    FeatureId feature;
+    std::array<std::int64_t, 12> q{};
+};
+FeaturePlacement placementOf(FeatureId feature, const Xform& frameToModel);
+// Do two placements put the feature in the same place: rotations within 1e-6 per entry, translations within 1e-3 mm?
+bool samePlacement(const FeaturePlacement& a, const FeaturePlacement& b);
+
 // Per-body table: every current sub-shape of the body's Shape has ONE OR MORE names
 // (several after same-domain unification merged elements; the merged element carries every input name).
 class ElementMap {
@@ -62,6 +77,9 @@ public:
     std::span<const Hash256> family(const Hash256& familyId) const;    // member names issued in this build
     Fingerprint fingerprintOf(kernel::SubId) const;
     std::size_t size() const;                                          // number of named sub-shapes
+    // The placement of `feature` in this build (NamingInput::placement, carried from map to map); null when the feature
+    // gave none or is not upstream of this map.
+    const FeaturePlacement* placement(FeatureId feature) const;
     std::vector<std::byte> serialize() const;                       // canonical, deterministic
     static Result<ElementMap> deserialize(std::span<const std::byte>);
     struct Impl; std::shared_ptr<const Impl> impl;   // opaque, immutable, shared by copies; null = empty map
@@ -92,6 +110,12 @@ struct NamingInput {
     // reference to either resolves Merged instead of Exact. Empty: names come from the history alone, as before.
     // When given, the size must equal inputMaps' size and no entry may be null (else propagate() fails).
     std::span<const kernel::Shape* const> inputShapes;
+    // Optional (T-081b round 4): where this feature placed what it makes (FeaturePlacement: a sketch's plane, a hole's
+    // frame). The result map holds it, and every placement its input maps held for other features; a reference records
+    // the placements of the features that made the picked element, so that when such a feature is moved (another
+    // placement) the resolver follows the pick by the feature's own move instead of guessing it from the geometry.
+    // A feature whose size or depth changed but not its placement, and a direct edit (no placement), are guessed.
+    std::optional<Xform> placement;
 };
 struct NamingOutput { ElementMap map; std::vector<LineageEvent> lineage; };
 Result<NamingOutput> propagate(const NamingInput&);
@@ -193,6 +217,11 @@ struct TopoRef {
     Territory territory;                 // the picked element's own
     std::vector<PickNeighbour> pickNeighbours;
     PickOutline outline;                 // a planar face's (T-081b round 2)
+    // The pick-time placements (T-081b round 4) of the features whose names the picked element held (the origins of
+    // its names) that had one, sorted by feature. A face that holds none of its territory where it was picked, whose
+    // feature has another placement now, is the pick moved with its feature when the territory carried by the feature's
+    // move lands on it (at least half of it), or when it lies wholly inside the pick so carried; else Broken.
+    std::vector<FeaturePlacement> placements;
 };
 
 // ---- The JSON form of a TopoRef ----
@@ -209,12 +238,14 @@ struct TopoRef {
 //    "neighbourNames": [...], "splitParents": [...],
 //    "outline": {"chords": [[x0, y0, z0, x1, y1, z1, slack], ...]},   optional, in quanta
 //    "pickNeighbours": [{"names": [...], "relation": "sibling" | "carrier", "territory": T}, ...],   optional
+//    "placements": [{"feature": "<uuid>", "q": [12 integers]}, ...],  optional, FeaturePlacement, sorted by feature
 //    "repairConfirmed": bool,
 //    "territory": T}                           optional
 // where T = {"box": [xmin, ymin, zmin, xmax, ymax, zmax], "measure": n, "points": [[x, y, z], ...]} in quanta.
 // Every integer is a JSON number, or a decimal string when beyond +-2^53. toJson writes every member (empty arrays
-// included) except territory, pickNeighbours and outline, which it writes only when the territory or the outline is
-// known / the list is not empty, so a reference made without evidence is written exactly as references were before the evidence existed.
+// included) except territory, pickNeighbours, outline and placements, which it writes only when the territory or the
+// outline is known / the list is not empty, so a reference made without evidence is written exactly as references
+// were before the evidence existed.
 std::string toJson(const TopoRef&);
 // Reads the JSON form. Every member but body, kind and names is optional; unknown members are refused. Errors are
 // InvalidArgument, with the problem in `message` ("must list at least one name") and the member in context[0]

@@ -27,6 +27,7 @@ struct ElementMap::Impl {
     };
     std::vector<Element> elements; // sorted by sub, no duplicates
     std::vector<TopoName> records; // sorted by id, no duplicates; every one is held by at least one element
+    std::vector<FeaturePlacement> placements; // sorted by feature, no duplicates (T-081b round 4)
 
     // Derived by detail::finishMap, never serialised:
     // name -> element, for names held by EXACTLY one element. A name held by several elements (they could not

@@ -10,6 +10,9 @@
 //       Hash256 id, u8 kind, Uuid origin, u32 roleLength, role bytes,
 //       u32 parentCount, Hash256 x parentCount, u32 discriminatorCount, Hash256 x discriminatorCount,
 //       u32 ordinal, u32 siblingCount, Hash256 family
+//   version 2 only (T-081b round 4; written only when the map holds a placement, so a map without one is the same
+//   version-1 byte string as before): u32 placementCount, then per placement in feature order:
+//       Uuid feature, 12 x i64 (FeaturePlacement::q)
 //   Hash256 checksum: BLAKE3 of every byte before it.
 // The byte string is a function of the table alone, so equal maps serialise to equal bytes. deserialize()
 // rejects anything that does not follow this layout or the rules of detail::finishMap.
@@ -24,7 +27,9 @@ namespace ray::naming {
 namespace {
 
 constexpr std::array<std::uint8_t, 4> kMagic{'R', 'C', 'E', 'M'};
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kVersion = 2;        // the newest this build reads and writes
+constexpr std::uint32_t kVersionNoPlacements = 1;
+constexpr std::size_t kPlacementBytes = 16 + 12 * 8;
 constexpr std::size_t kMaxRoleLength = 4096;
 // Smallest possible encoded sizes, to reject absurd counts before allocating.
 constexpr std::size_t kMinElementBytes = 1 + 4 + 1 + 8 * 8 + 2 + 4 + 32;
@@ -190,7 +195,8 @@ std::vector<std::byte> serializeTable(const ElementMap::Impl* impl)
 {
     Writer w;
     w.raw(kMagic);
-    w.u32(kVersion);
+    const bool placements = impl != nullptr && !impl->placements.empty();
+    w.u32(placements ? kVersion : kVersionNoPlacements);
     const std::size_t elementCount = impl != nullptr ? impl->elements.size() : 0;
     w.u32(static_cast<std::uint32_t>(elementCount));
     for (std::size_t i = 0; i < elementCount; ++i) {
@@ -218,6 +224,14 @@ std::vector<std::byte> serializeTable(const ElementMap::Impl* impl)
         w.u32(r.ordinal);
         w.u32(r.siblingCount);
         w.hash(r.family);
+    }
+    if (placements) {
+        w.u32(static_cast<std::uint32_t>(impl->placements.size()));
+        for (const FeaturePlacement& p : impl->placements) {
+            w.raw(p.feature.value.bytes);
+            for (const std::int64_t v : p.q)
+                w.i64(v);
+        }
     }
     const Hash256 sum = checksum(w.bytes());
     w.hash(sum);
@@ -247,7 +261,7 @@ Result<ElementMap> deserializeTable(std::span<const std::byte> bytes)
     if (r.ok() && version > kVersion)
         return tl::unexpected(
             makeError(ErrorCode::FormatTooNew, "The element map was written by a newer version of RayCAD.", where));
-    if (!r.ok() || version != kVersion)
+    if (!r.ok() || (version != kVersion && version != kVersionNoPlacements))
         return corrupt("unknown version");
 
     ElementMap::Impl table;
@@ -286,6 +300,18 @@ Result<ElementMap> deserializeTable(std::span<const std::byte> bytes)
         n.family = r.hash();
         if (!r.ok())
             return corrupt("a name record is cut short or invalid");
+    }
+    if (version == kVersion) {
+        table.placements.resize(r.count(kPlacementBytes));
+        if (table.placements.empty())
+            return corrupt("a version-2 map without placements");
+        for (FeaturePlacement& p : table.placements) {
+            r.raw(p.feature.value.bytes);
+            for (std::int64_t& v : p.q)
+                v = r.i64();
+            if (!r.ok())
+                return corrupt("a placement is cut short");
+        }
     }
     if (!r.atEnd())
         return corrupt("unexpected bytes after the last record");
@@ -389,6 +415,9 @@ Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile)
     }
     if (std::find(used.begin(), used.end(), false) != used.end())
         return bad("a name record is not held by any element");
+    for (std::size_t i = 1; i < table.placements.size(); ++i)
+        if (!(table.placements[i - 1].feature < table.placements[i].feature))
+            return bad("placements are not in order");
 
     std::vector<std::pair<Hash256, Hash256>> members;
     members.reserve(table.records.size());
@@ -456,6 +485,34 @@ Fingerprint ElementMap::fingerprintOf(kernel::SubId sub) const
 std::size_t ElementMap::size() const
 {
     return impl ? impl->elements.size() : 0;
+}
+
+const FeaturePlacement* ElementMap::placement(FeatureId feature) const
+{
+    if (!impl)
+        return nullptr;
+    const auto it = std::lower_bound(impl->placements.begin(), impl->placements.end(), feature,
+                                     [](const FeaturePlacement& p, const FeatureId& f) { return p.feature < f; });
+    return it != impl->placements.end() && it->feature == feature ? &*it : nullptr;
+}
+
+FeaturePlacement placementOf(FeatureId feature, const Xform& frameToModel)
+{
+    FeaturePlacement p{feature, {}};
+    for (std::size_t i = 0; i < 12; ++i)
+        p.q[i] = (i % 4 == 3) ? detail::quantise(frameToModel.m[i], detail::kLengthQuantaPerMm)
+                              : detail::quantise(frameToModel.m[i], 1e9);
+    return p;
+}
+
+bool samePlacement(const FeaturePlacement& a, const FeaturePlacement& b)
+{
+    for (std::size_t i = 0; i < 12; ++i) {
+        const std::int64_t d = a.q[i] > b.q[i] ? a.q[i] - b.q[i] : b.q[i] - a.q[i];
+        if (d > ((i % 4 == 3) ? 10 : 1000))
+            return false;
+    }
+    return a.feature == b.feature;
 }
 
 std::vector<std::byte> ElementMap::serialize() const

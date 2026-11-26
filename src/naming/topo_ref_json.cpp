@@ -559,6 +559,23 @@ std::string toJson(const TopoRef& ref)
         }
         out += ']';
     }
+    if (!ref.placements.empty()) {
+        out += ",\"placements\":[";
+        for (std::size_t i = 0; i < ref.placements.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            out += "{\"feature\":\"";
+            out += ref.placements[i].feature.value.toString();
+            out += "\",\"q\":[";
+            for (std::size_t k = 0; k < 12; ++k) {
+                if (k > 0)
+                    out += ',';
+                writeInteger(out, ref.placements[i].q[k]);
+            }
+            out += "]}";
+        }
+        out += ']';
+    }
     out += ",\"repairConfirmed\":";
     out += ref.repairConfirmed ? "true" : "false";
     out += ",\"splitParents\":";
@@ -581,7 +598,7 @@ Result<TopoRef> topoRefFromJson(std::string_view json)
             Error{ErrorCode::InvalidArgument, "must be a reference to a face, edge or vertex (a JSON object)", {}});
     if (auto ok = onlyKeys(root,
                            {"ambiguous", "body", "families", "hint", "kind", "names", "neighbourNames", "outline",
-                            "pickNeighbours", "repairConfirmed", "splitParents", "territory"},
+                            "pickNeighbours", "placements", "repairConfirmed", "splitParents", "territory"},
                            "");
         !ok)
         return tl::unexpected(ok.error());
@@ -730,6 +747,38 @@ Result<TopoRef> topoRefFromJson(std::string_view json)
                 return tl::unexpected(t.error());
             n.territory = std::move(*t);
             out.pickNeighbours.push_back(std::move(n));
+        }
+    }
+    if (const Node* list = root.find("placements")) {
+        if (list->type != Node::Type::Array)
+            return fieldError("placements", "must be an array");
+        for (std::size_t i = 0; i < list->items.size(); ++i) {
+            const Node& item = list->items[i];
+            const std::string at = "placements[" + std::to_string(i) + "]";
+            if (item.type != Node::Type::Object)
+                return fieldError(at, "must be a JSON object");
+            if (auto ok = onlyKeys(item, {"feature", "q"}, at + "."); !ok)
+                return tl::unexpected(ok.error());
+            FeaturePlacement p;
+            const Node* feature = item.find("feature");
+            if (feature == nullptr || feature->type != Node::Type::String)
+                return fieldError(at + ".feature", "must be a lower-case UUID");
+            const Uuid id = Uuid::fromString(feature->text);
+            if (id.toString() != feature->text || id == Uuid{})
+                return fieldError(at + ".feature", "must be a lower-case UUID other than the nil one");
+            p.feature = FeatureId{id};
+            const Node* q = item.find("q");
+            if (q == nullptr || q->type != Node::Type::Array || q->items.size() != 12)
+                return fieldError(at + ".q", "must be twelve whole numbers");
+            for (std::size_t k = 0; k < 12; ++k) {
+                const auto n = wholeNumber(q->items[k]);
+                if (!n)
+                    return fieldError(at + ".q", "must be twelve whole numbers");
+                p.q[k] = *n;
+            }
+            if (!out.placements.empty() && !(out.placements.back().feature < p.feature))
+                return fieldError("placements", "must be sorted by feature, each feature once");
+            out.placements.push_back(p);
         }
     }
     return out;

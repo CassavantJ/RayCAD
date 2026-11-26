@@ -309,6 +309,18 @@ private:
         ref.pickNeighbours = detail::pickNeighboursOf(map, body->shape, sub, territories);
         if (sub.kind == kernel::SubKind::Face)
             ref.outline = detail::pickOutlineOf(body->shape, sub);
+        // The placements of the features that made it (T-081b round 4), sorted by feature.
+        for (const Hash256& name : ref.names)
+            if (const TopoName* record = map.record(name))
+                if (const FeaturePlacement* p = map.placement(record->origin))
+                    ref.placements.push_back(*p);
+        std::sort(ref.placements.begin(), ref.placements.end(),
+                  [](const FeaturePlacement& a, const FeaturePlacement& b) { return a.feature < b.feature; });
+        ref.placements.erase(std::unique(ref.placements.begin(), ref.placements.end(),
+                                         [](const FeaturePlacement& a, const FeaturePlacement& b) {
+                                             return a.feature == b.feature;
+                                         }),
+                             ref.placements.end());
     }
 
     std::vector<ResolverBody> bodies_;                                 // sorted by id, unique

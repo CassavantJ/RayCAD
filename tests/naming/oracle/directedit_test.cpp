@@ -500,3 +500,183 @@ TEST_CASE("Direct edit: an edit in the history follows its face through an upstr
             CHECK(o.verdict == Verdict::Correct);
         }
 }
+
+namespace {
+
+// The element of `kind` of `r`'s edited shape nearest point p (its samples' polyline, mesh or point), or -1.
+long elementNear(const Run& r, SubKind kind, const Vec3& p)
+{
+    const auto& N = r.samples->of(kind);
+    long best = -1;
+    double dBest = 1e-2;
+    for (std::uint32_t e = 0; e < N.size(); ++e) {
+        double d = 1e300;
+        if (kind == SubKind::Face) {
+            if (N[e].mesh)
+                d = N[e].mesh->distanceWithin(p, 1e-2, true);
+        } else if (kind == SubKind::Edge) {
+            for (std::size_t k = 1; k < N[e].nodes.size(); ++k) {
+                const Vec3 a = N[e].nodes[k - 1], ab = sub(N[e].nodes[k], a);
+                const double l2 = dot(ab, ab);
+                const double s = l2 > 0 ? std::clamp(dot(sub(p, a), ab) / l2, 0.0, 1.0) : 0.0;
+                d = std::min(d, norm(sub(p, add(a, mul(ab, s)))));
+            }
+        } else if (!N[e].nodes.empty()) {
+            d = norm(sub(p, N[e].nodes.front()));
+        }
+        if (d < dBest) {
+            dBest = d;
+            best = static_cast<long>(e);
+        }
+    }
+    return best;
+}
+
+Verdict judgeAs(const Run& r, const Outcome& o, Answer answer, std::vector<std::uint32_t> elements)
+{
+    const Expectation x = expect(o.ref.record, *r.owners, *r.samples);
+    return judgeAnswer(x, o.ref.record, *r.owners, *r.samples, answer, std::move(elements)).verdict;
+}
+
+} // namespace
+
+TEST_CASE("Structural check (round 4): an edge on a line that stayed, the pick's stretch gone, is not the other end",
+          "[naming][directedit]")
+{
+    // The reviewer's holdout1 4:33 edge 9 and holdout2 1:3 edge 42, scripted: a pocket open at the front (y -10..20,
+    // seen from y 0) is moved along its own walls by 60 mm (y 50..80, seen to y 60). Its right wall stays on the plane
+    // x 60, and its edge with the top on the line x 60, z 20; the picked stretch (y 0..20) is top face now, the moved
+    // image (y 60..80) is outside the part, and the edge there (y 50..60) holds neither: Broken (the resolver: another
+    // stretch of a line that stayed), the expectation gone, and Exact on it WRONG (the structural check on edges).
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("P1", BOp::Cut, top(20), rect(40, -10, 60, 20), 10));
+    Script edited = base;
+    edited[1].frame.o = add(edited[1].frame.o, Vec3{0, 60, 0});
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    const long other = elementNear(r, SubKind::Edge, Vec3{60, 55, 20});
+    REQUIRE(other >= 0);
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (o.ref.ref.kind != SubKind::Edge || !about(o, "P1/s2") || !about(o, "F01/c1/1") ||
+            o.ref.record.truth.cons.size() != 2)
+            continue;
+        ++probed;
+        INFO("reference " << o.ref.record.base.index << " " << o.ref.names << ": " << stateText(o.resolved.state) << " "
+                          << o.resolved.reason << "; " << verdictName(o.verdict));
+        CHECK(o.resolved.state == naming::ResolveState::Broken);
+        CHECK(o.verdict == Verdict::BrokenGone);
+        CHECK(isWrong(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(other)})));
+        CHECK(isWrong(judgeAs(r, o, Answer::Merged, {static_cast<std::uint32_t>(other)})));
+    }
+    CHECK(probed == 1);
+}
+
+TEST_CASE("Resize (round 4, the lead's decision): a bore opened past a counterbore took the counterbore's ground",
+          "[naming][directedit]")
+{
+    // Review holdout 18:33 face 2, scripted: a bore r 2, 15 deep, under a counterbore r 4, 4 deep; the bore opened up
+    // to
+    // r 5 runs on to the top, through the heights the counterbore's floor and wall held. The bore's reference is the
+    // bore
+    // and more: Merged (the resolver), Exact on it a silent merge (WRONG), Merged on it right.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("H1", BOp::Cut, top(20), circle(30, 30, 2), 15, "hole"));
+    base.push_back(sweep("C1", BOp::Cut, top(20), circle(30, 30, 4), 4, "hole"));
+    Script edited = base;
+    edited.push_back(directEdit("E1", EKind::Resize, {"H1/s1"}, 5.0));
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    const long bore = elementNear(r, SubKind::Face, Vec3{35, 30, 10});
+    REQUIRE(bore >= 0);
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (!faceOf(o, "H1/s1"))
+            continue;
+        ++probed;
+        INFO("reference " << o.ref.names << ": " << stateText(o.resolved.state) << " " << o.resolved.reason << "; "
+                          << verdictName(o.verdict));
+        CHECK(o.resolved.state == naming::ResolveState::Merged);
+        CHECK(o.verdict == Verdict::Correct);
+        const Expectation x = expect(o.ref.record, *r.owners, *r.samples);
+        INFO("E " << x.expected.elems.size() << " merged " << x.expected.merged << " partial "
+                   << x.expected.partial.size() << " merge unknown " << x.mergeUnknown << " weak " << x.weak
+                   << " moved " << x.moved << "; Exact judged "
+                   << verdictName(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(bore)})));
+        CHECK(isWrong(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(bore)})));
+        CHECK(judgeAs(r, o, Answer::Merged, {static_cast<std::uint32_t>(bore)}) == Verdict::Correct);
+    }
+    CHECK(probed == 1);
+}
+
+TEST_CASE("Sibling match (round 4): a picked piece that came apart is all its pieces, not the one at its rank",
+          "[naming][directedit]")
+{
+    // Review holdout 15:10 edge 8, scripted: a slot across the front top edge leaves it in two pieces, and a chamfer on
+    // that logical edge has two pieces, each with an edge on the top (siblings). The chamfer made larger slides those
+    // edges; a groove inserted across the right piece cuts its top edge in two. The right piece's top edge is now both
+    // stretches: Split with both is right, either stretch alone WRONG (incomplete); the left piece's edge goes on
+    // alone, as the sibling's continuation.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("S1", BOp::Cut, top(20), rect(40, -1, 50, 10), 5));
+    base.push_back(blendOn("C1", false, Target{"F01/c1/1", "F01/s1", true, true}, 0.6));
+    Script edited = base;
+    edited[2].size = 0.9;
+    edited.push_back(sweep("X1", BOp::Cut, top(20), rect(70, -1, 72, 61), 3));
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    const long a = elementNear(r, SubKind::Edge, Vec3{60, 0.9, 20});
+    const long b = elementNear(r, SubKind::Edge, Vec3{85, 0.9, 20});
+    REQUIRE(a >= 0);
+    REQUIRE(b >= 0);
+    REQUIRE(a != b);
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (o.ref.ref.kind != SubKind::Edge || !about(o, "F01/c1/1") || !about(o, "C1/b0") ||
+            o.ref.record.picked().boxMin.x < 45)
+            continue;
+        ++probed;
+        INFO("reference " << o.ref.record.base.index << " " << o.ref.names << ": " << stateText(o.resolved.state) << " "
+                          << o.resolved.reason << "; " << verdictName(o.verdict));
+        const auto ua = static_cast<std::uint32_t>(a), ub = static_cast<std::uint32_t>(b);
+        CHECK_FALSE(isWrong(o.verdict));
+        CHECK(judgeAs(r, o, Answer::Split, {ua, ub}) == Verdict::Correct);
+        CHECK(isWrong(judgeAs(r, o, Answer::Exact, {ua})));
+        CHECK(isWrong(judgeAs(r, o, Answer::Exact, {ub})));
+    }
+    CHECK(probed == 1);
+}
+
+TEST_CASE("Structural check (round 4): an edge moved along its line with its feature holds the moved pick",
+          "[naming][directedit]")
+{
+    // The counterpart of the test above (tuned 10:17 edge 45, holdout1 10:5 edge 8): a pocket open at the front (y
+    // -10..10,
+    // seen from y 0) moved along its own walls by 25 mm (y 15..35). Its right wall's edge with the top lies on the same
+    // line, nowhere where it was picked (y 0..10), but the pick moved with the pocket (y 25..35) lies on it: the
+    // pick moved with its feature, Exact and judged correct (the oracle's structural check follows the sweep's move,
+    // its
+    // own map projecting the crossing of a moved wall with the top that stayed; the resolver follows the pocket's
+    // placement).
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("P1", BOp::Cut, top(20), rect(40, -10, 60, 10), 10));
+    Script edited = base;
+    edited[1].frame.o = add(edited[1].frame.o, Vec3{0, 25, 0});
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    const long moved = elementNear(r, SubKind::Edge, Vec3{60, 30, 20});
+    REQUIRE(moved >= 0);
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (o.ref.ref.kind != SubKind::Edge || !about(o, "P1/s2") || !about(o, "F01/c1/1") ||
+            o.ref.record.truth.cons.size() != 2)
+            continue;
+        ++probed;
+        INFO("reference " << o.ref.record.base.index << " " << o.ref.names << ": " << stateText(o.resolved.state) << " "
+                          << o.resolved.reason << "; " << verdictName(o.verdict));
+        CHECK(o.resolved.state == naming::ResolveState::Exact);
+        CHECK(o.verdict == Verdict::Correct);
+        CHECK(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(moved)}) == Verdict::Correct);
+    }
+    CHECK(probed == 1);
+}

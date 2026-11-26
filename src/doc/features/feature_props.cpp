@@ -47,7 +47,9 @@ std::string topoRefSchema()
            hashesSchema() + R"(,"neighbourNames":)" + hashesSchema() +
            R"(,"hint":{"type":"object"},"repairConfirmed":{"type":"boolean"},"territory":{"type":"object"},)" +
            R"("outline":{"type":"object"},)" + // T-081b: a planar face's pick-time outline (naming reads it)
-           R"("pickNeighbours":{"type":"array","items":{"type":"object"}}},)" +
+           R"("pickNeighbours":{"type":"array","items":{"type":"object"}},)" +
+           R"("placements":{"type":"array","items":{"type":"object"}}},)" + // T-081b round 4: feature placements
+
            R"j("description":"A persistent reference to a face, edge or vertex (made by the model.reference action)"})j";
 }
 

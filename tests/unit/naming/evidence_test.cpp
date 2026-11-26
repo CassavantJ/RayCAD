@@ -832,3 +832,84 @@ TEST_CASE("With the input shapes, an input face the history reports deleted but 
     const std::array<const kernel::Shape*, 1> one{&a.shape};
     CHECK_FALSE(propagate(NamingInput{kPocket, "extrude", maps, &fused.history, &fused.shape, {}, one}).has_value());
 }
+
+namespace {
+
+// A pocket 10 x 20, 5 deep, cut into a 100 x 60 x 20 block with its sketch frame at (x0, 20, 20) (feature kPocket),
+// its placement given to propagate() (T-081b round 4) or not.
+Body placedPocket(double x0, bool placed)
+{
+    const Body block = extrude(kBlock, 0, rectangle(0, 0, 100, 60, 1, 1), 20);
+    JobContext ctx;
+    const kernel::Plane plane{Vec3{x0, 20, 20}, Vec3{0, 0, 1}, Vec3{1, 0, 0}};
+    auto sweep = take(kernel::extrude(kernel::Profile{plane, {rectangle(0, 0, 10, 20, 41, 5)}}, -5, 0.0, ctx));
+    const Xform frame{{1, 0, 0, x0, 0, 1, 0, 20, 0, 0, 1, 20}};
+    NamingInput toolIn{kPocket, "extrude", {}, nullptr, &sweep.op.shape, sweep.origins};
+    if (placed)
+        toolIn.placement = frame;
+    const ElementMap toolMap = take(propagate(toolIn)).map;
+    auto result = take(kernel::boolean(kernel::BoolOp::Cut, block.shape, sweep.op.shape, ctx));
+    const std::array<const ElementMap*, 2> maps{&block.map, &toolMap};
+    const std::array<const kernel::Shape*, 2> shapes{&block.shape, &sweep.op.shape};
+    NamingInput in{kPocket, "extrude", maps, &result.history, &result.shape, {}, shapes};
+    if (placed)
+        in.placement = frame;
+    return Body{result.shape, take(propagate(in)).map};
+}
+
+} // namespace
+
+TEST_CASE("A feature's placement is carried from map to map, recorded by a reference, and followed when it moves",
+          "[naming][evidence]")
+{
+    // T-081b round 4: NamingInput::placement, ElementMap::placement, TopoRef::placements.
+    const Body b = placedPocket(30, true);
+    const FeaturePlacement* p = b.map.placement(kPocket);
+    REQUIRE(p != nullptr);
+    CHECK(samePlacement(*p, placementOf(kPocket, Xform{{1, 0, 0, 30, 0, 1, 0, 20, 0, 0, 1, 20}})));
+    CHECK_FALSE(samePlacement(*p, placementOf(kPocket, Xform{{1, 0, 0, 30.01, 0, 1, 0, 20, 0, 0, 1, 20}})));
+    CHECK(b.map.placement(kBlock) == nullptr);
+    // The map file: version 2 with the placement, read back the same; a map without one is version 1, as before.
+    const std::vector<std::byte> bytes = b.map.serialize();
+    CHECK(std::to_integer<int>(bytes[4]) == 2);
+    const ElementMap back = take(ElementMap::deserialize(bytes));
+    REQUIRE(back.placement(kPocket) != nullptr);
+    CHECK(back.placement(kPocket)->q == p->q);
+    CHECK(back.serialize() == bytes);
+    CHECK(std::to_integer<int>(placedPocket(30, false).map.serialize()[4]) == 1);
+    // The pocket's floor: its reference records the pocket's placement, and its JSON form keeps it.
+    const auto floor = faceAt(b.shape, Vec3{35, 30, 15}, Vec3{0, 0, 1});
+    REQUIRE(floor);
+    const TopoRef ref = resolverFor(b)->makeRef(kBody, *floor);
+    REQUIRE(ref.placements.size() == 1);
+    CHECK(ref.placements[0].feature == kPocket);
+    const std::string text = toJson(ref);
+    CHECK(text.find("\"placements\":[{\"feature\":\"") != std::string::npos);
+    const TopoRef read = take(topoRefFromJson(text));
+    REQUIRE(read.placements.size() == 1);
+    CHECK(read.placements[0].q == ref.placements[0].q);
+    CHECK(toJson(read) == text);
+    CHECK(toJson(withoutEvidence(ref)).find("placements") != std::string::npos); // not evidence: written whenever known
+    // The pocket moved to x 95: clipped by the block's end, its floor half as large and nowhere where it was. Carried
+    // by
+    // the pocket's own move it lies wholly inside the picked floor: Exact. Without the placement the move is guessed
+    // (the floor neither in place nor over its place along its normal): Broken.
+    const Body moved = placedPocket(95, true);
+    const auto movedFloor = faceAt(moved.shape, Vec3{97, 30, 15}, Vec3{0, 0, 1});
+    REQUIRE(movedFloor);
+    const Resolved r = resolverFor(moved)->resolve(ref);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.elements == std::vector<SubId>{*movedFloor});
+    TopoRef unplaced = ref;
+    unplaced.placements.clear();
+    CHECK(resolverFor(moved)->resolve(unplaced).state == ResolveState::Broken);
+    // Sorted by feature, each once: a damaged list is refused, naming the member.
+    std::string twice = text;
+    const std::size_t at = twice.find("\"placements\":[");
+    const std::size_t end = twice.find("]}]", at) + 2;
+    const std::string one = twice.substr(at + 14, end - at - 14);
+    twice.insert(end, "," + one);
+    const auto refused = topoRefFromJson(twice);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error().context.front() == "placements");
+}
