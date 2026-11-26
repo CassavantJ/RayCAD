@@ -168,7 +168,10 @@ bool onSurfacesOf(const kernel::Shape& shape, SubId edge, const Territory& terri
     if (!territory.known())
         return false;
     const std::vector<SubId> faces = kernel::adjacent(shape, edge, SubKind::Face);
-    if (edge.kind == SubKind::Edge ? faces.size() != 2 : faces.size() < 2)
+    // (A vertex on only two faces is a seam vertex: where it lies on their curve is the periodic face's seam, which
+    // moves with that face's parametrisation, not a meeting point of three surfaces: T-081a random seam pin, the
+    // document's hole moved by its diameter, tests/unit/doc sketch_stability.)
+    if (edge.kind == SubKind::Edge ? faces.size() != 2 : faces.size() < 3)
         return false;
     for (const SubId& f : faces) {
         const auto info = kernel::surfaceInfo(shape, f);
