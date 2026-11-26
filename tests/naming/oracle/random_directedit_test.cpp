@@ -2034,6 +2034,21 @@ void replayCases(bool keyOnly)
          {{Answer::Exact, {41}}},
          "windows",
          0.4771},
+        // The real catch of round 3's moved-face rule among the reviewer's sample (round 4: it must stay): a window of a
+        // moved boss's start cap, its name on a patch of the cap's plane outside the part, holding none of the pick in
+        // place or carried by the boss's move: Broken, the old Exact WRONG.
+        {4,
+         29,
+         k + "fillet_block_1.stp #29|face 17",
+         Answer::Broken,
+         Verdict::BrokenGone,
+         "a moved start cap's window, another patch now",
+         false,
+         0,
+         false,
+         {{Answer::Exact, {39}}},
+         "windows",
+         9.5592},
         // The reviewer's own block (round 4 rulings), authored on Windows:
         //  - a stretch of a moved cut's edge past its old start, ground inside a bore at pick time, is not a piece; the
         //    resolver cannot tell such ground from new ground the pick grew into (sorted 17:32 edge 32): Broken (a miss:

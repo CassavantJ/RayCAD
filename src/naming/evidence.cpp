@@ -125,7 +125,7 @@ std::optional<Vec3> ontoSurface(const kernel::SurfaceInfo& info, const Vec3& p)
 }
 
 // Do two edge fingerprints lie on one line (lines: parallel within 1e-6, each midpoint within 1e-2 mm of the other's
-// line) or one circle (circles: the same centre within 1e-2 mm, axis within 1e-6, radius within 1e-2 mm)? (1e-2 mm:
+// line) or one circle (circles: the same centre within 1e-3 mm, axis within 1e-6, radius within 1e-3 mm)? (1e-2 mm:
 // a feature moved along its own wall moves that wall by the rounding of its frame, a few micrometres; the oracle's
 // structural check counts such a wall as where it was.)
 bool sameCurve(const Fingerprint& a, const Fingerprint& b)
@@ -154,8 +154,8 @@ bool sameCurve(const Fingerprint& a, const Fingerprint& b)
         return length(Vec3{d.x - ua.x * along, d.y - ua.y * along, d.z - ua.z * along}) <= 1e-2;
     }
     if (a.surface == static_cast<kernel::SurfaceType>(kernel::CurveType::Circle))
-        return length(d) <= 1e-2 &&
-               std::abs(static_cast<double>(a.qRadius - b.qRadius)) / kLengthQuantaPerMm <= 1e-2;
+        return length(d) <= 1e-3 &&
+               std::abs(static_cast<double>(a.qRadius - b.qRadius)) / kLengthQuantaPerMm <= 1e-3;
     return false;
 }
 
@@ -206,7 +206,9 @@ bool onSurfacesOf(const kernel::Shape& shape, SubId edge, const Territory& terri
                     off = 0;
             } else if (Probe(shape, f).on(p)) // another surface: the face itself, where it is now, holds the point
                 off = 0;
-            if (!(off <= 1e-2))
+            // (Planes within 1e-2 mm: a feature moved along its own wall moves the wall by the rounding of its frame,
+            // a few micrometres; curved surfaces within 1e-3 mm: a blend made a little larger is another surface.)
+            if (!(off <= (info->type == kernel::SurfaceType::Plane ? 1e-2 : 1e-3)))
                 return false;
         }
     }
@@ -725,46 +727,41 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
         if (element.kind != SubKind::Vertex && ref.hint.qArea > 0 &&
             static_cast<double>(map.fingerprintOf(element).qArea) < 0.05 * static_cast<double>(ref.hint.qArea))
             return brokenBecause("Only a small remnant of the picked element is left, and not where it was picked.");
-        // An edge that holds none of its own territory (its box meets the picked box nowhere but at a point) and lies
-        // on
-        // the very line (or circle) the picked edge lay on, or between faces on whose surfaces every picked territory
-        // point still lies (the curve where those surfaces meet), is another stretch of it: the curve stayed, and what
-        // was picked of it is gone (T-081b round 4, the reviewer's holdout1 4:33 edge 9 and holdout2 1:3 edge 42: a cut
-        // moved along its own wall's line, the wall's other end now where the picked end was; holdout1 7:33 edges 10,
-        // 14:
-        // a boss moved along its own side's plane, another stretch of where that side meets the shaft). Unless the
-        // pick's feature was moved (TopoRef::placements) and its move carries at least half the picked territory onto
-        // the edge: then it moved along its curve with its feature.
-        const auto edgeBox = element.kind == SubKind::Edge ? elementBox(shape, element) : std::nullopt;
-        if (edgeBox &&
-            (sameCurve(map.fingerprintOf(element), ref.hint) || onSurfacesOf(shape, element, ref.territory)) &&
-            (gapOrOverlap(*edgeBox, boxOf(ref.territory)) >= -1e-3 ||
-             noPointInside(territories.of(element), boxOf(ref.territory)))) {
+        // An edge or vertex that holds none of its territory, in place (within 1e-2 mm) or carried by its feature's
+        // move
+        // (TopoRef::placements), while it lies on the very line (or circle) the picked edge lay on, or between faces on
+        // whose surfaces every picked territory point still lies (the curve or point where those surfaces meet), is
+        // another stretch of that curve (another of those meeting points): the curve stayed, what bounded the pick or
+        // the pick's own feature moved along it, and what was picked of it is gone (T-081b round 4: the reviewer's
+        // holdout1 4:33 edge 9 and holdout2 1:3 edge 42, a cut moved along its own wall's line, the wall's other end
+        // now
+        // where the picked end was; holdout1 7:33 edges 10 and 14, a boss moved along its own side's plane; holdout2
+        // 6:8
+        // edge 7, an imported arc, the cut that ended it moved, the rest of the circle now; holdout1 6:26 vertex 11, a
+        // corner of a boss moved along its side, another corner of that side now). An edge that holds some of the pick
+        // carried by its feature's move moved with the feature, clipped otherwise.
+        if (element.kind != SubKind::Face) {
             const KnownMove move = knownMove(map, ref);
-            std::size_t landed = 0;
-            if (move.kind == KnownMove::Kind::Moved)
-                for (const auto& q : ref.territory.points)
-                    landed += probe.on(carry(move.from, move.to, fromQuanta(q))) ? 1 : 0;
-            if (2 * landed < ref.territory.points.size())
-                return brokenBecause("The picked edge's line is where it was, and the edge its name leads to is "
-                                     "another stretch of it that holds none of the picked one.");
-        }
-        // A vertex that is not where it was picked while the picked point still lies on the surface of every face
-        // around
-        // it (planes, cylinders, spheres: those surfaces still meet there) is another of their meeting points, unless
-        // the
-        // pick's feature was moved and its move carries the picked point onto it (T-081b round 4: holdout1 6:26 vertex
-        // 11, a corner of a boss moved along its own side, another corner of that side now).
-        if (element.kind == SubKind::Vertex && onSurfacesOf(shape, element, ref.territory)) {
-            const KnownMove move = knownMove(map, ref);
-            bool carried = false;
-            if (move.kind == KnownMove::Kind::Moved)
-                for (const auto& q : ref.territory.points)
-                    carried = carried || probe.on(carry(move.from, move.to, fromQuanta(q)));
-            if (!carried)
-                return brokenBecause("The picked vertex is not where it was picked, though the faces around the "
-                                     "vertex its name leads to still meet there; which of their meeting points is "
-                                     "the picked one cannot be told.");
+            bool holds = false;
+            for (const auto& q : ref.territory.points) {
+                holds = holds || probe.on(fromQuanta(q), 1e-2);
+                if (move.kind == KnownMove::Kind::Moved)
+                    holds = holds || probe.on(carry(move.from, move.to, fromQuanta(q)), 1e-2);
+            }
+            const auto box = element.kind == SubKind::Edge ? elementBox(shape, element) : std::nullopt;
+            const bool apart = element.kind == SubKind::Vertex ||
+                               (box && (gapOrOverlap(*box, boxOf(ref.territory)) >= -1e-3 ||
+                                        noPointInside(territories.of(element), boxOf(ref.territory))));
+            const bool sameCarrier =
+                (element.kind == SubKind::Edge && sameCurve(map.fingerprintOf(element), ref.hint)) ||
+                onSurfacesOf(shape, element, ref.territory);
+            if (!holds && apart && sameCarrier)
+                return brokenBecause(element.kind == SubKind::Edge
+                                         ? "The picked edge's feature slid along the line the edge lies on, and the "
+                                           "edge its name leads to is another stretch of it that holds none of the "
+                                           "picked one."
+                                         : "The picked vertex's feature slid along the faces the vertex lies on, and "
+                                           "the vertex its name leads to is another of their meeting points.");
         }
         // A face that holds none of its own territory moved (or what was picked of it is gone).
         //  - A feature of the pick was moved (TopoRef::placements, another placement now; T-081b round 4): the face is
