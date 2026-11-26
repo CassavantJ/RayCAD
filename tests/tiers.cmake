@@ -43,6 +43,7 @@ set(RAY_SLOW_TESTS
     ray_naming_random_directedit_holdout1
     ray_naming_random_directedit_holdout2
     ray_naming_random_directedit_review1
+    ray_naming_random_directedit_review2
     ray_naming_random_perturbed
     ray_sketch_drag_agreement
     ray_cam_invariants_slow   # the property tests of every operation type on their large seed sets (T-058)
@@ -70,6 +71,7 @@ set(RAY_MSVC_DEBUG_DISABLED_TESTS
     ray_naming_random_directedit_holdout1
     ray_naming_random_directedit_holdout2
     ray_naming_random_directedit_review1
+    ray_naming_random_directedit_review2
     ray_naming_random_perturbed
     ray_kernel_directedit_corpus # T-080: 1,337 edits on unoptimised OpenCASCADE, many past their time limit
     ray_kernel_directedit_nist)
@@ -135,7 +137,8 @@ set(RAY_SANITIZER_HEAVY_TESTS
     ray_naming_random_directedit_sorted
     ray_naming_random_directedit_holdout1
     ray_naming_random_directedit_holdout2
-    ray_naming_random_directedit_review1)
+    ray_naming_random_directedit_review1
+    ray_naming_random_directedit_review2)
 
 # The slow naming blocks, each in a CI job of its own family (build-test.yml, sanitizers.yml): run one at a time after
 # everything else they took the Release and ASan jobs past the 4-hour limit (run 45646624932: Windows Release stopped
@@ -157,7 +160,8 @@ set(RAY_DIRECTEDIT_BLOCK_TESTS
     ray_naming_random_directedit_sorted
     ray_naming_random_directedit_holdout1
     ray_naming_random_directedit_holdout2
-    ray_naming_random_directedit_review1)
+    ray_naming_random_directedit_review1
+    ray_naming_random_directedit_review2)
 
 # Tests whose pass or fail is a wall-clock budget, set for a developer's machine (PLAN.md section 9 rows, UI-thread
 # gaps, benchmarks): every <test>_wallclock split below (RAY_WALLCLOCK_SPLITS) and these. They get the label bench, which
@@ -189,6 +193,7 @@ set(RAY_TEST_PROCESSORS
     ray_naming_random_directedit_holdout1=8
     ray_naming_random_directedit_holdout2=8
     ray_naming_random_directedit_review1=8
+    ray_naming_random_directedit_review2=8
     ray_naming_random_perturbed=8
     ray_naming_s4=7             # 7.0
     ray_naming_random_smoke=5   # 4.8

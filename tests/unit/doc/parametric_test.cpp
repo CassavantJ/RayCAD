@@ -739,6 +739,47 @@ TEST_CASE("a document saved before references carried pick-time evidence opens a
     CHECK(body.shape.count(kernel::SubKind::Edge) == static_cast<std::uint32_t>(geometry->find("edges")->asNumber()));
     CHECK(body.shape.count(kernel::SubKind::Vertex) ==
           static_cast<std::uint32_t>(geometry->find("vertices")->asNumber()));
+    // T-081b round 5, item 2: the document passes each extrude's placement (its sketch's plane) to the naming, so the
+    // rebuilt maps hold the two extrudes' (element-map format 2) while the saved references, made before placements,
+    // carry none; they resolved above (every feature Ok), and the document saves as it was.
+    std::size_t placed = 0;
+    for (const Feature& f : loaded->features) {
+        if (body.map.placement(f.id) != nullptr) {
+            CHECK(f.type == "extrude");
+            ++placed;
+        }
+    }
+    CHECK(placed == 2);
+    CHECK(serializeState(*loaded).manifest == manifest);
+}
+
+TEST_CASE("an extrude's references record its placement, and the JSON carries it", "[doc][parametric]")
+{
+    // T-081b round 5, item 2: a reference to a face the extrude made holds the extrude's placement, written as the
+    // TopoRef member "placements" and read back, and it resolves Exact again.
+    Model m;
+    block(m);
+    const BuildResultPtr b = m.build();
+    const BuiltBody& body = bodyOf(*b, 'b');
+    const auto top = findFace(body.shape, [](const kernel::SurfaceInfo& s) {
+        return s.type == kernel::SurfaceType::Plane && near(s.centroid.z, 10, 1e-3) && s.area > 500;
+    });
+    REQUIRE(top);
+    const naming::TopoRef ref = refTo(*b, 'b', *top);
+    REQUIRE(ref.placements.size() == 1);
+    const json::Value v = features::topoRefToJson(ref);
+    CHECK(json::write(v).find("placements") != std::string::npos);
+    const features::PropsReader r("test", v);
+    auto back = features::topoRefFromJson(r, *json::parse(json::write(v)), "ref");
+    REQUIRE(back);
+    REQUIRE(back->placements.size() == 1);
+    CHECK(back->placements[0].feature == ref.placements[0].feature);
+    CHECK(back->placements[0].q == ref.placements[0].q);
+    const naming::FeaturePlacement* now = body.map.placement(ref.placements[0].feature);
+    REQUIRE(now != nullptr);
+    CHECK(naming::samePlacement(*now, ref.placements[0]));
+    const naming::Resolved again = resolveOn(*b, 'b', *back);
+    CHECK(again.state == naming::ResolveState::Exact);
 }
 
 TEST_CASE("the size of the pick-time evidence in a saved document (printed)", "[.toporef-size]")

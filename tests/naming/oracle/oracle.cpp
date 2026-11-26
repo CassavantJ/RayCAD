@@ -28,7 +28,9 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 // pick's"), resize-axis (a resized bore's take-over along its axis), joined-surface (pieces joined on one surface),
 // structural-edges (the structural check on edges and vertices), structural-pieces (on each piece of a flagged
 // answer), copy-position (the rigid-copy exemption's position test: off, any congruent face passes, as in round 3)
-// and rotation-exact (a turned feature's map counted as exact). For checking the pins only; never set in a gate run.
+// and rotation-exact (a turned feature's map counted as exact); round 5: new-piece (new pieces are never required) and
+// held-in-place (an element where the pick was, its owners on their carriers, is never gone). For checking the pins
+// only; never set in a gate run.
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
 
@@ -3039,11 +3041,49 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
 
 Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
 
+// Boxes of two elements more than 0.05 mm apart (they cannot share samples).
+bool boxesApart(const ElemSamples& a, const ElemSamples& b)
+{
+    constexpr double m = 0.05;
+    return a.boxMax.x + m < b.boxMin.x || b.boxMax.x + m < a.boxMin.x || a.boxMax.y + m < b.boxMin.y ||
+           b.boxMax.y + m < a.boxMin.y || a.boxMax.z + m < b.boxMin.z || b.boxMax.z + m < a.boxMin.z;
+}
+
 } // namespace
 
 Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
 {
     Expectation x = expectCore(pick, now, smp);
+    // HELD IN PLACE (T-081b round 5, item 3b; the reviewer's ruling on Linux review1 18:6). Gone, though an element of
+    // the pick's kind and type lies where the pick was (each on 90 % of the other, in place; a vertex at the same
+    // point), and every owner of the description is still there on the carrier it had (stillOwners): that element is
+    // the pick's continuation, whatever the owners' extents now say (a feature that failed on this platform changes the
+    // extents the description is judged by, not the faces that stayed). Restricted so: a face of another feature made
+    // again in the same place has other owners, which the description does not name.
+    if (x.expected.elems.empty() && x.noAnchor.empty() && !mutated("held-in-place") && !pick.picked().pts.empty() &&
+        stillOwners(pick.truth, *pick.owners, now)) {
+        const auto& N = smp.of(x.kind);
+        const ElemSamples& P = pick.picked();
+        long held = -1;
+        int found = 0;
+        for (std::uint32_t e = 0; e < N.size(); ++e) {
+            if (N[e].pts.empty() || N[e].type != P.type || boxesApart(P, N[e]))
+                continue;
+            const bool there = x.kind == SubKind::Vertex
+                                   ? !N[e].nodes.empty() && !P.nodes.empty() &&
+                                         norm(sub(N[e].nodes.front(), P.nodes.front())) <= kExactVertexTolerance
+                                   : shareOn(P, N[e], x.kind) >= 0.9 && shareOn(N[e], P, x.kind) >= 0.9;
+            if (there) {
+                held = static_cast<long>(e);
+                ++found;
+            }
+        }
+        if (found == 1) {
+            x.expected = TruthEval{};
+            x.expected.elems.push_back(static_cast<std::uint32_t>(held));
+            x.heldInPlace = true;
+        }
+    }
     // The structural check applies to the expectation too (round 3): a single expected face that holds none of the
     // picked ground, in place or where the edit's exact map takes it, is not the pick's continuation but another patch
     // of its surface (holdout1 17:10 face 5; T-081a holdout2 11:6 face 24, 13:5 face 19): the pick is gone.
@@ -3069,6 +3109,99 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                     kept.partial.push_back(e);
             kept.merged = !kept.partial.empty();
             x.expected = kept;
+        }
+    }
+    // NEW PIECES ARE NEVER REQUIRED (T-081b round 5, item 3a; the reviewer's rulings on Linux holdout2 18:24 face 3 and
+    // sorted 17:32 edge 32): a piece of the expected set that holds none of the pick and lies on no pick-time element's
+    // ground (it overlaps no baseline element of its kind: 10 % of either on the other, away from the boundary) is
+    // ground nobody held when the reference was made: not the pick's continuation, so never required (while another
+    // piece is left). "Holds none of the pick": none of it in place, or where the edit's exact map or its feature's
+    // move takes it (holdsPickedGround); or, for an edge, the piece lies wholly past a plane that bounded the pick at
+    // pick time (a face at one of its vertices, still there), on whose near side the pick lies in place and carried by
+    // every sweep's move: a crossing's map slides the pick along its line, past such a bound, where the pick never was
+    // (17:32: the moved cut's edge runs on below the plane z 0.425 that ended the pick, over a deleted hole's place).
+    // For holdsPickedGround, where the pick went must be known: the description's carriers in place, or an exact map.
+    // An answer that has the piece too is judged as any answer with an element outside the expectation (judgeAnswer).
+    if (x.expected.elems.size() >= 2 && x.noAnchor.empty() && !mutated("new-piece") && !pick.picked().pts.empty()) {
+        // (The bound needs no map: the pick in place and carried by its sweeps' moves.)
+        const bool placed = x.inPlace || (!x.mapped.pts.empty() && rigidOrStill(pick.truth, *pick.owners, now));
+        const auto& N = smp.of(x.kind);
+        const auto& B = pick.baseline->of(x.kind);
+        const ElemSamples& P = pick.picked();
+        // The planes that bounded an edge pick (faces at its vertices other than its own), still in the edited shape.
+        std::vector<std::pair<Vec3, Vec3>> bounds; // point, unit normal
+        if (x.kind == SubKind::Edge && pick.base.index < pick.baseline->verticesOf.size()) {
+            const Samples& S0 = *pick.baseline;
+            const auto& own = S0.facesOf[1][pick.base.index];
+            std::vector<Vec3> moves = sweepMoves(pick, now);
+            moves.push_back(Vec3{0, 0, 0});
+            for (const std::uint32_t v : S0.verticesOf[pick.base.index])
+                for (const std::uint32_t f : S0.facesOf[0][v]) {
+                    if (std::find(own.begin(), own.end(), f) != own.end())
+                        continue;
+                    const ElemSamples& F = S0.of(SubKind::Face)[f];
+                    if (F.type != static_cast<int>(kernel::SurfaceType::Plane) || F.pts.empty() || norm(F.nrm) < 0.5)
+                        continue;
+                    const Vec3 n = unit(F.nrm), o = F.pts.front();
+                    bool still = false; // a face on that plane in the edited shape
+                    for (const ElemSamples& G : smp.of(SubKind::Face)) {
+                        if (still || G.type != F.type || G.pts.empty() || norm(G.nrm) < 0.5 ||
+                            std::abs(dot(unit(G.nrm), n)) < 1 - 1e-9)
+                            continue;
+                        still = std::abs(dot(sub(G.pts.front(), o), n)) <= kAnchorTolerance;
+                    }
+                    double lo = 1e300, hi = -1e300;
+                    for (const Vec3& d : moves)
+                        for (const Vec3& p : P.pts) {
+                            const double s = dot(sub(add(p, d), o), n);
+                            lo = std::min(lo, s);
+                            hi = std::max(hi, s);
+                        }
+                    if (std::getenv("RAYCAD_ORACLE_DEBUG_NEWPIECE") != nullptr)
+                        std::printf("new-piece: bound face %u n (%.3f %.3f %.3f) o (%.3f %.3f %.3f) still %d pick "
+                                    "%.4f..%.4f, %zu moves\n",
+                                    f, n.x, n.y, n.z, o.x, o.y, o.z, still ? 1 : 0, lo, hi, moves.size());
+                    if (!still || (lo < -kAnchorTolerance && hi > kAnchorTolerance))
+                        continue;
+                    bounds.push_back({o, lo >= -kAnchorTolerance ? n : mul(n, -1.0)});
+                }
+        }
+        auto pastBound = [&](const ElemSamples& es) {
+            for (const auto& [o, n] : bounds) {
+                // Wholly on the far side, touching the plane at most (an edge's own end node on it).
+                bool beyond = !es.pts.empty();
+                std::size_t far = 0;
+                for (const Vec3& p : es.pts) {
+                    const double s = dot(sub(p, o), n);
+                    beyond = beyond && s <= 1e-6;
+                    far += s < -1e-6 ? 1 : 0;
+                }
+                if (beyond && 2 * far >= es.pts.size())
+                    return true;
+            }
+            return false;
+        };
+        TruthEval kept;
+        for (const std::uint32_t e : x.expected.elems) {
+            const ElemSamples& es = N[e];
+            bool fresh = !es.pts.empty() && (pastBound(es) || (placed && !holdsPickedGround(es, pick, x, x.kind, now)));
+            for (std::uint32_t i = 0; fresh && i < B.size(); ++i)
+                if (!B[i].pts.empty() && !boxesApart(es, B[i]) && overlap(es, B[i], x.kind))
+                    fresh = false;
+            if (std::getenv("RAYCAD_ORACLE_DEBUG_NEWPIECE") != nullptr)
+                std::printf("new-piece: piece %u bounds %zu past %d placed %d holds %d fresh %d\n", e, bounds.size(),
+                            pastBound(es) ? 1 : 0, placed ? 1 : 0, holdsPickedGround(es, pick, x, x.kind, now) ? 1 : 0,
+                            fresh ? 1 : 0);
+            if (!fresh)
+                kept.elems.push_back(e);
+        }
+        if (!kept.elems.empty() && kept.elems.size() < x.expected.elems.size()) {
+            for (const std::uint32_t e : x.expected.partial)
+                if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
+                    kept.partial.push_back(e);
+            kept.merged = !kept.partial.empty();
+            x.expected = kept;
+            x.newPiecesDropped = true;
         }
     }
     return x;

@@ -59,6 +59,7 @@ struct RefResult {
     int conflict = 0;      // the one element congruent in place is not E, nothing moved, and: 1 the answer was judged
                            // correct, 2 it was not (Broken, or judged wrong); 3: the same after a move
     std::string selfCheck; // non-empty: the oracle's own expected answer was not judged correct (why)
+    std::string signature; // the resolver's answer, answerSignature (matched against the reviewed lists)
     struct Mutant {
         std::string cls;
         bool caught = false;
@@ -201,13 +202,36 @@ struct JudgeLog {
     std::size_t maxWrongs = 20;
 };
 
-// The reviewed lists (tests/naming/oracle/reviewed_territory.txt, reviewed_conflicts.txt): key -> one-line
-// justification. Keys are "<run key>|<kind> <baseline index>" for references and
-// "<run key>|pick <feature>/<target> edge <index>" for blend picks.
-const std::map<std::string, std::string>& reviewedTerritory();
-const std::map<std::string, std::string>& reviewedConflicts();
+// The reviewed lists (tests/naming/oracle/reviewed_territory.txt, reviewed_conflicts.txt, reviewed_unjudged.txt):
+// one line per reviewed ANSWER, "<key> => <answer signature> => <one-line justification>". Keys are
+// "<run key>|<kind> <baseline index>" for references and "<run key>|pick <feature>/<target> edge <index>" for blend
+// picks. A key may be listed more than once (one entry per reviewed answer: another platform's, or the answer
+// without placements). An answer counts as reviewed only when its signature matches an entry's (sameAnswer): a later
+// answer to a listed reference that is another element is NOT reviewed (T-081b round 5, item 1: the list used to
+// match the key alone, so a regression to a wrong element on a listed reference passed).
+struct ReviewedEntry {
+    std::string answer; // the reviewed answer's signature (answerSignature); empty: none recorded, never matches
+    std::string why;
+};
+using ReviewedList = std::multimap<std::string, ReviewedEntry>;
+const ReviewedList& reviewedTerritory();
+const ReviewedList& reviewedConflicts();
 // tests/naming/oracle/reviewed_unjudged.txt: answers the oracle could not judge (no anchor), each looked at.
-const std::map<std::string, std::string>& reviewedUnjudged();
+const ReviewedList& reviewedUnjudged();
+// The entry of `list` for reference `id` whose reviewed answer matches `signature`, or null.
+const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature);
+// " [reviewed: <why>]", or " [NOT REVIEWED; answer <signature>]" with the listed answers when the key is listed for
+// other answers only.
+std::string reviewNote(const ReviewedList& list, const std::string& id, const std::string& signature);
+
+// An answer's geometric signature, platform-tolerant (element numbers differ between platforms; the geometry of one
+// answer does not): its state, then per element its kind, centroid (by the samples' weights) and area or length,
+// e.g. "Exact edge(1.3573 1.1583 0.4967 3.3246)"; elements in order of kind and centroid.
+std::string answerSignature(Answer answer, const std::vector<SubId>& elements, const Samples& samples);
+std::string answerSignature(const naming::Resolved& resolved, const Samples& samples);
+// Do two signatures describe the same answer: the same state, and element for element the same kind, centroids
+// within 0.02 mm, areas or lengths within 1 % (+0.001)? An empty or unreadable signature matches nothing.
+bool sameAnswer(const std::string& a, const std::string& b);
 
 // Resolves every reference against the replayed build, judges it with the full judge (oracle.h), adds it and the
 // replay's blend picks to `tally`, and runs the cross-checks (congruence, injectivity, mutants). `key` names the run

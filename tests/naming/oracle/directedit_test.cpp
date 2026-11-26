@@ -680,3 +680,46 @@ TEST_CASE("Structural check (round 4): an edge moved along its line with its fea
     }
     CHECK(probed == 1);
 }
+
+TEST_CASE("Rotation (round 5, the reviewer's case): a boss turned 90 degrees about a far point is followed, its twin is "
+          "not",
+          "[naming][directedit]")
+{
+    // The reviewer's round-3 adversarial case (rotation-exact): two equal bosses 10 x 6 on a block; B1 turned 90
+    // degrees about a point away from it (its sketch frame's x along y, its origin moved from (15, 25) to (35, 15)), so
+    // that its top lands elsewhere, B2 left. The turned top is B1's top: Exact on it right; Exact on B2's top (a
+    // congruent twin) WRONG, and on the block's top too. With rotation-exact off, the turned feature's map counts as
+    // exact, the structural check finds the right answer holds none of the mapped pick, and calls it a ghost.
+    Script base = block(100, 60, 10);
+    Frame f1 = top(10);
+    f1.o = {15, 25, 10};
+    Frame f2 = top(10);
+    f2.o = {45, 25, 10};
+    base.push_back(sweep("B1", BOp::Join, f1, rect(-5, -3, 5, 3), 5));
+    base.push_back(sweep("B2", BOp::Join, f2, rect(-5, -3, 5, 3), 5));
+    Script edited = base;
+    edited[1].frame.xd = {0, 1, 0};
+    edited[1].frame.o = {35, 15, 10};
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    const long turned = elementNear(r, SubKind::Face, Vec3{35, 15, 15});
+    const long twin = elementNear(r, SubKind::Face, Vec3{45, 25, 15});
+    const long plate = elementNear(r, SubKind::Face, Vec3{80, 50, 10});
+    REQUIRE(turned >= 0);
+    REQUIRE(twin >= 0);
+    REQUIRE(plate >= 0);
+    REQUIRE(turned != twin);
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (!faceOf(o, "B1/c1/1"))
+            continue;
+        ++probed;
+        INFO("reference " << o.ref.names << ": " << stateText(o.resolved.state) << " " << o.resolved.reason << "; "
+                          << verdictName(o.verdict));
+        CHECK_FALSE(isWrong(o.verdict));
+        CHECK(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(turned)}) == Verdict::Correct);
+        CHECK(isWrong(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(twin)})));
+        CHECK(isWrong(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(plate)})));
+    }
+    CHECK(probed == 1);
+}

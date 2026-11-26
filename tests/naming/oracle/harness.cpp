@@ -14,6 +14,7 @@
 #include <set>
 #include <span>
 #include <thread>
+#include <tuple>
 
 namespace ray::naming_oracle {
 
@@ -644,14 +645,14 @@ const char* answerText(Answer a)
     return "?";
 }
 
-std::map<std::string, std::string> loadReviewed(const char* file)
+ReviewedList loadReviewed(const char* file)
 {
-    std::map<std::string, std::string> out;
+    ReviewedList out;
     const std::string path = std::string(RAY_ORACLE_DIR) + "/" + file;
     std::FILE* f = std::fopen(path.c_str(), "r");
     if (f == nullptr)
         return out;
-    char buf[2048];
+    char buf[4096];
     while (std::fgets(buf, sizeof buf, f) != nullptr) {
         std::string line(buf);
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
@@ -659,31 +660,180 @@ std::map<std::string, std::string> loadReviewed(const char* file)
         if (line.empty() || line[0] == '#')
             continue;
         const auto sep = line.find(" => ");
-        if (sep != std::string::npos)
-            out[line.substr(0, sep)] = line.substr(sep + 4);
+        if (sep == std::string::npos)
+            continue;
+        ReviewedEntry e;
+        std::string rest = line.substr(sep + 4);
+        // "<signature> => <why>": the signature starts with an answer state.
+        const auto sep2 = rest.find(" => ");
+        bool stated = false;
+        for (const char* st : {"Exact", "Split", "Merged", "Repaired", "Broken"})
+            stated = stated || rest.compare(0, std::strlen(st), st) == 0;
+        if (sep2 != std::string::npos && stated) {
+            e.answer = rest.substr(0, sep2);
+            e.why = rest.substr(sep2 + 4);
+        } else {
+            e.why = rest;
+        }
+        out.emplace(line.substr(0, sep), std::move(e));
     }
     std::fclose(f);
     return out;
 }
 
+struct SigElement {
+    std::string kind;
+    Vec3 c{};
+    double measure = 0;
+};
+
+bool parseSignature(const std::string& sig, std::string& state, std::vector<SigElement>& els)
+{
+    els.clear();
+    const auto sp = sig.find(' ');
+    state = sig.substr(0, sp);
+    if (state.empty())
+        return false;
+    std::size_t at = sp == std::string::npos ? sig.size() : sp + 1;
+    while (at < sig.size()) {
+        const auto open = sig.find('(', at);
+        const auto close = sig.find(')', at);
+        if (open == std::string::npos || close == std::string::npos || close < open)
+            return false;
+        SigElement e;
+        e.kind = sig.substr(at, open - at);
+        const std::string inside = sig.substr(open + 1, close - open - 1);
+        double v[4] = {0, 0, 0, 0};
+        const int n = std::sscanf(inside.c_str(), "%lf %lf %lf %lf", &v[0], &v[1], &v[2], &v[3]);
+        if (n < 3 || (e.kind != "vertex" && n != 4) || (e.kind != "face" && e.kind != "edge" && e.kind != "vertex"))
+            return false;
+        e.c = Vec3{v[0], v[1], v[2]};
+        e.measure = v[3];
+        els.push_back(e);
+        at = close + 1;
+        while (at < sig.size() && sig[at] == ' ')
+            ++at;
+    }
+    return true;
+}
+
 } // namespace
 
-const std::map<std::string, std::string>& reviewedTerritory()
+std::string answerSignature(Answer answer, const std::vector<SubId>& elements, const Samples& samples)
 {
-    static const std::map<std::string, std::string> list = loadReviewed("reviewed_territory.txt");
+    struct El {
+        int kind;
+        Vec3 c;
+        double measure;
+    };
+    std::vector<El> els;
+    for (const SubId& s : elements) {
+        const auto& N = samples.of(s.kind);
+        if (s.index >= N.size()) {
+            els.push_back({static_cast<int>(s.kind), Vec3{1e9, 1e9, 1e9}, -1});
+            continue;
+        }
+        const ElemSamples& es = N[s.index];
+        Vec3 c{0, 0, 0};
+        double m = 0;
+        if (!es.pts.empty() && es.w.size() == es.pts.size()) {
+            for (const double w : es.w)
+                m += w;
+            c = m > 0 ? centroidOf(es) : es.pts.front();
+        } else if (!es.pts.empty()) {
+            for (const Vec3& p : es.pts)
+                c = add(c, mul(p, 1.0 / static_cast<double>(es.pts.size())));
+        } else if (!es.nodes.empty()) {
+            for (const Vec3& p : es.nodes)
+                c = add(c, mul(p, 1.0 / static_cast<double>(es.nodes.size())));
+        }
+        els.push_back({static_cast<int>(s.kind), c, s.kind == SubKind::Vertex ? 0.0 : m});
+    }
+    std::sort(els.begin(), els.end(), [](const El& a, const El& b) {
+        return std::tie(a.kind, a.c.x, a.c.y, a.c.z) < std::tie(b.kind, b.c.x, b.c.y, b.c.z);
+    });
+    auto num = [](double v) {
+        if (std::abs(v) < 5e-5)
+            v = 0.0;
+        char b[40];
+        std::snprintf(b, sizeof b, "%.4f", v);
+        return std::string(b);
+    };
+    std::string out = answerText(answer);
+    for (const El& e : els) {
+        const SubKind k = static_cast<SubKind>(e.kind);
+        out += std::string(" ") + kindName(k) + "(" + num(e.c.x) + " " + num(e.c.y) + " " + num(e.c.z) +
+               (k == SubKind::Vertex ? std::string() : " " + num(e.measure)) + ")";
+    }
+    return out;
+}
+
+std::string answerSignature(const naming::Resolved& resolved, const Samples& samples)
+{
+    return answerSignature(answerOf(resolved.state), resolved.elements, samples);
+}
+
+bool sameAnswer(const std::string& a, const std::string& b)
+{
+    std::string sa, sb;
+    std::vector<SigElement> ea, eb;
+    if (a.empty() || b.empty() || !parseSignature(a, sa, ea) || !parseSignature(b, sb, eb))
+        return false;
+    if (sa != sb || ea.size() != eb.size())
+        return false;
+    std::vector<bool> used(eb.size(), false);
+    for (const SigElement& x : ea) {
+        bool found = false;
+        for (std::size_t j = 0; j < eb.size() && !found; ++j) {
+            const SigElement& y = eb[j];
+            if (used[j] || x.kind != y.kind || norm(sub(x.c, y.c)) > 0.02 ||
+                std::abs(x.measure - y.measure) > 0.01 * std::max(x.measure, y.measure) + 1e-3)
+                continue;
+            used[j] = true;
+            found = true;
+        }
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+const ReviewedList& reviewedTerritory()
+{
+    static const ReviewedList list = loadReviewed("reviewed_territory.txt");
     return list;
 }
 
-const std::map<std::string, std::string>& reviewedUnjudged()
+const ReviewedList& reviewedUnjudged()
 {
-    static const std::map<std::string, std::string> list = loadReviewed("reviewed_unjudged.txt");
+    static const ReviewedList list = loadReviewed("reviewed_unjudged.txt");
     return list;
 }
 
-const std::map<std::string, std::string>& reviewedConflicts()
+const ReviewedList& reviewedConflicts()
 {
-    static const std::map<std::string, std::string> list = loadReviewed("reviewed_conflicts.txt");
+    static const ReviewedList list = loadReviewed("reviewed_conflicts.txt");
     return list;
+}
+
+const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature)
+{
+    const auto [lo, hi] = list.equal_range(id);
+    for (auto it = lo; it != hi; ++it)
+        if (sameAnswer(it->second.answer, signature))
+            return &it->second;
+    return nullptr;
+}
+
+std::string reviewNote(const ReviewedList& list, const std::string& id, const std::string& signature)
+{
+    if (const ReviewedEntry* e = reviewedAnswer(list, id, signature))
+        return " [reviewed: " + e->why + "]";
+    std::string others;
+    const auto [lo, hi] = list.equal_range(id);
+    for (auto it = lo; it != hi; ++it)
+        others += (others.empty() ? "" : "; ") + (it->second.answer.empty() ? "(no answer recorded)" : it->second.answer);
+    return " [NOT REVIEWED; answer " + signature + (others.empty() ? "" : "; listed only for: " + others) + "]";
 }
 
 RefResult judgeReference(const PickRecord& pick, const Owners& now, const Samples& smp, const naming::Resolved& res,
@@ -693,6 +843,7 @@ RefResult judgeReference(const PickRecord& pick, const Owners& now, const Sample
     const Expectation x = expect(pick, now, smp);
     const SubKind kind = pick.base.kind;
     out.answer = answerOf(res.state);
+    out.signature = answerSignature(res, smp);
     std::vector<std::uint32_t> X;
     bool kindOk = true;
     for (const SubId& s : res.elements) {
@@ -952,42 +1103,38 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     const std::string answer = std::string(answerText(rr.answer)) + " " + list(indices(res.elements));
     if (!rr.judgement.accepted.empty()) {
         ++tally.accepted;
-        const auto it = reviewedTerritory().find(id);
-        if (it != reviewedTerritory().end())
+        if (reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
             ++tally.acceptedReviewed;
         log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
-                            (it != reviewedTerritory().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+                            reviewNote(reviewedTerritory(), id, rr.signature));
     }
     if (!rr.judgement.newGround.empty()) {
         ++tally.acceptedNewGround;
         // Every acceptance by the new-ground rule must be reviewed (round 3), on the same list as the new-territory
         // rule's (reviewed_territory.txt).
-        const auto it = reviewedTerritory().find(id);
-        if (it != reviewedTerritory().end())
+        if (reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
             ++tally.acceptedNewGroundReviewed;
         log.notes.push_back("NEW GROUND " + id + ": " + rr.judgement.newGround +
-                            (it != reviewedTerritory().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+                            reviewNote(reviewedTerritory(), id, rr.signature));
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
-        const auto it = reviewedConflicts().find(id);
-        if (it != reviewedConflicts().end())
+        if (reviewedAnswer(reviewedConflicts(), id, rr.signature) != nullptr)
             ++tally.conflictsReviewed;
         log.notes.push_back("CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) +
                             ", oracle expects " + list(rr.expected) + ", resolver " + answer +
-                            (it != reviewedConflicts().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+                            reviewNote(reviewedConflicts(), id, rr.signature));
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)
             log.notes.push_back(verbose());
     }
     if (v == Verdict::Unjudged) {
-        const auto it = reviewedUnjudged().find(id);
-        if (it != reviewedUnjudged().end())
+        if (reviewedAnswer(reviewedUnjudged(), id, rr.signature) != nullptr)
             ++tally.unjudgedReviewed;
         log.notes.push_back("UNJUDGED " + id + ": resolver " + answer + ", " +
                             (rr.noAnchor.empty() ? std::string("whether the element also continues another piece of "
                                                                "the logical element cannot be told")
                                                  : rr.noAnchor) +
-                            (it != reviewedUnjudged().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+                            reviewNote(reviewedUnjudged(), id, rr.signature));
     }
     if (rr.conflict == 2)
         ++tally.conflictsOther;

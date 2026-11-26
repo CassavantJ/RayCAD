@@ -539,24 +539,20 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
     };
     if (!rr.judgement.accepted.empty()) {
         ++tally.accepted;
-        const auto it = o::reviewedTerritory().find(id);
-        if (it != o::reviewedTerritory().end()) {
+        if (o::reviewedAnswer(o::reviewedTerritory(), id, rr.signature) != nullptr) {
             ++tally.acceptedReviewed;
         }
-        log.notes.push_back(
-            "ACCEPTED " + id + ": " + rr.judgement.accepted +
-            (it != o::reviewedTerritory().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+        log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
+                            o::reviewNote(o::reviewedTerritory(), id, rr.signature));
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
-        const auto it = o::reviewedConflicts().find(id);
-        if (it != o::reviewedConflicts().end()) {
+        if (o::reviewedAnswer(o::reviewedConflicts(), id, rr.signature) != nullptr) {
             ++tally.conflictsReviewed;
         }
-        log.notes.push_back(
-            "CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) + ", oracle expects " +
-            list(rr.expected) + ", resolver " + answer +
-            (it != o::reviewedConflicts().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
+        log.notes.push_back("CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) +
+                            ", oracle expects " + list(rr.expected) + ", resolver " + answer +
+                            o::reviewNote(o::reviewedConflicts(), id, rr.signature));
     }
     if (rr.conflict == 2) {
         ++tally.conflictsOther;

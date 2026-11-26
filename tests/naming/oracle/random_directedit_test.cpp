@@ -1399,6 +1399,14 @@ TEST_CASE("Direct-edit block of the independent review: 1,000 sequences, choices
     runHoldout("Direct-edit review block 1", 0x6B1D3F5A2C800000ull, "directedit-review1 ");
 }
 
+TEST_CASE("Review block 2: 1,000 randomised sequences with direct edits, the reviewer's second seed",
+          "[random-directedit-review2]")
+{
+    // The reviewer's frozen block 2 (seed 0x93E5A0C4F1170000, run on oracle-freeze-2 and adjudicated in round 5: no
+    // wrong answer, its 10 answers not judged reviewed), kept as a regular block: gated as the holdouts.
+    runHoldout("Direct-edit review block 2", 0x93E5A0C4F1170000ull, "directedit-review2 ");
+}
+
 TEST_CASE("Direct-edit block of any seed: RAYCAD_NAMING_BLOCK_SEED=<hex>, choices by geometry",
           "[.random-directedit-seed]")
 {
@@ -1498,6 +1506,8 @@ struct Looked {
     std::vector<Judgement> probes;   // the oracle's verdicts on the answers asked for (replayAndLook probes)
     std::vector<std::string> probed; // what each probe asked, and the expectation it was judged against
     double pickMeasure = 0;          // the picked element's area (face) or length (edge) by its samples' weights
+    std::string signature;           // the resolver's answer (answerSignature)
+    std::vector<std::string> probeSignatures; // each probe's answer (answerSignature)
 };
 
 // In a probe's elements, kAnswer + k stands for the k-th element of the resolver's own answer (sorted): a negative that
@@ -1623,6 +1633,7 @@ Looked lookAt(const std::string& id, const Ref& ref, const naming::Resolved& res
         for (const double w : ref.record.picked().w)
             l.pickMeasure += w;
         l.answer = rr.answer;
+        l.signature = rr.signature;
         for (const SubId& s : res.elements)
             l.elements.push_back(s.index);
         l.judgement = rr.judgement;
@@ -1679,6 +1690,10 @@ Looked lookAt(const std::string& id, const Ref& ref, const naming::Resolved& res
                         e = static_cast<std::uint32_t>(best);
             }
             l.probes.push_back(judgeAnswer(x, ref.record, now, samples, p.answer, els));
+            std::vector<SubId> subs;
+            for (const std::uint32_t e : els)
+                subs.push_back(SubId{ref.record.base.kind, e});
+            l.probeSignatures.push_back(answerSignature(p.answer, subs, samples));
             std::string s = "asked";
             for (const std::uint32_t e : els)
                 s += " " + std::to_string(e);
@@ -2891,4 +2906,175 @@ TEST_CASE("review probe: answers asked of the oracle", "[.review-probes]")
             std::printf("   probe %zu: %s; %s\n", i, verdictName(looked[0].probes[i].verdict),
                         looked[0].probed[i].c_str());
     }
+}
+
+TEST_CASE("Every entry of the reviewed lists records the answer it reviewed", "[naming][oracle-gate]")
+{
+    // T-081b round 5, item 1: an entry counts an answer as reviewed only when the answer matches the one recorded
+    // (state and geometric signature), so an entry without one would never match: none may be left.
+    for (const auto* list : {&reviewedUnjudged(), &reviewedConflicts(), &reviewedTerritory()})
+        for (const auto& [key, entry] : *list) {
+            INFO(key);
+            CHECK(sameAnswer(entry.answer, entry.answer));
+            CHECK_FALSE(entry.why.empty());
+        }
+    // The signature tolerates what differs between platforms and nothing more.
+    const std::string a = "Exact edge(1.3573 1.1583 0.4967 3.3246)";
+    CHECK(sameAnswer(a, "Exact edge(1.3600 1.1583 0.4967 3.3300)"));
+    CHECK_FALSE(sameAnswer(a, "Split edge(1.3573 1.1583 0.4967 3.3246)"));
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.5967 3.3246)"));
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.5246)"));
+    CHECK_FALSE(sameAnswer(a, "Exact face(1.3573 1.1583 0.4967 3.3246)"));
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.3246) edge(0 0 0 1.0000)"));
+    CHECK_FALSE(sameAnswer(a, ""));
+    CHECK(sameAnswer("Split vertex(1.0000 2.0000 3.0000) vertex(4.0000 5.0000 6.0000)",
+                     "Split vertex(4.0000 5.0000 6.0000) vertex(1.0000 2.0000 3.0000)"));
+}
+
+TEST_CASE("A regression to a wrong element on a reviewed reference is not reviewed (holdout2 17:24 edge 3)",
+          "[naming][directedit-replays]")
+{
+    // T-081b round 5, item 1 (the reviewer's round-3 audit, finding 1): holdout2 17:24 edge 3 is on the reviewed list
+    // (Exact {3}, the upper stretch of the torus rim's meeting with cut R2's side). The oracle cannot judge either
+    // stretch, so the other stretch, Exact {5}, is NOT JUDGED too; the list keyed by the reference alone counted that
+    // wrong answer as reviewed. Now only the reviewed answer is.
+    const std::string listed = "directedit-holdout2 nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #24|edge 3";
+    const std::vector<Looked> looked =
+        replayAndLook(17, 24, {"directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #24|edge 3"}, false,
+                      0xB2081B00ull, {{Answer::Exact, {5}}, {Answer::Exact, {3}}});
+    REQUIRE(looked.size() == 1);
+    const Looked& l = looked[0];
+    REQUIRE(l.probeSignatures.size() == 2);
+    INFO("resolver " << l.signature << "; probes " << l.probeSignatures[0] << " / " << l.probeSignatures[1]);
+    REQUIRE(reviewedUnjudged().count(listed) >= 1); // the reference is listed: by key alone, any answer would pass
+    CHECK(l.answer == Answer::Exact);
+    CHECK(l.judgement.verdict == Verdict::Unjudged);
+    CHECK(reviewedAnswer(reviewedUnjudged(), listed, l.signature) != nullptr); // the reviewed answer
+    // The wrong stretch: not judged by the oracle, and not reviewed.
+    CHECK((l.probes[0].verdict == Verdict::Unjudged || isWrong(l.probes[0].verdict)));
+    CHECK(reviewedAnswer(reviewedUnjudged(), listed, l.probeSignatures[0]) == nullptr);
+    CHECK(reviewedAnswer(reviewedUnjudged(), listed, l.probeSignatures[1]) != nullptr);
+}
+
+TEST_CASE("debug: replay one pinned script", "[.debug-scripted]")
+{
+    // RAYCAD_PIN_SCRIPT=<name in pinned_scripts.txt> RAYCAD_PIN_PART=<part index>: replays it and prints every answer
+    // that is wrong or not judged (all with RAYCAD_PIN_ALL), with the pick's fingerprint centroid and measure (what a
+    // scripted pin finds the reference by).
+    const char* name = std::getenv("RAYCAD_PIN_SCRIPT");
+    const char* partText = std::getenv("RAYCAD_PIN_PART");
+    REQUIRE(name != nullptr);
+    REQUIRE(partText != nullptr);
+    const int partIndex = std::atoi(partText);
+    const auto [baseline, edited] = pinnedScripts(name);
+    const Part part = loadPart(kParts[partIndex]);
+    REQUIRE(part.base != nullptr);
+    const Script s0 = scriptFromText(baseline, part.base);
+    const Script s1 = scriptFromText(edited, part.base);
+    SequenceOptions opt;
+    opt.keyPrefix = "scripted ";
+    opt.script = &s0;
+    opt.edited = &s1;
+    const bool all = std::getenv("RAYCAD_PIN_ALL") != nullptr;
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved&, const RefResult& rr, const Owners&,
+                     const Samples&) {
+        if (!all && !isWrong(rr.judgement.verdict) && rr.judgement.verdict != Verdict::Unjudged)
+            return;
+        const naming::Fingerprint& h = ref.ref.hint;
+        std::string e;
+        for (const std::uint32_t x : rr.expected)
+            e += " " + std::to_string(x);
+        std::printf("PIN %s: %s, %s; E {%s }; pick centroid (%.6f %.6f %.6f) measure %.6f\n", id.c_str(),
+                    rr.signature.c_str(), verdictName(rr.judgement.verdict), e.c_str(), h.qCx * 1e-4, h.qCy * 1e-4,
+                    h.qCz * 1e-4, h.qArea * 1e-4);
+    });
+    const SequenceResult r = runSequence(part, partIndex, 0, opt);
+    setInspector({});
+    std::printf("edits: %s\n", r.edit.c_str());
+    for (const std::string& w : r.log.wrongs)
+        std::printf("%s\n", w.c_str());
+}
+
+TEST_CASE("Oracle (round 5): a new piece is never required; an element held in place is never gone",
+          "[naming][directedit-replays]")
+{
+    // T-081b round 5, item 3 (the reviewer's round-3 rulings), each with the answer that is right and two that must stay
+    // wrong; the rules' mutation switches (new-piece, held-in-place) fail the right answers.
+    //  a. NEW PIECES ARE NEVER REQUIRED: sorted 17:32 edge 32 (Windows): cut R1 moved by its width, the hole R3 deleted;
+    //     edge 30 is the moved stretch, edge 31 (0.436 mm, z 0.425 -> 0) runs past where the plane F11 bounded the
+    //     pick, holding none of it, on ground no baseline edge held: E {30}. Linux holdout2 18:24 face 3: the bore wall
+    //     F1 and F12 (0.26 mm2 at z 0..1.37, on ground that was boss R2's material at pick time): E {1}.
+    //  b. HELD IN PLACE: Linux review1 18:6 face 11 and edge 25: R2's delete and R5's join fail on Linux, so the
+    //     owners' extents change; face 4 is the same bore wall (99 % of the pick on it), edge 18 the same line between
+    //     R3's wall and the bore, every owner on its carrier: they are the pick, not "gone".
+    struct P {
+        int part, seq;
+        std::string id;
+        bool byIndex;
+        std::uint64_t seed;
+        const char* builtOn;
+        const char* about;
+        std::vector<Probe> right, wrong;
+    };
+    const std::uint64_t h2 = 0xB2081B00ull, r1 = 0x6B1D3F5A2C800000ull;
+    const std::vector<P> ps{
+        {17,
+         32,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #32|edge 32",
+         false,
+         0,
+         "windows",
+         "new piece past where a third face bounded the pick",
+         {{Answer::Exact, {30}}, {Answer::Split, {30}}},
+         {{Answer::Split, {30, 31}}, {Answer::Exact, {31}}}},
+        {18,
+         24,
+         "directedit nist-d2mi/827-9999-905.stp #24|face 3",
+         false,
+         h2,
+         "linux",
+         "new piece of a bore on ground that was a boss's material",
+         {{Answer::Exact, {1}}},
+         {{Answer::Split, {1, 12}}, {Answer::Exact, {12}}}},
+        {18,
+         6,
+         "directedit nist-d2mi/827-9999-905.stp #6|face 11",
+         false,
+         r1,
+         "linux",
+         "a bore wall held in place, owners' extents changed by failed features",
+         {{Answer::Exact, {4}}},
+         {{Answer::Exact, {4}, 4}, {Answer::Split, {4, 3}}}},
+        {18,
+         6,
+         "directedit nist-d2mi/827-9999-905.stp #6|edge 25",
+         false,
+         r1,
+         "linux",
+         "a line held in place, owners' extents changed by failed features",
+         {{Answer::Exact, {18}}},
+         {{Answer::Exact, {18}, 18}, {Answer::Split, {18, 14}}}},
+    };
+    std::vector<std::string> offPlatform;
+    for (const P& p : ps) {
+        if (std::string(p.builtOn) != kPlatformName) {
+            offPlatform.push_back(p.id + " (" + p.builtOn + ")");
+            continue;
+        }
+        std::vector<Probe> probes = p.right;
+        probes.insert(probes.end(), p.wrong.begin(), p.wrong.end());
+        const std::vector<Looked> looked = replayAndLook(p.part, p.seq, {p.id}, p.byIndex, p.seed, probes);
+        INFO(p.id << ": " << p.about);
+        REQUIRE(looked.size() == 1);
+        REQUIRE(looked[0].probes.size() == probes.size());
+        CHECK_FALSE(isWrong(looked[0].judgement.verdict));
+        for (std::size_t i = 0; i < probes.size(); ++i) {
+            INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+            if (i < p.right.size())
+                CHECK(looked[0].probes[i].verdict == Verdict::Correct);
+            else
+                CHECK(isWrong(looked[0].probes[i].verdict));
+        }
+    }
+    reportPinnedSkips({}, offPlatform);
 }

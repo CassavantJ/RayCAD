@@ -513,6 +513,11 @@ struct Expectation {
     // The one expected face held none of the picked ground, in place or mapped (the structural check, expect): the
     // pick is gone, E emptied.
     bool structuralGone = false;
+    // Expected "gone", but an element lies where the pick was, every owner of the description on its carrier still:
+    // E is that element (expect: HELD IN PLACE, T-081b round 5).
+    bool heldInPlace = false;
+    // Pieces holding none of the pick on ground nobody held were left out of E (expect: NEW PIECES ARE NEVER REQUIRED).
+    bool newPiecesDropped = false;
     // Every carrier of the description is as it was at pick time (only separators or bounding features moved): the
     // picked element's ground is where it was (T-081b round 2: remnants, and the new-ground rule's coverage).
     bool inPlace = false;

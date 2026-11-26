@@ -235,6 +235,9 @@ public:
                 return tl::unexpected(regions.error());
             }
             kernel::Plane plane = (*artifact)->plane;
+            // The sketch's plane, before through-all or symmetric shift it along the normal: the frame the profile
+            // is drawn in.
+            const Xform placement = sweepPlacement(plane);
             double signedDistance = props->reverse ? -*distance : *distance;
             if (props->throughAll) {
                 // Through the whole target as it is now, so it stays through-all after edits upstream.
@@ -254,7 +257,8 @@ public:
             return buildSweep(f, ctx, props->common, plane, *regions, "extrude",
                               [&](const kernel::Profile& profile, JobContext& job) {
                                   return kernel::extrude(profile, signedDistance, draftAngle, job);
-                              });
+                              },
+                              placement);
         } catch (const std::bad_alloc&) {
             return failed(ErrorCode::Internal, featureLabel(f) + ": out of memory");
         } catch (...) {
@@ -443,10 +447,19 @@ Result<std::shared_ptr<const SketchArtifact>> sketchFor(const Feature& self, Reb
     return artifact;
 }
 
+Xform sweepPlacement(const kernel::Plane& plane)
+{
+    const Vec3 x = plane.xDir;
+    const Vec3 y = planeYDir(plane);
+    const Vec3 n = plane.normal;
+    const Vec3 o = plane.origin;
+    return Xform{{x.x, y.x, n.x, o.x, x.y, y.y, n.y, o.y, x.z, y.z, n.z, o.z}};
+}
+
 Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const SweepCommon& props,
                                  const kernel::Plane& plane,
                                  const std::vector<std::vector<kernel::ProfileLoop>>& regions, std::string_view role,
-                                 const SweepOne& sweepOne)
+                                 const SweepOne& sweepOne, const std::optional<Xform>& placement)
 {
     const std::string where = featureLabel(self);
     const std::string featureRole(role);
@@ -484,7 +497,8 @@ Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const
             return failed(swept.error().code, kernelMessage(where, swept.error()));
         }
         out.warnings.insert(out.warnings.end(), swept->op.warnings.begin(), swept->op.warnings.end());
-        const naming::NamingInput toolInput{self.id, featureRole, {}, nullptr, &swept->op.shape, swept->origins};
+        naming::NamingInput toolInput{self.id, featureRole, {}, nullptr, &swept->op.shape, swept->origins};
+        toolInput.placement = placement;
         auto named = naming::propagate(toolInput);
         if (!named) {
             return failed(ErrorCode::Internal, where + ": naming the swept faces failed: " + named.error().message);
@@ -508,8 +522,9 @@ Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const
         out.warnings.insert(out.warnings.end(), combined->warnings.begin(), combined->warnings.end());
         const std::array<const naming::ElementMap*, 2> maps{&intoMap, &named->map};
         const std::array<const kernel::Shape*, 2> shapes{&*into, &swept->op.shape};
-        const naming::NamingInput input{self.id, featureRole,      maps, &combined->history, &combined->shape,
-                                        {},      std::span(shapes)};
+        naming::NamingInput input{self.id, featureRole,      maps, &combined->history, &combined->shape,
+                                  {},      std::span(shapes)};
+        input.placement = placement;
         auto result = naming::propagate(input);
         if (!result) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + result.error().message);
@@ -530,8 +545,9 @@ Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const
         out.warnings.insert(out.warnings.end(), combined->warnings.begin(), combined->warnings.end());
         const std::array<const naming::ElementMap*, 2> maps{&map, &toolMap};
         const std::array<const kernel::Shape*, 2> shapes{&*shape, &*tool};
-        const naming::NamingInput input{self.id, featureRole,      maps, &combined->history, &combined->shape,
-                                        {},      std::span(shapes)};
+        naming::NamingInput input{self.id, featureRole,      maps, &combined->history, &combined->shape,
+                                  {},      std::span(shapes)};
+        input.placement = placement;
         auto result = naming::propagate(input);
         if (!result) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + result.error().message);
