@@ -817,6 +817,17 @@ private:
         for (const TopoName& record : sortedRecords_)
             if (std::binary_search(held.begin(), held.end(), record.id))
                 table.records.push_back(record);
+        // Placements (T-081b round 4): this feature's own, then every other feature's from the input maps (the first
+        // map that holds one wins; the inputs of one build agree).
+        std::map<FeatureId, FeaturePlacement> placements;
+        if (in_.placement)
+            placements.emplace(in_.feature, placementOf(in_.feature, *in_.placement));
+        for (const ElementMap* map : in_.inputMaps)
+            if (map != nullptr && map->impl)
+                for (const FeaturePlacement& p : map->impl->placements)
+                    placements.emplace(p.feature, p);
+        for (const auto& [feature, p] : placements)
+            table.placements.push_back(p);
         return detail::finishMap(std::move(table), false);
     }
 

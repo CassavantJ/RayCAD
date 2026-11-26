@@ -116,6 +116,10 @@ InPlace stillInPlace(const kernel::Shape& shape, kernel::SubId element, const To
 bool liesOnOutline(const kernel::Shape& shape, kernel::SubId face, const PickOutline& outline,
                    const TerritoryCache& territories);
 
+// Is `p` on the plane of `outline` and inside it, or on its boundary within a chord's slack plus kOnTolerance? False
+// without an outline. Never throws.
+bool insidePickOutline(const PickOutline& outline, const Vec3& p);
+
 // Do `pieces` together hold at least half of `territory`'s points (any point on any piece)? True when the territory
 // has no points. Never throws (false on failure).
 bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces, const Territory& territory);
@@ -176,5 +180,13 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
 // point of a recorded neighbour's territory. Yes when there is no evidence.
 bool piecesFitEvidence(const ElementMap& map, const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces,
                        const TopoRef& ref, std::string& why);
+// Of the edge pieces of a Split, those that the pick's feature's own move (TopoRef::placements, a placement that
+// changed) does not take wholly outside the pick: a piece whose every territory point, carried back by the move, lies
+// outside the picked box (beyond the extent tolerance) is past the pick's old end (T-081b round 4, review holdout 1:39
+// edge 83: a stretch of a moved cut's edge that lay inside a bore when it was picked), and the resolver answers Broken
+// when there is one. Dropped only while some piece is kept. All pieces when no feature of the pick was moved. Never
+// throws.
+std::vector<kernel::SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Shape& shape,
+                                                 const std::vector<kernel::SubId>& pieces, const TopoRef& ref);
 
 } // namespace ray::naming::detail

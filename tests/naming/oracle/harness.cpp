@@ -26,7 +26,19 @@ naming::TopoRef withoutOutlineIfAsked(naming::TopoRef ref)
     static const bool strip = std::getenv("RAYCAD_NAMING_NO_OUTLINE") != nullptr;
     if (strip)
         ref.outline = naming::PickOutline{};
+    // RAYCAD_NAMING_NO_PLACEMENT: references without TopoRef::placements, as a build before round 4 made them (the
+    // moved-face rule then guesses every move, as round 3 did: the before/after of the round-4 change).
+    static const bool unplaced = std::getenv("RAYCAD_NAMING_NO_PLACEMENT") != nullptr;
+    if (unplaced)
+        ref.placements.clear();
     return ref;
+}
+
+// A sweep's sketch frame as a rigid transform, frame to model (naming.h NamingInput::placement).
+Xform placementOf(const Frame& f)
+{
+    const Vec3 y = f.yd();
+    return Xform{{f.xd.x, y.x, f.n.x, f.o.x, f.xd.y, y.y, f.n.y, f.o.y, f.xd.z, y.z, f.n.z, f.o.z}};
 }
 
 kernel::ProfileLoop toKernel(const Loop& loop)
@@ -244,7 +256,9 @@ bool Builder::sweep(const Feature& f)
             failed_.push_back(f.id + " loop " + std::to_string(loop.id) + ": " + tool.error().message);
             continue;
         }
-        const naming::NamingInput toolInput{fid, f.role, {}, nullptr, &tool->op.shape, tool->origins};
+        // The sweep's placement (naming.h NamingInput::placement): its sketch frame, as the document's extrude gives.
+        naming::NamingInput toolInput{fid, f.role, {}, nullptr, &tool->op.shape, tool->origins};
+        toolInput.placement = placementOf(f.frame);
         auto toolNames = naming::propagate(toolInput);
         if (!toolNames) {
             failed_.push_back(f.id + ": naming the tool failed: " + toolNames.error().message);
@@ -265,7 +279,8 @@ bool Builder::sweep(const Feature& f)
         }
         const std::array<const naming::ElementMap*, 2> maps{&map_, &toolNames->map};
         const std::array<const kernel::Shape*, 2> shapes{&shape_, &tool->op.shape};
-        const naming::NamingInput input{fid, f.role, maps, &result->history, &result->shape, {}, std::span(shapes)};
+        naming::NamingInput input{fid, f.role, maps, &result->history, &result->shape, {}, std::span(shapes)};
+        input.placement = toolInput.placement;
         auto named = naming::propagate(input);
         if (!named) {
             failed_.push_back(f.id + ": naming failed: " + named.error().message);

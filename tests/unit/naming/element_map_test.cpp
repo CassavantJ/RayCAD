@@ -273,10 +273,16 @@ TEST_CASE("ElementMap::deserialize rejects damaged bytes with an error", "[namin
     SECTION("a newer version")
     {
         std::vector<std::byte> newer = good;
-        newer[4] = std::byte{2};
+        newer[4] = std::byte{3};
         const auto result = ElementMap::deserialize(reseal(newer));
         REQUIRE_FALSE(result.has_value());
         CHECK(result.error().code == ErrorCode::FormatTooNew);
+        // Version 2 (placements, T-081b round 4) without its placement list is damaged, not too new.
+        std::vector<std::byte> cut = good;
+        cut[4] = std::byte{2};
+        const auto damaged = ElementMap::deserialize(reseal(cut));
+        REQUIRE_FALSE(damaged.has_value());
+        CHECK(damaged.error().code == ErrorCode::FormatError);
     }
     SECTION("garbage never throws")
     {

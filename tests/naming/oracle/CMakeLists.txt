@@ -101,6 +101,10 @@ set_tests_properties(ray_naming_random_directedit_holdout1 PROPERTIES TIMEOUT 72
 add_test(NAME ray_naming_random_directedit_holdout2 COMMAND ray_naming_oracle_tests "[random-directedit-holdout2]")
 ray_test_runtime_path(ray_naming_random_directedit_holdout2)
 set_tests_properties(ray_naming_random_directedit_holdout2 PROPERTIES TIMEOUT 7200)
+# T-081b round 4: the independent reviewer's block (seed 0x6B1D3F5A2C800000), kept as a tuned block.
+add_test(NAME ray_naming_random_directedit_review1 COMMAND ray_naming_oracle_tests "[random-directedit-review1]")
+ray_test_runtime_path(ray_naming_random_directedit_review1)
+set_tests_properties(ray_naming_random_directedit_review1 PROPERTIES TIMEOUT 7200)
 # The fifth block's seeds with every cos and sin of the inputs moved by a few ulp, as another platform's libm can give.
 add_test(NAME ray_naming_random_perturbed COMMAND ray_naming_oracle_tests "[random-perturbed]")
 ray_test_runtime_path(ray_naming_random_perturbed)

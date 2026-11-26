@@ -46,6 +46,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -225,6 +226,71 @@ std::array<std::int64_t, 6> boxKey(const ElemSamples& es)
     return {lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]};
 }
 
+// SequenceOptions::portable of the sequence the thread is running (T-081b round 4, item 9): choices by geometry that do
+// not turn on the last bits of the geometry. Opt-in, for blocks authored after round 4: every block above keeps the
+// generator it was tuned or held out on (its pinned replays are sequences of that generator).
+thread_local bool tPortable = false;
+
+// The ranks of `values` once values within `tol` of the next one up are counted as one (single linkage over the
+// sorted values): two values a platform's last bits tell apart get one rank, and the order of the ranks is the order of
+// the values. Ties keep their order by the caller's next key.
+std::vector<std::size_t> tolerantRanks(const std::vector<double>& values, double tol)
+{
+    std::vector<std::size_t> order(values.size());
+    for (std::size_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return values[a] < values[b]; });
+    std::vector<std::size_t> rank(values.size(), 0);
+    std::size_t r = 0;
+    for (std::size_t k = 0; k < order.size(); ++k) {
+        if (k > 0 && values[order[k]] - values[order[k - 1]] > tol)
+            ++r;
+        rank[order[k]] = r;
+    }
+    return rank;
+}
+
+// Sorts `items` by their boxes (min corner, then max corner), each coordinate compared by tolerantRanks (1e-6 mm), the
+// ties by `next` (a key that holds on every platform), then as they came.
+template <class Item, class BoxOf, class Next>
+void sortByBoxes(std::vector<Item>& items, BoxOf boxOf, Next next)
+{
+    std::array<std::vector<double>, 6> coords;
+    for (const Item& it : items) {
+        const std::array<double, 6> b = boxOf(it);
+        for (std::size_t c = 0; c < 6; ++c)
+            coords[c].push_back(b[c]);
+    }
+    std::array<std::vector<std::size_t>, 6> ranks;
+    for (std::size_t c = 0; c < 6; ++c)
+        ranks[c] = tolerantRanks(coords[c], 1e-6);
+    std::vector<std::size_t> order(items.size());
+    for (std::size_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        for (std::size_t c = 0; c < 6; ++c)
+            if (ranks[c][a] != ranks[c][b])
+                return ranks[c][a] < ranks[c][b];
+        return next(items[a]) < next(items[b]);
+    });
+    std::vector<Item> sorted;
+    for (const std::size_t i : order)
+        sorted.push_back(items[i]);
+    items = std::move(sorted);
+}
+
+std::array<double, 6> boxOfSamples6(const ElemSamples& es)
+{
+    return {es.boxMin.x, es.boxMin.y, es.boxMin.z, es.boxMax.x, es.boxMax.y, es.boxMax.z};
+}
+
+// v rounded to a multiple of `q` (the portable generator's way of making a value a platform computes in its last bits
+// the same everywhere, except within 1e-12 of a rounding boundary).
+double snapped(double v, double q)
+{
+    return std::round(v / q) * q;
+}
+
 std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rng, const std::string& id, bool cut)
 {
     std::vector<std::uint32_t> planar;
@@ -234,16 +300,43 @@ std::optional<Feature> proposeSweep(const Samples& smp, double partSize, Rng& rn
             planar.push_back(i);
     if (planar.empty())
         return std::nullopt;
-    if (!tByIndex)
+    if (tPortable)
+        sortByBoxes(
+            planar, [&](std::uint32_t i) { return boxOfSamples6(faces[i]); },
+            [&](std::uint32_t i) {
+                const Vec3 n = unit(faces[i].nrm);
+                return std::array<long long, 3>{std::llround(n.x * 1e3), std::llround(n.y * 1e3),
+                                                std::llround(n.z * 1e3)};
+            });
+    else if (!tByIndex)
         std::stable_sort(planar.begin(), planar.end(),
                          [&](std::uint32_t a, std::uint32_t b) { return boxKey(faces[a]) < boxKey(faces[b]); });
     const ElemSamples& f = faces[planar[rng.below(planar.size())]];
     std::vector<Vec3> pts = f.pts;
-    if (!tByIndex)
+    if (!tByIndex && !tPortable)
         std::stable_sort(pts.begin(), pts.end(),
                          [](const Vec3& a, const Vec3& b) { return roundedKey(a) < roundedKey(b); });
-    const Vec3 point = pts[rng.below(pts.size())];
-    const Vec3 n = unit(f.nrm);
+    Vec3 point{};
+    if (tPortable) {
+        // Not a mesh sample (the meshes differ between platforms): a point drawn in the face's box, on its plane
+        // (through
+        // the samples' mean), snapped to 1e-6 mm. It may lie off the face, beside it: the profile is still placed
+        // there.
+        Vec3 mean{0, 0, 0};
+        for (const Vec3& p : pts)
+            mean = add(mean, mul(p, 1.0 / static_cast<double>(pts.size())));
+        const Vec3 nn = unit(f.nrm);
+        const Vec3 at{f.boxMin.x + (f.boxMax.x - f.boxMin.x) * rng.uniform(0.2, 0.8),
+                      f.boxMin.y + (f.boxMax.y - f.boxMin.y) * rng.uniform(0.2, 0.8),
+                      f.boxMin.z + (f.boxMax.z - f.boxMin.z) * rng.uniform(0.2, 0.8)};
+        const Vec3 on = sub(at, mul(nn, dot(sub(at, mean), nn)));
+        point = {snapped(on.x, 1e-6), snapped(on.y, 1e-6), snapped(on.z, 1e-6)};
+    } else {
+        point = pts[rng.below(pts.size())];
+    }
+    Vec3 n = unit(f.nrm);
+    if (tPortable)
+        n = unit(Vec3{snapped(n.x, 1e-9), snapped(n.y, 1e-9), snapped(n.z, 1e-9)});
     const Vec3 e = std::abs(n.x) <= std::abs(n.y) && std::abs(n.x) <= std::abs(n.z) ? Vec3{1, 0, 0}
                    : std::abs(n.y) <= std::abs(n.z)                                 ? Vec3{0, 1, 0}
                                                                                     : Vec3{0, 0, 1};
@@ -321,7 +414,11 @@ std::optional<Feature> proposeBlend(const Script& built, const Samples& smp, Rng
         if (canBlend(owners, t, fillet))
             candidates.push_back({e, t});
     }
-    if (!tByIndex)
+    if (tPortable)
+        sortByBoxes(
+            candidates, [&](const std::pair<std::uint32_t, Target>& c) { return boxOfSamples6(edges[c.first]); },
+            [](const std::pair<std::uint32_t, Target>& c) { return std::make_tuple(c.second.a, c.second.b); });
+    else if (!tByIndex)
         std::stable_sort(candidates.begin(), candidates.end(), [&](const auto& x, const auto& y) {
             return std::make_tuple(boxKey(edges[x.first]), x.second.a, x.second.b) <
                    std::make_tuple(boxKey(edges[y.first]), y.second.a, y.second.b);
@@ -504,6 +601,133 @@ std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& sha
     return f;
 }
 
+// ---------------------------------------------------------------- scripts as text (T-081b round 4)
+// A script written out exactly (doubles as hexadecimal floating point, which every platform's strtod reads back to the
+// same value), so that a sequence one platform's generator authored is replayed as it is on every platform: the
+// platform-independent pins (item 8 of round 4). One token stream, whitespace-separated: per feature
+//   F <id> <type> <op> <role> <suppressed> o x y z xd x y z n x y z <dist> <size> <loops> {<loop id> <ents> {<k> x0 y0
+//   x1 y1 cx cy r tag}} <targets> {<a> <b> <convex> <picked>} <edit kind> <amount> <edit targets> {<target>}
+// The import's base is not written: it is the part's.
+std::string scriptToText(const Script& s)
+{
+    std::string out;
+    char buf[64];
+    auto num = [&](double v) {
+        std::snprintf(buf, sizeof buf, " %a", v);
+        out += buf;
+    };
+    for (const Feature& f : s) {
+        out += "F " + f.id + " " + std::to_string(static_cast<int>(f.type)) + " " +
+               std::to_string(static_cast<int>(f.op)) + " " + (f.role.empty() ? "-" : f.role) + " " +
+               (f.suppressed ? "1" : "0");
+        for (const Vec3& v : {f.frame.o, f.frame.xd, f.frame.n}) {
+            num(v.x);
+            num(v.y);
+            num(v.z);
+        }
+        num(f.dist);
+        num(f.size);
+        out += " " + std::to_string(f.loops.size());
+        for (const Loop& l : f.loops) {
+            out += " " + std::to_string(l.id) + " " + std::to_string(l.ents.size());
+            for (const Ent& e : l.ents) {
+                out += std::string(" ") + e.k;
+                for (const double v : {e.x0, e.y0, e.x1, e.y1, e.cx, e.cy, e.r})
+                    num(v);
+                out += " " + std::to_string(e.tag);
+            }
+        }
+        out += " " + std::to_string(f.targets.size());
+        for (const Target& t : f.targets)
+            out += " " + t.a + " " + t.b + (t.convex ? " 1" : " 0") + (t.picked ? " 1" : " 0");
+        out += " " + std::to_string(static_cast<int>(f.edit.kind));
+        num(f.edit.amount);
+        out += " " + std::to_string(f.edit.targets.size());
+        for (const std::string& t : f.edit.targets)
+            out += " " + t;
+        out += "\n";
+    }
+    return out;
+}
+
+Script scriptFromText(const std::string& text, const std::shared_ptr<const ImportBase>& base)
+{
+    std::vector<std::string> tok;
+    {
+        std::string cur;
+        for (const char c : text) {
+            if (std::isspace(static_cast<unsigned char>(c)) != 0) {
+                if (!cur.empty())
+                    tok.push_back(cur);
+                cur.clear();
+            } else {
+                cur += c;
+            }
+        }
+        if (!cur.empty())
+            tok.push_back(cur);
+    }
+    std::size_t i = 0;
+    auto next = [&]() -> const std::string& {
+        REQUIRE(i < tok.size());
+        return tok[i++];
+    };
+    auto real = [&]() { return std::strtod(next().c_str(), nullptr); };
+    auto whole = [&]() { return std::strtoull(next().c_str(), nullptr, 10); };
+    Script s;
+    while (i < tok.size()) {
+        REQUIRE(next() == "F");
+        Feature f;
+        f.id = next();
+        f.type = static_cast<FType>(whole());
+        f.op = static_cast<BOp>(whole());
+        f.role = next();
+        if (f.role == "-")
+            f.role.clear();
+        f.suppressed = whole() != 0;
+        for (Vec3* v : {&f.frame.o, &f.frame.xd, &f.frame.n}) {
+            v->x = real();
+            v->y = real();
+            v->z = real();
+        }
+        f.dist = real();
+        f.size = real();
+        const std::size_t loops = whole();
+        for (std::size_t k = 0; k < loops; ++k) {
+            Loop l;
+            l.id = whole();
+            const std::size_t ents = whole();
+            for (std::size_t m = 0; m < ents; ++m) {
+                Ent e;
+                e.k = next()[0];
+                for (double* v : {&e.x0, &e.y0, &e.x1, &e.y1, &e.cx, &e.cy, &e.r})
+                    *v = real();
+                e.tag = whole();
+                l.ents.push_back(e);
+            }
+            f.loops.push_back(std::move(l));
+        }
+        const std::size_t targets = whole();
+        for (std::size_t k = 0; k < targets; ++k) {
+            Target t;
+            t.a = next();
+            t.b = next();
+            t.convex = whole() != 0;
+            t.picked = whole() != 0;
+            f.targets.push_back(t);
+        }
+        f.edit.kind = static_cast<EKind>(whole());
+        f.edit.amount = real();
+        const std::size_t editTargets = whole();
+        for (std::size_t k = 0; k < editTargets; ++k)
+            f.edit.targets.push_back(next());
+        if (f.type == FType::Import)
+            f.base = base;
+        s.push_back(std::move(f));
+    }
+    return s;
+}
+
 // ---------------------------------------------------------------- one sequence
 struct SequenceResult {
     Tally tally;
@@ -529,6 +753,15 @@ struct SequenceOptions {
     // Choose among the elements of a built shape in the kernel's order (true: the blocks below, on which the oracle was
     // tuned), or sorted by geometry (the hidden block [.random-directedit-sorted], see there).
     bool byIndex = true;
+    // Scripted (T-081b round 4): no generator; the baseline is `script`, the edited script `edited` (scriptFromText).
+    const Script* script = nullptr;
+    const Script* edited = nullptr;
+    // The portable generator (tPortable, item 9 of round 4); implies choices by geometry.
+    bool portable = false;
+    // Only author the sequence (both scripts, SequenceResult::scriptText and editedText as scriptToText), judge
+    // nothing:
+    // for comparing what two platforms author ([.generator-portability]).
+    bool authorOnly = false;
 };
 
 // One random edit of `edited` (the import, at 0, is never edited), as in T-081a, or a direct edit appended. Returns it
@@ -619,7 +852,8 @@ void addCounts(std::map<std::string, int>& into, const Builder& b)
 SequenceResult runSequence(const Part& part, int partIndex, int seq, const SequenceOptions& opt)
 {
     SequenceResult out;
-    tByIndex = opt.byIndex;
+    tByIndex = opt.byIndex && !opt.portable;
+    tPortable = opt.portable;
     Rng rng{opt.seedBase + static_cast<std::uint64_t>(partIndex) * 1000003ull + static_cast<std::uint64_t>(seq)};
     for (int i = 0; i < 4; ++i)
         rng.next();
@@ -634,7 +868,18 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
     FeatRefs picks;
     Builder b(Mode::Author, picks);
     b.apply(import);
-    const int want = 3 + static_cast<int>(rng.below(3));
+    if (opt.script != nullptr)
+        for (std::size_t k = 1; k < opt.script->size(); ++k) {
+            const int before = b.built();
+            b.apply((*opt.script)[k]);
+            if (b.built() > before) {
+                script.push_back((*opt.script)[k]);
+                ++out.ops;
+            } else {
+                ++out.refused;
+            }
+        }
+    const int want = opt.script != nullptr ? 0 : 3 + static_cast<int>(rng.below(3));
     for (int attempt = 0; out.ops < want && attempt < 20; ++attempt) {
         auto smp = sampleShape(b.shape());
         if (!smp)
@@ -708,10 +953,27 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
     out.refs = static_cast<long>(refs.size());
 
     Script edited = script;
-    const std::size_t edits = rng.chance(0.35) ? 2 + rng.below(2) : 1;
-    int inserted = 0;
-    for (std::size_t k = 0; k < edits; ++k)
-        out.edit += (k == 0 ? "" : "; ") + randomEdit(edited, part, b, **smp0, rng, inserted);
+    if (opt.script != nullptr) {
+        edited = *opt.edited;
+        for (Feature& f : edited)
+            if (f.type == FType::Import)
+                f.base = part.base;
+        out.edit = "scripted";
+    } else {
+        const std::size_t edits = rng.chance(0.35) ? 2 + rng.below(2) : 1;
+        int inserted = 0;
+        for (std::size_t k = 0; k < edits; ++k)
+            out.edit += (k == 0 ? "" : "; ") + randomEdit(edited, part, b, **smp0, rng, inserted);
+    }
+    if (opt.authorOnly) {
+        out.scriptText = scriptToText(script);
+        out.editedText = scriptToText(edited);
+        return out;
+    }
+    // RAYCAD_DUMP_SCRIPTS: both scripts exactly (scriptToText), to pin the sequence on every platform.
+    if (std::getenv("RAYCAD_DUMP_SCRIPTS") != nullptr)
+        std::printf("SCRIPT %s\nBASELINE\n%sEDITED\n%sEND\n", label.c_str(), scriptToText(script).c_str(),
+                    scriptToText(edited).c_str());
 
     Builder replay(Mode::Replay, picks);
     for (const Feature& f : edited)
@@ -1094,7 +1356,7 @@ TEST_CASE("Holdout: 1,000 randomised sequences with direct edits, choices by geo
 // Holdouts with direct edits, choices by geometry: each block's seeds were first run once, unseen, on Windows and on
 // Linux after the fixes the block before it showed (T-081b round 2), and are kept as regression blocks.
 namespace {
-void runHoldout(const char* title, std::uint64_t seedBase, const std::string& prefix)
+void runHoldout(const char* title, std::uint64_t seedBase, const std::string& prefix, bool portable = false)
 {
     const std::uint64_t guardBefore = kernel::testing::structuredExceptions();
     const std::vector<Part> parts = loadParts();
@@ -1106,6 +1368,7 @@ void runHoldout(const char* title, std::uint64_t seedBase, const std::string& pr
     opt.byIndex = false;
     opt.seedBase = seedBase;
     opt.keyPrefix = prefix;
+    opt.portable = portable;
     const BlockResult r = runBlock(title, parts, kSequencesPerPart, opt);
     checkNoFault(guardBefore);
     checkGates(r, kSequencesPerPart, prefix);
@@ -1123,6 +1386,102 @@ TEST_CASE("Direct-edit holdout 2: 1,000 sequences, choices by geometry, seeds fi
 {
     runHoldout("Direct-edit holdout 2", 0xB2081B00ull, "directedit-holdout2 ");
 }
+
+TEST_CASE("Direct-edit block of the independent review: 1,000 sequences, choices by geometry, the reviewer's seed",
+          "[random-directedit-review1]")
+{
+    // The reviewer's own block, first run on the frozen oracle (oracle-freeze-1) and adjudicated (T-081b round 4, the
+    // review's round-2 holdout), kept as a tuned block: gated as the holdouts.
+    runHoldout("Direct-edit review block 1", 0x6B1D3F5A2C800000ull, "directedit-review1 ");
+}
+
+TEST_CASE("Direct-edit block of any seed: RAYCAD_NAMING_BLOCK_SEED=<hex>, choices by geometry",
+          "[.random-directedit-seed]")
+{
+    // A fresh block for a reviewer, without a driver: RAYCAD_NAMING_BLOCK_SEED=<hex seed base> (e.g. 6B1D3F5A2C800000),
+    // keys "directedit-seed<hex> ". Gated as a holdout block (its reviewed-list entries use that prefix). With
+    // RAYCAD_NAMING_PORTABLE=1, authored by the portable generator (SequenceOptions::portable).
+    const char* seed = std::getenv("RAYCAD_NAMING_BLOCK_SEED");
+    if (seed == nullptr)
+        SKIP("RAYCAD_NAMING_BLOCK_SEED is not set");
+    const std::uint64_t base = std::strtoull(seed, nullptr, 16);
+    REQUIRE(base != 0);
+    runHoldout("Direct-edit block of a given seed", base, "directedit-seed" + std::string(seed) + " ",
+               std::getenv("RAYCAD_NAMING_PORTABLE") != nullptr);
+}
+TEST_CASE("Generator portability: what the generators by geometry author, per sequence, to compare platforms",
+          "[.generator-portability]")
+{
+    // T-081b round 4, item 9. Authors (judges nothing) the first RAYCAD_PORTABILITY_PER_PART (default 10) sequences of
+    // every part on the sorted block's seeds, with the generator by geometry and with the portable one, and prints one
+    // line per sequence: "GEN <generator> <part> <sequence> <digest>", the digest of both scripts with every number to
+    // 1e-4 (the same sequence on two platforms gives the same line). Compare two platforms' outputs line by line.
+    int perPart = 10;
+    if (const char* n = std::getenv("RAYCAD_PORTABILITY_PER_PART"))
+        perPart = std::clamp(std::atoi(n), 1, kSequencesPerPart);
+    const std::vector<Part> parts = loadParts();
+    const auto digest = [](const std::string& text) {
+        std::string rounded;
+        std::string tok;
+        const auto flush = [&] {
+            if (tok.empty())
+                return;
+            if (tok.find("0x") != std::string::npos) {
+                char buf[64];
+                std::snprintf(buf, sizeof buf, "%.4f", std::strtod(tok.c_str(), nullptr) + 0.0);
+                rounded += std::string(buf) == "-0.0000" ? "0.0000" : buf;
+            } else {
+                rounded += tok;
+            }
+            rounded += ' ';
+            tok.clear();
+        };
+        for (const char c : text) {
+            if (std::isspace(static_cast<unsigned char>(c)) != 0)
+                flush();
+            else
+                tok += c;
+        }
+        flush();
+        std::uint64_t h = 1469598103934665603ull;
+        for (const char c : rounded)
+            h = (h ^ static_cast<unsigned char>(c)) * 1099511628211ull;
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(h));
+        return std::string(buf);
+    };
+    struct Job {
+        int part, seq;
+        bool portable;
+    };
+    std::vector<Job> jobs;
+    for (const bool portable : {false, true})
+        for (int p = 0; p < kPartCount; ++p)
+            for (int s = 0; s < perPart; ++s)
+                jobs.push_back({p, s, portable});
+    std::vector<std::string> lines(jobs.size());
+    std::atomic<std::size_t> nextJob{0};
+    std::vector<std::thread> workers;
+    for (unsigned w = 0; w < workerCount(); ++w)
+        workers.emplace_back([&] {
+            for (std::size_t j = nextJob++; j < jobs.size(); j = nextJob++) {
+                SequenceOptions opt;
+                opt.byIndex = false;
+                opt.portable = jobs[j].portable;
+                opt.authorOnly = true;
+                const SequenceResult r = runSequence(parts[static_cast<std::size_t>(jobs[j].part)], jobs[j].part,
+                                                     jobs[j].seq, opt);
+                lines[j] = std::string("GEN ") + (jobs[j].portable ? "portable " : "sorted ") +
+                           std::to_string(jobs[j].part) + " " + std::to_string(jobs[j].seq) + " " +
+                           (r.skipped ? "skipped" : digest(r.scriptText + "|" + r.editedText));
+            }
+        });
+    for (std::thread& t : workers)
+        t.join();
+    for (const std::string& l : lines)
+        std::printf("%s\n", l.c_str());
+}
+
 // ---------------------------------------------------------------- oracle refinements on the sequences that showed them
 namespace {
 
@@ -1145,7 +1504,41 @@ struct Probe {
     Answer answer;
     std::vector<std::uint32_t> elements;
     long offCarrier = -1; // replace this element of elements by the nearest element off the picked one's carriers
+    // Elements by a point on each, added to elements (scripted pins: element numbers may differ between platforms).
+    std::vector<Vec3> at = {};
 };
+
+// The element of kind of samples nearest p (within 1e-2 mm), or none.
+std::optional<std::uint32_t> elementAt(const Samples& samples, SubKind kind, const Vec3& p)
+{
+    const auto& N = samples.of(kind);
+    std::optional<std::uint32_t> best;
+    double dBest = 1e-2;
+    for (std::uint32_t e = 0; e < N.size(); ++e) {
+        double d = 1e300;
+        if (kind == SubKind::Face) {
+            if (N[e].mesh)
+                d = N[e].mesh->distanceWithin(p, 1e-2, true);
+        } else if (kind == SubKind::Edge) {
+            for (std::size_t k = 1; k < N[e].nodes.size(); ++k) {
+                const Vec3 a = N[e].nodes[k - 1], ab = sub(N[e].nodes[k], a);
+                const double l2 = dot(ab, ab);
+                const double s = l2 > 0 ? std::clamp(dot(sub(p, a), ab) / l2, 0.0, 1.0) : 0.0;
+                d = std::min(d, norm(sub(p, add(a, mul(ab, s)))));
+            }
+        } else if (!N[e].nodes.empty()) {
+            d = norm(sub(p, N[e].nodes.front()));
+        }
+        if (d < dBest) {
+            dBest = d;
+            best = e;
+        }
+    }
+    return best;
+}
+
+Looked lookAt(const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+              const Owners& now, const Samples& samples, const std::vector<Probe>& probes);
 
 // Replays sequence `seq` of part `partIndex` of the block and looks at the references `ids`: the resolver's answer and
 // its verdict, and the verdict on an Exact answer of another element of the same kind. No answer of the sequence may be
@@ -1165,6 +1558,62 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
                      const Owners& now, const Samples& samples) {
         if (std::find(ids.begin(), ids.end(), id) == ids.end())
             return;
+        out.push_back(lookAt(id, ref, res, rr, now, samples, probes));
+    });
+    const SequenceResult r = runSequence(part, partIndex, seq, legacy);
+    setInspector({});
+    if (edit != nullptr)
+        *edit = r.edit;
+    INFO(kParts[partIndex] << " #" << seq << ": " << r.edit);
+    CHECK_FALSE(r.skipped);
+    CHECK(r.tally.wrong() == 0);
+    CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    return out;
+}
+
+// The pinned sequence `baseline` -> `edited` (scriptToText, as one platform's generator authored it) replayed as it is,
+// on part `partIndex`: the references to the element whose pick-time fingerprint has centroid `at` (within 1e-3 mm) and
+// area or length `measure` (within a thousandth), looked at as replayAndLook does. Element numbers are not used, so the
+// pin holds on every platform whose kernel builds the scripts alike (T-081b round 4, item 8).
+std::vector<Looked> replayScriptedAndLook(int partIndex, const std::string& baseline, const std::string& edited,
+                                          SubKind kind, const Vec3& at, double measure,
+                                          const std::vector<Probe>& probes = {})
+{
+    const Part part = loadPart(kParts[partIndex]);
+    REQUIRE(part.base != nullptr);
+    const Script s0 = scriptFromText(baseline, part.base);
+    const Script s1 = scriptFromText(edited, part.base);
+    SequenceOptions opt;
+    opt.keyPrefix = "scripted ";
+    opt.script = &s0;
+    opt.edited = &s1;
+    std::vector<Looked> out;
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners& now, const Samples& samples) {
+        const naming::Fingerprint& h = ref.ref.hint;
+        if (ref.ref.kind != kind)
+            return;
+        const Vec3 c{static_cast<double>(h.qCx) * 1e-4, static_cast<double>(h.qCy) * 1e-4,
+                     static_cast<double>(h.qCz) * 1e-4};
+        if (norm(sub(c, at)) > 1e-3 || std::abs(static_cast<double>(h.qArea) * 1e-4 - measure) > 1e-3 * measure + 1e-4)
+            return;
+        out.push_back(lookAt(id, ref, res, rr, now, samples, probes));
+    });
+    const SequenceResult r = runSequence(part, partIndex, 0, opt);
+    setInspector({});
+    INFO(kParts[partIndex] << " scripted: " << r.edit);
+    CHECK_FALSE(r.skipped);
+    CHECK(r.tally.wrong() == 0);
+    CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    return out;
+}
+
+// What one reference got (replayAndLook): its answer and verdict, the verdict on another element answered Exact, and
+// the probes' verdicts.
+Looked lookAt(const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+              const Owners& now, const Samples& samples, const std::vector<Probe>& probes)
+{
+    {
         Looked l;
         l.id = id;
         for (const double w : ref.record.picked().w)
@@ -1181,6 +1630,24 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
             for (std::uint32_t& e : els)
                 if (e >= kAnswer && e - kAnswer < l.elements.size())
                     e = l.elements[e - kAnswer];
+            for (const Vec3& q : p.at)
+                if (const auto e = elementAt(samples, ref.record.base.kind, q))
+                    els.push_back(*e);
+            // RAYCAD_LOOK_POINTS: a point on each probed element (for a scripted pin's Probe::at), and the pick's
+            // fingerprint centroid and measure.
+            if (std::getenv("RAYCAD_LOOK_POINTS") != nullptr) {
+                const naming::Fingerprint& h = ref.ref.hint;
+                std::printf("POINTS %s pick centroid (%.6f %.6f %.6f) measure %.6f\n", id.c_str(), h.qCx * 1e-4,
+                            h.qCy * 1e-4, h.qCz * 1e-4, h.qArea * 1e-4);
+                for (const std::uint32_t e : els) {
+                    if (e >= samples.of(ref.record.base.kind).size())
+                        continue;
+                    const ElemSamples& es = samples.of(ref.record.base.kind)[e];
+                    const Vec3 q =
+                        es.pts.empty() ? (es.nodes.empty() ? Vec3{} : es.nodes.front()) : es.pts[es.pts.size() / 2];
+                    std::printf("POINTS   element %u at {%a, %a, %a}\n", e, q.x, q.y, q.z);
+                }
+            }
             if (p.offCarrier >= 0) {
                 const auto& N = samples.of(ref.record.base.kind);
                 auto centre = [](const ElemSamples& s) {
@@ -1221,17 +1688,8 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
                  (x.mergeUnknown ? " (merge unknown)" : "");
             l.probed.push_back(s);
         }
-        out.push_back(std::move(l));
-    });
-    const SequenceResult r = runSequence(part, partIndex, seq, legacy);
-    setInspector({});
-    if (edit != nullptr)
-        *edit = r.edit;
-    INFO(kParts[partIndex] << " #" << seq << ": " << r.edit);
-    CHECK_FALSE(r.skipped);
-    CHECK(r.tally.wrong() == 0);
-    CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
-    return out;
+        return l;
+    }
 }
 
 } // namespace
@@ -1255,21 +1713,36 @@ constexpr const char* kPlatformName = "macos";
 constexpr const char* kPlatformName = "linux";
 #endif
 
-void reportPinnedSkips(const std::vector<std::string>& skipped)
+// offPlatform: pins authored on another platform only (Case::builtOn), not run here: reported as skipped with their
+// count, on every platform (T-081b round 4, item 8: never silently; each has a scripted twin that runs everywhere).
+void reportPinnedSkips(const std::vector<std::string>& skipped, const std::vector<std::string>& offPlatform = {})
 {
-    if (skipped.empty())
+    if (skipped.empty() && offPlatform.empty())
         return;
     std::string all;
     for (const std::string& s : skipped) {
         std::fprintf(stderr, "PINNED REPLAY NOT BUILT ON THIS PLATFORM: %s\n", s.c_str());
         all += (all.empty() ? "" : "; ") + s;
     }
-    if (!kPinnedSkipAllowed) {
+    for (const std::string& s : offPlatform)
+        std::fprintf(stderr, "PINNED REPLAY AUTHORED ON ANOTHER PLATFORM, NOT RUN HERE: %s\n", s.c_str());
+    if (!kPinnedSkipAllowed && !skipped.empty()) {
         for (const std::string& s : skipped)
             FAIL_CHECK("pinned replay not built on this platform (skips are allowed on macOS only): " << s);
         return;
     }
-    SKIP(std::to_string(skipped.size()) + " pinned replay(s) not built on this platform (allowed on macOS): " + all);
+    std::string text;
+    if (!skipped.empty())
+        text = std::to_string(skipped.size()) + " pinned replay(s) not built on this platform (allowed on macOS): " +
+               all;
+    if (!offPlatform.empty()) {
+        std::string list;
+        for (const std::string& s : offPlatform)
+            list += (list.empty() ? "" : "; ") + s;
+        text += (text.empty() ? "" : "; and ") + std::to_string(offPlatform.size()) +
+                " pinned replay(s) authored on another platform only, not run here: " + list;
+    }
+    SKIP(text);
 }
 
 // The replays of T-081b's findings (the cases below), each a sequence of a randomised block; `keyOnly`: only the few
@@ -1518,7 +1991,9 @@ void replayCases(bool keyOnly)
         // Resolver (propagate_resolve.cpp canContain): a sliver of a boss's cylindrical side, split off by a cut that
         // then moved over it; the rest of the side is whole, but holds none of the sliver: Broken, not Merged.
         // (Authored so on Windows only: Linux, Debug and Release alike, puts the cut R3 at (72.985 101.6 21.028) where
-        // Windows puts it at (78.356 101.6 28.031), and its face 54 is another face, 421.5 mm^2.)
+        // Windows puts it at (78.356 101.6 28.031), and its face 54 is another face, 421.5 mm^2; CI's Linux job r4
+        // failed the
+        // pin on it, before it was marked Windows-only. Its scripted twin, below, runs everywhere.)
         {5,
          15,
          k + "fixture_plate_1.stp #15|face 54",
@@ -1531,6 +2006,118 @@ void replayCases(bool keyOnly)
          {},
          "windows",
          2.010893},
+
+        // Round 4. The structural check on edges (the reviewer's re-check of round 3's list): a cut moved along its own
+        // wall's line, the edge its name leads to the wall's other end, holding none of the pick in place or under the
+        // cut's move: Broken (resolver: another stretch of a line that stayed), Exact on it WRONG.
+        {4,
+         33,
+         k + "fillet_block_1.stp #33|edge 9",
+         Answer::Broken,
+         Verdict::Missed,
+         "other end of a wall slid along its line",
+         false,
+         0xA81B7000ull,
+         false,
+         {{Answer::Exact, {11}}},
+         "windows",
+         7.780},
+        {1,
+         3,
+         k + "chamfer_block_2.stp #3|edge 42",
+         Answer::Broken,
+         Verdict::Missed,
+         "another stretch of a line that stayed",
+         false,
+         0xB2081B00ull,
+         false,
+         {{Answer::Exact, {41}}},
+         "windows",
+         0.4771},
+        // The real catch of round 3's moved-face rule among the reviewer's sample (round 4: it must stay): a window of a
+        // moved boss's start cap, its name on a patch of the cap's plane outside the part, holding none of the pick in
+        // place or carried by the boss's move: Broken, the old Exact WRONG.
+        {4,
+         29,
+         k + "fillet_block_1.stp #29|face 17",
+         Answer::Broken,
+         Verdict::BrokenGone,
+         "a moved start cap's window, another patch now",
+         false,
+         0,
+         false,
+         {{Answer::Exact, {39}}},
+         "windows",
+         9.5592},
+        // The reviewer's own block (round 4 rulings), authored on Windows:
+        //  - a stretch of a moved cut's edge past its old start, ground inside a bore at pick time, is not a piece; the
+        //    resolver cannot tell such ground from new ground the pick grew into (sorted 17:32 edge 32): Broken (a miss:
+        //    {104} is right); with that stretch, or it alone, WRONG;
+        {1,
+         39,
+         "directedit raycad-synthetic/chamfer_block_2.stp #39|edge 83",
+         Answer::Broken,
+         Verdict::Missed,
+         "piece past the moved pick's old start",
+         false,
+         0x6B1D3F5A2C800000ull,
+         false,
+         {{Answer::Split, {104, 106}}, {Answer::Exact, {106}}},
+         "windows",
+         13.3226},
+        //  - the lead's decision: a bore opened past the step, cone and upper bore above it took their ground along its
+        //    axis: Merged, Exact a silent merge, and with the upper bore's remnant WRONG;
+        {18,
+         33,
+         "directedit nist-d2mi/827-9999-905.stp #33|face 2",
+         Answer::Merged,
+         Verdict::Correct,
+         "resized bore past its ends",
+         false,
+         0x6B1D3F5A2C800000ull,
+         false,
+         {{Answer::Exact, {kAnswer}}, {Answer::Merged, {kAnswer, 24}}},
+         "windows",
+         202.4883},
+        //  - the picked chamfer edge cut in two by an inserted groove, its sibling going on as a third edge: both
+        // pieces
+        //    (the sibling match refuses to pair by rank); either piece alone WRONG;
+        {15,
+         10,
+         "directedit raycad-synthetic/slot_through_1.stp #10|edge 8",
+         Answer::Split,
+         Verdict::Correct,
+         "the pick came apart, its sibling elsewhere",
+         false,
+         0x6B1D3F5A2C800000ull,
+         false,
+         {{Answer::Exact, {71}}, {Answer::Exact, {13}}},
+         "windows",
+         29.2864},
+        //  - a vertex at the same point on the same surfaces, three of the four pieces around it unified: the pieces of
+        //    one surface joined (oracle: joined-surface); the nearest vertex off its carriers WRONG.
+        {7,
+         8,
+         "directedit raycad-synthetic/keyway_tslot_1.stp #8|vertex 1",
+         Answer::Exact,
+         Verdict::Correct,
+         "joined pieces of one surface",
+         false,
+         0x6B1D3F5A2C800000ull,
+         false,
+         {{Answer::Exact, {0}}},
+         "windows"},
+        {7,
+         8,
+         "directedit raycad-synthetic/keyway_tslot_1.stp #8|vertex 7",
+         Answer::Exact,
+         Verdict::Correct,
+         "joined pieces of one surface",
+         false,
+         0x6B1D3F5A2C800000ull,
+         false,
+         {{Answer::Exact, {1}}},
+         "windows"},
 
         // The hidden block's findings (choices by geometry), each resolved in the oracle:
         //  - an edge moved only because a direct edit moved the separator that cut it off: still in place;
@@ -1585,7 +2172,7 @@ void replayCases(bool keyOnly)
         {17, 20, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #20|face 13", Answer::Merged, Verdict::Unjudged,
          "owner gone, ground held"},
     };
-    std::vector<std::string> skipped;
+    std::vector<std::string> skipped, offPlatform;
     for (const Case& c : cases) {
         if (keyOnly && std::none_of(key.begin(), key.end(), [&](const std::string& s) {
                 return c.id.size() >= s.size() && c.id.compare(c.id.size() - s.size(), s.size(), s) == 0;
@@ -1605,9 +2192,7 @@ void replayCases(bool keyOnly)
                 edit += " (the reference is to another element here: picked measure " +
                         std::to_string(looked[0].pickMeasure) + ")";
             if (c.builtOn != nullptr && std::string(c.builtOn) != kPlatformName) {
-                std::fprintf(stderr,
-                             "PINNED REPLAY AUTHORED ONLY ON %s, NOT BUILT HERE: %s (%s); the sequence's edits: %s\n",
-                             c.builtOn, c.id.c_str(), c.about, edit.c_str());
+                offPlatform.push_back(c.id + " (" + c.about + ", authored on " + c.builtOn + ")");
                 continue;
             }
             skipped.push_back(c.id + " (" + c.about + ") is not recorded; the sequence's edits: " + edit);
@@ -1626,7 +2211,7 @@ void replayCases(bool keyOnly)
             CHECK(isWrong(looked[0].probes[i].verdict));
         }
     }
-    reportPinnedSkips(skipped);
+    reportPinnedSkips(skipped, offPlatform);
 }
 
 } // namespace
@@ -1641,6 +2226,129 @@ TEST_CASE("Oracle and kernel (directedit replays): the refinements of T-081b on 
           "[naming][directedit-replays]")
 {
     replayCases(false);
+}
+
+namespace {
+
+// The baseline and edited scripts of pinned sequence `name` (tests/naming/oracle/pinned_scripts.txt).
+std::pair<std::string, std::string> pinnedScripts(const std::string& name)
+{
+    std::ifstream in(std::filesystem::path(RAY_ORACLE_DIR) / "pinned_scripts.txt", std::ios::binary);
+    REQUIRE(in.good());
+    std::string line, base, edited;
+    int where = 0; // 0 elsewhere, 1 baseline, 2 edited
+    bool mine = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (line.rfind("SCRIPT ", 0) == 0) {
+            mine = line.substr(7) == name;
+            where = 0;
+        } else if (mine && line == "BASELINE") {
+            where = 1;
+        } else if (mine && line == "EDITED") {
+            where = 2;
+        } else if (line == "END") {
+            mine = false;
+            where = 0;
+        } else if (mine && where == 1) {
+            base += line + "\n";
+        } else if (mine && where == 2) {
+            edited += line + "\n";
+        }
+    }
+    INFO("pinned script " << name);
+    REQUIRE(!base.empty());
+    REQUIRE(!edited.empty());
+    return {base, edited};
+}
+
+Vec3 hex(const char* x, const char* y, const char* z)
+{
+    return {std::strtod(x, nullptr), std::strtod(y, nullptr), std::strtod(z, nullptr)};
+}
+
+} // namespace
+
+TEST_CASE("Pinned sequences as scripts (round 4): the Windows-authored pins, on every platform",
+          "[naming][directedit-replays]")
+{
+    // T-081b round 4, item 8: the pins found on sequences that only the Windows generator authors (holdout2 7:44 faces
+    // 27
+    // and 30, holdout1 7:33 face 18 and 8:23 face 1, sorted 5:15 face 54) as fixed scripts (pinned_scripts.txt), so
+    // that
+    // every platform replays them: the picked element by its fingerprint, the negatives by a point on each.
+    struct Pin {
+        const char* script;
+        int part;
+        const char* about;
+        Vec3 at;
+        double measure;
+        Answer answer;
+        Verdict verdict;
+        std::vector<Probe> wrongs;
+    };
+    const std::vector<Pin> pins{
+        {"holdout2 7:44",
+         7,
+         "a window of a moved boss's start cap: its place under another face (face 27)",
+         {22.0014, -0.0257, -11.1774},
+         0.3131,
+         Answer::Broken,
+         Verdict::Missed,
+         {{Answer::Exact, {}, -1, {hex("0x1.6005ce0000000p+4", "0x1.8eff1d5555555p+0", "-0x1.96bde8aaaaaabp+3")}},
+          {Answer::Exact, {}, -1, {hex("0x1.6005ce0000000p+4", "-0x1.5e5f900000000p+0", "-0x1.2376535555556p+3")}}}},
+        {"holdout2 7:44",
+         7,
+         "the boss's end cap in two pieces, moved or new ground (face 30)",
+         {43.3498, 0.1598, -11.4613},
+         0.5507,
+         Answer::Broken,
+         Verdict::Missed,
+         {{Answer::Split, {}, -1, {hex("0x1.5acc540000000p+5", "0x1.00a4755555555p-1", "-0x1.7412d0aaaaaabp+3")}},
+          {Answer::Exact, {}, -1, {hex("0x1.5acc540000000p+5", "0x1.8eff1d5555555p+0", "-0x1.96bde8aaaaaabp+3")}}}},
+        {"holdout1 7:33",
+         7,
+         "another patch of a boss's side, structural (face 18)",
+         {39.2339, -2.5489, 10.5459},
+         27.0338,
+         Answer::Broken,
+         Verdict::BrokenGone,
+         {{Answer::Exact, {}, -1, {hex("0x1.3941a20000000p+5", "0x1.ea9f34aaaaaa8p+0", "0x1.7b91b3aaaaaabp+3")}}}},
+        {"holdout1 8:23",
+         8,
+         "a cut's wall through the part moved along itself, a rigid copy (face 1)",
+         {24.8149, 23.7970, 4.0},
+         434.3759,
+         Answer::Exact,
+         Verdict::Correct,
+         {}},
+        {"sorted 5:15",
+         5,
+         "a sliver of a boss's side a moved cut had split off (face 54)",
+         {80.6955, 114.4066, 26.7698},
+         2.0109,
+         Answer::Broken,
+         Verdict::BrokenGone,
+         {}},
+    };
+    for (const Pin& p : pins) {
+        const auto [baseline, edited] = pinnedScripts(p.script);
+        const std::vector<Looked> looked =
+            replayScriptedAndLook(p.part, baseline, edited, SubKind::Face, p.at, p.measure, p.wrongs);
+        INFO(p.script << ": " << p.about);
+        REQUIRE(looked.size() == 1);
+        INFO("verdict " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == p.answer);
+        CHECK(looked[0].judgement.verdict == p.verdict);
+        if (p.verdict == Verdict::Correct || p.verdict == Verdict::BrokenGone)
+            CHECK(isWrong(looked[0].other.verdict));
+        REQUIRE(looked[0].probes.size() == p.wrongs.size());
+        for (std::size_t i = 0; i < p.wrongs.size(); ++i) {
+            INFO("negative " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+            CHECK(isWrong(looked[0].probes[i].verdict));
+        }
+    }
 }
 
 TEST_CASE("Oracle (directedit 7:12, 15:46; hidden 6:47): edits the oracle's model does not describe are not modelled",
@@ -1998,6 +2706,106 @@ TEST_CASE("evidence: one judged reference of one sequence, written out", "[.evid
 
 // The round-3 review's probes (the reviewer's, kept hidden): each listed reference of holdout 2 and the tuned block,
 // the resolver's answer and the oracle's verdicts on the answers the review asked about, printed.
+TEST_CASE("Reviewed answers measured: how much of the pick each answer holds, in place and mapped",
+          "[.reviewed-measure]")
+{
+    // T-081b round 4, item 7: every round-3 entry of reviewed_unjudged.txt re-checked against "holds some of the pick
+    // in
+    // place or under the exact map". Prints, per entry, the resolver's answer and verdict now, and for each answer
+    // element the share of the picked samples on it and of its samples on the pick, in place and mapped through the
+    // edit (shareOnElement), and whether the structural check's scope applies.
+    struct E {
+        int part, seq;
+        const char* id;
+        std::uint64_t seed;
+    };
+    const std::uint64_t h1 = 0xA81B7000ull, h2 = 0xB2081B00ull;
+    const std::vector<E> entries{
+        {0, 0, "#0|face 13", h1},    {0, 0, "#0|edge 28", h1},    {4, 33, "#33|edge 9", h1},
+        {6, 33, "#33|face 9", h1},   {9, 16, "#16|vertex 27", h1}, {17, 45, "#45|face 21", h1},
+        {17, 45, "#45|edge 27", h1}, {17, 45, "#45|edge 52", h1}, {17, 45, "#45|edge 62", h1},
+        {17, 45, "#45|vertex 0", h1}, {17, 45, "#45|vertex 1", h1}, {17, 45, "#45|vertex 24", h1},
+        {17, 45, "#45|vertex 31", h1}, {18, 47, "#47|face 18", h1}, {1, 3, "#3|edge 42", h2},
+        {11, 41, "#41|vertex 30", h2}, {17, 24, "#24|edge 3", h2},  {19, 37, "#37|face 90", h2},
+        // Round 4's own: answers the new moved-face rule gives that the oracle cannot judge.
+        {4, 45, "#45|face 20", h1},
+        {10, 7, "#7|face 3", 0x6B1D3F5A2C800000ull},
+        {10, 7, "#7|edge 18", 0x6B1D3F5A2C800000ull},
+        {1, 48, "#48|vertex 18", 0x6B1D3F5A2C800000ull}, {7, 34, "#34|vertex 9", 0x6B1D3F5A2C800000ull}};
+    for (const E& e : entries) {
+        const Part part = loadPart(kParts[e.part]);
+        REQUIRE(part.base != nullptr);
+        SequenceOptions opt;
+        opt.byIndex = false;
+        opt.seedBase = e.seed;
+        const std::string want = std::string(" #") + std::to_string(e.seq) + "|" + std::string(e.id).substr(
+                                                                                     std::string(e.id).find('|') + 1);
+        std::string line;
+        setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                         const Owners& now, const Samples& samples) {
+            if (id.size() < want.size() || id.compare(id.size() - want.size(), want.size(), want) != 0)
+                return;
+            const Expectation x = expect(ref.record, now, samples);
+            const SubKind kind = ref.record.base.kind;
+            const ElemSamples& P = ref.record.picked();
+            char buf[400];
+            static const char* const kAnswerNames[] = {"Exact", "Split", "Merged", "Repaired", "Broken"};
+            std::snprintf(buf, sizeof buf, "%s: %s {", id.c_str(), kAnswerNames[static_cast<int>(rr.answer)]);
+            line = buf;
+            for (const SubId& s : res.elements)
+                line += " " + std::to_string(s.index);
+            line += std::string(" } verdict ") + verdictName(rr.judgement.verdict) +
+                    (rr.judgement.structural.empty() ? "" : " [structural: " + rr.judgement.structural + "]") +
+                    "; E {";
+            for (const std::uint32_t el : x.expected.elems)
+                line += " " + std::to_string(el);
+            line += " }" + (x.noAnchor.empty() ? std::string() : " (no anchor: " + x.noAnchor + ")");
+            for (const SubId& s : res.elements) {
+                const ElemSamples& A = samples.of(kind)[s.index];
+                std::snprintf(buf, sizeof buf,
+                              "\n    %u: pick on it %.3f, it on pick %.3f; mapped pick on it %.3f, it on mapped %.3f",
+                              s.index, shareOnElement(P, A, kind), shareOnElement(A, P, kind),
+                              x.mapped.pts.empty() ? -1.0 : shareOnElement(x.mapped, A, kind),
+                              x.mapped.pts.empty() ? -1.0 : shareOnElement(A, x.mapped, kind));
+                line += buf;
+                // The pick carried by each sweep the edit moved (its frame's displacement): its share on the answer.
+                for (const auto& [sid, sweep] : now.sweeps) {
+                    const auto was = ref.record.owners->sweeps.find(sid);
+                    if (was == ref.record.owners->sweeps.end())
+                        continue;
+                    const Vec3 d = sub(sweep.frame.o, was->second.frame.o);
+                    if (norm(d) <= 1e-9)
+                        continue;
+                    ElemSamples moved = P;
+                    for (Vec3& q : moved.pts)
+                        q = add(q, d);
+                    for (Vec3& q : moved.nodes)
+                        q = add(q, d);
+                    std::snprintf(buf, sizeof buf, "; pick moved with %s (%.3f %.3f %.3f) on it %.3f, it on that %.3f",
+                                  sid.c_str(), d.x, d.y, d.z, shareOnElement(moved, A, kind),
+                                  kind == SubKind::Face ? -1.0 : shareOnElement(A, moved, kind));
+                    line += buf;
+                }
+                // The baseline elements it lies on (its samples' share on each, over 1 %), the picked one marked.
+                const auto& B = ref.record.baseline->of(kind);
+                for (std::uint32_t i = 0; i < B.size(); ++i) {
+                    const double share = B[i].pts.empty() ? 0.0 : shareOnElement(A, B[i], kind);
+                    if (share > 0.01) {
+                        std::snprintf(buf, sizeof buf, "; on baseline %u%s %.3f", i,
+                                      i == ref.record.base.index ? " (the pick)" : "", share);
+                        line += buf;
+                    }
+                }
+            }
+        });
+        const SequenceResult r = runSequence(part, e.part, e.seq, opt);
+        setInspector({});
+        std::printf("== %s %s (%d:%d, seed %llx) edits: %s\n   %s\n", kParts[e.part], e.id, e.part, e.seq,
+                    static_cast<unsigned long long>(e.seed), r.edit.c_str(),
+                    line.empty() ? "not recorded on this build" : line.c_str());
+    }
+}
+
 TEST_CASE("review probe: answers asked of the oracle", "[.review-probes]")
 {
     struct P {

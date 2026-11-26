@@ -24,7 +24,11 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 
 // Mutation switches (T-081b round 3: every new rule's pinned negatives are verified by switching the rule off):
 // RAYCAD_ORACLE_MUTATE=<name>[,<name>...] turns off the rules named structural, held, sibling-match, past-mapped-end
-// and ground-outline. For checking the pins only; never set in a gate run.
+// and ground-outline; round 4: sibling-cover (the sibling match's one-piece-per-piece test and "every piece is the
+// pick's"), resize-axis (a resized bore's take-over along its axis), joined-surface (pieces joined on one surface),
+// structural-edges (the structural check on edges and vertices), structural-pieces (on each piece of a flagged
+// answer), copy-position (the rigid-copy exemption's position test: off, any congruent face passes, as in round 3)
+// and rotation-exact (a turned feature's map counted as exact). For checking the pins only; never set in a gate run.
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
 
@@ -2042,6 +2046,36 @@ double largestOwnerShift(const Owners& before, const Owners& after)
 }
 
 // Is b another surface than a (not merely another reference point on the same surface)?
+// Do two analytic carriers describe one surface (within 1e-6 mm or rad): the same plane on the same side, the same
+// cylinder (axis either way), the same sphere, cone or torus? A mesh carrier is never shared.
+bool sharedSurface(const Carrier& a, const Carrier& b, double eps = 1e-6)
+{
+    using K = Carrier::K;
+    constexpr double angle = 1e-6;
+    if (a.k != b.k || !a.analytic() || !b.analytic() || a.sigma != b.sigma || std::abs(a.r - b.r) > eps ||
+        std::abs(a.r2 - b.r2) > eps)
+        return false;
+    const bool sameAxis = norm(sub(a.a, b.a)) <= angle;
+    const bool flipped = norm(add(a.a, b.a)) <= angle;
+    const Vec3 d = sub(b.p, a.p);
+    switch (a.k) {
+    case K::Plane:
+        return sameAxis && std::abs(dot(d, a.a)) <= eps;
+    case K::Cyl:
+        return (sameAxis || flipped) && norm(sub(d, mul(a.a, dot(d, a.a)))) <= eps;
+    case K::Sphere:
+        return norm(d) <= eps;
+    default:
+        break;
+    }
+    if (!sameAxis || norm(d) > eps)
+        return false;
+    for (int i = 0; i < 4; ++i)
+        if (std::abs(a.q[i] - b.q[i]) > eps)
+            return false;
+    return true;
+}
+
 bool carrierChanged(const Carrier& a, const Carrier& b)
 {
     using K = Carrier::K;
@@ -2225,6 +2259,35 @@ bool rigidOrStill(const TruthDesc& d, const Owners& before, const Owners& after)
             const auto a = before.sweeps.find(f);
             const auto b = after.sweeps.find(f);
             if (a == before.sweeps.end() || b == after.sweeps.end() || !sameSweepShape(a->second, b->second))
+                return false;
+            // Moved without turning (T-081b round 4): a turned feature's map is not exact here.
+            if (!mutated("rotation-exact") && (norm(sub(a->second.frame.n, b->second.frame.n)) > 1e-12 ||
+                                               norm(sub(a->second.frame.xd, b->second.frame.xd)) > 1e-12))
+                return false;
+        }
+    return !d.cons.empty();
+}
+
+// Is every owner of description `d` on the analytic carrier it had (an imported plane or cylinder, a sweep's side or
+// cap whose surface is where it was: a cut moved along its own wall's plane, its depth changed)? The elements where
+// such faces meet lie where they lay (an edge on the same line or circle, a vertex at the same point). (The structural
+// check's scope for edges and vertices, T-081b round 4.)
+bool stillOwners(const TruthDesc& d, const Owners& before, const Owners& after)
+{
+    // By the carriers alone: an owner a direct edit moved has another carrier now, and one an edit in both scripts
+    // moved alike has the same (holdout1 4:33: the top face, offset in the baseline, the cut moved along its wall).
+    for (const Constraint& c : d.cons)
+        for (const std::string& alt : c.alts) {
+            const Owner* o0 = before.get(alt);
+            const Owner* o1 = after.get(alt);
+            // (Within 1e-2 mm: a cut moved by its width along its own wall's line moves that wall's plane by the
+            // rounding of its frame, a few micrometres: holdout1 4:33.)
+            if (o0 == nullptr || o1 == nullptr || !sharedSurface(o0->c, o1->c, 1e-2))
+                return false;
+            // A sweep's face: the sweep as the script describes it, in both (one with a face a direct edit changed is
+            // not, buildOwners), so that where its move takes the pick is known (holdsPickedGround).
+            if (alt.compare(0, 2, "I/") != 0 && (before.sweeps.count(featureOfOwner(alt)) == 0 ||
+                                                   after.sweeps.count(featureOfOwner(alt)) == 0))
                 return false;
         }
     return !d.cons.empty();
@@ -2800,20 +2863,129 @@ bool seamVertex(const Samples& smp, std::uint32_t v)
     return faces.size() == 2;
 }
 
-// Does face `a` hold any of the picked ground, in place or mapped through the edit (the structural check's test)?
-bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expectation& x)
+// Does element `a` hold any of the picked ground, in place or mapped through the edit (the structural check's test)?
+// A face: any sample of either on the other (within the overlap tolerance, boundaries included): a face that only
+// touches the picked ground, or holds a strip of it, is not called another element here; one apart from it is. An edge
+// (T-081b round 4): a sample of either inside the other, away from its ends (an edge that only meets the pick at an end
+// is past it: the reviewer's holdout1 4:33 edge 9, the other end of a wall that slid along its own line). A vertex: on
+// the picked point, or on the mapped one (within the anchor tolerance).
+// The moves of the sweeps that own the description's faces and moved rigidly without turning (rigidOrStill): each
+// one's frame displacement. The exact map of an element those faces bound, where the oracle's map projects a crossing
+// with a face that stayed (SLIDING CROSSINGS): a wall moved along its own plane takes its edges and corners along.
+std::vector<Vec3> sweepMoves(const PickRecord& pick, const Owners& now)
 {
-    // Any sample of either on the other (within the overlap tolerance, boundaries included): a face that only touches
-    // the picked ground, or holds a strip of it, is not called another element here; one apart from it is.
+    std::vector<Vec3> out;
+    std::set<std::string> seen;
+    for (const Constraint& c : pick.truth.cons)
+        for (const std::string& alt : c.alts) {
+            const std::string f = featureOfOwner(alt);
+            if (alt.compare(0, 2, "I/") == 0 || !seen.insert(f).second)
+                continue;
+            const auto a = pick.owners->sweeps.find(f);
+            const auto b = now.sweeps.find(f);
+            if (a == pick.owners->sweeps.end() || b == now.sweeps.end())
+                continue;
+            const Vec3 d = sub(b->second.frame.o, a->second.frame.o);
+            if (norm(d) > 1e-9)
+                out.push_back(d);
+        }
+    return out;
+}
+
+bool beyondPickBoundary(const ElemSamples& s, const Owners& before);
+
+// Does element `s` (of the edited shape) lie on ground the picked element could not have grown into: beyond a boundary
+// it had at pick time (beyondPickBoundary), or on another baseline element of its kind (half of it, interior)?
+bool foreignGround(const ElemSamples& s, const PickRecord& pick, SubKind kind)
+{
+    if (beyondPickBoundary(s, *pick.owners))
+        return true;
+    const auto& B = pick.baseline->of(kind);
+    for (std::uint32_t i = 0; i < B.size(); ++i)
+        if (i != pick.base.index && !B[i].pts.empty() && interiorShare(s, B[i], kind) >= 0.5)
+            return true;
+    return false;
+}
+
+bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expectation& x, SubKind kind,
+                       const Owners& now)
+{
+    const ElemSamples& P = pick.picked();
+    const std::vector<Vec3> moves = kind == SubKind::Face || mutated("structural-moves") ? std::vector<Vec3>{}
+                                                                                          : sweepMoves(pick, now);
+    if (kind == SubKind::Vertex) {
+        if (a.nodes.empty() || P.nodes.empty())
+            return true;
+        if (norm(sub(a.nodes.front(), P.nodes.front())) <= kExactVertexTolerance)
+            return true;
+        for (const Vec3& d : moves)
+            if (norm(sub(a.nodes.front(), add(P.nodes.front(), d))) <= kAnchorTolerance)
+                return true;
+        const std::vector<Vec3>& m = x.mapped.pts.empty() ? x.mapped.nodes : x.mapped.pts;
+        return !m.empty() && norm(sub(a.nodes.front(), m.front())) <= kAnchorTolerance;
+    }
+    if (kind == SubKind::Edge) {
+        const auto holdsEdge = [&](const ElemSamples& ground) {
+            return !ground.pts.empty() &&
+                   (interiorShare(a, ground, SubKind::Edge) > 0.0 || interiorShare(ground, a, SubKind::Edge) > 0.0);
+        };
+        if (a.pts.empty() || holdsEdge(P) || holdsEdge(x.mapped))
+            return true;
+        for (const Vec3& d : moves) {
+            ElemSamples moved = P;
+            for (Vec3& p : moved.pts)
+                p = add(p, d);
+            for (Vec3& p : moved.nodes)
+                p = add(p, d);
+            if (holdsEdge(moved))
+                return true;
+        }
+        return false;
+    }
     const auto holds = [&](const ElemSamples& ground) {
         return shareOn(a, ground, SubKind::Face) > 0.0 || shareOn(ground, a, SubKind::Face) > 0.0;
     };
     // A rigid copy of the picked face (the same surface type, area within 2 % by the samples' weights, sorted extents
-    // within a hundredth) is the pick moved, wherever the map takes the picked points: a feature's surface the part
-    // clips, moved along itself (holdout1 8:23 face 1, a cut's wall through the part, the cut moved 12 mm down its
-    // profile: the same wall, its points elsewhere on the moved surface).
-    {
-        const ElemSamples& P = pick.picked();
+    // within a hundredth) where the map takes it, as far as a surface the part clips can be told: a planar copy that
+    // lies on the picked ground carried onto its own plane along the normal (holdout1 8:23 face 1, a cut's wall through
+    // the part, the cut moved 12 mm down its profile: the same wall, where the part still clips it, its plane moved
+    // along its normal by the move's normal part), facing the way the mapped pick faces. A congruent twin elsewhere (on
+    // another plane, facing elsewhere, or elsewhere on the plane: T-081b round 4) is not the pick.
+    if (!mutated("copy-position")) {
+        double wa = 0, wp = 0;
+        for (const double w : a.w)
+            wa += w;
+        for (const double w : P.w)
+            wp += w;
+        std::array<double, 3> da{a.boxMax.x - a.boxMin.x, a.boxMax.y - a.boxMin.y, a.boxMax.z - a.boxMin.z};
+        std::array<double, 3> dp{P.boxMax.x - P.boxMin.x, P.boxMax.y - P.boxMin.y, P.boxMax.z - P.boxMin.z};
+        std::sort(da.begin(), da.end());
+        std::sort(dp.begin(), dp.end());
+        bool copy = a.type == static_cast<int>(kernel::SurfaceType::Plane) && a.type == P.type && wp > 0 &&
+                    std::abs(wa - wp) <= 0.02 * wp && !a.pts.empty() && !x.mapped.pts.empty();
+        for (std::size_t i = 0; i < 3 && copy; ++i)
+            copy = std::abs(da[i] - dp[i]) <= 0.01 * std::max(da[i], dp[i]) + 2e-3;
+        // Facing as the pick faced (the map moves without turning: rigidOrStill), on the plane the map takes the pick
+        // to (the mapped samples on a's plane), and the picked ground carried onto that plane along its normal on a.
+        const Vec3 n = unit(a.nrm);
+        if (copy)
+            copy = norm(n) > 0.5 && norm(P.nrm) > 0.5 && dot(n, unit(P.nrm)) >= 1 - 1e-6;
+        if (copy) {
+            const Vec3 on = a.pts.front();
+            double off = 0;
+            for (const Vec3& m : x.mapped.pts)
+                off = std::max(off, std::abs(dot(sub(m, on), n)));
+            copy = off <= kAnchorTolerance;
+        }
+        if (copy) {
+            const Vec3 on = a.pts.front();
+            ElemSamples carried = P;
+            for (Vec3& p : carried.pts)
+                p = sub(p, mul(n, dot(sub(p, on), n)));
+            if (shareOn(carried, a, SubKind::Face) >= 0.5) // most of it: the part clips the copy where it is now
+                return true;
+        }
+    } else {
         double wa = 0, wp = 0;
         for (const double w : a.w)
             wa += w;
@@ -2830,7 +3002,6 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
             return true;
     }
     if (std::getenv("RAYCAD_ORACLE_DEBUG_STRUCTURAL") != nullptr) {
-        const ElemSamples& P = pick.picked();
         std::printf(
             "structural: answer n%zu mesh %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f); pick n%zu mesh %d box (%.3f "
             "%.3f %.3f)-(%.3f %.3f %.3f); mapped n%zu mesh %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f); in place "
@@ -2848,8 +3019,22 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
 // Does the structural check apply to this reference (judgeAnswer): a face, its map known and exact?
 bool structuralScope(const PickRecord& pick, const Owners& now, const Expectation& x)
 {
-    return !mutated("structural") && x.kind == SubKind::Face && !x.mapped.pts.empty() && !pick.picked().pts.empty() &&
-           rigidOrStill(pick.truth, *pick.owners, now);
+    if (mutated("structural") || pick.picked().pts.empty())
+        return false;
+    if (x.kind == SubKind::Face)
+        return !x.mapped.pts.empty() && rigidOrStill(pick.truth, *pick.owners, now);
+    // An edge or vertex (T-081b round 4): only where every owner of its description is where it was (a crossing of a
+    // moved surface with one that stayed slides along it, off both the pick and its map: SLIDING CROSSINGS); a vertex
+    // on three faces or more (a seam vertex, on only its two faces, lies where the periodic face's seam meets the other,
+    // which moves with that face's parametrisation: SLIDING CROSSINGS (a); T-081a holdout5 13:3 vertex 7).
+    if (x.kind == SubKind::Vertex && !mutated("structural-seam")) {
+        std::vector<std::uint32_t> faces = pick.baseline->facesOf[0][pick.base.index];
+        std::sort(faces.begin(), faces.end());
+        faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+        if (faces.size() < 3)
+            return false;
+    }
+    return !mutated("structural-edges") && stillOwners(pick.truth, *pick.owners, now);
 }
 
 Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
@@ -2863,9 +3048,28 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     // picked ground, in place or where the edit's exact map takes it, is not the pick's continuation but another patch
     // of its surface (holdout1 17:10 face 5; T-081a holdout2 11:6 face 24, 13:5 face 19): the pick is gone.
     if (x.expected.elems.size() == 1 && x.noAnchor.empty() && structuralScope(pick, now, x) &&
-        !holdsPickedGround(smp.of(SubKind::Face)[x.expected.elems.front()], pick, x)) {
+        x.expected.elems.front() < smp.of(x.kind).size() &&
+        !holdsPickedGround(smp.of(x.kind)[x.expected.elems.front()], pick, x, x.kind, now)) {
         x.expected = TruthEval{};
         x.structuralGone = true;
+    }
+    // And to each piece of an expected set (round 4, as judgeAnswer): a piece that holds none of the pick, on ground
+    // the pick could not have grown into, is not one of its pieces (while another piece is left).
+    if (x.expected.elems.size() >= 2 && x.noAnchor.empty() && !mutated("structural-pieces") &&
+        structuralScope(pick, now, x)) {
+        TruthEval kept;
+        for (const std::uint32_t e : x.expected.elems) {
+            const ElemSamples& es = smp.of(x.kind)[e];
+            if (sliver(es, x.kind) || holdsPickedGround(es, pick, x, x.kind, now) || !foreignGround(es, pick, x.kind))
+                kept.elems.push_back(e);
+        }
+        if (!kept.elems.empty() && kept.elems.size() < x.expected.elems.size()) {
+            for (const std::uint32_t e : x.expected.partial)
+                if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
+                    kept.partial.push_back(e);
+            kept.merged = !kept.partial.empty();
+            x.expected = kept;
+        }
     }
     return x;
 }
@@ -3137,12 +3341,35 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
     if (x.kind != SubKind::Face && !x.moved && same >= 0 && !x.inLogical(static_cast<std::uint32_t>(same))) {
         TruthDesc joined = withoutSeparators(d);
         std::vector<Constraint> distinct;
+        // Faces of one logical face: the same owners, or (T-081b round 4, review holdout 7:8 vertices 1 and 7: the
+        // quadrant pieces of a keyway's rounded end, imported as two faces of one cylinder, three of the four pieces
+        // unified by the kernel) owners on one surface (coincident carriers, sharedSurface), which the pieces of a face
+        // the kernel unified lie on as one face.
+        const auto oneSurface = [&](const std::vector<std::string>& a, const std::vector<std::string>& b) {
+            for (const std::string& p : a)
+                for (const std::string& q : b) {
+                    if (p == q)
+                        return true;
+                    if (mutated("joined-surface"))
+                        continue;
+                    const Owner* op = pick.owners->get(p);
+                    const Owner* oq = pick.owners->get(q);
+                    if (op != nullptr && oq != nullptr && sharedSurface(op->c, oq->c))
+                        return true;
+                }
+            return false;
+        };
         for (const Constraint& c : joined.cons) {
             std::vector<std::string> alts = c.alts;
             std::sort(alts.begin(), alts.end());
             bool seen = false;
-            for (const Constraint& k : distinct)
-                seen = seen || k.alts == alts;
+            for (Constraint& k : distinct)
+                if (!seen && oneSurface(k.alts, alts)) {
+                    std::vector<std::string> all;
+                    std::set_union(k.alts.begin(), k.alts.end(), alts.begin(), alts.end(), std::back_inserter(all));
+                    k.alts = all;
+                    seen = true;
+                }
             if (!seen)
                 distinct.push_back(Constraint{alts, {}});
         }
@@ -3247,7 +3474,25 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
     // baseline element, or one that cannot be placed because something moved, keeps the element merged. A weak
     // reference's "claimed" elements (they continue another baseline piece) stay merged in any case.
     auto ownTerritory = [&](TruthEval& te) {
-        if (te.partial.empty())
+        // (A bore at another radius is looked at even when it fits its description: the lead's decision, below.)
+        const bool resizedBore = [&] {
+            if (x.kind != SubKind::Face || d.cons.size() != 1 || d.cons[0].alts.size() != 1 || mutated("resize-axis"))
+                return false;
+            const Owner* a = pick.owners->get(d.cons[0].alts[0]);
+            const Owner* b = now.get(d.cons[0].alts[0]);
+            return a != nullptr && b != nullptr && a->c.k == Carrier::K::Cyl && b->c.k == Carrier::K::Cyl &&
+                   std::abs(a->c.r - b->c.r) > 1e-3 && norm(cross(unit(a->c.a), unit(b->c.a))) <= 1e-6 &&
+                   norm(sub(sub(b->c.p, a->c.p), mul(unit(a->c.a), dot(sub(b->c.p, a->c.p), unit(a->c.a))))) <= 1e-3;
+        }();
+        if (std::getenv("RAYCAD_ORACLE_DEBUG_AXIS") != nullptr && x.kind == SubKind::Face && d.cons.size() == 1 &&
+            d.cons[0].alts.size() == 1) {
+            const Owner* a = pick.owners->get(d.cons[0].alts[0]);
+            const Owner* b = now.get(d.cons[0].alts[0]);
+            std::printf("axis: %s then k%d r%.4f now k%d r%.4f partial %zu resized %d\n", d.cons[0].alts[0].c_str(),
+                        a ? static_cast<int>(a->c.k) : -1, a ? a->c.r : 0.0, b ? static_cast<int>(b->c.k) : -1,
+                        b ? b->c.r : 0.0, te.partial.size(), resizedBore ? 1 : 0);
+        }
+        if (te.partial.empty() && !resizedBore)
             return;
         FitMasks masks;
         evalTruthImpl(d, now, smp, &masks);
@@ -3375,6 +3620,86 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
             }
         }
         const bool movedWithSweep = x.moved && fa != nullptr;
+        // THE LEAD'S DECISION (T-081b round 4, review holdout 18:33 face 2): a bore at another radius than it had (a
+        // resize) that now runs along its axis past the picked bore's ends, through heights where other pick-time faces
+        // lay inside its new radius (a step, a cone, an upper bore), took in their ground: merged, concretely (an Exact
+        // answer is a silent merge), whether or not those faces can be mapped through the edit. `axialTakeover(e)`:
+        // (heights below the pick taken, heights above taken), measured from the samples.
+        const Owner* boreThen = nullptr;
+        const Owner* boreNow = nullptr;
+        if (x.kind == SubKind::Face && d.cons.size() == 1 && d.cons[0].alts.size() == 1 && !mutated("resize-axis")) {
+            boreThen = pick.owners->get(d.cons[0].alts[0]);
+            boreNow = now.get(d.cons[0].alts[0]);
+            // A resize in place: the same axis (a bore moved as well is the moved-face business of the map).
+            const auto sameAxis = [](const Carrier& p, const Carrier& q) {
+                const Vec3 u = unit(p.a), v = unit(q.a), d = sub(q.p, p.p);
+                return norm(cross(u, v)) <= 1e-6 && norm(sub(d, mul(u, dot(d, u)))) <= 1e-3;
+            };
+            if (boreThen == nullptr || boreNow == nullptr || boreThen->c.k != Carrier::K::Cyl ||
+                boreNow->c.k != Carrier::K::Cyl || std::abs(boreThen->c.r - boreNow->c.r) <= 1e-3 ||
+                !sameAxis(boreThen->c, boreNow->c))
+                boreThen = boreNow = nullptr;
+        }
+        double boreLo = 1e300, boreHi = -1e300;
+        // (From the mesh nodes, which reach the face's boundary: the interior samples stop short of it by up to their
+        // spacing.)
+        if (boreThen != nullptr)
+            for (const Vec3& q : pick.picked().nodes.empty() ? pick.picked().pts : pick.picked().nodes) {
+                const double h = dot(sub(q, boreNow->c.p), unit(boreNow->c.a));
+                boreLo = std::min(boreLo, h);
+                boreHi = std::max(boreHi, h);
+            }
+        constexpr double kAxialTol = 1e-2;
+        std::map<std::uint32_t, std::pair<bool, bool>> takeovers;
+        auto axialTakeover = [&](std::uint32_t e) -> std::pair<bool, bool> {
+            if (boreThen == nullptr || pick.picked().pts.empty())
+                return {false, false};
+            if (const auto it = takeovers.find(e); it != takeovers.end())
+                return it->second;
+            // About the bore as it is now (a bore moved and resized is looked at where it is).
+            const Vec3 o = boreNow->c.p, a = unit(boreNow->c.a);
+            double lo = 1e300, hi = -1e300;
+            for (const Vec3& p : N[e].nodes.empty() ? N[e].pts : N[e].nodes) {
+                const double h = dot(sub(p, o), a);
+                lo = std::min(lo, h);
+                hi = std::max(hi, h);
+            }
+            const double r = boreNow->c.r - kAnchorTolerance; // inside the new radius, not on the new wall
+            bool below = false, above = false;
+            for (std::uint32_t i = 0; i < B.size() && !(below && above); ++i) {
+                if (i == pick.base.index)
+                    continue;
+                for (const Vec3& q : B[i].pts) {
+                    const double h = dot(sub(q, o), a);
+                    if (norm(sub(sub(q, o), mul(a, h))) > r)
+                        continue;
+                    // Inside the bore's new extent, not on its end planes (the face a bore ends at is not taken in).
+                    below = below || (h < boreLo - kAxialTol && h > lo + kAxialTol);
+                    above = above || (h > boreHi + kAxialTol && h < hi - kAxialTol);
+                }
+            }
+            if (std::getenv("RAYCAD_ORACLE_DEBUG_AXIS") != nullptr)
+                std::printf("axis take-over: element %u heights %.3f..%.3f, pick %.3f..%.3f, r %.3f: below %d "
+                            "above %d\n",
+                            e, lo, hi, boreLo, boreHi, r, below ? 1 : 0, above ? 1 : 0);
+            return takeovers[e] = {below, above};
+        };
+        auto tookAlongAxis = [&](std::uint32_t e, const Vec3& p) {
+            if (boreThen == nullptr)
+                return false;
+            const auto [below, above] = axialTakeover(e);
+            const double h = dot(sub(p, boreNow->c.p), unit(boreNow->c.a));
+            return (below && h < boreLo - kAxialTol) || (above && h > boreHi + kAxialTol);
+        };
+        // (An element whose samples all fit the description, a sweep's bore whose extent the resize left as it was,
+        // is looked at too when it runs past the pick's ends there.)
+        if (boreThen != nullptr) {
+            for (const std::uint32_t e : te.elems)
+                if (!std::binary_search(te.partial.begin(), te.partial.end(), e) &&
+                    std::any_of(N[e].pts.begin(), N[e].pts.end(), [&](const Vec3& p) { return tookAlongAxis(e, p); }))
+                    te.partial.push_back(e);
+            std::sort(te.partial.begin(), te.partial.end());
+        }
         std::vector<std::uint32_t> still;
         bool allUnknown = true; // every merged element is merged only for an element that cannot be mapped
         for (const std::uint32_t e : te.partial) {
@@ -3385,9 +3710,16 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
             bool merged = mask == nullptr || (x.weak && x.isClaimed(e));
             bool onlyUnknown = !merged;
             for (std::size_t j = 0; (!merged || onlyUnknown) && j < N[e].pts.size(); ++j) {
+                const Vec3& p = N[e].pts[j];
+                // The lead's decision, above: taken in, whatever lay at p itself and whether or not p fits the
+                // description (a bore's extent along its axis is not where the resize left its ends).
+                if (tookAlongAxis(e, p) && !nearElement(p, pick.picked(), x.kind, pickTol)) {
+                    merged = true;
+                    onlyUnknown = false;
+                    continue;
+                }
                 if ((*mask)[j] != 0)
                     continue;
-                const Vec3& p = N[e].pts[j];
                 // (On, not inside: the samples of an element that kept part of the picked one's border lie on that
                 // border; a sibling's territory beyond the border has samples further than the tolerance from it.)
                 if (!x.mapped.pts.empty() && nearElement(p, x.mapped, x.kind, pickTol))
@@ -3608,12 +3940,63 @@ Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples&
                             match = static_cast<long>(x.expected.elems[i]);
                     if (!apart)
                         match = -1;
+                    // Each pick-time piece must cover, with its own mapped samples, the piece now at its rank: one
+                    // piece now per piece then. When the pick itself came apart, or a sibling continues as an element
+                    // outside the pieces now, ranking pairs pieces that do not continue each other (T-081b round 4,
+                    // review holdout 15:10 edge 8: the picked chamfer edge cut in two by an inserted groove, its
+                    // sibling
+                    // continuing as a third edge; the ranks paired the sibling with a piece of the pick). Then nothing
+                    // is matched.
+                    if (match >= 0 && !mutated("sibling-cover")) {
+                        std::vector<const ElemSamples*> pieces{&x.mapped};
+                        for (const ElemSamples& s : mappedSiblings)
+                            pieces.push_back(&s);
+                        for (std::size_t k = 0; k < pieces.size() && match >= 0; ++k) {
+                            bool rankApart = true;
+                            const std::size_t rank = rankOf(then, k, rankApart);
+                            bool covered = false;
+                            for (std::size_t i = 0; i < later.size(); ++i) {
+                                bool laterApart = true;
+                                if (rankOf(later, i, laterApart) != rank)
+                                    continue;
+                                const ElemSamples& later_i = N[x.expected.elems[i]];
+                                const std::vector<Vec3>& pts =
+                                    pieces[k]->pts.empty() ? pieces[k]->nodes : pieces[k]->pts;
+                                for (const Vec3& p : pts)
+                                    covered = covered || nearElement(p, later_i, x.kind, kAnchorTolerance);
+                            }
+                            if (!covered)
+                                match = -1;
+                        }
+                    }
                 }
             }
+            // No mapped sibling on any piece now, and the mapped pick on them (the pick came apart, its siblings went
+            // on as other elements): every piece now is the pick's, E stays as it is, and nothing is shared.
+            bool siblingsElsewhere = mappable && !mappedSiblings.empty() && !mutated("sibling-cover");
+            for (const ElemSamples& s : mappedSiblings) {
+                const std::vector<Vec3>& pts = s.pts.empty() ? s.nodes : s.pts;
+                for (const std::uint32_t e : x.expected.elems)
+                    for (const Vec3& p : pts)
+                        siblingsElsewhere = siblingsElsewhere && !nearElement(p, N[e], x.kind, kAnchorTolerance);
+            }
+            bool pickOnAll = siblingsElsewhere;
+            for (const std::uint32_t e : x.expected.elems) {
+                const std::vector<Vec3>& pts = x.mapped.pts.empty() ? x.mapped.nodes : x.mapped.pts;
+                bool on = false;
+                for (const Vec3& p : pts)
+                    on = on || nearElement(p, N[e], x.kind, kAnchorTolerance);
+                pickOnAll = pickOnAll && on;
+            }
             if (std::getenv("RAYCAD_ORACLE_DEBUG_MATCH") != nullptr)
-                std::printf("match: pieces then %zu now %zu mappable %d -> %ld\n", then.size(), x.expected.elems.size(),
-                            mappable ? 1 : 0, match);
-            if (match >= 0 && !mutated("sibling-match")) {
+                std::printf("match: pieces then %zu now %zu mappable %d -> %ld (siblings elsewhere %d, pick on all "
+                            "%d)\n",
+                            then.size(), x.expected.elems.size(), mappable ? 1 : 0, match, siblingsElsewhere ? 1 : 0,
+                            pickOnAll ? 1 : 0);
+            if (match < 0 && pickOnAll) {
+                x.sharedAnchor = false;
+                x.mergeUnknown = mergeUnknownBefore;
+            } else if (match >= 0 && !mutated("sibling-match")) {
                 TruthEval one;
                 one.elems = {static_cast<std::uint32_t>(match)};
                 // Larger than described only by the description (a sibling's claim is settled by the match).
@@ -3967,16 +4350,33 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
     // (expect: SLIDING CROSSINGS), and is told there. Only where the map is known (the mapped pick has samples) and
     // exact: every owner of the description still or moved rigidly (rigidOrStill; a blend or a sweep whose profile
     // changed changes shape, and its map is an approximation: S4 D02, D03, D09).
-    if ((answer == Answer::Exact || answer == Answer::Repaired) && X.size() == 1 &&
-        X[0] < smp.of(SubKind::Face).size() && structuralScope(pick, now, x) &&
-        !holdsPickedGround(smp.of(SubKind::Face)[X[0]], pick, x)) {
-        j.verdict = x.expected.elems.empty() ? Verdict::WrongGhost : Verdict::WrongOther;
-        j.unjudged = false;
-        j.newGround.clear();
-        j.accepted.clear();
-        j.structural = std::string(answerName(answer)) + " {" + std::to_string(X[0]) +
-                       "} holds none of the picked ground, in place or mapped through the edit";
-        return j;
+    // Round 4: edges and vertices too, where every owner of the description is where it was (the reviewer's holdout1
+    // 4:33 edge 9: the other end of a wall that slid along its own line); and every piece of a Split or Merged answer
+    // (a piece that holds none of the picked ground is not a piece of it).
+    if (answer != Answer::Broken && !X.empty() && structuralScope(pick, now, x)) {
+        const bool single = answer == Answer::Exact || answer == Answer::Repaired;
+        for (const std::uint32_t e : X) {
+            if (e >= smp.of(x.kind).size() || (!single && mutated("structural-pieces")) || (single && X.size() != 1))
+                continue;
+            if ((!single && sliver(smp.of(x.kind)[e], x.kind)) ||
+                holdsPickedGround(smp.of(x.kind)[e], pick, x, x.kind, now))
+                continue;
+            // A piece of a flagged answer that holds none of the pick is called another element only on ground that was
+            // not the pick's to grow into: beyond a boundary the pick had (inside a pick-time sweep) or another
+            // element's
+            // (review holdout 1:39 edge 83: a stretch of a moved cut's edge that lay inside a bore when it was picked).
+            // New
+            // ground the pick's own carriers reached is not judged here.
+            if (!single && !foreignGround(smp.of(x.kind)[e], pick, x.kind))
+                continue;
+            j.verdict = x.expected.elems.empty() ? Verdict::WrongGhost : Verdict::WrongOther;
+            j.unjudged = false;
+            j.newGround.clear();
+            j.accepted.clear();
+            j.structural = std::string(answerName(answer)) + " " + listOf(X) + ": " + std::to_string(e) +
+                           " holds none of the picked ground, in place or mapped through the edit";
+            return j;
+        }
     }
     if (isWrong(j.verdict)) {
         std::sort(X.begin(), X.end());

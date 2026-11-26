@@ -861,6 +861,13 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                               "and whether it moved cannot be told.");
             elements = inside;
         }
+        // A piece the pick's feature's own move takes wholly past the pick (T-081b round 4, review holdout 1:39 edge 83:
+        // a stretch of a moved cut's edge that lay inside a bore when it was picked) is ground the pick did not have:
+        // another element's, or new ground the pick grew into where something that bounded it is gone (sorted 17:32 edge
+        // 32, a deleted hole); which, cannot be told here: Broken.
+        if (piecesInsideMovedPick(map, shape, elements, ref).size() < elements.size())
+            return broken("The picked element came apart after its feature was moved, and a piece lies past where the "
+                          "move took the picked one; whether it is part of the picked element cannot be told.");
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
         if (!facePiecesStayInside(map, shape, elements, ref))
@@ -908,6 +915,8 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                         continue; // moved, or new ground outside the outline: cannot be told (as above)
                     elements = inside;
                 }
+                if (piecesInsideMovedPick(map, shape, elements, ref).size() < elements.size())
+                    continue; // a piece past the moved pick (as above)
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||
