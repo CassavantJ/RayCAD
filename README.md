@@ -202,6 +202,8 @@ the direct-edit blocks (`directedit-blocks`), and the same three under AddressSa
 labelled `sanitizer-heavy` (too slow under ASan for the runner). Every test runs in exactly one of the two. A
 milestone closes only after one manual run of `nightly.yml` is green on its closing commit (PLAN.md section 12).
 Wrong answers of the direct-edit blocks come with an `[.evidence]` artifact per answer (`tools/ci_naming_evidence.py`).
+`probe.yml` (by hand only) replays single naming sequences on a chosen platform and uploads their output, shapes and
+evidence (`tools/ci_naming_probe.py` says how to write the cases).
 In an MSVC Debug build
 the randomised naming blocks are disabled (they would take hours there); ctest lists them as "Not Run
 (Disabled)". Debug CI also leaves out the tests labelled `debug-heavy` (the four S4 suites, the Release-scale

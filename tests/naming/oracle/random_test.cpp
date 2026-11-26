@@ -20,6 +20,8 @@
 
 #include "harness.h"
 
+#include <ray/kernel.h>
+
 #include <shape_testing.h>
 
 #include <algorithm>
@@ -31,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -479,6 +482,22 @@ std::string randomEdit(Script& edited, const Part& part, Rng& rng, int& inserted
     return "no-op";
 }
 
+// The shapes of one sequence before and after its edit, as before/after.rbrep (kernel serialisation) and .step.
+void writeSequenceShapes(const std::filesystem::path& dir, const kernel::Shape& before, const kernel::Shape& after)
+{
+    std::filesystem::create_directories(dir);
+    for (const auto& [stem, shape] : {std::pair{"before", &before}, std::pair{"after", &after}}) {
+        const std::vector<std::byte> bytes = kernel::serialize(*shape);
+        if (std::FILE* f = std::fopen((dir / (std::string(stem) + ".rbrep")).string().c_str(), "wb")) {
+            std::fwrite(bytes.data(), 1, bytes.size(), f);
+            std::fclose(f);
+        }
+        JobContext ctx;
+        const std::array<kernel::Shape, 1> one{*shape};
+        (void)kernel::exportStep((dir / (std::string(stem) + ".step")).string(), one, ctx);
+    }
+}
+
 SequenceResult runSequence(const Part& part, int partIndex, int seq, const SequenceOptions& opt = {})
 {
     SequenceResult out;
@@ -569,7 +588,16 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
     // One sequence on its own (RAYCAD_NAMING_ONLY) is being diagnosed: keep every line.
     out.log.maxWrongs = std::getenv("RAYCAD_NAMING_ONLY") != nullptr ? 100000 : 20;
     judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
-    if ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr) {
+    // RAYCAD_EVIDENCE_DIR=<folder> with RAYCAD_NAMING_ONLY (one sequence; the probe workflow,
+    // tools/ci_naming_probe.py): the shapes before and after the edit into that folder, as kernel serialisation and
+    // STEP, and the scripts and every element listed below whatever the verdicts, for a review on the platform that
+    // built them.
+    const char* evidenceDir = std::getenv("RAYCAD_EVIDENCE_DIR");
+    const bool evidence = evidenceDir != nullptr && std::getenv("RAYCAD_NAMING_ONLY") != nullptr;
+    if (evidence)
+        writeSequenceShapes(evidenceDir, b.shape(), replay.shape());
+    if (evidence ||
+        ((!out.log.wrongs.empty() || !out.log.notes.empty()) && std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)) {
         auto describe = [](const Script& s) {
             std::string text;
             char buf[400];
