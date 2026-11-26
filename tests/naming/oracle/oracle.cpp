@@ -3040,9 +3040,6 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
 }
 
 Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
-Judgement judgeCore(const Expectation& x, const PickRecord& pick, const Owners& now, const Samples& smp, Answer answer,
-                    std::vector<std::uint32_t> X);
-
 // Boxes of two elements more than 0.05 mm apart (they cannot share samples).
 bool boxesApart(const ElemSamples& a, const ElemSamples& b)
 {
@@ -3196,8 +3193,11 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             const bool inPlace = shareOn(P, es, x.kind) > 0.0 || shareOn(es, P, x.kind) > 0.0;
             bool fresh = !es.pts.empty() && !inPlace && !sliver(es, x.kind) &&
                          (pastBound(es) || (placed && !holdsPickedGround(es, pick, x, x.kind, now)));
+            // On a baseline element's ground: overlapping it within 1e-3 mm (the same surface or curve; within the
+            // anchor tolerance a sliver of a bore beside two crossing cylinders counts as on them: Linux holdout2
+            // 18:24 face 12, 0.17 mm wide where the bore meets a boss's and a hole's cylinders).
             for (std::uint32_t i = 0; fresh && i < B.size(); ++i)
-                if (!B[i].pts.empty() && !boxesApart(es, B[i]) && overlap(es, B[i], x.kind))
+                if (!B[i].pts.empty() && !boxesApart(es, B[i]) && overlap(es, B[i], x.kind, 1e-3))
                     fresh = false;
             if (std::getenv("RAYCAD_ORACLE_DEBUG_NEWPIECE") != nullptr)
                 std::printf("new-piece: piece %u bounds %zu past %d placed %d holds %d fresh %d\n", e, bounds.size(),
@@ -3216,7 +3216,7 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             y.expected = kept;
             y.newPiecesDropped = true;
             const Answer best = kept.elems.size() == 1 ? (kept.merged ? Answer::Merged : Answer::Exact) : Answer::Split;
-            if (judgeCore(y, pick, now, smp, best, kept.elems).verdict == Verdict::Correct)
+            if (judgeAnswer(y, pick, now, smp, best, kept.elems).verdict == Verdict::Correct)
                 x = y;
         }
     }
