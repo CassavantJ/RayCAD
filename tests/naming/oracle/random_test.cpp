@@ -1101,7 +1101,11 @@ struct Looked {
     std::string crossing; // Expectation::crossing: how the sliding-crossing rule told E, if it did
     std::string noAnchor; // Expectation::noAnchor
     std::string reason;   // the resolver's reason
+    std::vector<std::uint32_t> expected; // the oracle's expected elements
+    bool expectedMerged = false;         // and whether they continue the pick merged
 };
+
+long lastReplayWrong = 0; // the wrong answers of the sequence replayAndLook replayed last
 
 // Replays sequence `seq` of part `partIndex` of a block, and for the reference `id` judges also `wrong` (from its
 // expectation and the resolver's answer).
@@ -1128,6 +1132,8 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, std::uint64_t seedBase
         l.crossing = x.crossing;
         l.noAnchor = x.noAnchor;
         const std::vector<std::uint32_t>& E = x.expected.elems;
+        l.expected = E;
+        l.expectedMerged = x.expected.merged;
         l.own = judgeAnswer(x, ref.record, now, samples,
                             E.size() > 1        ? Answer::Split
                             : x.expected.merged ? Answer::Merged
@@ -1144,7 +1150,35 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, std::uint64_t seedBase
     setInspector({});
     CHECK_FALSE(r.skipped);
     CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    lastReplayWrong = r.tally.wrong();
     return out;
+}
+
+// A replayed case checks one scenario, and the kernel builds the scenario from the sequence's inputs: another
+// platform's OpenCASCADE can build another (macOS ARM64, CI run 45646624932). Where `holds` is false the case has
+// nothing to check on this platform and is skipped, with what this kernel gave instead; never past a wrong answer:
+// the replayed sequence must have none (a skip after a failed check still fails the case).
+void skipUnlessScenario(const std::vector<Looked>& looked, bool holds, const std::string& scenario)
+{
+    if (holds)
+        return;
+    CHECK(lastReplayWrong == 0);
+    const auto name = [](Answer a) {
+        static const char* const names[] = {"Exact", "Split", "Merged", "Repaired", "Broken"};
+        return names[static_cast<int>(a)];
+    };
+    const auto list = [](const std::vector<std::uint32_t>& v) {
+        std::string s = "{";
+        for (const std::uint32_t e : v)
+            s += " " + std::to_string(e);
+        return s + " }";
+    };
+    std::string got = looked.empty() ? " the reference is not in the baseline;" : "";
+    for (const Looked& l : looked)
+        got += " " + l.id + ": " + name(l.answer) + " " + list(l.elements) + ", expected " + list(l.expected) +
+               (l.expectedMerged ? " merged" : "") + ", " + verdictName(l.judgement.verdict) + ";";
+    SKIP("this platform's kernel does not build the scenario (" << scenario << "):" << got
+                                                                << " no wrong answer in the sequence");
 }
 
 } // namespace
@@ -1186,6 +1220,8 @@ TEST_CASE("Oracle (holdout3 16:1): where a separating cut is gone, the edge whol
     const std::vector<Looked> looked = replayAndLook(
         16, 1, 0x7A11D000ull, "holdout3 ", {id},
         [](const Expectation&, const std::vector<std::uint32_t>& got) { return std::make_pair(Answer::Exact, got); });
+    skipUnlessScenario(looked, looked.size() == 1 && looked[0].expectedMerged,
+                       "R5 gone, the edge whole again: its continuation merged");
     REQUIRE(looked.size() == 1);
     CHECK(looked[0].answer == Answer::Merged);
     CHECK(looked[0].judgement.verdict == Verdict::Correct);

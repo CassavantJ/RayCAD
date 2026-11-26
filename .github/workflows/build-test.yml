@@ -1,5 +1,5 @@
 # Configure, build and test on Windows, Linux and macOS (Apple Silicon): Debug with the quick test tier, Release
-# with every test, each configuration in a job of its own.
+# with every test, each configuration in a job of its own (Release in three: the slow naming blocks in two of theirs).
 #
 # vcpkg binaries are cached with actions/cache on vcpkg's file-based binary cache folder (the old x-gha
 # backend is gone). No secret is needed. Qt comes from prebuilt binaries (tools/fetch_qt.py, cached).
@@ -28,7 +28,11 @@ jobs:
     # Debug and Release are separate jobs that run side by side. In one job, one after the other, they did not fit
     # the time limit on the 4-processor Windows runner (run 45129357124: about 15 minutes of Debug build, over 100
     # of Debug tests, then the Release build and every test still to come at 4 hours).
-    name: ${{ matrix.preset }}-${{ matrix.config }}
+    # Release is three jobs (part): every test but the slow naming blocks (main), the T-081a naming blocks (naming)
+    # and the T-081b direct-edit blocks (directedit), labels naming-blocks and directedit-blocks in tests/tiers.cmake.
+    # The blocks run one at a time on the 4-processor runner; after everything else in one job they took Windows past
+    # the 4-hour limit (run 45646624932: stopped at 114 of 121 tests).
+    name: ${{ matrix.preset }}-${{ matrix.config }}${{ matrix.part != 'main' && format('-{0}', matrix.part) || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     strategy:
@@ -36,6 +40,12 @@ jobs:
       matrix:
         preset: [windows-msvc, linux-gcc, macos-arm64]
         config: [debug, release]
+        part: [main, naming, directedit]
+        exclude:
+          - config: debug
+            part: naming
+          - config: debug
+            part: directedit
         include:
           - preset: windows-msvc
             os: windows-latest
@@ -55,7 +65,17 @@ jobs:
           - config: debug
             tests: debug-ci
           - config: release
+            part: main
             tests: release-ci
+          # The naming blocks are all in one program: those jobs build only it.
+          - config: release
+            part: naming
+            tests: release-naming-ci
+            build_args: --target ray_naming_oracle_tests
+          - config: release
+            part: directedit
+            tests: release-directedit-ci
+            build_args: --target ray_naming_oracle_tests
           # Windows also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself
           # rather than through a test preset (an -LE given with --preset was not combined with the preset's own
           # exclusion): the same selection as on Linux and macOS, less the label desktop.
@@ -64,7 +84,16 @@ jobs:
             windows_tests: '-C Debug -L "^quick$" -LE "^(debug-heavy|bench|desktop)$"'
           - preset: windows-msvc
             config: release
-            windows_tests: '-C Release -LE "^(bench|desktop)$"'
+            part: main
+            windows_tests: '-C Release -LE "^(bench|desktop|naming-blocks|directedit-blocks)$"'
+          - preset: windows-msvc
+            config: release
+            part: naming
+            windows_tests: '-C Release -L "^naming-blocks$" -LE "^(bench|desktop)$"'
+          - preset: windows-msvc
+            config: release
+            part: directedit
+            windows_tests: '-C Release -L "^directedit-blocks$" -LE "^(bench|desktop)$"'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -186,20 +215,20 @@ jobs:
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
-          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} || exit /b 1
+          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }} || exit /b 1
           ctest --test-dir build/${{ matrix.preset }} ${{ matrix.windows_tests }} --output-on-failure --timeout 300 --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
       - name: Build (Linux, macOS)
         if: runner.os != 'Windows'
-        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }}
+        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }}
 
-      # Diagnosis of the naming answers that differ on macOS (temporary): the sequences that gave wrong answers there,
-      # with the resolver's and the oracle's answers (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE) and every cos and sin
-      # the sequences took (RAYCAD_NAMING_LIBM_LOG), printed here, so they can be replayed on Windows and Linux
-      # (RAYCAD_NAMING_LIBM_TABLE). tests/naming/oracle/random_test.cpp says how. Before the tests: after them, a job
-      # that had to rebuild its dependencies reached its time limit first (run 45576522199).
+      # Diagnosis of the naming answers that differ on macOS (temporary): the resolver's and the oracle's answers on the
+      # sequences concerned (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE: every element of the baseline and the replay).
+      # macOS's OpenCASCADE builds other geometry from the same inputs, so these sequences are judged from this output.
+      # Before the tests: after them, a job that had to rebuild its dependencies reached its time limit first
+      # (run 45576522199).
       - name: Naming diagnosis (macOS)
-        if: runner.os == 'macOS' && matrix.config == 'release'
+        if: runner.os == 'macOS' && matrix.config == 'release' && matrix.part == 'main'
         continue-on-error: true
         timeout-minutes: 20
         env:
@@ -207,24 +236,22 @@ jobs:
           RAYCAD_NAMING_WORKERS: "1"
         run: |
           bin="build/${{ matrix.preset }}/bin/Release/ray_naming_oracle_tests"
-          log="$RUNNER_TEMP/libm.log"
-          export RAYCAD_NAMING_LIBM_LOG="$log"
+          # Settled: holdout6 3:1 (Exact is right) and holdout3 16:1 (another scenario; that case skips). Open: the
+          # Repaired answers of 8:18, and the macOS-only answers not judged in 10:2 and the first holdout's 7:7 (their
+          # geometry, for the reviewed list).
           for spec in \
             "- 8:18 5EED0000|raycad-synthetic/l_bracket_1.stp #18|edge 104" \
             "- 8:18 5EED0000|raycad-synthetic/l_bracket_1.stp #18|vertex 69" \
-            "holdout6 3:1 1F6A6000|raycad-synthetic/closed_pocket_3.stp #1|face 3" \
-            "holdout6 3:1 1F6A6000|raycad-synthetic/closed_pocket_3.stp #1|edge 8" \
-            "holdout3 16:1 7A11D000|raycad-synthetic/thin_wall_box_1.stp #1|edge 5" \
             "- 10:2 5EED0000|raycad-synthetic/open_pocket_step_1.stp #2|face 16"; do
             echo "== probe $spec"
             RAYCAD_NAMING_PROBE="$spec" "$bin" "[.naming-probe]" 2>&1 | grep -E "^probe |FAILED|replay failure" || true
           done
           echo "== 8:18 of the main block, verbose"
           RAYCAD_NAMING_ONLY=8:18 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random]" 2>&1 || true
-          echo "== 3:1 of holdout 6, verbose"
-          RAYCAD_NAMING_ONLY=3:1 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random-holdout6]" 2>&1 | tail -n 120 || true
-          echo "== cos and sin taken (function, argument bits, result bits)"
-          sort -u "$log" || true
+          echo "== 10:2 of the main block, verbose"
+          RAYCAD_NAMING_ONLY=10:2 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random]" 2>&1 || true
+          echo "== 7:7 of the first holdout, verbose"
+          RAYCAD_NAMING_ONLY=7:7 RAYCAD_NAMING_VERBOSE=1 "$bin" "[random-holdout]" 2>&1 || true
 
       # No display on the runners: the desktop app's smoke test renders with Qt's software backend into
       # the offscreen platform.
@@ -233,4 +260,33 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
-        run: ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)"
+        # The output is kept for the next step.
+        run: |
+          set -o pipefail
+          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)" 2>&1 \
+            | tee "$RUNNER_TEMP/ctest.log"
+
+      # A wrong answer of a direct-edit naming block can be judged only from the geometry this runner built (another
+      # platform's kernel builds another sequence): for each, the oracle's [.evidence] test replays the sequence here
+      # and writes the shapes, elements, scripts and claims (tools/ci_naming_evidence.py), uploaded as an artifact.
+      - name: Naming evidence (Linux, macOS)
+        if: failure() && runner.os != 'Windows'
+        continue-on-error: true
+        timeout-minutes: 40
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          [ -f "$RUNNER_TEMP/ctest.log" ] || exit 0
+          cfg=Release; [ "${{ matrix.config }}" = debug ] && cfg=Debug
+          python3 tools/ci_naming_evidence.py --log "$RUNNER_TEMP/ctest.log" --out evidence \
+            --bin "build/${{ matrix.preset }}/bin/$cfg/ray_naming_oracle_tests"
+
+      - name: Upload naming evidence
+        if: failure() && runner.os != 'Windows'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: naming-evidence-${{ matrix.preset }}-${{ matrix.config }}-${{ matrix.part }}
+          path: evidence
+          if-no-files-found: ignore
+          retention-days: 30
