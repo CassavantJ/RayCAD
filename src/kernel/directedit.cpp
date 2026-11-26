@@ -47,9 +47,10 @@
 // cap it puts on what is left of a hole, on the plane of a counterbore floor that is now inside the material) is not
 // that face, nor is an image that shares no ground with the old face: either is Generated from it, and the old
 // face Deleted if nothing else is its image. The same holds for the faces a push/pull or a resize does not move.
-// T-081b: naming would otherwise
-// resolve a reference to the floor to a face on the other side of the material, or a reference to a fillet to a face
-// somewhere else.
+// The edges and vertices of a face a push/pull moves or a resize resizes are Modified to their counterparts on the
+// edited face when the counterpart is unique (modifyEditedBoundaries; T-081b). T-081b: naming would otherwise resolve a
+// reference to the floor to a face on the other side of the material, or a reference to a fillet to a face somewhere
+// else.
 //
 // CANCEL AND ABANDON. Defeaturing can run for minutes on some fillets (S9: over 150 s) and polls OCCT's progress hook
 // rarely (S9: up to 9.4 s from cancel to return). So every direct edit runs its OCCT work on a kernel-owned thread
@@ -67,6 +68,7 @@
 #include "io_internal.h"
 
 #include <BOPAlgo_Alerts.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
@@ -112,6 +114,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -578,6 +581,208 @@ std::optional<HistoryEntry::Relation> primaryRelation(const ShapeHistory& histor
     return std::nullopt;
 }
 
+// The faces around `index` (an edge or a vertex of `shape`, by kind), as 0-based face indices, sorted, each once.
+std::vector<std::uint32_t> facesAround(const Shape& shape, SubKind kind, std::uint32_t index)
+{
+    const detail::AncestorIndex& map = shape.impl->ancestors(kind, SubKind::Face);
+    const detail::ShapeIndex& subs = shape.impl->subs[detail::kindSlot(kind)];
+    const detail::ShapeIndex& faces = shape.impl->subs[detail::kindSlot(SubKind::Face)];
+    std::vector<std::uint32_t> out;
+    const int k = map.FindIndex(subs.FindKey(static_cast<int>(index) + 1));
+    if (k == 0)
+        return out;
+    for (const TopoDS_Shape& f : map.FindFromIndex(k))
+        if (const int i = faces.FindIndex(f); i > 0)
+            out.push_back(static_cast<std::uint32_t>(i - 1));
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+// Whether `p` lies on the (unbounded) surface of `face`, within 0.1 um (faces a boolean split from one surface can
+// differ by a few 1e-6 mm).
+bool onSurfaceOf(const TopoDS_Face& face, const gp_Pnt& p)
+{
+    GeomAPI_ProjectPointOnSurf proj(p, BRep_Tool::Surface(face));
+    return proj.NbPoints() > 0 && proj.LowerDistance() <= 1e-4;
+}
+
+// Whether result edge `edge` runs on into another edge on the same two surfaces (it meets, at one of its vertices, an
+// edge whose middle lies on the surfaces of both of `edge`'s faces): the edited boundary is then longer than the input
+// edge in some direction, and which stretch carries the input edge's identity is not for the kernel to decide.
+bool continuesOnSameSurfaces(const Shape& result, std::uint32_t edge, const std::vector<std::uint32_t>& faces)
+{
+    if (faces.size() != 2)
+        return false;
+    const detail::ShapeIndex& edges = result.impl->subs[detail::kindSlot(SubKind::Edge)];
+    const detail::ShapeIndex& vertices = result.impl->subs[detail::kindSlot(SubKind::Vertex)];
+    const detail::ShapeIndex& resultFaces = result.impl->subs[detail::kindSlot(SubKind::Face)];
+    const detail::AncestorIndex& vertexEdges = result.impl->ancestors(SubKind::Vertex, SubKind::Edge);
+    const TopoDS_Shape& self = edges.FindKey(static_cast<int>(edge) + 1);
+    const TopoDS_Face a = TopoDS::Face(resultFaces.FindKey(static_cast<int>(faces[0]) + 1));
+    const TopoDS_Face b = TopoDS::Face(resultFaces.FindKey(static_cast<int>(faces[1]) + 1));
+    for (TopExp_Explorer v(self, TopAbs_VERTEX); v.More(); v.Next()) {
+        if (vertices.FindIndex(v.Current()) == 0)
+            continue;
+        const int k = vertexEdges.FindIndex(v.Current());
+        if (k == 0)
+            continue;
+        for (const TopoDS_Shape& other : vertexEdges.FindFromIndex(k)) {
+            if (other.IsSame(self) || BRep_Tool::Degenerated(TopoDS::Edge(other)))
+                continue;
+            const BRepAdaptor_Curve curve(TopoDS::Edge(other));
+            const gp_Pnt mid = curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter()));
+            if (onSurfaceOf(a, mid) && onSurfaceOf(b, mid))
+                return true;
+        }
+    }
+    return false;
+}
+
+// See "HISTORY" (kernel.h, T-081b): the edges and vertices of a face a push/pull moves or a resize resizes are Modified
+// to their counterparts on the edited face when that counterpart is unique. The counterpart of an edge or vertex is the
+// one result element whose faces are exactly one image of each face around it (an edge between two faces: the result
+// edge between their images; a seam: the seam of the face's image; a vertex: the result vertex on an image of each of
+// its faces and on no other face). Only an element the boolean reported Deleted gets one, and only a result element no
+// other input element is Modified to, not an edge that runs on into another edge on the same two surfaces (the
+// edited boundary grew, see continuesOnSameSurfaces), and not a vertex on fewer than three faces that is not where the
+// edit takes its point (see whereMoved); anything else stays as it was (Deleted, its counterpart new).
+// `planarEndsOnly` (a resize): only elements whose other faces are planes square to the bore's axis (its flat end
+// faces: a rim; a line where a plane along the axis cuts the bore moves along the bore and is left alone).
+void modifyEditedBoundaries(ShapeHistory& history, const Shape& input, const Shape& result, std::span<const int> edited,
+                            bool planarEndsOnly = false)
+{
+    std::vector<gp_Ax1> axes; // the edited faces' axes (a resize) or normals (a push/pull)
+    for (const int f : edited) {
+        const BRepAdaptor_Surface s(TopoDS::Face(input.impl->subs[detail::kindSlot(SubKind::Face)].FindKey(f + 1)));
+        if (s.GetType() == GeomAbs_Cylinder)
+            axes.push_back(s.Cylinder().Axis());
+        else if (s.GetType() == GeomAbs_Cone)
+            axes.push_back(s.Cone().Axis());
+        else if (s.GetType() == GeomAbs_Plane)
+            axes.push_back(s.Plane().Axis());
+    }
+    const auto endFace = [&axes](const BRepAdaptor_Surface& s) {
+        if (s.GetType() != GeomAbs_Plane || axes.empty())
+            return false;
+        const gp_Dir n = s.Plane().Axis().Direction();
+        return std::all_of(axes.begin(), axes.end(),
+                           [&n](const gp_Ax1& a) { return n.IsParallel(a.Direction(), 1e-6); });
+    };
+    // A vertex on fewer than three faces (where a closed rim starts, at the seam) is not fixed by its faces: it is
+    // paired only where the edit takes its point, square to the moved plane (a push/pull) or out from the bore's axis
+    // at the same angle and height (a resize).
+    const auto whereMoved = [&axes, planarEndsOnly](const gp_Pnt& was, const gp_Pnt& is) {
+        const double tol = 1e-6;
+        return std::any_of(axes.begin(), axes.end(), [&](const gp_Ax1& a) {
+            const gp_Vec d(a.Direction());
+            if (!planarEndsOnly)
+                return gp_Vec(was, is).Crossed(d).Magnitude() < tol;
+            const gp_Vec v0(a.Location(), was), v1(a.Location(), is);
+            const double h0 = v0.Dot(d), h1 = v1.Dot(d);
+            const gp_Vec r0 = v0 - d * h0, r1 = v1 - d * h1;
+            return std::abs(h0 - h1) < tol && r0.Magnitude() > tol && r1.Magnitude() > tol && r0.Angle(r1) < tol;
+        });
+    };
+    std::map<std::uint32_t, std::set<std::uint32_t>> images; // input face -> its Modified result faces
+    std::set<SubId> taken; // result edges and vertices an input element is already Modified to
+    for (const HistoryEntry& e : history.entries) {
+        if (e.inputIndex != 0 || e.relation != HistoryEntry::Relation::Modified)
+            continue;
+        if (e.source.kind == SubKind::Face) {
+            for (const SubId& r : e.results)
+                if (r.kind == SubKind::Face)
+                    images[e.source.index].insert(r.index);
+        } else {
+            taken.insert(e.results.begin(), e.results.end());
+        }
+    }
+    const detail::ShapeIndex& inFaces = input.impl->subs[detail::kindSlot(SubKind::Face)];
+    std::map<SubId, SubId> found;
+    std::map<SubId, int> claims;
+    for (const SubKind kind : {SubKind::Edge, SubKind::Vertex}) {
+        const detail::ShapeIndex& subs = input.impl->subs[detail::kindSlot(kind)];
+        std::set<std::uint32_t> candidates;
+        for (const int f : edited)
+            for (TopExp_Explorer it(inFaces.FindKey(f + 1), detail::occtKind(kind)); it.More(); it.Next())
+                if (const int i = subs.FindIndex(it.Current()); i > 0)
+                    candidates.insert(static_cast<std::uint32_t>(i - 1));
+        // Result elements of this kind with their faces, made once.
+        std::vector<std::vector<std::uint32_t>> resultFaces(result.count(kind));
+        for (std::uint32_t r = 0; r < result.count(kind); ++r)
+            resultFaces[r] = facesAround(result, kind, r);
+        for (const std::uint32_t c : candidates) {
+            const SubId source{kind, c};
+            if (primaryRelation(history, source) != HistoryEntry::Relation::Deleted)
+                continue;
+            const std::vector<std::uint32_t> around = facesAround(input, kind, c);
+            std::vector<const std::set<std::uint32_t>*> imageSets;
+            bool mapped = !around.empty();
+            // A resized bore: only where it meets flat end faces (a rim on a countersink's cone moves along the cone).
+            if (planarEndsOnly)
+                for (const std::uint32_t f : around)
+                    if (std::find(edited.begin(), edited.end(), static_cast<int>(f)) == edited.end() &&
+                        !endFace(BRepAdaptor_Surface(TopoDS::Face(inFaces.FindKey(static_cast<int>(f) + 1)))))
+                        mapped = false;
+            for (const std::uint32_t f : around) {
+                const auto it = images.find(f);
+                mapped = mapped && it != images.end() && !it->second.empty();
+                if (mapped)
+                    imageSets.push_back(&it->second);
+            }
+            if (!mapped)
+                continue;
+            std::optional<SubId> only;
+            bool unique = true;
+            for (std::uint32_t r = 0; r < result.count(kind) && unique; ++r) {
+                const std::vector<std::uint32_t>& faces = resultFaces[r];
+                if (faces.size() != around.size())
+                    continue;
+                std::vector<bool> used(faces.size(), false);
+                bool match = true;
+                for (const auto* set : imageSets) {
+                    bool hit = false;
+                    for (std::size_t j = 0; j < faces.size() && !hit; ++j)
+                        if (!used[j] && set->count(faces[j]) != 0) {
+                            used[j] = true;
+                            hit = true;
+                        }
+                    match = match && hit;
+                }
+                if (!match)
+                    continue;
+                if (only)
+                    unique = false;
+                else
+                    only = SubId{kind, r};
+            }
+            if (!unique || !only || taken.count(*only) != 0)
+                continue;
+            if (kind == SubKind::Edge && continuesOnSameSurfaces(result, only->index, resultFaces[only->index]))
+                continue;
+            if (kind == SubKind::Vertex && around.size() < 3 &&
+                !whereMoved(BRep_Tool::Pnt(TopoDS::Vertex(subs.FindKey(static_cast<int>(c) + 1))),
+                            BRep_Tool::Pnt(TopoDS::Vertex(result.impl->subs[detail::kindSlot(SubKind::Vertex)].FindKey(
+                                static_cast<int>(only->index) + 1)))))
+                continue;
+            found[source] = *only;
+            ++claims[*only];
+        }
+    }
+    bool changed = false;
+    for (HistoryEntry& e : history.entries) {
+        if (e.inputIndex != 0 || e.relation != HistoryEntry::Relation::Deleted)
+            continue;
+        const auto it = found.find(e.source);
+        if (it == found.end() || claims[it->second] != 1)
+            continue;
+        e.relation = HistoryEntry::Relation::Modified;
+        e.results = {it->second};
+        changed = true;
+    }
+    if (changed)
+        canonicalise(history);
+}
 // ShapeAnalysis_Shell finds no free and no badly oriented edge. validateSolids' incremental BRepCheck passed two
 // blend-run removals on NIST CTC 02 whose shells had badly oriented edges (T-080 measurement), so the direct edits
 // check this too. May throw.
@@ -1314,6 +1519,7 @@ Result<OpResult> offsetWork(const Shape& shape, const std::vector<int>& picked, 
                                      SubId{SubKind::Face, static_cast<std::uint32_t>(picked.front())});
     // (The moved faces' images lie apart from them by design; any other face keeps its place.)
     demoteReversedImages(out.history, shape, out.shape, picked);
+    modifyEditedBoundaries(out.history, shape, out.shape, picked);
     for (const int f : picked) {
         bool square = true;
         for (const detail::FaceLink& link : model.links(f))
@@ -1426,6 +1632,7 @@ Result<OpResult> finishResize(FaceModel& model, const std::vector<int>& bore, co
     out.history = rewriteToolHistory(std::move(body), op.history, edited, {},
                                      SubId{SubKind::Face, static_cast<std::uint32_t>(bore.front())});
     demoteReversedImages(out.history, input, out.shape, bore);
+    modifyEditedBoundaries(out.history, input, out.shape, bore, true);
     keepBooleanWarnings(op, out);
     addOrphanWarning(out);
     return out;

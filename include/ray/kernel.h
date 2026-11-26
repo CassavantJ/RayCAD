@@ -9,6 +9,7 @@
 // Amended by T-050 (shared 2D geometry core): the rules of sliceAt, silhouette and minInternalCornerRadius are written
 // down below, and faceLoops / edgeCurves give a picked face or edge in a frame's XY by the same curve rules (CAM builds
 // contour and pocket boundaries from picked geometry, and only the kernel can read curves).
+// Amended by T-081b (naming through direct edits): comments only: an edited face's edges and vertices in the history.
 // Amended by T-080 (direct edits): comments only, no declaration changed. What each direct edit does with a hole, a
 // fillet out of a run and nothing to merge; which faces of the internal tool body are Generated; that direct edits run
 // on a kernel thread and are abandoned on cancel; what blendRun returns for a face that is not a blend.
@@ -173,7 +174,11 @@ Result<OpResult> splitBody(const Shape&, Plane, JobContext&);                   
 // InvalidArgument.
 // History (T-080): the edited face is Modified to its new face(s); faces of the internal tool body that end on the
 // result where no input face accounts for them are Generated from the edge they were swept from (push/pull) or from
-// the edited hole face (resize); the tool never appears as an input.
+// the edited hole face (resize); the tool never appears as an input. T-081b: the edges and vertices of a face a direct
+// edit moves or resizes are Modified to their counterparts on the edited face (the element between the images of the
+// same faces; for a resized bore, the rim on a flat end face square to its axis), only when that counterpart is unique
+// and is not an edge that runs on into another edge on the same two surfaces; otherwise they are Deleted and the
+// counterpart is new, as before.
 // deleteFaces: BRepAlgoAPI_Defeaturing. A hole is removed with its counterbore/countersink/chamfer stack,
 //   falling back to the bore alone. Removing one face out of a blend run usually fails: pass the whole run.
 //   Any face of a hole (its wall, bottom, counterbore floor) stands for the hole; the bore-alone fall-back adds a
