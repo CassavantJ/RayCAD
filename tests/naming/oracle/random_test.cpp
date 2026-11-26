@@ -1154,10 +1154,19 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, std::uint64_t seedBase
     return out;
 }
 
-// A replayed case checks one scenario, and the kernel builds the scenario from the sequence's inputs: another
-// platform's OpenCASCADE can build another (macOS ARM64, CI run 45646624932). Where `holds` is false the case has
-// nothing to check on this platform and is skipped, with what this kernel gave instead; never past a wrong answer:
-// the replayed sequence must have none (a skip after a failed check still fails the case).
+// The platforms where a replayed case may skip (an allow-list): macOS ARM64, whose OpenCASCADE builds other geometry
+// from the same inputs (CI run 45646624932). Elsewhere a case's scenario is the one it was written on, and its absence
+// fails the case.
+#if defined(__APPLE__)
+constexpr bool kScenarioMaySkip = true;
+#else
+constexpr bool kScenarioMaySkip = false;
+#endif
+
+// A replayed case checks one scenario, and the kernel builds the scenario from the sequence's inputs. Where `holds` is
+// false the case has nothing to check: on an allowed platform it is skipped, printed (without -s: on stdout and as
+// Catch2's SKIPPED), with what this kernel gave instead; elsewhere it fails. Never past a wrong answer: the replayed
+// sequence must have none (a skip after a failed check still fails the case).
 void skipUnlessScenario(const std::vector<Looked>& looked, bool holds, const std::string& scenario)
 {
     if (holds)
@@ -1177,8 +1186,12 @@ void skipUnlessScenario(const std::vector<Looked>& looked, bool holds, const std
     for (const Looked& l : looked)
         got += " " + l.id + ": " + name(l.answer) + " " + list(l.elements) + ", expected " + list(l.expected) +
                (l.expectedMerged ? " merged" : "") + ", " + verdictName(l.judgement.verdict) + ";";
-    SKIP("this platform's kernel does not build the scenario (" << scenario << "):" << got
-                                                                << " no wrong answer in the sequence");
+    const std::string what = "this platform's kernel does not build the scenario (" + scenario + "):" + got +
+                             " wrong answers in the sequence: " + std::to_string(lastReplayWrong);
+    if (!kScenarioMaySkip)
+        FAIL(what << " (a skip is allowed on macOS only)");
+    std::printf("SKIPPED replay: %s\n", what.c_str());
+    SKIP(what);
 }
 
 } // namespace
