@@ -1016,9 +1016,9 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
             return pieces;
         KnownMove move = knownMove(map, ref);
         // A reference made before placements were recorded, to an edge of a feature that has one now (T-081b round
-        // 5: an old document's reference): whether that feature moved cannot be told. Pieces wholly outside the pick
-        // as it was are left out; when none is left, the caller answers Broken (review1 1:39 edge 83 without
-        // placements: Split {104, 106} with 106 inside a bore at pick time).
+        // 5: an old document's reference): whether that feature moved cannot be told. If a piece lies wholly outside
+        // the pick as it was, none is answered: the caller answers Broken (review1 1:39 edge 83 without placements:
+        // Split {104, 106} with 106 inside a bore at pick time).
         bool placedNow = false;
         // (By the reference's own names and their families, as fillRef records placements: one of their features has
         // a placement now, so a reference made now would carry it. Not every name of the pieces: an edge of a chamfer
@@ -1062,8 +1062,11 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
             if (!outside)
                 kept.push_back(piece);
         }
+        // Its move unknown, a piece where the pick was may be another element the move brought there (the scripted
+        // 8:18: a hole moved up by its width, its lower crossing where the picked upper one was): any piece outside,
+        // none is answered (empty: the caller answers Broken).
         if (placedNow)
-            return kept; // (empty: none lies where the pick was)
+            return kept.size() == pieces.size() ? pieces : std::vector<SubId>{};
         return kept.empty() ? pieces : kept;
     } catch (...) {
         return pieces;

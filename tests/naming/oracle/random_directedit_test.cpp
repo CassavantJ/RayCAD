@@ -3057,7 +3057,7 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
          "a bore wall held in place, owners' extents changed by failed features",
          {{Answer::Exact, {4}}},
          // (11: R3's wall s3, beside the bore along edge 18, on Linux.)
-         {{Answer::Exact, {4}, 4}, {Answer::Split, {4, 11}}}},
+         {{Answer::Exact, {11}}, {Answer::Split, {4, 11}}}},
         {18,
          6,
          "directedit nist-d2mi/827-9999-905.stp #6|edge 25",
@@ -3066,8 +3066,8 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
          "linux",
          "a line held in place, owners' extents changed by failed features",
          {{Answer::Exact, {18}}},
-         // (One negative only: the nearest edge off the pick's carriers.)
-         {{Answer::Exact, {18}, 18}}},
+         // (The bore's rim at the top, z 2.159, found by a point on it.)
+         {{Answer::Exact, {}, -1, {Vec3{-1.7844, 0, 2.159}}}, {Answer::Split, {18}, -1, {Vec3{-1.7844, 0, 2.159}}}}},
     };
     std::vector<std::string> offPlatform;
     for (const P& p : ps) {
@@ -3084,6 +3084,7 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
         CHECK_FALSE(isWrong(looked[0].judgement.verdict));
         for (std::size_t i = 0; i < probes.size(); ++i) {
             INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+            CHECK(looked[0].probed[i].rfind("asked;", 0) != 0); // a probe that found its elements
             if (i < p.right.size())
                 CHECK(looked[0].probes[i].verdict == Verdict::Correct);
             else
