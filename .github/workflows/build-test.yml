@@ -260,4 +260,33 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
-        run: ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)"
+        # The output is kept for the next step.
+        run: |
+          set -o pipefail
+          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)" 2>&1 \
+            | tee "$RUNNER_TEMP/ctest.log"
+
+      # A wrong answer of a direct-edit naming block can be judged only from the geometry this runner built (another
+      # platform's kernel builds another sequence): for each, the oracle's [.evidence] test replays the sequence here
+      # and writes the shapes, elements, scripts and claims (tools/ci_naming_evidence.py), uploaded as an artifact.
+      - name: Naming evidence (Linux, macOS)
+        if: failure() && runner.os != 'Windows'
+        continue-on-error: true
+        timeout-minutes: 40
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          [ -f "$RUNNER_TEMP/ctest.log" ] || exit 0
+          cfg=Release; [ "${{ matrix.config }}" = debug ] && cfg=Debug
+          python3 tools/ci_naming_evidence.py --log "$RUNNER_TEMP/ctest.log" --out evidence \
+            --bin "build/${{ matrix.preset }}/bin/$cfg/ray_naming_oracle_tests"
+
+      - name: Upload naming evidence
+        if: failure() && runner.os != 'Windows'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: naming-evidence-${{ matrix.preset }}-${{ matrix.config }}-${{ matrix.part }}
+          path: evidence
+          if-no-files-found: ignore
+          retention-days: 30

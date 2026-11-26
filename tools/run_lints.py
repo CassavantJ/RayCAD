@@ -14,7 +14,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINTS = ["lint_includes", "lint_cmake_deps", "lint_dmath", "lint_colours", "lint_licences", "corpus_check"]
 # Tools that have nothing to check on the tree by themselves, only a self-test.
-SELF_TESTS = ["corpus_fetch", "update_golden"]
+SELF_TESTS = ["corpus_fetch", "update_golden", "ci_naming_evidence"]
 
 
 def main():
