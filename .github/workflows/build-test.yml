@@ -1,5 +1,8 @@
-# Configure, build and test on Windows, Linux and macOS (Apple Silicon): Debug with the quick test tier, Release
-# with every test, each configuration in a job of its own (Release in three: the slow naming blocks in two of theirs).
+# Configure, build and test on Windows, Linux and macOS (Apple Silicon), each configuration in a job of its own.
+# Per push and pull request: Debug and Release with the quick test tier. Nightly (nightly.yml calls this workflow with
+# scope nightly): Release with the slow tier, in three jobs per OS, the slow tests (slow), the T-081a naming blocks
+# (naming) and the T-081b direct-edit blocks (directedit). Every test runs in exactly one of the two (tests/tiers.cmake
+# labels; README, "Which tests to run").
 #
 # vcpkg binaries are cached with actions/cache on vcpkg's file-based binary cache folder (the old x-gha
 # backend is gone). No secret is needed. Qt comes from prebuilt binaries (tools/fetch_qt.py, cached).
@@ -11,12 +14,24 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      scope:
+        description: "push (the quick tier) or nightly (the slow tier)"
+        type: string
+        required: true
+      ref:
+        description: "The branch, tag or commit to check out (empty: the caller's)"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-test-${{ github.ref }}
+  # Per scope: a push never waits behind or replaces a nightly run (nightly.yml).
+  group: build-test-${{ inputs.scope || 'push' }}-${{ github.ref }}
   # A run on main is allowed to finish so it can fill the dependency cache.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -28,10 +43,11 @@ jobs:
     # Debug and Release are separate jobs that run side by side. In one job, one after the other, they did not fit
     # the time limit on the 4-processor Windows runner (run 45129357124: about 15 minutes of Debug build, over 100
     # of Debug tests, then the Release build and every test still to come at 4 hours).
-    # Release is three jobs (part): every test but the slow naming blocks (main), the T-081a naming blocks (naming)
-    # and the T-081b direct-edit blocks (directedit), labels naming-blocks and directedit-blocks in tests/tiers.cmake.
-    # The blocks run one at a time on the 4-processor runner; after everything else in one job they took Windows past
-    # the 4-hour limit (run 45646624932: stopped at 114 of 121 tests).
+    # Per push the part is main (the quick tier). The nightly Release is three jobs (part): the slow tier but the
+    # naming blocks (slow), the T-081a naming blocks (naming) and the T-081b direct-edit blocks (directedit), labels
+    # naming-blocks and directedit-blocks in tests/tiers.cmake. The blocks run one at a time on the 4-processor runner;
+    # after everything else in one job they took Windows past the 4-hour limit (run 45646624932: stopped at 114 of 121
+    # tests).
     name: ${{ matrix.preset }}-${{ matrix.config }}${{ matrix.part != 'main' && format('-{0}', matrix.part) || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
@@ -39,13 +55,8 @@ jobs:
       fail-fast: false
       matrix:
         preset: [windows-msvc, linux-gcc, macos-arm64]
-        config: [debug, release]
-        part: [main, naming, directedit]
-        exclude:
-          - config: debug
-            part: naming
-          - config: debug
-            part: directedit
+        config: ${{ fromJSON(inputs.scope == 'nightly' && '["release"]' || '["debug", "release"]') }}
+        part: ${{ fromJSON(inputs.scope == 'nightly' && '["slow", "naming", "directedit"]' || '["main"]') }}
         include:
           - preset: windows-msvc
             os: windows-latest
@@ -59,43 +70,41 @@ jobs:
             os: macos-latest
             triplet: arm64-osx-dynamic
             qt_arch: clang_64
-          # The test preset of each configuration on Linux and macOS (tests/tiers.cmake): Debug runs the quick tier
-          # less the debug-heavy tests, Release every test; both leave out the label bench (wall-clock budgets set for
-          # a developer's machine, which the shared runners do not meet reliably; local runs keep them).
-          - config: debug
-            tests: debug-ci
-          - config: release
-            part: main
-            tests: release-ci
-          # The naming blocks are all in one program: those jobs build only it.
-          - config: release
-            part: naming
-            tests: release-naming-ci
-            build_args: --target ray_naming_oracle_tests
-          - config: release
-            part: directedit
-            tests: release-directedit-ci
-            build_args: --target ray_naming_oracle_tests
-          # Windows also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself
-          # rather than through a test preset (an -LE given with --preset was not combined with the preset's own
-          # exclusion): the same selection as on Linux and macOS, less the label desktop.
-          - preset: windows-msvc
-            config: debug
-            windows_tests: '-C Debug -L "^quick$" -LE "^(debug-heavy|bench|desktop)$"'
-          - preset: windows-msvc
-            config: release
-            part: main
-            windows_tests: '-C Release -LE "^(bench|desktop|naming-blocks|directedit-blocks)$"'
-          - preset: windows-msvc
-            config: release
-            part: naming
-            windows_tests: '-C Release -L "^naming-blocks$" -LE "^(bench|desktop)$"'
-          - preset: windows-msvc
-            config: release
-            part: directedit
-            windows_tests: '-C Release -L "^directedit-blocks$" -LE "^(bench|desktop)$"'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The tests of this job, chosen here rather than by matrix include entries: with the configurations and parts
+      # set by scope, an include entry that matches no job of its scope would become a job of its own. Linux and macOS
+      # use a test preset (tests/tiers.cmake labels): Debug runs the quick tier less the debug-heavy tests, Release main
+      # the quick tier, the nightly parts the slow tier between them; all leave out the label bench (wall-clock budgets
+      # set for a developer's machine, which the shared runners do not meet reliably; local runs keep them). Windows
+      # also leaves out the window tests (see "Build and test (Windows)"), so it filters by label itself rather than
+      # through a test preset (an -LE given with --preset was not combined with the preset's own exclusion): the same
+      # selection as on Linux and macOS, less the label desktop. The naming blocks are all in one program: those jobs
+      # build only it.
+      - name: Select tests
+        shell: bash
+        run: |
+          args=""
+          case "${{ matrix.config }}-${{ matrix.part }}" in
+            debug-main)
+              tests=debug-ci; win='-C Debug -L "^quick$" -LE "^(debug-heavy|bench|desktop)$"' ;;
+            release-main)
+              tests=release-quick-ci; win='-C Release -L "^quick$" -LE "^(bench|desktop)$"' ;;
+            release-slow)
+              tests=release-slow-ci; win='-C Release -L "^slow$" -LE "^(bench|desktop|naming-blocks|directedit-blocks)$"' ;;
+            release-naming)
+              tests=release-naming-ci; win='-C Release -L "^naming-blocks$" -LE "^(bench|desktop)$"'
+              args="--target ray_naming_oracle_tests" ;;
+            release-directedit)
+              tests=release-directedit-ci; win='-C Release -L "^directedit-blocks$" -LE "^(bench|desktop)$"'
+              args="--target ray_naming_oracle_tests" ;;
+            *) echo "no tests for ${{ matrix.config }}-${{ matrix.part }}"; exit 1 ;;
+          esac
+          { echo "CI_TESTS=$tests"; echo "CI_WINDOWS_TESTS=$win"; echo "CI_BUILD_ARGS=$args"; } >> "$GITHUB_ENV"
+          echo "tests: $tests (Windows: $win) ${args:+build: $args}"
 
       - name: Install system packages (Linux)
         if: runner.os == 'Linux'
@@ -193,10 +202,10 @@ jobs:
           echo | c++ -dM -E -x c++ - | grep -E '__FMA__|__AVX2__|__x86_64__|__aarch64__' | tr '\n' ' '; echo
           cmake --preset ${{ matrix.preset }}
 
-      # Debug runs the quick test tier, Release runs every test (tests/tiers.cmake). The slow tier is the long
-      # randomised naming blocks: in Debug they re-run the code paths the quick tier's naming tests (S4, acceptance,
-      # the smoke block) already run there, at many times the cost (an MSVC Debug build cannot finish them in this
-      # job), while Release here and the AddressSanitizer job (sanitizers.yml) run them in full. Debug also leaves
+      # Debug runs the quick test tier, Release the quick tier per push and the slow tier nightly (tests/tiers.cmake).
+      # The slow tier is mostly the long randomised naming blocks: in Debug they re-run the code paths the quick tier's
+      # naming tests (S4, acceptance, the smoke block) already run there, at many times the cost (an MSVC Debug build
+      # cannot finish them in this job), while the nightly Release and AddressSanitizer jobs run them. Debug also leaves
       # out the tests labelled debug-heavy (presets <preset>-debug-ci): the S4 suites, the Release-scale benchmarks
       # and the suites that take 20 minutes or more each in an MSVC Debug build. On the 4-processor runners they took
       # the Debug tests past two hours on Windows and to almost three on Linux (run 45454955286), most of it in the
@@ -215,20 +224,20 @@ jobs:
         shell: cmd
         run: |
           call tools\win-env.cmd || exit /b 1
-          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }} || exit /b 1
-          ctest --test-dir build/${{ matrix.preset }} ${{ matrix.windows_tests }} --output-on-failure --timeout 300 --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
+          cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ env.CI_BUILD_ARGS }} || exit /b 1
+          ctest --test-dir build/${{ matrix.preset }} ${{ env.CI_WINDOWS_TESTS }} --output-on-failure --timeout 300 --parallel %NUMBER_OF_PROCESSORS% || exit /b 1
 
       - name: Build (Linux, macOS)
         if: runner.os != 'Windows'
-        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ matrix.build_args }}
+        run: cmake --build --preset ${{ matrix.preset }}-${{ matrix.config }} ${{ env.CI_BUILD_ARGS }}
 
       # Diagnosis of the naming answers that differ on macOS (temporary): the resolver's and the oracle's answers on the
       # sequences concerned (RAYCAD_NAMING_PROBE, RAYCAD_NAMING_VERBOSE: every element of the baseline and the replay).
       # macOS's OpenCASCADE builds other geometry from the same inputs, so these sequences are judged from this output.
-      # Before the tests: after them, a job that had to rebuild its dependencies reached its time limit first
-      # (run 45576522199).
+      # In the nightly naming job, whose blocks they come from. Before the tests: after them, a job that had to rebuild
+      # its dependencies reached its time limit first (run 45576522199).
       - name: Naming diagnosis (macOS)
-        if: runner.os == 'macOS' && matrix.config == 'release' && matrix.part == 'main'
+        if: runner.os == 'macOS' && matrix.config == 'release' && matrix.part == 'naming'
         continue-on-error: true
         timeout-minutes: 20
         env:
@@ -263,7 +272,7 @@ jobs:
         # The output is kept for the next step.
         run: |
           set -o pipefail
-          ctest --preset ${{ matrix.preset }}-${{ matrix.tests }} --parallel "$(getconf _NPROCESSORS_ONLN)" 2>&1 \
+          ctest --preset ${{ matrix.preset }}-${{ env.CI_TESTS }} --parallel "$(getconf _NPROCESSORS_ONLN)" 2>&1 \
             | tee "$RUNNER_TEMP/ctest.log"
 
       # A wrong answer of a direct-edit naming block can be judged only from the geometry this runner built (another

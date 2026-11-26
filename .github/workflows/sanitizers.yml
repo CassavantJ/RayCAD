@@ -1,7 +1,8 @@
 # AddressSanitizer and UndefinedBehaviorSanitizer on Linux (Clang), preset linux-clang-asan.
-# The vcpkg libraries and Qt are not instrumented; RayCAD's own code and the tests are. Every test runs (four jobs
-# in parallel) except those labelled sanitizer-heavy or bench (tests/tiers.cmake). The preset builds without precompiled headers (RAY_PCH=OFF), so this job is also the one that proves
-# every source includes what it uses.
+# The vcpkg libraries and Qt are not instrumented; RayCAD's own code and the tests are. Every test runs except those
+# labelled sanitizer-heavy or bench (tests/tiers.cmake): the quick tier per push and pull request, the slow tier
+# nightly (nightly.yml calls this workflow with scope nightly) in three jobs. The preset builds without precompiled
+# headers (RAY_PCH=OFF), so the quick job is also the one that proves every source includes what it uses.
 # Needs no secret. Actions are pinned to commit SHAs; the comment gives the release tag.
 name: sanitizers
 
@@ -9,12 +10,24 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      scope:
+        description: "push (the quick tier) or nightly (the slow tier)"
+        type: string
+        required: true
+      ref:
+        description: "The branch, tag or commit to check out (empty: the caller's)"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: sanitizers-${{ github.ref }}
+  # Per scope: a push never waits behind or replaces a nightly run (nightly.yml).
+  group: sanitizers-${{ inputs.scope || 'push' }}-${{ github.ref }}
   # A run on main is allowed to finish so it can fill the dependency cache.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -23,31 +36,40 @@ env:
 
 jobs:
   asan-ubsan:
-    # The quick and the slow tier are jobs side by side: one after the other they ran past the 4-hour limit (run
-    # 45528384533: about 35 minutes of build, then over two hours of tests with the slow naming blocks still to come).
-    # The slow naming blocks have jobs of their own, the T-081a ones (naming) and the T-081b direct-edit ones
-    # (directedit), labels in tests/tiers.cmake: with the rest of the slow tier they ran past it again (run
-    # 45646625017: the direct-edit block still running at 4 hours).
+    # The quick tier per push; nightly the slow tier in three jobs side by side: in one job with the quick tier it ran
+    # past the 4-hour limit (run 45528384533: about 35 minutes of build, then over two hours of tests with the slow
+    # naming blocks still to come). The slow naming blocks have jobs of their own, the T-081a ones (naming) and the
+    # T-081b direct-edit ones (directedit), labels in tests/tiers.cmake: with the rest of the slow tier they ran past it
+    # again (run 45646625017: the direct-edit block still running at 4 hours).
     name: asan-ubsan-${{ matrix.tier }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        tier: [quick, slow, naming, directedit]
-        include:
-          - tier: quick
-            labels: -L "^quick$" -LE "^(sanitizer-heavy|bench)$"
-          - tier: slow
-            labels: -L "^slow$" -LE "^(sanitizer-heavy|bench|naming-blocks|directedit-blocks)$"
-          - tier: naming
-            labels: -L "^naming-blocks$" -LE "^(sanitizer-heavy|bench)$"
-            build_args: --target ray_naming_oracle_tests
-          - tier: directedit
-            labels: -L "^directedit-blocks$" -LE "^(sanitizer-heavy|bench)$"
-            build_args: --target ray_naming_oracle_tests
+        tier: ${{ fromJSON(inputs.scope == 'nightly' && '["slow", "naming", "directedit"]' || '["quick"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      # This job's tests, by label (tests/tiers.cmake), chosen here rather than by matrix include entries: with the
+      # tiers set by scope, an include entry that matches no job of its scope would become a job of its own. Each
+      # leaves out the tests labelled sanitizer-heavy (too slow under ASan for the runner) and bench (wall-clock
+      # budgets for an optimised build on a developer's machine). The naming tiers build only the program of their
+      # tests.
+      - name: Select tests
+        run: |
+          args=""
+          case "${{ matrix.tier }}" in
+            quick) labels='-L "^quick$" -LE "^(sanitizer-heavy|bench)$"' ;;
+            slow) labels='-L "^slow$" -LE "^(sanitizer-heavy|bench|naming-blocks|directedit-blocks)$"' ;;
+            naming) labels='-L "^naming-blocks$" -LE "^(sanitizer-heavy|bench)$"'; args="--target ray_naming_oracle_tests" ;;
+            directedit) labels='-L "^directedit-blocks$" -LE "^(sanitizer-heavy|bench)$"'; args="--target ray_naming_oracle_tests" ;;
+            *) echo "no tests for tier ${{ matrix.tier }}"; exit 1 ;;
+          esac
+          { echo "CI_LABELS=$labels"; echo "CI_BUILD_ARGS=$args"; } >> "$GITHUB_ENV"
+          echo "tests: $labels ${args:+build: $args}"
 
       - name: Install system packages
         run: |
@@ -119,8 +141,7 @@ jobs:
 
       - name: Build
         # -k 0: a failed compile does not stop the others, so one run reports every source that does not build.
-        # The naming tiers build only the program of their tests.
-        run: cmake --build --preset linux-clang-asan ${{ matrix.build_args }} -- -k 0
+        run: cmake --build --preset linux-clang-asan ${{ env.CI_BUILD_ARGS }} -- -k 0
 
       # Leak detection is off for now: Qt, Fontconfig and OpenCASCADE keep process-lifetime allocations
       # that LeakSanitizer reports, and no suppression list has been built yet.
@@ -132,8 +153,7 @@ jobs:
           QT_QUICK_BACKEND: software
           ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        # This job's tests (matrix.labels): each leaves out those labelled sanitizer-heavy (too slow under ASan for the
-        # runner) and bench (wall-clock budgets for an optimised build on a developer's machine); tests/tiers.cmake.
+        # This job's tests (step "Select tests").
         run: >-
-          ctest --preset linux-clang-asan ${{ matrix.labels }}
+          ctest --preset linux-clang-asan ${{ env.CI_LABELS }}
           --parallel "$(getconf _NPROCESSORS_ONLN)"

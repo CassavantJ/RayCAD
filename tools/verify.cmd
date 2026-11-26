@@ -3,9 +3,9 @@ rem Configures, builds and tests RayCAD on Windows. One argument picks how much 
 rem   quick  (default) Release build, then the quick test tier (ctest --preset windows-msvc-release-quick). Every merge.
 rem   full   Release build, then every test (windows-msvc-release). Before a push, and after any change in src/naming,
 rem          src/kernel, ports/ or the naming oracle.
-rem   ci     exactly what .github/workflows/build-test.yml does on Windows: vcpkg install (triplet x64-windows, into
-rem          build\vcpkg_installed), configure, Debug build and the quick tier without the tests labelled debug-heavy,
-rem          Release build and every test.
+rem   ci     what .github/workflows/build-test.yml does on Windows per push and in the nightly run together: vcpkg
+rem          install (triplet x64-windows, into build\vcpkg_installed), configure, Debug build and the quick tier
+rem          without the tests labelled debug-heavy, Release build and every test.
 rem It stops at the first step that fails. ctest runs one job per logical processor, as CI does (tests/tiers.cmake).
 rem
 rem Usage, from a plain cmd prompt in any folder:   tools\verify.cmd [quick, full or ci]

@@ -5,6 +5,7 @@
 #          to run": every merge).
 #   slow   the long randomised naming blocks and the like. They guard src/naming, src/kernel, ports/ and the naming
 #          oracle, and matter for little else; the full presets (`ctest --preset <config>`) run them with the rest.
+#          CI runs the quick tier per push and the slow tier nightly (.github/workflows/nightly.yml).
 # A test is quick unless it is listed in RAY_SLOW_TESTS. Naming coverage in the quick tier: the S4 scenarios
 # (ray_naming_s4), the acceptance and regression replays (ray_naming_oracle_tests) and the smoke block
 # (ray_naming_random_smoke: the first sequences of every part of the main randomised block, judged by the same gates).
@@ -137,10 +138,10 @@ set(RAY_SANITIZER_HEAVY_TESTS
     ray_naming_random_directedit_holdout2
     ray_naming_random_directedit_review1)
 
-# The slow naming blocks, each in a CI job of its own family (build-test.yml, sanitizers.yml): run one at a time after
-# everything else they took the Release and ASan jobs past the 4-hour limit (run 45646624932: Windows Release stopped
-# at 114 of 121 tests, the direct-edit block alone 36 minutes). Label naming-blocks: the T-081a blocks; label
-# directedit-blocks: the T-081b ones. Local runs are unchanged.
+# The slow naming blocks, each in a nightly CI job of its own family (build-test.yml, sanitizers.yml): run one at a
+# time after everything else they took the Release and ASan jobs past the 4-hour limit (run 45646624932: Windows
+# Release stopped at 114 of 121 tests, the direct-edit block alone 36 minutes). Label naming-blocks: the T-081a blocks;
+# label directedit-blocks: the T-081b ones. Local runs are unchanged.
 set(RAY_NAMING_BLOCK_TESTS
     ray_naming_random
     ray_naming_session
