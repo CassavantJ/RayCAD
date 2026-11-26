@@ -3161,9 +3161,14 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                         std::printf("new-piece: bound face %u n (%.3f %.3f %.3f) o (%.3f %.3f %.3f) still %d pick "
                                     "%.4f..%.4f, %zu moves\n",
                                     f, n.x, n.y, n.z, o.x, o.y, o.z, still ? 1 : 0, lo, hi, moves.size());
-                    if (!still || (lo < -kAnchorTolerance && hi > kAnchorTolerance))
+                    // A bound: the pick ends on the plane and runs away from it (by 0.1 mm at least), on one side; not
+                    // a plane the pick lies in or near (thin_wall_box 16:27 edge 52: an edge 0.002..0.065 mm off the
+                    // plane x 2, along it).
+                    const bool above = lo >= -kAnchorTolerance && lo <= kAnchorTolerance && hi >= lo + 0.1;
+                    const bool below = hi <= kAnchorTolerance && hi >= -kAnchorTolerance && lo <= hi - 0.1;
+                    if (!still || (!above && !below))
                         continue;
-                    bounds.push_back({o, lo >= -kAnchorTolerance ? n : mul(n, -1.0)});
+                    bounds.push_back({o, above ? n : mul(n, -1.0)});
                 }
         }
         auto pastBound = [&](const ElemSamples& es) {

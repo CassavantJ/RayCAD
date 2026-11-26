@@ -1,0 +1,3 @@
+# New-territory acceptances of the naming oracle (oracle.h, NEW TERRITORY) that have been reviewed.
+# One per line: <key> => <one-line justification>. The key is printed by the test ("ACCEPTED <key>: ...").
+# The tests fail on any acceptance that is not listed here.
