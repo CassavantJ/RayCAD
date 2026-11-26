@@ -1002,6 +1002,44 @@ Result<OpResult> booleanWithTool(BoolOp op, const Shape& body, const Shape& tool
                                   where, context));
 }
 
+// Stops OCCT on a cancel or once a time budget is spent (for a diagnosis that must not hold up a refusal).
+class BudgetIndicator final : public Message_ProgressIndicator {
+public:
+    BudgetIndicator(CancelToken cancel, std::chrono::steady_clock::duration budget)
+        : cancel_(std::move(cancel)), until_(std::chrono::steady_clock::now() + budget)
+    {
+    }
+    bool UserBreak() override { return cancel_.cancelled() || std::chrono::steady_clock::now() > until_; }
+    void Show(const Message_ProgressScope&, const bool) override {}
+
+private:
+    CancelToken cancel_;
+    std::chrono::steady_clock::time_point until_;
+};
+
+// Whether cutting `tool` out of `body` leaves more than one solid: a plain BRepAlgoAPI_Cut on a private copy (OCCT
+// parallelism off), without the checks and the unification of kernel::boolean, given at most 5 s. Used to say why a
+// pull-in whose boolean gave an invalid body was refused: when the cut falls apart the request cannot be met at all
+// (the pieces touch along an edge or a point, which no valid solid can do). Empty if the cut fails, runs out of time or
+// is cancelled. May throw.
+std::optional<bool> cutFallsApart(const Shape& body, const TopoDS_Shape& tool, JobContext& ctx)
+{
+    BRepBuilderAPI_Copy copier(detail::occt(body), false, false);
+    BRepAlgoAPI_Cut cut;
+    NCollection_List<TopoDS_Shape> arguments, tools;
+    arguments.Append(copier.Shape());
+    tools.Append(tool);
+    cut.SetArguments(arguments);
+    cut.SetTools(tools);
+    cut.SetRunParallel(false);
+    cut.SetNonDestructive(true);
+    occ::handle<BudgetIndicator> indicator = new BudgetIndicator(ctx.cancel, std::chrono::seconds(5));
+    cut.Build(indicator->Start());
+    if (!cut.IsDone() || cut.HasErrors())
+        return std::nullopt;
+    return detail::solidsOf(cut.Shape()).size() > 1;
+}
+
 // Warnings of a boolean that still apply to the edit (not its "separate solids" note, which the edits refuse).
 void keepBooleanWarnings(const OpResult& from, OpResult& to)
 {
@@ -1215,8 +1253,16 @@ Result<OpResult> offsetWork(const Shape& shape, const std::vector<int>& picked, 
 
     auto op = booleanWithTool(outward ? BoolOp::Union : BoolOp::Cut, shape, tool, ctx, subject, where);
 
-    if (!op)
+    if (!op) {
+        // A pull-in that gave an invalid body: say so if the request itself cannot be met (the cut falls apart).
+        if (!outward && op.error().code == ErrorCode::KernelFailure)
+            if (const std::optional<bool> apart = cutFallsApart(shape, toolShape, ctx); apart && *apart) {
+                Error error = op.error();
+                error.message = subject + " would cut the part in two." + kNothingChanged;
+                return tl::unexpected(std::move(error));
+            }
         return tl::unexpected(op.error());
+    }
     if (op->shape.count(SubKind::Solid) != shape.count(SubKind::Solid))
         return tl::unexpected(failure(subject + " would cut the part in two." + kNothingChanged, where));
     {

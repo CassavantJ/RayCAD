@@ -276,6 +276,9 @@ struct SetSpec {
     // true: a part missing means the rates are printed but not judged, and with none present the test is skipped
     // (the NIST set is mostly fetch-only, and a CI job without the cache would judge a different set).
     bool ratesNeedEveryPart;
+    // At most this many requests of each edit ("rs_grow", "pp_out", "pp_in") may be infeasible (the counts of T-080
+    // round 3), so a change to the classifier cannot quietly take new failures out of the judged rates.
+    std::map<std::string, int> infeasibleCaps;
 };
 constexpr std::size_t kNistParts = 26; // the lines of set_nist.tsv
 
@@ -369,28 +372,32 @@ void measureSet(const SetSpec& spec)
                 << '\n';
     }
 
-    // The acceptance lines of PLAN.md T-080.
+    // The acceptance lines of PLAN.md T-080. The push/pull and resize lines are judged on the feasible requests (the
+    // lead's decision, T-080 round 3: refusing a request no body can meet is the right outcome); both rates are
+    // printed.
     struct Line {
         const char* name;
         double required;
         bool realOnly;
         std::vector<std::string> edits;
-        std::string note; // empty: any
+        std::string note;  // empty: any
+        bool feasibleOnly; // judged without the infeasible requests (testing::infeasibleRequest)
     };
     const std::vector<Line> lines = {
-        {"delete plain hole", 0.95, false, {"del_hole"}, "plain"},
+        {"delete plain hole", 0.95, false, {"del_hole"}, "plain", false},
         {"delete hole with its counterbore, countersink or chamfer",
          0.95,
          false,
          {"del_hole_stack", "del_hole"},
-         "in_stack|"},
-        {"delete closed pocket", 0.95, false, {"del_pocket"}, ""},
-        {"resize hole larger", 0.97, false, {"rs_grow"}, ""},
-        {"resize hole smaller", 0.95, false, {"rs_shrink"}, ""},
-        {"push planar face out", 0.95, false, {"pp_out"}, ""},
-        {"pull planar face in", 0.95, false, {"pp_in"}, ""},
-        {"delete fillet touching no other blend (real parts)", 0.75, true, {"del_fillet"}, "isolated"},
-        {"delete whole blend run (real parts)", 0.50, true, {"del_fillet_chain"}, ""},
+         "in_stack|",
+         false},
+        {"delete closed pocket", 0.95, false, {"del_pocket"}, "", false},
+        {"resize hole larger", 0.97, false, {"rs_grow"}, "", true},
+        {"resize hole smaller", 0.95, false, {"rs_shrink"}, "", true},
+        {"push planar face out", 0.95, false, {"pp_out"}, "", true},
+        {"pull planar face in", 0.95, false, {"pp_in"}, "", true},
+        {"delete fillet touching no other blend (real parts)", 0.75, true, {"del_fillet"}, "isolated", false},
+        {"delete whole blend run (real parts)", 0.50, true, {"del_fillet_chain"}, "", false},
     };
     const auto inLine = [](const Line& line, const Outcome& o) {
         if (line.realOnly && o.kind != "real")
@@ -410,7 +417,7 @@ void measureSet(const SetSpec& spec)
                     m.c_str());
     for (const std::string& f : loadFailures)
         std::printf("  NOT LOADED: %s\n", f.c_str());
-    std::vector<std::pair<const Line*, Tally>> tallies;
+    std::vector<std::pair<const Line*, Tally>> tallies; // the judged tally of each line
     for (const Line& line : lines) {
         Tally t, feasible;
         for (const Outcome& o : outcomes)
@@ -422,13 +429,12 @@ void measureSet(const SetSpec& spec)
                     feasible.ok += o.result == "ok" ? 1 : 0;
                 }
             }
-        tallies.emplace_back(&line, t);
-        std::printf("  %-58s %4d of %4d  %5.1f%%  (at least %.0f%%)", line.name, t.ok, t.total, 100.0 * t.rate(),
-                    100.0 * line.required);
-        if (feasible.total != t.total)
+        tallies.emplace_back(&line, line.feasibleOnly ? feasible : t);
+        std::printf("  %-58s %4d of %4d  %5.1f%%", line.name, t.ok, t.total, 100.0 * t.rate());
+        if (line.feasibleOnly)
             std::printf("; without %d infeasible requests %d of %d  %5.1f%%", t.total - feasible.total, feasible.ok,
                         feasible.total, 100.0 * feasible.rate());
-        std::printf("\n");
+        std::printf("  (%s at least %.0f%%)\n", line.feasibleOnly ? "feasible ones" : "all", 100.0 * line.required);
     }
     // All edits, real and synthetic, for the record.
     std::map<std::string, std::map<std::string, Tally>> byEdit;
@@ -477,8 +483,20 @@ void measureSet(const SetSpec& spec)
         CHECK(t.total > 0);
         CHECK(t.rate() >= line->required);
     }
+    // No more infeasible requests than the caps allow.
+    std::map<std::string, int> infeasibleCount;
+    for (const Outcome& o : outcomes)
+        if (!o.infeasible.empty())
+            ++infeasibleCount[o.edit];
+    for (const auto& [edit, n] : infeasibleCount) {
+        const auto cap = spec.infeasibleCaps.find(edit);
+        INFO(edit << ": " << n << " infeasible requests");
+        CHECK(n <= (cap == spec.infeasibleCaps.end() ? 0 : cap->second));
+    }
     // Every success is a valid closed solid that changed the expected way; every failure is a KernelFailure with a
-    // message, never an exception's text; a call stopped for its time limit hands control back within 100 ms.
+    // message, never an exception's text; a call stopped for its time limit hands control back within 100 ms; a
+    // refused infeasible request says why in the user's terms (the face would end in or beyond the material, or the
+    // part would come apart).
     for (const Outcome& o : outcomes) {
         INFO(o.part << " " << o.edit << " k" << o.k << ": " << o.result << " " << o.message);
         CHECK(o.result != "bad_invalid");
@@ -490,6 +508,10 @@ void measureSet(const SetSpec& spec)
             CHECK_FALSE(o.message.empty());
             CHECK(o.message.rfind("The geometry kernel failed:", 0) == std::string::npos);
         }
+        if (!o.infeasible.empty())
+            CHECK((o.message.find("would cut the part in two") != std::string::npos ||
+                   o.message.find("would disappear into other material of the part or pass its far side") !=
+                       std::string::npos));
         if (o.result == "timeout") {
             CHECK(o.cancelMs < 100.0);
             CHECK(o.stopMs < 10000.0); // the abandoned edit's own work stopped within 10 s of the cancel
@@ -505,7 +527,7 @@ void measureSet(const SetSpec& spec)
 
 TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][directedit_corpus]")
 {
-    measureSet({"set.tsv", "S9 set", 50, false});
+    measureSet({"set.tsv", "S9 set", 50, false, {{"rs_grow", 1}, {"pp_out", 3}, {"pp_in", 5}}});
 }
 
 // The same measurement on the wider set of NIST public test models (tests/corpus/directedit/README.md): other exports
@@ -513,5 +535,5 @@ TEST_CASE("direct edits on the S9 set meet the T-080 success rates", "[kernel][d
 // own ctest entry (ray_kernel_directedit_nist), so the S9 measurement keeps its run time.
 TEST_CASE("direct edits on the wider NIST set meet the T-080 success rates", "[kernel][directedit_nist]")
 {
-    measureSet({"set_nist.tsv", "wider NIST set", kNistParts, true});
+    measureSet({"set_nist.tsv", "wider NIST set", kNistParts, true, {{"pp_out", 6}, {"pp_in", 5}}});
 }

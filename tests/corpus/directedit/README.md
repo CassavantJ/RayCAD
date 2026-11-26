@@ -37,7 +37,7 @@ The CTC/FTC parts reappear on purpose: the same design written by other exporter
 import and direct-edit quirks show. Files that differ from another listed file only in their header or PMI entities
 (the D2MI 907 and 908 files, four of the `sfa/` files) are left out so no geometry counts twice. Two NIST files are
 not in the set because they do not import as a valid solid: the FTC 08 `-tg` files (tessellated geometry, no B-rep
-solid) and the MTC box (one solid that fails the validity check, with or without healing).
+solid) and the MTC box (one solid that fails the validity check with the default healing; the STEP reader's own fix makes it valid, see docs/reports/import-mtc-box-heal.md).
 
 20 of the 26 are fetch-only: `python tools/corpus_fetch.py --source nist-pmi nist-d2mi nist-mtc`. CI fetches nothing,
 so there the test runs the 6 committed parts and checks every case (a valid solid or a KernelFailure with a message,

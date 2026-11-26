@@ -819,3 +819,43 @@ TEST_CASE("a small push/pull on a large imported body is judged by the volume ne
         CHECK(close(take(surfaceInfo(out.shape, moved.front())).centroid, shifted, 1e-6));
     }
 }
+
+TEST_CASE("a push/pull whose result would be an invalid body is refused with a clear message", "[kernel][directedit]")
+{
+    // The two feasible requests of the NIST set whose boolean gives an invalid body (T-080 round 2, group C), pinned as
+    // the corpus measurement picks them (testing::directEditCases) on the bodies as imported:
+    //   - NIST D2MI 827-9999-904: pushing face 107 out by 1.25425 mm (the union leaves face 94 unorientable);
+    //   - NIST CTC 02, AP203 with PMI: pulling face 4 in by 2 mm (free or badly oriented edges; the plain cut does not
+    //     fall apart, so it is not "would cut the part in two").
+    // Neither may come back as a body; each is a KernelFailure that says what went wrong and that nothing changed.
+    struct Pinned {
+        const char* file;
+        testing::DirectEdit edit;
+        int k;
+        std::uint32_t face;
+        double distance;
+    };
+    for (const Pinned& p : {Pinned{"nist_d2mi_904_body.rbrep", testing::DirectEdit::PushOut, 2, 107, 1.254252},
+                            Pinned{"nist_ctc_02_ap203pmi_body.rbrep", testing::DirectEdit::PushIn, 2, 4, -2.0}}) {
+        INFO(p.file);
+        const Shape body = loadSavedBody(p.file);
+        const std::string before = testing::rawState(body);
+        const std::vector<testing::DirectEditCase> cases = take(testing::directEditCases(body));
+        const auto it = std::find_if(cases.begin(), cases.end(),
+                                     [&](const testing::DirectEditCase& c) { return c.edit == p.edit && c.k == p.k; });
+        REQUIRE(it != cases.end());
+        REQUIRE(it->faces.size() == 1);
+        CHECK(it->faces.front().index == p.face);
+        CHECK(close(it->distance, p.distance, 1e-6));
+        JobContext ctx;
+        const Result<OpResult> out = offsetFaces(body, it->faces, it->distance, ctx);
+        REQUIRE_FALSE(out.has_value());
+        CHECK(out.error().code == ErrorCode::KernelFailure);
+        const std::string& message = out.error().message;
+        INFO(message);
+        CHECK(message.find("gives an invalid body") != std::string::npos);
+        CHECK(message.find("face " + std::to_string(p.face)) != std::string::npos);
+        CHECK(message.ends_with("Nothing was changed."));
+        CHECK(testing::rawState(body) == before);
+    }
+}

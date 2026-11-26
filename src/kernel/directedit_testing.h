@@ -81,7 +81,13 @@ DirectEditVerdict judgeDirectEdit(const Shape& input, const DirectEditCase& edit
 // Why the request of a push/pull or a hole enlargement cannot be met by any body, decided from the input alone by a
 // geometric test independent of the kernel's edit (empty if it can): pushed out, the moved face's sample point lies
 // inside the body's material; pulled in, it lies outside the body, or the body minus the swept face falls apart;
-// enlarged, the body minus the new hole's cylinder falls apart. For reporting rates both ways (T-080 round 2).
+// enlarged, the body minus the new hole's cylinder falls apart (undecided after 60 s: feasible). The rate lines of
+// push/pull and resize are judged on the requests it finds feasible (T-080 round 3).
+// INDEPENDENCE: it uses none of the kernel's direct-edit code (no FaceModel, classifyPoint or any edit). It reads the
+// case's picked face, distance, diameter and check points (which directEditCases chose), and calls OCCT directly:
+// BRepClass3d_SolidClassifier and BRepExtrema_DistShapeShape for points, BRepAdaptor_Surface for the hole's cylinder
+// (the faces of the body on the same cylinder give its extent), BRepPrimAPI_MakePrism / MakeCylinder for the tool and
+// BRepAlgoAPI_Cut for the split; and of the kernel only the shape access and solidsOf (boolean_internal.h).
 std::string infeasibleRequest(const Shape& input, const DirectEditCase& edit);
 
 // What BRepCheck_Analyzer finds wrong with 'shape', one line per faulty sub-shape (kind, SubId index, statuses), at
