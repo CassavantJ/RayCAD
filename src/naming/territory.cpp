@@ -695,6 +695,124 @@ std::vector<SubId> piecesInsideOutline(const kernel::Shape& shape, const std::ve
     }
 }
 
+std::vector<SubId> otherFacesInsideOutline(const kernel::Shape& shape, SubId element, const TopoRef& ref,
+                                           const TerritoryCache& territories)
+{
+    std::vector<SubId> out;
+    try {
+        const PickOutline& outline = ref.outline;
+        if (element.kind != SubKind::Face || !outline.known() || !ref.territory.known())
+            return out;
+        // The outline in a frame of its plane, with each chord's slack (as piecesInsideOutline).
+        Outline o;
+        const auto start = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][0], outline.chords[i][1], outline.chords[i][2]});
+        };
+        const auto end = [&](std::size_t i) {
+            return fromQuanta({outline.chords[i][3], outline.chords[i][4], outline.chords[i][5]});
+        };
+        o.origin = start(0);
+        Vec3 d0{};
+        if (!unitOf(sub(end(0), start(0)), d0))
+            return out;
+        bool plane = false;
+        for (std::size_t i = 1; i < outline.chords.size() && !plane; ++i)
+            plane = unitOf(cross(d0, sub(end(i), start(i))), o.n) || unitOf(cross(d0, sub(end(i), o.origin)), o.n);
+        if (!plane)
+            return out;
+        o.e1 = d0;
+        o.e2 = cross(o.n, o.e1);
+        std::vector<double> slack;
+        double planeMargin = kOnTolerance;
+        for (std::size_t i = 0; i < outline.chords.size(); ++i) {
+            const auto a = o.uv(start(i)), b = o.uv(end(i));
+            o.chords.push_back({a[0], a[1], b[0], b[1]});
+            slack.push_back(static_cast<double>(outline.chords[i][6]) / kLengthQuantaPerMm);
+            planeMargin = std::max(planeMargin, slack.back() + kOnTolerance);
+        }
+        const auto clearlyInside = [&](const Vec3& p) {
+            const auto uv = o.uv(p);
+            if (std::abs(o.off(p)) > planeMargin || !o.inside(uv[0], uv[1]))
+                return false;
+            double best = 1e300;
+            for (std::size_t i = 0; i < o.chords.size(); ++i) {
+                const auto& c = o.chords[i];
+                const double dx = c[2] - c[0], dy = c[3] - c[1];
+                const double l2 = dx * dx + dy * dy;
+                const double t =
+                    l2 > 0.0 ? std::clamp(((uv[0] - c[0]) * dx + (uv[1] - c[1]) * dy) / l2, 0.0, 1.0) : 0.0;
+                const double px = c[0] + dx * t - uv[0], py = c[1] + dy * t - uv[1];
+                best = std::min(best, std::sqrt(px * px + py * py) - slack[i]);
+            }
+            return best > kOnTolerance;
+        };
+        // The pick stayed: the element holds most of the picked territory.
+        if (!piecesHoldMostOf(shape, {element}, ref.territory))
+            return out;
+        for (std::uint32_t i = 0; i < shape.count(SubKind::Face); ++i) {
+            const SubId face{SubKind::Face, i};
+            if (face == element || !territories.sameCarrier(element, face))
+                continue;
+            const Territory& t = territories.of(face);
+            bool all = t.known() && !t.points.empty();
+            for (const auto& q : t.points)
+                all = all && clearlyInside(fromQuanta(q));
+            if (!all)
+                continue;
+            const Probe probe(shape, face);
+            bool neighbours = false;
+            for (const PickNeighbour& n : ref.pickNeighbours)
+                neighbours = neighbours || (n.territory.known() && probe.count(n.territory) > 0);
+            if (!neighbours)
+                out.push_back(face);
+        }
+    } catch (...) {
+        out.clear();
+    }
+    return out;
+}
+
+InPlace stillInPlace(const kernel::Shape& shape, SubId element, const TopoRef& ref)
+{
+    try {
+        if (!ref.territory.known() || ref.territory.points.empty())
+            return InPlace::No;
+        const Probe probe(shape, element);
+        const std::size_t on = probe.count(ref.territory), n = ref.territory.points.size();
+        if (on < n)
+            return InPlace::No;
+        for (const PickNeighbour& nb : ref.pickNeighbours)
+            if (nb.territory.known() && probe.count(nb.territory) > 0)
+                return InPlace::TookNeighbour;
+        return InPlace::Yes;
+    } catch (...) {
+        return InPlace::No;
+    }
+}
+
+bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<SubId>& pieces, const Territory& territory)
+{
+    try {
+        if (territory.points.empty())
+            return true;
+        std::vector<std::unique_ptr<Probe>> probes;
+        for (const SubId& p : pieces)
+            probes.push_back(std::make_unique<Probe>(shape, p));
+        std::size_t held = 0;
+        for (const auto& q : territory.points) {
+            const Vec3 p = fromQuanta(q);
+            for (const auto& probe : probes)
+                if (probe->on(p)) {
+                    ++held;
+                    break;
+                }
+        }
+        return 2 * held >= territory.points.size();
+    } catch (...) {
+        return false;
+    }
+}
+
 Box3 boxOf(const Territory& t)
 {
     return Box3{fromQuanta(t.qMin), fromQuanta(t.qMax)};

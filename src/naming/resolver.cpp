@@ -156,10 +156,20 @@ private:
         // on a stub of a micron at its end).
         if (element.kind != kernel::SubKind::Vertex && now.qArea < 10 && now.qArea * 1000 < ref.hint.qArea)
             return broken("Only a vanishingly small stub of the picked element is left.");
-        if (ambiguous && !now.matches(ref.hint))
-            return broken("The picked element could only be told apart from similar elements by its surroundings or "
-                          "its geometry, and its geometry has changed.");
-        // A piece told apart from its siblings by the faces of the feature that made them (T-081a): it may shrink
+        // Unless the change only trimmed it where it was (T-081b round 3, item 4's regressions: tuned 6:22 edge 17, a
+        // pocket floor's rim arc whose far end a neighbouring hole, opened up by 0.06 mm, trimmed by 0.1 mm): still on
+        // every point of its pick-time territory and on none of a recorded neighbour's (detail::stillInPlace), no
+        // larger than picked and shorter (smaller) by at most a twentieth. Then the geometry still tells it apart, and
+        // the checks below go on. Anything more (grown, on a neighbour's territory, trimmed further: T-081a holdout4
+        // 9:9 edge 64, directedit-holdout2 3:34 edge 19) stays Broken: what it is now cannot be told.
+        if (ambiguous && !now.matches(ref.hint)) {
+            const double area = static_cast<double>(now.qArea), picked = static_cast<double>(ref.hint.qArea);
+            const bool trimmed = element.kind != kernel::SubKind::Vertex &&
+                                 area <= picked * (1.0 + 1e-6) + detail::kGrowthSlackQuanta && area >= 0.95 * picked;
+            if (!trimmed || detail::stillInPlace(body.shape, element, ref) != detail::InPlace::Yes)
+                return broken("The picked element could only be told apart from similar elements by its surroundings "
+                              "or its geometry, and its geometry has changed.");
+        } // A piece told apart from its siblings by the faces of the feature that made them (T-081a): it may shrink
         // (something cut into it), but a piece that grew may have taken in what was a sibling's when it was picked
         // (random sequence 9:7: the separating cut no longer ran between two pieces of an edge, and one of them took
         // in most of the other). Whether the extra is new territory or a sibling's cannot be told from the names.
@@ -188,6 +198,18 @@ private:
         // tells when part of what was picked is now another element's (holdout4).
         if (auto evidence = detail::exactAgainstEvidence(map, body.shape, territories, element, ref))
             return evidence;
+        // Other faces on the picked plane, wholly inside the picked face's outline at pick time, while the face that
+        // kept the name still holds most of the picked territory: the pick came apart, and they are the rest of it
+        // (TopoRef::outline; T-081b holdout2 0:18). Split, when the pieces fit the evidence; else as before.
+        if (element.kind == kernel::SubKind::Face && !now.matches(ref.hint))
+            if (std::vector<kernel::SubId> rest =
+                    detail::otherFacesInsideOutline(body.shape, element, ref, territories);
+                !rest.empty()) {
+                rest.push_back(element);
+                std::sort(rest.begin(), rest.end());
+                if (std::string why; detail::piecesFitEvidence(map, body.shape, rest, ref, why))
+                    return Resolved{ResolveState::Split, std::move(rest), {}};
+            }
         return Resolved{ResolveState::Exact, {element}, {}};
     }
 

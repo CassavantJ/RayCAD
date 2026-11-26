@@ -764,6 +764,16 @@ std::optional<Resolved> repaired(const ElementMap& map, const kernel::Shape& sha
     const SubId candidate = candidates.front();
     if (!surroundedAsPicked(map, shape, candidate, ref))
         return std::nullopt;
+    // Not onto a sibling of the pick: an element of the same name family (the same feature, role and parent faces,
+    // told apart only by discriminator or ordinal) that now lies where the pick was is most likely the pick's twin
+    // after the feature moved, not the pick (T-081b round 3, randomised 8:18 on macOS: a hole moved by exactly its
+    // own width puts its other crossing with a wall where the picked crossing was). Without a map of the move, no
+    // candidate is offered: Broken.
+    for (const Hash256& name : map.namesOf(candidate))
+        if (const TopoName* record = map.record(name);
+            record != nullptr &&
+            std::find(ref.families.begin(), ref.families.end(), record->family) != ref.families.end())
+            return std::nullopt;
     return make(ResolveState::Repaired, {candidate},
                 "The picked element's name is gone. One element has the same shape and position and is surrounded "
                 "by the same faces; confirm that it is the one you meant.");
@@ -839,8 +849,18 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 return broken("Part of the picked element no longer exists.");
             return std::nullopt; // the Exact stage's business
         }
-        // A face piece wholly outside the picked face's outline at pick time is not a piece (TopoRef::outline).
-        elements = piecesInsideOutline(shape, elements, ref.outline);
+        // A face piece wholly outside the picked face's outline at pick time is not a piece (TopoRef::outline). But
+        // only while the pieces kept hold most of the picked territory: when they hold less, the face may have moved
+        // with its feature, and a piece outside the outline may hold the moved pick (T-081b holdout2 7:44 face 30: a
+        // boss's end cap, the boss moved by its width; one piece left in a pocket, the other sticking out below the
+        // part). Which reading is right cannot be told from the evidence: Broken.
+        if (const std::vector<SubId> inside = piecesInsideOutline(shape, elements, ref.outline);
+            inside.size() < elements.size()) {
+            if (!piecesHoldMostOf(shape, inside, ref.territory))
+                return broken("The picked face came apart; some pieces lie where it was and others where it was not, "
+                              "and whether it moved cannot be told.");
+            elements = inside;
+        }
         if (!piecesLieAsPicked(map, shape, elements, ref.hint))
             return broken("The picked element came apart, and not every piece lies where it was.");
         if (!facePiecesStayInside(map, shape, elements, ref))
@@ -882,7 +902,12 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                 std::erase_if(elements, [&](const SubId& s) { return zeroMeasure(shape, s, ref.hint); });
                 if (elements.empty())
                     continue;
-                elements = piecesInsideOutline(shape, elements, ref.outline);
+                if (const std::vector<SubId> inside = piecesInsideOutline(shape, elements, ref.outline);
+                    inside.size() < elements.size()) {
+                    if (!piecesHoldMostOf(shape, inside, ref.territory))
+                        continue; // moved, or new ground outside the outline: cannot be told (as above)
+                    elements = inside;
+                }
                 std::string why;
                 if (!piecesLieAsPicked(map, shape, elements, ref.hint) ||
                     !facePiecesStayInside(map, shape, elements, ref) ||

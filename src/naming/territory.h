@@ -96,6 +96,25 @@ PickOutline pickOutlineOf(const kernel::Shape& shape, kernel::SubId face);
 std::vector<kernel::SubId> piecesInsideOutline(const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces,
                                                const PickOutline& outline);
 
+// Faces other than `element` that are the rest of the picked face, come apart from the one that kept its name (T-081b
+// holdout2 0:18: a triangle of a boss's start cap, cut off by a cut inserted upstream, named after the push/pull whose
+// slab side it was unified with at pick time): on `element`'s carrier (plane on the same side), every territory point
+// of which lies inside `outline` clear of its boundary, that hold no point of a recorded neighbour's territory, while
+// `element` itself holds most of the picked territory (the pick stayed where it was). Sorted; empty when there is no
+// outline, `element` is not a planar face, or nothing qualifies. Never throws.
+std::vector<kernel::SubId> otherFacesInsideOutline(const kernel::Shape& shape, kernel::SubId element,
+                                                   const TopoRef& ref, const TerritoryCache& territories);
+
+// Is `element` still where the reference's element was picked: on every point of its territory (a piece of it would
+// miss some)? Yes, Yes but also on a point of a recorded neighbour's territory (TookNeighbour), or No (also
+// without evidence). Never throws.
+enum class InPlace { No, Yes, TookNeighbour };
+InPlace stillInPlace(const kernel::Shape& shape, kernel::SubId element, const TopoRef& ref);
+
+// Do `pieces` together hold at least half of `territory`'s points (any point on any piece)? True when the territory
+// has no points. Never throws (false on failure).
+bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces, const Territory& territory);
+
 // The box of element `sub` as a territory would record it (no points made). nullopt when unreadable.
 std::optional<Box3> elementBox(const kernel::Shape& shape, kernel::SubId sub);
 

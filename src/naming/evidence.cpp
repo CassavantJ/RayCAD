@@ -2,6 +2,7 @@
 #include "territory.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <set>
@@ -470,7 +471,106 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
             return incomplete;
         if (own > 0)
             return std::nullopt;
-        // Moved, and grown while a recorded sibling's names are gone: the pieces may have joined (they were apart
+        // A face that holds none of its own territory while another face on its carrier (the same plane on the same
+        // side, the same cylinder) holds some of it: the picked place is still there, on the picked face's own surface,
+        // under another face; the face the names lead to is another patch of that surface, not the pick moved (T-081b
+        // holdout2 7:44 face 27: a window of a boss's start cap at the bottom of a hole; the boss moved by its width,
+        // the window's ground went to the hole's floor, and the start cap's name led to a patch of the same plane
+        // sticking out below the part). Which of them continues the pick cannot be told from the names: Broken.
+        if (element.kind == SubKind::Face)
+            for (std::uint32_t i = 0; i < shape.count(SubKind::Face); ++i) {
+                const SubId other{SubKind::Face, i};
+                if (other == element || !territories.sameCarrier(element, other))
+                    continue;
+                if (Probe(shape, other).count(ref.territory) > 0)
+                    return brokenBecause("The picked face's place is now part of another face on the same surface, and "
+                                         "the face its name leads to lies elsewhere on that surface.");
+            }
+        // An edge or face that holds none of its own territory and is now less than a twentieth of its picked size is a
+        // remnant where the rest of it went, not the element (T-081b round 3, holdout2 9:3 edge 33: a 2.6 mm arc of a
+        // bore's rim, its name left on a 9 um stub of it).
+        if (element.kind != SubKind::Vertex && ref.hint.qArea > 0 &&
+            static_cast<double>(map.fingerprintOf(element).qArea) < 0.05 * static_cast<double>(ref.hint.qArea))
+            return brokenBecause("Only a small remnant of the picked element is left, and not where it was picked.");
+        // A face that holds none of its own territory moved (or what was picked of it is gone). A face that moved with
+        // its feature, or that a push/pull moved, still lies over its picked place seen along its surface: the picked
+        // territory carried onto the face's surface as it is now (a plane: along its normal; a cylinder: straight out
+        // from its axis) lands on it, at least half of it. Another patch of the same feature's surface, exposed
+        // elsewhere, does not; which it is cannot be told from the names (T-081b round 3, the structural check:
+        // holdout2 4:31 face 37, the part of a moved boss's start cap outside the part, now on the other side; holdout1
+        // 7:33 face 18, a boss's side whose visible patch slid along it as a join moved over it; tuned 18:49 face 13).
+        // Another surface (a sphere, a torus, a B-spline): moved and resized by more than a fifth. A face whose surface
+        // changed size (a bore resized: another radius) is the same face at another size; there the bound is twice or
+        // half its area.
+        if (element.kind == SubKind::Face && ref.hint.qArea > 0) {
+            const Fingerprint print = map.fingerprintOf(element);
+            const double now = static_cast<double>(print.qArea);
+            const double then = static_cast<double>(ref.hint.qArea);
+            const bool sameShape =
+                print.surface == ref.hint.surface && std::abs(print.qRadius - ref.hint.qRadius) <= 10; // 1 um
+            const auto info = kernel::surfaceInfo(shape, element);
+            bool changed = false;
+            if (!sameShape) {
+                changed = now > 2.0 * then + kGrowthSlackQuanta || 2.0 * now + kGrowthSlackQuanta < then;
+            } else if (info &&
+                       (info->type == kernel::SurfaceType::Plane || info->type == kernel::SurfaceType::Cylinder)) {
+                const Vec3 o = info->origin;
+                const Vec3 a = info->axis;
+                // And carried by the face's own shift (box centre to box centre): a face that moved as a whole holds
+                // its picked territory moved with it (holdout1 8:23 face 1 holds both; a cut's arc wall whose visible
+                // part changed as the cut moved, sorted 15:49 face 14, holds the first only).
+                const auto nowBox = elementBox(shape, element);
+                const Vec3 shift = nowBox ? minus(centreOf(*nowBox), centreOf(boxOf(ref.territory))) : Vec3{0, 0, 0};
+                std::size_t landed = 0, shifted = 0;
+                for (const auto& q : ref.territory.points) {
+                    const Vec3 p = fromQuanta(q);
+                    shifted += probe.on(Vec3{p.x + shift.x, p.y + shift.y, p.z + shift.z}) ? 1 : 0;
+                    const Vec3 d = minus(p, o);
+                    const double h = d.x * a.x + d.y * a.y + d.z * a.z;
+                    Vec3 onSurface{};
+                    if (info->type == kernel::SurfaceType::Plane) {
+                        onSurface = {p.x - a.x * h, p.y - a.y * h, p.z - a.z * h};
+                    } else {
+                        const Vec3 radial{d.x - a.x * h, d.y - a.y * h, d.z - a.z * h};
+                        const double r = length(radial);
+                        if (r < 1e-9)
+                            continue;
+                        const double k = info->radius / r;
+                        onSurface = {o.x + a.x * h + radial.x * k, o.y + a.y * h + radial.y * k,
+                                     o.z + a.z * h + radial.z * k};
+                    }
+                    landed += probe.on(onSurface) ? 1 : 0;
+                }
+                changed =
+                    2 * landed < ref.territory.points.size() || 2 * shifted < ref.territory.points.size() || !nowBox;
+                // A plane that moved along itself (its shift has a part in its plane, as a feature moved sideways does)
+                // must be a rigid copy of itself: the same area and the same sorted extents, each within a hundredth.
+                // A face the part clips differently where it is now is another patch of the feature's surface (T-081a
+                // random 3:23 face 14: a cut's wall where it met the part's corner, the cut moved, its name on the
+                // wall's patch at the corner now). A plane moved only along its normal (a push/pull) may change shape.
+                if (!changed && nowBox && info->type == kernel::SurfaceType::Plane) {
+                    const double along = shift.x * a.x + shift.y * a.y + shift.z * a.z;
+                    const double tangential =
+                        length(Vec3{shift.x - a.x * along, shift.y - a.y * along, shift.z - a.z * along});
+                    if (tangential > 1e-2) {
+                        const Box3 was = boxOf(ref.territory);
+                        std::array<double, 3> da{was.max.x - was.min.x, was.max.y - was.min.y, was.max.z - was.min.z};
+                        std::array<double, 3> db{nowBox->max.x - nowBox->min.x, nowBox->max.y - nowBox->min.y,
+                                                 nowBox->max.z - nowBox->min.z};
+                        std::sort(da.begin(), da.end());
+                        std::sort(db.begin(), db.end());
+                        changed = std::abs(now - then) > 0.01 * then + kGrowthSlackQuanta;
+                        for (std::size_t i = 0; i < 3; ++i)
+                            changed = changed || std::abs(da[i] - db[i]) > 0.01 * std::max(da[i], db[i]) + 2e-3;
+                    }
+                }
+            } else {
+                changed = std::abs(now - then) > 0.2 * then + kGrowthSlackQuanta;
+            }
+            if (changed)
+                return brokenBecause("The picked face is no longer where it was picked, nor over that place along its "
+                                     "surface; whether the face its name leads to is the one picked cannot be told.");
+        } // Moved, and grown while a recorded sibling's names are gone: the pieces may have joined (they were apart
         // where the element was picked, and are one element where it is now). The names say the element continues the
         // pick; whether it also holds the siblings cannot be told, so it is not Exact (T-081a random 17:44).
         const Fingerprint print = map.fingerprintOf(element);
