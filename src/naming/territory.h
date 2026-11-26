@@ -186,6 +186,12 @@ bool piecesFitEvidence(const ElementMap& map, const kernel::Shape& shape, const 
 // edge 83: a stretch of a moved cut's edge that lay inside a bore when it was picked), and the resolver answers Broken
 // when there is one. Dropped only while some piece is kept. All pieces when no feature of the pick was moved. Never
 // throws.
+// A Merged answer of one face against the pick's feature's move (T-081b round 6, T-081a holdout2 4:6 face 31): Broken
+// when the feature moved (TopoRef::placements) and none of the pick carried by the move lands on the face, or, for a
+// reference made before placements to a face of a feature that has one now, when the face lies mostly away from the
+// picked place (its box centre outside the picked box). nullopt: no objection.
+std::optional<Resolved> mergedAgainstMove(const ElementMap& map, const kernel::Shape& shape, kernel::SubId element,
+                                          const TopoRef& ref);
 std::vector<kernel::SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Shape& shape,
                                                  const std::vector<kernel::SubId>& pieces, const TopoRef& ref);
 

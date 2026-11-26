@@ -257,6 +257,9 @@ private:
         if (r.state == ResolveState::Split || r.state == ResolveState::Merged)
             if (auto evidence = detail::completeAgainstEvidence(body.map, body.shape, territories, r.elements, ref))
                 return std::move(*evidence);
+        if (r.state == ResolveState::Merged && r.elements.size() == 1)
+            if (auto evidence = detail::mergedAgainstMove(body.map, body.shape, r.elements.front(), ref))
+                return std::move(*evidence);
         return r;
     }
 

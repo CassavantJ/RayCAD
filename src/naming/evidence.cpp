@@ -687,10 +687,71 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                                              const TerritoryCache& territories, SubId element, const TopoRef& ref)
 {
     try {
-        if (!ref.territory.known() || map.fingerprintOf(element).matches(ref.hint))
+        if (!ref.territory.known())
             return std::nullopt;
         const Probe probe(shape, element);
-        const std::size_t own = probe.count(ref.territory);
+        std::size_t own = probe.count(ref.territory);
+        // A face holding a minority of the territory points, every one of them on its boundary (within the territory
+        // margin of one of its edges), or lying mostly elsewhere, does not hold the picked ground: it touched or
+        // overlapped a corner of the pick (T-081b round 6, review block 3 18:23 face 6: one of five points of a
+        // 0.2 mm2 strip on a 0.1 mm2 patch of the same top cap beside it, the strip itself cut away by a moved hole).
+        if (element.kind == SubKind::Face && own > 0 && 2 * own < ref.territory.points.size()) {
+            std::vector<std::unique_ptr<Probe>> edges;
+            for (const SubId& e : kernel::adjacent(shape, element, SubKind::Edge))
+                edges.push_back(std::make_unique<Probe>(shape, e));
+            std::size_t inside = 0;
+            for (const auto& q : ref.territory.points) {
+                const Vec3 p = fromQuanta(q);
+                if (!probe.on(p))
+                    continue;
+                bool nearEdge = false;
+                for (const auto& e : edges)
+                    nearEdge = nearEdge || e->on(p, kTerritoryMargin);
+                inside += nearEdge ? 0 : 1;
+            }
+            // Or the face lies mostly elsewhere: its box centre outside the picked box. What is left of a face a cut
+            // took most of lies within the picked place; a patch beside it that overlaps a corner of it does not.
+            const auto nowBox = elementBox(shape, element);
+            const Box3 was = boxOf(ref.territory);
+            const double tol = extentTolerance(was);
+            const Vec3 c = nowBox ? centreOf(*nowBox) : Vec3{0, 0, 0};
+            const bool elsewhere = nowBox && (c.x < was.min.x - tol || c.x > was.max.x + tol || c.y < was.min.y - tol ||
+                                              c.y > was.max.y + tol || c.z < was.min.z - tol || c.z > was.max.z + tol);
+            if (inside == 0 || elsewhere)
+                own = 0;
+        }
+        // An edge that holds its pick and has grown, along a face that now carries the names of another face as well as
+        // a pick-time face of the edge (two faces unified into one): the edge along the other face's side was unified
+        // into it too, and it continues two pick-time edges: Merged, not Exact (T-081b round 6, review block 3 10:21
+        // edge 31: x 0, y 18; the front face moved onto y 18 by an offset, unified with the face the pick bordered;
+        // the edge now runs z 0..30, the pick z 18..30 and the front face's edge z 0..18).
+        // (Wherever it lies: there the face the pick bordered was offset, and the edge with it.)
+        if (element.kind == SubKind::Edge && ref.hint.qArea > 0 &&
+            static_cast<double>(map.fingerprintOf(element).qArea) >
+                static_cast<double>(ref.hint.qArea) * 1.01 + kGrowthSlackQuanta) {
+            auto isNeighbour = [&](const Hash256& h) {
+                return std::find(ref.neighbourNames.begin(), ref.neighbourNames.end(), h) != ref.neighbourNames.end();
+            };
+            for (const SubId& f : kernel::adjacent(shape, element, SubKind::Face)) {
+                bool pickTime = false, another = false;
+                for (const Hash256& name : map.namesOf(f)) {
+                    if (isNeighbour(name)) {
+                        pickTime = true;
+                        continue;
+                    }
+                    const TopoName* record = map.record(name);
+                    another = another || (record != nullptr && record->kind == SubKind::Face &&
+                                          record->role.rfind("split", 0) != 0);
+                }
+                if (pickTime && another)
+                    return Resolved{ResolveState::Merged, {element}, {}};
+            }
+        }
+        // A face whose fingerprint still matches the hint is checked too when it holds none of its territory: a patch
+        // of the same surface the size of the pick passes the fingerprint (T-081b round 6, review block 3 18:23 face
+        // 6: a 0.2 mm2 strip of a boss's top cap, cut away by a moved hole; the cap's name on another strip of it).
+        if (map.fingerprintOf(element).matches(ref.hint) && (own > 0 || element.kind != SubKind::Face))
+            return std::nullopt;
         bool tookOther = false;
         for (const PickNeighbour& n : ref.pickNeighbours)
             tookOther = tookOther || (n.territory.known() && probe.count(n.territory) > 0);
@@ -705,6 +766,29 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
         // and 5:9, holdout5 1:2).
         if (auto incomplete = completeAgainstEvidence(map, shape, territories, {element}, ref))
             return incomplete;
+        // A face that holds the pick's old place while the pick's feature moved (TopoRef::placements) and none of the
+        // pick carried by that move lands on it: the face covers the old place only because it, or what bounds it,
+        // moved over it; the pick went with its feature, and where it went is not this face (T-081b round 6, T-081a
+        // holdout2 4:6 face 31: a corner piece of a cut's ceiling, the cut moved, the piece's image off the part; the
+        // ceiling moved over the old corner).
+        if (own > 0 && element.kind == SubKind::Face) {
+            const KnownMove move = knownMove(map, ref);
+            if (move.kind == KnownMove::Kind::Moved) {
+                const auto info = kernel::surfaceInfo(shape, element);
+                std::size_t landed = 0;
+                for (const auto& q : ref.territory.points) {
+                    const Vec3 there = carry(move.from, move.to, fromQuanta(q));
+                    bool on = probe.on(there);
+                    if (!on && info)
+                        if (const auto onto = ontoSurface(*info, there))
+                            on = probe.on(*onto);
+                    landed += on ? 1 : 0;
+                }
+                if (landed == 0)
+                    return brokenBecause("The picked face's feature moved and took the picked place with it; the face "
+                                         "its name leads to lies over the old place but holds none of the moved one.");
+            }
+        }
         if (own > 0)
             return std::nullopt;
         // A face that holds none of its own territory while another face on its carrier (the same plane on the same
@@ -823,7 +907,44 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                 }
                 carried = 2 * landed >= n || inside;
             }
-            if (carried) {
+            // Its surface where the pick's was (every territory point on it), the face holding none of them, and the
+            // pick's features not moved (TopoRef::placements: all still), or none recorded (a feature without a
+            // placement cannot slide along its own surface: a direct edit moves a face off it): the picked ground is
+            // gone from this surface, and the face is another patch of it (T-081b round 6, review block 3 18:23 face 6:
+            // a strip of a boss's top cap that a moved hole cut away; the cap's name on another strip, the boss where it
+            // was). A reference made before placements, to a face of a feature that has one now: the feature may have
+            // slid along the surface, and the face must be a rigid copy of the pick (below).
+            bool onItsSurface = info.has_value() && n > 0;
+            for (const auto& q : ref.territory.points) {
+                const Vec3 p = fromQuanta(q);
+                const auto onto = onItsSurface ? ontoSurface(*info, p) : std::nullopt;
+                onItsSurface = onto && length(minus(*onto, p)) <= 1e-3;
+            }
+            bool placedNow = false;
+            if (ref.placements.empty())
+                for (const Hash256& name : map.namesOf(element))
+                    if (const TopoName* record = map.record(name))
+                        placedNow = placedNow || map.placement(record->origin) != nullptr;
+            if (!carried && onItsSurface && move.kind != KnownMove::Kind::Moved &&
+                move.kind != KnownMove::Kind::Several && !placedNow)
+                return brokenBecause("The picked face's place on its surface is gone, and the face its name leads to is "
+                                     "another patch of that surface.");
+            if (!carried && onItsSurface && placedNow) {
+                // Slid along its own surface, perhaps: only a rigid copy of the pick (the same area and sorted extents,
+                // each within a hundredth) can be it.
+                const auto nowBox = elementBox(shape, element);
+                changed = !nowBox || std::abs(now - then) > 0.01 * then + kGrowthSlackQuanta;
+                if (nowBox) {
+                    const Box3 was = boxOf(ref.territory);
+                    std::array<double, 3> da{was.max.x - was.min.x, was.max.y - was.min.y, was.max.z - was.min.z};
+                    std::array<double, 3> db{nowBox->max.x - nowBox->min.x, nowBox->max.y - nowBox->min.y,
+                                             nowBox->max.z - nowBox->min.z};
+                    std::sort(da.begin(), da.end());
+                    std::sort(db.begin(), db.end());
+                    for (std::size_t i = 0; i < 3; ++i)
+                        changed = changed || std::abs(da[i] - db[i]) > 0.01 * std::max(da[i], db[i]) + 2e-3;
+                }
+            } else if (carried) {
                 changed = false;
             } else if (!sameShape) {
                 changed = now > 2.0 * then + kGrowthSlackQuanta || 2.0 * now + kGrowthSlackQuanta < then;
@@ -846,7 +967,7 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                 // Still on its own pick-time ground (inside its outline, on its plane): what was picked of it shrank
                 // where it was (a cut took the part its territory points were on), and it did not move.
                 changed = false;
-            } else if (std::abs(now - then) <= 0.01 * then + kGrowthSlackQuanta) {
+            } else if (std::abs(now - then) <= 0.01 * then + kGrowthSlackQuanta && !(placedNow && onItsSurface)) {
                 // Its area kept within a hundredth: the face moved as a whole, turned or not (a body moved onto a mate,
                 // tests/unit/doc transform_body; a cut's wall through the part moved along itself, holdout1 8:23).
                 changed = false;
@@ -877,11 +998,6 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                 // patch at the corner now). Where the pick's features are known to be where they were, the face was
                 // moved by a resize, a depth or a direct edit, which may change its shape: no such demand (T-081b round
                 // 4: 19 of 20 sampled faces this demand broke were the pick).
-                bool placedNow = false;
-                if (ref.placements.empty())
-                    for (const Hash256& name : map.namesOf(element))
-                        if (const TopoName* record = map.record(name))
-                            placedNow = placedNow || map.placement(record->origin) != nullptr;
                 const bool demandRigid =
                     move.kind == KnownMove::Kind::Moved || move.kind == KnownMove::Kind::Several || placedNow;
                 if (!changed && demandRigid && nowBox && info->type == kernel::SurfaceType::Plane) {
@@ -1070,6 +1186,51 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
         return kept.empty() ? pieces : kept;
     } catch (...) {
         return pieces;
+    }
+}
+
+std::optional<Resolved> mergedAgainstMove(const ElementMap& map, const kernel::Shape& shape, SubId element,
+                                          const TopoRef& ref)
+{
+    try {
+        if (element.kind != SubKind::Face || !ref.territory.known())
+            return std::nullopt;
+        const KnownMove move = knownMove(map, ref);
+        if (move.kind == KnownMove::Kind::Moved) {
+            const Probe probe(shape, element);
+            const auto info = kernel::surfaceInfo(shape, element);
+            std::size_t landed = 0;
+            for (const auto& q : ref.territory.points) {
+                const Vec3 there = carry(move.from, move.to, fromQuanta(q));
+                bool on = probe.on(there);
+                if (!on && info)
+                    if (const auto onto = ontoSurface(*info, there))
+                        on = probe.on(*onto);
+                landed += on ? 1 : 0;
+            }
+            if (landed == 0)
+                return brokenBecause("The picked face's feature moved and took the picked place with it; the face its "
+                                     "names lead to holds none of the moved place.");
+            return std::nullopt;
+        }
+        bool placedNow = false;
+        if (move.kind == KnownMove::Kind::None && ref.placements.empty())
+            for (const Hash256& name : map.namesOf(element))
+                if (const TopoName* record = map.record(name))
+                    placedNow = placedNow || map.placement(record->origin) != nullptr;
+        if (!placedNow)
+            return std::nullopt;
+        const auto nowBox = elementBox(shape, element);
+        const Box3 was = boxOf(ref.territory);
+        const double tol = extentTolerance(was);
+        const Vec3 c = nowBox ? centreOf(*nowBox) : Vec3{0, 0, 0};
+        if (nowBox && (c.x < was.min.x - tol || c.x > was.max.x + tol || c.y < was.min.y - tol ||
+                       c.y > was.max.y + tol || c.z < was.min.z - tol || c.z > was.max.z + tol))
+            return brokenBecause("The picked face's feature may have moved (the reference was made before feature "
+                                 "placements were recorded), and the face its names lead to lies mostly elsewhere.");
+        return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
     }
 }
 
