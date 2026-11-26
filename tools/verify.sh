@@ -4,8 +4,9 @@
 #   quick  (default) Release build, then the quick test tier (ctest --preset <preset>-release-quick). Every merge.
 #   full   Release build, then every test (<preset>-release). Before a push, and after any change in src/naming,
 #          src/kernel, ports/ or the naming oracle.
-#   ci     exactly what .github/workflows/build-test.yml does: vcpkg install, configure, Debug build and the quick tier,
-#          Release build and every test, with Qt's offscreen platform and software scene graph.
+#   ci     what .github/workflows/build-test.yml does per push and in the nightly run together: vcpkg install,
+#          configure, Debug build and the quick tier, Release build and every test, with Qt's offscreen platform and
+#          software scene graph.
 # It stops at the first step that fails. ctest runs one job per logical processor, as CI does (tests/tiers.cmake).
 #
 #   tools/verify.sh [quick|full|ci] [configure preset]

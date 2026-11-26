@@ -1,0 +1,77 @@
+# The slow tier, once a day and on demand: what the per-push jobs leave out. build-test.yml and sanitizers.yml with
+# scope nightly: per OS a Release job for the slow tests (slow), the T-081a naming blocks (naming) and the T-081b
+# direct-edit blocks (directedit), with the [.evidence] artifacts of any direct-edit wrong answer; under
+# AddressSanitizer the same three. Every test runs in exactly one of push and nightly (tests/tiers.cmake; README,
+# "Which tests to run"). A milestone closes only after a manual run of this workflow is green on its closing commit
+# (PLAN.md section 12).
+#
+# The scheduled run is skipped when main has no commit since the last scheduled nightly that was not cancelled; a
+# manual run (Actions, "nightly", Run workflow, optionally with a ref) always runs.
+name: nightly
+
+on:
+  schedule:
+    - cron: "23 6 * * *" # 06:23 UTC: off the hour, when the runner queues are busiest
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to test (empty: the branch chosen above)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+# Its own group: a push never cancels or queues it; a newer nightly replaces an older one still running.
+concurrency:
+  group: nightly-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD: ${{ github.sha }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          if [ "$EVENT" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "manual run: it always runs"
+            exit 0
+          fi
+          last=$(gh run list -R "$GITHUB_REPOSITORY" --workflow nightly.yml --event schedule --limit 30 \
+                   --json databaseId,headSha,status,conclusion \
+                   --jq "[.[] | select(.databaseId != $THIS_RUN and .status == \"completed\" and .conclusion != \"cancelled\")][0].headSha // \"\"") \
+            || last="" # the lookup failed: run
+          if [ -n "$last" ] && [ "$last" = "$HEAD" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "main is still at $HEAD, which the last scheduled nightly ran on: skipped"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "main at $HEAD; last scheduled nightly on '${last:-none}'"
+          fi
+
+  build-test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    uses: ./.github/workflows/build-test.yml
+    with:
+      scope: nightly
+      ref: ${{ inputs.ref }}
+
+  sanitizers:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    uses: ./.github/workflows/sanitizers.yml
+    with:
+      scope: nightly
+      ref: ${{ inputs.ref }}

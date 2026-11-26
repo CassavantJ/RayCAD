@@ -721,6 +721,8 @@ RayCAD/
 
 Every milestone ends in a build Jake can install and a demo of one workflow. Durations assume about 20 hours a week of Jake's review time with agents implementing. Review, not typing, is the bottleneck.
 
+A milestone is closed only when, besides the per-push CI jobs, one full nightly run (`.github/workflows/nightly.yml`, started by hand on the closing commit) is green: the per-push jobs run the quick tier only, the nightly run the slow tier, the naming and direct-edit blocks and their AddressSanitizer jobs.
+
 | # | Name | Demo at the end | Estimate [guess] |
 |-|-|-|-|
 | M0 | Spikes and skeleton | Ten spike reports with measured numbers (**done 2026-11-17**, `spikes/RESULTS.md`); an empty app window on all three OSes from CI. | 2 weeks left |
