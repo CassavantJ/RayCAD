@@ -27,7 +27,7 @@ namespace ray::naming {
 namespace {
 
 constexpr std::array<std::uint8_t, 4> kMagic{'R', 'C', 'E', 'M'};
-constexpr std::uint32_t kVersion = 2;        // the newest this build reads and writes
+constexpr std::uint32_t kVersion = 2; // the newest this build reads and writes
 constexpr std::uint32_t kVersionNoPlacements = 1;
 constexpr std::size_t kPlacementBytes = 16 + 12 * 8;
 constexpr std::size_t kMaxRoleLength = 4096;

@@ -316,11 +316,10 @@ private:
                     ref.placements.push_back(*p);
         std::sort(ref.placements.begin(), ref.placements.end(),
                   [](const FeaturePlacement& a, const FeaturePlacement& b) { return a.feature < b.feature; });
-        ref.placements.erase(std::unique(ref.placements.begin(), ref.placements.end(),
-                                         [](const FeaturePlacement& a, const FeaturePlacement& b) {
-                                             return a.feature == b.feature;
-                                         }),
-                             ref.placements.end());
+        ref.placements.erase(
+            std::unique(ref.placements.begin(), ref.placements.end(),
+                        [](const FeaturePlacement& a, const FeaturePlacement& b) { return a.feature == b.feature; }),
+            ref.placements.end());
     }
 
     std::vector<ResolverBody> bodies_;                                 // sorted by id, unique

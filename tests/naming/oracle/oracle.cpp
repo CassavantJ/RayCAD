@@ -2286,8 +2286,8 @@ bool stillOwners(const TruthDesc& d, const Owners& before, const Owners& after)
                 return false;
             // A sweep's face: the sweep as the script describes it, in both (one with a face a direct edit changed is
             // not, buildOwners), so that where its move takes the pick is known (holdsPickedGround).
-            if (alt.compare(0, 2, "I/") != 0 && (before.sweeps.count(featureOfOwner(alt)) == 0 ||
-                                                   after.sweeps.count(featureOfOwner(alt)) == 0))
+            if (alt.compare(0, 2, "I/") != 0 &&
+                (before.sweeps.count(featureOfOwner(alt)) == 0 || after.sweeps.count(featureOfOwner(alt)) == 0))
                 return false;
         }
     return !d.cons.empty();
@@ -2911,8 +2911,8 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
                        const Owners& now)
 {
     const ElemSamples& P = pick.picked();
-    const std::vector<Vec3> moves = kind == SubKind::Face || mutated("structural-moves") ? std::vector<Vec3>{}
-                                                                                          : sweepMoves(pick, now);
+    const std::vector<Vec3> moves =
+        kind == SubKind::Face || mutated("structural-moves") ? std::vector<Vec3>{} : sweepMoves(pick, now);
     if (kind == SubKind::Vertex) {
         if (a.nodes.empty() || P.nodes.empty())
             return true;
@@ -3025,8 +3025,8 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
         return !x.mapped.pts.empty() && rigidOrStill(pick.truth, *pick.owners, now);
     // An edge or vertex (T-081b round 4): only where every owner of its description is where it was (a crossing of a
     // moved surface with one that stayed slides along it, off both the pick and its map: SLIDING CROSSINGS); a vertex
-    // on three faces or more (a seam vertex, on only its two faces, lies where the periodic face's seam meets the other,
-    // which moves with that face's parametrisation: SLIDING CROSSINGS (a); T-081a holdout5 13:3 vertex 7).
+    // on three faces or more (a seam vertex, on only its two faces, lies where the periodic face's seam meets the
+    // other, which moves with that face's parametrisation: SLIDING CROSSINGS (a); T-081a holdout5 13:3 vertex 7).
     if (x.kind == SubKind::Vertex && !mutated("structural-seam")) {
         std::vector<std::uint32_t> faces = pick.baseline->facesOf[0][pick.base.index];
         std::sort(faces.begin(), faces.end());

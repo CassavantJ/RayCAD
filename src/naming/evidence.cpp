@@ -154,8 +154,7 @@ bool sameCurve(const Fingerprint& a, const Fingerprint& b)
         return length(Vec3{d.x - ua.x * along, d.y - ua.y * along, d.z - ua.z * along}) <= 1e-2;
     }
     if (a.surface == static_cast<kernel::SurfaceType>(kernel::CurveType::Circle))
-        return length(d) <= 1e-3 &&
-               std::abs(static_cast<double>(a.qRadius - b.qRadius)) / kLengthQuantaPerMm <= 1e-3;
+        return length(d) <= 1e-3 && std::abs(static_cast<double>(a.qRadius - b.qRadius)) / kLengthQuantaPerMm <= 1e-3;
     return false;
 }
 
@@ -224,8 +223,7 @@ std::pair<double, double> axialRange(const Box3& box, const Vec3& o, const Vec3&
 {
     double lo = 1e300, hi = -1e300;
     for (int c = 0; c < 8; ++c) {
-        const Vec3 p{(c & 1) ? box.max.x : box.min.x, (c & 2) ? box.max.y : box.min.y,
-                     (c & 4) ? box.max.z : box.min.z};
+        const Vec3 p{(c & 1) ? box.max.x : box.min.x, (c & 2) ? box.max.y : box.min.y, (c & 4) ? box.max.z : box.min.z};
         const double h = (p.x - o.x) * a.x + (p.y - o.y) * a.y + (p.z - o.z) * a.z;
         lo = std::min(lo, h);
         hi = std::max(hi, h);
@@ -267,8 +265,8 @@ double gapOrOverlap(const Box3& a, const Box3& b)
 {
     double out = -1e300;
     const std::array<std::array<double, 4>, 3> axes{{{a.min.x, a.max.x, b.min.x, b.max.x},
-                                                      {a.min.y, a.max.y, b.min.y, b.max.y},
-                                                      {a.min.z, a.max.z, b.min.z, b.max.z}}};
+                                                     {a.min.y, a.max.y, b.min.y, b.max.y},
+                                                     {a.min.z, a.max.z, b.min.z, b.max.z}}};
     bool any = false;
     for (const auto& v : axes) {
         if (v[1] - v[0] <= 1e-6 && v[3] - v[2] <= 1e-6) {
@@ -816,11 +814,11 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                     inside = true;
                     for (const auto& q : held.points) {
                         const Vec3 back = carry(move.to, move.from, fromQuanta(q));
-                        inside = inside && (ref.outline.known()
-                                                ? insidePickOutline(ref.outline, back)
-                                                : back.x >= was.min.x - tol && back.x <= was.max.x + tol &&
-                                                      back.y >= was.min.y - tol && back.y <= was.max.y + tol &&
-                                                      back.z >= was.min.z - tol && back.z <= was.max.z + tol);
+                        inside = inside &&
+                                 (ref.outline.known() ? insidePickOutline(ref.outline, back)
+                                                      : back.x >= was.min.x - tol && back.x <= was.max.x + tol &&
+                                                            back.y >= was.min.y - tol && back.y <= was.max.y + tol &&
+                                                            back.z >= was.min.z - tol && back.z <= was.max.z + tol);
                     }
                 }
                 carried = 2 * landed >= n || inside;

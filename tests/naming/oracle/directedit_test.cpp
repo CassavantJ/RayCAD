@@ -600,9 +600,9 @@ TEST_CASE("Resize (round 4, the lead's decision): a bore opened past a counterbo
         CHECK(o.verdict == Verdict::Correct);
         const Expectation x = expect(o.ref.record, *r.owners, *r.samples);
         INFO("E " << x.expected.elems.size() << " merged " << x.expected.merged << " partial "
-                   << x.expected.partial.size() << " merge unknown " << x.mergeUnknown << " weak " << x.weak
-                   << " moved " << x.moved << "; Exact judged "
-                   << verdictName(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(bore)})));
+                  << x.expected.partial.size() << " merge unknown " << x.mergeUnknown << " weak " << x.weak << " moved "
+                  << x.moved << "; Exact judged "
+                  << verdictName(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(bore)})));
         CHECK(isWrong(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(bore)})));
         CHECK(judgeAs(r, o, Answer::Merged, {static_cast<std::uint32_t>(bore)}) == Verdict::Correct);
     }

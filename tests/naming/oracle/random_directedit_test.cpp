@@ -672,8 +672,12 @@ Script scriptFromText(const std::string& text, const std::shared_ptr<const Impor
         REQUIRE(i < tok.size());
         return tok[i++];
     };
-    auto real = [&]() { return std::strtod(next().c_str(), nullptr); };
-    auto whole = [&]() { return std::strtoull(next().c_str(), nullptr, 10); };
+    auto real = [&]() {
+        return std::strtod(next().c_str(), nullptr);
+    };
+    auto whole = [&]() {
+        return std::strtoull(next().c_str(), nullptr, 10);
+    };
     Script s;
     while (i < tok.size()) {
         REQUIRE(next() == "F");
@@ -1469,8 +1473,8 @@ TEST_CASE("Generator portability: what the generators by geometry author, per se
                 opt.byIndex = false;
                 opt.portable = jobs[j].portable;
                 opt.authorOnly = true;
-                const SequenceResult r = runSequence(parts[static_cast<std::size_t>(jobs[j].part)], jobs[j].part,
-                                                     jobs[j].seq, opt);
+                const SequenceResult r =
+                    runSequence(parts[static_cast<std::size_t>(jobs[j].part)], jobs[j].part, jobs[j].seq, opt);
                 lines[j] = std::string("GEN ") + (jobs[j].portable ? "portable " : "sorted ") +
                            std::to_string(jobs[j].part) + " " + std::to_string(jobs[j].seq) + " " +
                            (r.skipped ? "skipped" : digest(r.scriptText + "|" + r.editedText));
@@ -1733,8 +1737,8 @@ void reportPinnedSkips(const std::vector<std::string>& skipped, const std::vecto
     }
     std::string text;
     if (!skipped.empty())
-        text = std::to_string(skipped.size()) + " pinned replay(s) not built on this platform (allowed on macOS): " +
-               all;
+        text =
+            std::to_string(skipped.size()) + " pinned replay(s) not built on this platform (allowed on macOS): " + all;
     if (!offPlatform.empty()) {
         std::string list;
         for (const std::string& s : offPlatform)
@@ -2034,7 +2038,8 @@ void replayCases(bool keyOnly)
          {{Answer::Exact, {41}}},
          "windows",
          0.4771},
-        // The real catch of round 3's moved-face rule among the reviewer's sample (round 4: it must stay): a window of a
+        // The real catch of round 3's moved-face rule among the reviewer's sample (round 4: it must stay): a window of
+        // a
         // moved boss's start cap, its name on a patch of the cap's plane outside the part, holding none of the pick in
         // place or carried by the boss's move: Broken, the old Exact WRONG.
         {4,
@@ -2051,7 +2056,8 @@ void replayCases(bool keyOnly)
          9.5592},
         // The reviewer's own block (round 4 rulings), authored on Windows:
         //  - a stretch of a moved cut's edge past its old start, ground inside a bore at pick time, is not a piece; the
-        //    resolver cannot tell such ground from new ground the pick grew into (sorted 17:32 edge 32): Broken (a miss:
+        //    resolver cannot tell such ground from new ground the pick grew into (sorted 17:32 edge 32): Broken (a
+        //    miss:
         //    {104} is right); with that stretch, or it alone, WRONG;
         {1,
          39,
@@ -2720,26 +2726,38 @@ TEST_CASE("Reviewed answers measured: how much of the pick each answer holds, in
         std::uint64_t seed;
     };
     const std::uint64_t h1 = 0xA81B7000ull, h2 = 0xB2081B00ull;
-    const std::vector<E> entries{
-        {0, 0, "#0|face 13", h1},    {0, 0, "#0|edge 28", h1},    {4, 33, "#33|edge 9", h1},
-        {6, 33, "#33|face 9", h1},   {9, 16, "#16|vertex 27", h1}, {17, 45, "#45|face 21", h1},
-        {17, 45, "#45|edge 27", h1}, {17, 45, "#45|edge 52", h1}, {17, 45, "#45|edge 62", h1},
-        {17, 45, "#45|vertex 0", h1}, {17, 45, "#45|vertex 1", h1}, {17, 45, "#45|vertex 24", h1},
-        {17, 45, "#45|vertex 31", h1}, {18, 47, "#47|face 18", h1}, {1, 3, "#3|edge 42", h2},
-        {11, 41, "#41|vertex 30", h2}, {17, 24, "#24|edge 3", h2},  {19, 37, "#37|face 90", h2},
-        // Round 4's own: answers the new moved-face rule gives that the oracle cannot judge.
-        {4, 45, "#45|face 20", h1},
-        {10, 7, "#7|face 3", 0x6B1D3F5A2C800000ull},
-        {10, 7, "#7|edge 18", 0x6B1D3F5A2C800000ull},
-        {1, 48, "#48|vertex 18", 0x6B1D3F5A2C800000ull}, {7, 34, "#34|vertex 9", 0x6B1D3F5A2C800000ull}};
+    const std::vector<E> entries{{0, 0, "#0|face 13", h1},
+                                 {0, 0, "#0|edge 28", h1},
+                                 {4, 33, "#33|edge 9", h1},
+                                 {6, 33, "#33|face 9", h1},
+                                 {9, 16, "#16|vertex 27", h1},
+                                 {17, 45, "#45|face 21", h1},
+                                 {17, 45, "#45|edge 27", h1},
+                                 {17, 45, "#45|edge 52", h1},
+                                 {17, 45, "#45|edge 62", h1},
+                                 {17, 45, "#45|vertex 0", h1},
+                                 {17, 45, "#45|vertex 1", h1},
+                                 {17, 45, "#45|vertex 24", h1},
+                                 {17, 45, "#45|vertex 31", h1},
+                                 {18, 47, "#47|face 18", h1},
+                                 {1, 3, "#3|edge 42", h2},
+                                 {11, 41, "#41|vertex 30", h2},
+                                 {17, 24, "#24|edge 3", h2},
+                                 {19, 37, "#37|face 90", h2},
+                                 // Round 4's own: answers the new moved-face rule gives that the oracle cannot judge.
+                                 {4, 45, "#45|face 20", h1},
+                                 {10, 7, "#7|face 3", 0x6B1D3F5A2C800000ull},
+                                 {10, 7, "#7|edge 18", 0x6B1D3F5A2C800000ull},
+                                 {1, 48, "#48|vertex 18", 0x6B1D3F5A2C800000ull},
+                                 {7, 34, "#34|vertex 9", 0x6B1D3F5A2C800000ull}};
     for (const E& e : entries) {
         const Part part = loadPart(kParts[e.part]);
         REQUIRE(part.base != nullptr);
         SequenceOptions opt;
         opt.byIndex = false;
         opt.seedBase = e.seed;
-        const std::string want = std::string(" #") + std::to_string(e.seq) + "|" + std::string(e.id).substr(
-                                                                                     std::string(e.id).find('|') + 1);
+        const std::string want =
+            std::string(" #") + std::to_string(e.seq) + "|" + std::string(e.id).substr(std::string(e.id).find('|') + 1);
         std::string line;
         setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
                          const Owners& now, const Samples& samples) {
@@ -2755,8 +2773,7 @@ TEST_CASE("Reviewed answers measured: how much of the pick each answer holds, in
             for (const SubId& s : res.elements)
                 line += " " + std::to_string(s.index);
             line += std::string(" } verdict ") + verdictName(rr.judgement.verdict) +
-                    (rr.judgement.structural.empty() ? "" : " [structural: " + rr.judgement.structural + "]") +
-                    "; E {";
+                    (rr.judgement.structural.empty() ? "" : " [structural: " + rr.judgement.structural + "]") + "; E {";
             for (const std::uint32_t el : x.expected.elems)
                 line += " " + std::to_string(el);
             line += " }" + (x.noAnchor.empty() ? std::string() : " (no anchor: " + x.noAnchor + ")");
