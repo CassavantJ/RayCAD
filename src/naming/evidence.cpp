@@ -512,6 +512,10 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
             bool changed = false;
             if (!sameShape) {
                 changed = now > 2.0 * then + kGrowthSlackQuanta || 2.0 * now + kGrowthSlackQuanta < then;
+            } else if (std::abs(now - then) <= 0.01 * then + kGrowthSlackQuanta) {
+                // Its area kept within a hundredth: the face moved as a whole, turned or not (a body moved onto a mate,
+                // tests/unit/doc transform_body; a cut's wall through the part moved along itself, holdout1 8:23).
+                changed = false;
             } else if (info &&
                        (info->type == kernel::SurfaceType::Plane || info->type == kernel::SurfaceType::Cylinder)) {
                 const Vec3 o = info->origin;
