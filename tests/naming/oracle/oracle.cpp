@@ -3024,7 +3024,16 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
     if (x.kind == SubKind::Face)
         return !x.mapped.pts.empty() && rigidOrStill(pick.truth, *pick.owners, now);
     // An edge or vertex (T-081b round 4): only where every owner of its description is where it was (a crossing of a
-    // moved surface with one that stayed slides along it, off both the pick and its map: SLIDING CROSSINGS).
+    // moved surface with one that stayed slides along it, off both the pick and its map: SLIDING CROSSINGS); a vertex
+    // on three faces or more (a seam vertex, on only its two faces, lies where the periodic face's seam meets the other,
+    // which moves with that face's parametrisation: SLIDING CROSSINGS (a); T-081a holdout5 13:3 vertex 7).
+    if (x.kind == SubKind::Vertex && !mutated("structural-seam")) {
+        std::vector<std::uint32_t> faces = pick.baseline->facesOf[0][pick.base.index];
+        std::sort(faces.begin(), faces.end());
+        faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+        if (faces.size() < 3)
+            return false;
+    }
     return !mutated("structural-edges") && stillOwners(pick.truth, *pick.owners, now);
 }
 
