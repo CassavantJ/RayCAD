@@ -1137,8 +1137,9 @@ struct Looked {
     Answer answer = Answer::Broken;
     std::vector<std::uint32_t> elements;
     Judgement judgement;
-    Judgement other;               // the oracle's verdict on another element answered Exact
-    std::vector<Judgement> probes; // the oracle's verdicts on the answers asked for (replayAndLook probes)
+    Judgement other;                 // the oracle's verdict on another element answered Exact
+    std::vector<Judgement> probes;   // the oracle's verdicts on the answers asked for (replayAndLook probes)
+    std::vector<std::string> probed; // what each probe asked, and the expectation it was judged against
 };
 
 struct Probe {
@@ -1148,9 +1149,11 @@ struct Probe {
 };
 
 // Replays sequence `seq` of part `partIndex` of the block and looks at the references `ids`: the resolver's answer and
-// its verdict, and the verdict on an Exact answer of another element of the same kind.
+// its verdict, and the verdict on an Exact answer of another element of the same kind. No answer of the sequence may be
+// wrong, whether or not it records the references asked for. `edit`, when given, is set to the sequence's edits.
 std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std::string>& ids, bool byIndex = true,
-                                  std::uint64_t seedBase = 0, const std::vector<Probe>& probes = {})
+                                  std::uint64_t seedBase = 0, const std::vector<Probe>& probes = {},
+                                  std::string* edit = nullptr)
 {
     const Part part = loadPart(kParts[partIndex]);
     REQUIRE(part.base != nullptr);
@@ -1201,12 +1204,28 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
                         e = static_cast<std::uint32_t>(best);
             }
             l.probes.push_back(judgeAnswer(x, ref.record, now, samples, p.answer, els));
+            std::string s = "asked";
+            for (const std::uint32_t e : els)
+                s += " " + std::to_string(e);
+            s += "; logical";
+            for (const std::uint32_t e : x.logical)
+                s += " " + std::to_string(e);
+            s += "; E";
+            for (const std::uint32_t e : x.expected.elems)
+                s += " " + std::to_string(e);
+            s += "; no anchor: " + x.noAnchor + (x.sharedAnchor ? " (shared anchor)" : "") +
+                 (x.mergeUnknown ? " (merge unknown)" : "");
+            l.probed.push_back(s);
         }
         out.push_back(std::move(l));
     });
     const SequenceResult r = runSequence(part, partIndex, seq, legacy);
     setInspector({});
+    if (edit != nullptr)
+        *edit = r.edit;
+    INFO(kParts[partIndex] << " #" << seq << ": " << r.edit);
     CHECK_FALSE(r.skipped);
+    CHECK(r.tally.wrong() == 0);
     CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
     return out;
 }
@@ -1387,8 +1406,17 @@ void replayCases(bool keyOnly)
                 return c.id.size() >= s.size() && c.id.compare(c.id.size() - s.size(), s.size(), s) == 0;
             }))
             continue;
-        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex, c.seed, c.wrongs);
+        std::string edit;
+        const std::vector<Looked> looked = replayAndLook(c.part, c.seq, {c.id}, c.byIndex, c.seed, c.wrongs, &edit);
         INFO(c.id << " (" << c.about << ")");
+        // The case's precondition: this platform's kernel builds the sequence so that it records the reference (the
+        // macOS kernel builds other geometry, so some sequences differ). If not, the case is skipped, said so; the
+        // sequence's own answers were still judged above, and none may be wrong.
+        if (looked.empty()) {
+            WARN("skipped: " << c.id << " (" << c.about
+                             << ") is not recorded on this platform; the sequence's edits: " << edit);
+            continue;
+        }
         REQUIRE(looked.size() == 1);
         INFO("verdict " << verdictName(looked[0].judgement.verdict));
         CHECK(looked[0].answer == c.answer);
@@ -1398,7 +1426,7 @@ void replayCases(bool keyOnly)
         CHECK(looked[0].judgement.newGround.empty() == !c.newGround);
         REQUIRE(looked[0].probes.size() == c.wrongs.size());
         for (std::size_t i = 0; i < c.wrongs.size(); ++i) {
-            INFO("negative " << i << ": " << verdictName(looked[0].probes[i].verdict));
+            INFO("negative " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
             CHECK(isWrong(looked[0].probes[i].verdict));
         }
     }
@@ -1442,11 +1470,21 @@ TEST_CASE("Oracle (directedit 7:12, 15:46; hidden 6:47): edits the oracle's mode
         SequenceOptions opt;
         opt.byIndex = c.byIndex;
         const SequenceResult r = runSequence(pt, c.part, c.seq, opt);
-        INFO(kParts[c.part] << " #" << c.seq);
+        INFO(kParts[c.part] << " #" << c.seq << ": " << r.edit);
         CHECK_FALSE(r.skipped);
+        CHECK(r.tally.wrong() == 0); // whether or not this platform's kernel builds the case
+        // The case's precondition: the sequence makes the edit it is about (the macOS kernel builds other geometry, so
+        // some sequences differ). If not, the case is skipped, said so.
+        const bool edited = std::any_of(r.editCounts.begin(), r.editCounts.end(), [&c](const auto& e) {
+            return e.first.rfind(std::string(c.outcome).substr(0, std::string(c.outcome).find(':')) + ":", 0) == 0;
+        });
         const auto it = r.editCounts.find(c.outcome);
+        if (!edited && it == r.editCounts.end()) {
+            WARN("skipped: " << kParts[c.part] << " #" << c.seq << " makes no " << c.outcome
+                             << " edit on this platform; its edits: " << r.edit);
+            continue;
+        }
         CHECK((it != r.editCounts.end() && it->second >= 1));
-        CHECK(r.tally.wrong() == 0);
     }
 }
 TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
