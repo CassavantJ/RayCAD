@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -123,6 +124,8 @@ struct Run {
     std::vector<Outcome> out;
     std::vector<PickOutcome> picks; // the replayed direct edits' own picks, judged
     std::vector<std::string> failed;
+    std::shared_ptr<const Samples> samples; // the edited shape's, for probing answers (judgeAnswer)
+    std::shared_ptr<const Owners> owners;
 };
 
 // Builds `base`, records every reference the oracle vouches for, builds `edited`, resolves and judges them all.
@@ -146,6 +149,8 @@ Run run(const Script& base, const Script& edited)
     auto s1 = sampleShape(b1.shape());
     REQUIRE(s1.has_value());
     const Owners owners = buildOwners(b1.builtScript());
+    r.samples = *s1;
+    r.owners = std::make_shared<const Owners>(owners);
     auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), b1.map(), b1.shape()}});
     const bool verbose = std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr;
     const std::string edges = verbose ? dumpElements(b1, **s1, SubKind::Edge) : std::string();
@@ -395,6 +400,84 @@ TEST_CASE("Direct edit: deleting a referenced face gives Broken", "[naming][dire
             }
         }
     }
+}
+
+TEST_CASE("Oracle (round 3): a hole opened up over a smaller one at the same depth merges their floors",
+          "[naming][directedit]")
+{
+    // The independent reviewer's adversarial case for the "flat bottom widens" rule (EditSpec::held): a block 100 x 60
+    // x 20, hole H1 r 5 at (30, 30) and hole H2 r 1 at (37.5, 30), both 12 deep; H1 opened up to r 9 swallows H2, and
+    // the one floor left holds both floors' ground. H1's floor answered Exact on it is a silent merge (WRONG); the
+    // floor's growth over the ring takes in only ground nobody held, never H2's floor.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("H1", BOp::Cut, top(20), circle(30, 30, 5), 12, "hole"));
+    base.push_back(sweep("H2", BOp::Cut, top(20), circle(37.5, 30, 1), 12, "hole"));
+    Script edited = base;
+    edited.push_back(directEdit("E1", EKind::Resize, {"H1/s1"}, 9.0));
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    REQUIRE(r.samples != nullptr);
+    // The one face on the floor plane (z 8, facing up) that now holds H1's and H2's floors.
+    const auto& F = r.samples->of(SubKind::Face);
+    std::vector<std::uint32_t> floors;
+    for (std::uint32_t i = 0; i < F.size(); ++i)
+        if (F[i].type == static_cast<int>(kernel::SurfaceType::Plane) && F[i].nrm.z > 0.99 &&
+            std::abs(F[i].boxMin.z - 8.0) < 1e-6 && std::abs(F[i].boxMax.z - 8.0) < 1e-6)
+            floors.push_back(i);
+    REQUIRE(floors.size() == 1);
+    const std::uint32_t floor = floors.front();
+    REQUIRE(F[floor].boxMax.x > 38.0); // it reaches over H2's old floor
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (!faceOf(o, "H1/c1/1") && !faceOf(o, "H2/c1/1"))
+            continue;
+        ++probed;
+        INFO("reference to " << o.ref.record.truth.cat << " " << o.ref.names << ": resolver "
+                             << stateText(o.resolved.state) << ", " << verdictName(o.verdict));
+        const Expectation x = expect(o.ref.record, *r.owners, *r.samples);
+        INFO(
+            "H1's floor: " << faceOf(o, "H1/c1/1") << "; E " << x.expected.elems.size() << " merged "
+                           << x.expected.merged << " merge unknown " << x.mergeUnknown << " weak " << x.weak
+                           << " no anchor '" << x.noAnchor << "'; Exact judged "
+                           << verdictName(
+                                  judgeAnswer(x, o.ref.record, *r.owners, *r.samples, Answer::Exact, {floor}).verdict));
+        // Exact on the joined floor: a silent merge, for either floor.
+        CHECK(isWrong(judgeAnswer(x, o.ref.record, *r.owners, *r.samples, Answer::Exact, {floor}).verdict));
+        // Flagged Merged on it: right.
+        CHECK(judgeAnswer(x, o.ref.record, *r.owners, *r.samples, Answer::Merged, {floor}).verdict == Verdict::Correct);
+    }
+    CHECK(probed == 2);
+}
+
+TEST_CASE("Feature edit (round 3, macOS 8:18): a hole moved by its own width is not repaired onto its other crossing",
+          "[naming][directedit]")
+{
+    // The randomised block's 8:18 as macOS built it, scripted: a pocket's wall (x 30, z 5..20) through the axis of a
+    // blind hole bored along y (r 2 at z 4) meets the hole's wall along one line (z 6; the other crossing, z 2, is
+    // below the pocket's floor), named alone. The hole moved up by its width (4 mm) meets the wall along two lines, z 6
+    // and z 10, siblings told apart only by ordinal: the picked name is gone, and the hole's lower line lies where the
+    // picked one was. The reference must not be repaired onto it (a congruence repair onto another element of the
+    // pick's own feature after the feature moved): Broken, or Exact on the line at z 10.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("P1", BOp::Cut, top(20), rect(30, -1, 60, 61), 15));
+    base.push_back(
+        sweep("H1", BOp::Cut, front(), circle(30, 4, 2), 30, "hole")); // blind: the wall is notched, not cut in two
+    Script edited = base;
+    edited[2].frame.o = add(edited[2].frame.o, Vec3{0, 0, 4});
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    std::size_t lines = 0;
+    for (const Outcome& o : r.out) {
+        if (o.ref.ref.kind != SubKind::Edge || !about(o, "H1/s1") || !about(o, "P1/s4") ||
+            o.ref.record.truth.cons.size() != 2)
+            continue;
+        ++lines;
+        INFO("reference " << o.ref.record.base.index << " " << o.ref.names << ": " << stateText(o.resolved.state) << " "
+                          << o.resolved.reason << "; " << verdictName(o.verdict));
+        CHECK(o.resolved.state != naming::ResolveState::Repaired);
+        CHECK_FALSE(isWrong(o.verdict));
+    }
+    CHECK(lines >= 1);
 }
 
 TEST_CASE("Direct edit: an edit in the history follows its face through an upstream edit", "[naming][directedit]")

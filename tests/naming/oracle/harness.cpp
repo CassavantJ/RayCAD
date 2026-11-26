@@ -842,6 +842,7 @@ void Tally::merge(const Tally& o)
     crossingsAtSeam += o.crossingsAtSeam;
     accepted += o.accepted;
     acceptedNewGround += o.acceptedNewGround;
+    acceptedNewGroundReviewed += o.acceptedNewGroundReviewed;
     acceptedReviewed += o.acceptedReviewed;
     conflicts += o.conflicts;
     conflictsReviewed += o.conflictsReviewed;
@@ -944,7 +945,13 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     }
     if (!rr.judgement.newGround.empty()) {
         ++tally.acceptedNewGround;
-        log.notes.push_back("NEW GROUND " + id + ": " + rr.judgement.newGround);
+        // Every acceptance by the new-ground rule must be reviewed (round 3), on the same list as the new-territory
+        // rule's (reviewed_territory.txt).
+        const auto it = reviewedTerritory().find(id);
+        if (it != reviewedTerritory().end())
+            ++tally.acceptedNewGroundReviewed;
+        log.notes.push_back("NEW GROUND " + id + ": " + rr.judgement.newGround +
+                            (it != reviewedTerritory().end() ? " [reviewed: " + it->second + "]" : " [NOT REVIEWED]"));
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;

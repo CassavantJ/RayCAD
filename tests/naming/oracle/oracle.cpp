@@ -22,6 +22,21 @@ namespace {
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 
+// Mutation switches (T-081b round 3: every new rule's pinned negatives are verified by switching the rule off):
+// RAYCAD_ORACLE_MUTATE=<name>[,<name>...] turns off the rules named structural, held, sibling-match, past-mapped-end
+// and ground-outline. For checking the pins only; never set in a gate run.
+// How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
+constexpr double kHeldTolerance = 1e-3;
+
+bool mutated(const char* rule)
+{
+    static const std::string list = [] {
+        const char* v = std::getenv("RAYCAD_ORACLE_MUTATE");
+        return v == nullptr ? std::string() : "," + std::string(v) + ",";
+    }();
+    return !list.empty() && list.find("," + std::string(rule) + ",") != std::string::npos;
+}
+
 // Meshes: the imported base finely (it is the carrier of B-spline faces), built shapes for sampling.
 constexpr kernel::MeshOptions kBaseMesh{0.005, 0.1};
 constexpr kernel::MeshOptions kSampleMesh{0.02, 0.2};
@@ -609,6 +624,8 @@ Result<std::shared_ptr<const ImportBase>> analyseImport(const kernel::Shape& sha
     if (!mesh)
         return tl::unexpected(mesh.error());
     auto base = std::make_shared<ImportBase>();
+    static std::atomic<std::uint64_t> serials{0};
+    base->serial = ++serials;
     base->shape = shape;
     base->meshTolerance = 1.5 * kBaseMesh.chordTol + 1e-4;
     const std::uint32_t faces = shape.count(SubKind::Face);
@@ -716,9 +733,23 @@ void applyEdit(Owners& O, const Feature& f)
                 continue;
             O.grownByEdit.insert(o.key);
             const auto old = o.in;
-            o.in = [old, fill, reach](const Vec3& p, double m) {
+            const auto heldIt = mutated("held") ? e.held.end() : e.held.find(o.key);
+            const std::vector<std::shared_ptr<const FaceMesh>> held =
+                heldIt == e.held.end() ? std::vector<std::shared_ptr<const FaceMesh>>{} : heldIt->second;
+            if (!held.empty())
+                o.heldByOther = [held](const Vec3& p) {
+                    for (const auto& h : held)
+                        if (h && h->distanceWithin(p, kHeldTolerance) <= kHeldTolerance)
+                            return true;
+                    return false;
+                };
+            o.in = [old, fill, reach, held](const Vec3& p, double m) {
                 if (old(p, m))
                     return true;
+                // Not over ground another face on this carrier held before the edit (EditSpec::held).
+                for (const auto& h : held)
+                    if (h && h->distanceWithin(p, m) <= m)
+                        return false;
                 for (std::size_t i = 0; i < fill.size() && i < reach.size(); ++i) {
                     const double limit = reach[i] + m;
                     if (fill[i] && fill[i]->distanceWithin(p, limit) <= limit)
@@ -1148,6 +1179,7 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
                 continue;
         }
         double okw = 0, W = 0;
+        bool tookHeld = false; // a sample on ground another face held before an edit grew an owner (Owner::heldByOther)
         std::vector<char> mask(es.pts.size(), 0);
         for (std::size_t j = 0; j < es.pts.size(); ++j) {
             const Vec3& p = es.pts[j];
@@ -1166,12 +1198,16 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
             if (ok) {
                 okw += es.w[j];
                 mask[j] = 1;
+            } else if (!tookHeld) {
+                for (const auto& c : cons)
+                    for (const Owner* o : c.alts)
+                        tookHeld = tookHeld || (o->heldByOther && o->c.on(p, T.sample) && o->heldByOther(p));
             }
         }
         const double frac = W > 0 ? okw / W : 0;
         if (frac >= (minFraction >= 0 ? minFraction : T.thr) && frac > 0) {
             ev.elems.push_back(x);
-            if (frac < 0.98) {
+            if (frac < 0.98 || tookHeld) {
                 ev.merged = true;
                 ev.partial.push_back(x);
             }
@@ -1510,6 +1546,29 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
         s.push_back(f);
         return buildOwners(s);
     };
+    // EditSpec::held: for each grown owner, the meshes of the faces before the edit that lie on its carrier (nine in
+    // ten nodes on it) and are neither its own nor among `skip` (the removed, moved or bore faces whose ground it may
+    // take in).
+    auto measureHeld = [&](const std::set<std::uint32_t>& skip) {
+        e.held.clear();
+        const auto& B = before.of(SubKind::Face);
+        for (const std::string& key : e.grown) {
+            const Owner* o = O0.get(key);
+            if (o == nullptr || !o->c.analytic())
+                continue;
+            const std::vector<std::uint32_t> own = facesOn(key, O0, before);
+            for (std::uint32_t y = 0; y < B.size(); ++y) {
+                if (!B[y].mesh || B[y].nodes.empty() || skip.count(y) != 0 ||
+                    std::find(own.begin(), own.end(), y) != own.end() || !typeMatches(o->c, B[y]))
+                    continue;
+                std::size_t on = 0;
+                for (const Vec3& p : B[y].nodes)
+                    on += o->c.on(p, tolFor(SubKind::Face).node) ? 1 : 0;
+                if (10 * on >= 9 * B[y].nodes.size())
+                    e.held[key].push_back(B[y].mesh);
+            }
+        }
+    };
     // The owners, other than `exclude`, with a face that shares an edge with one of `faces` (of the shape before).
     auto bordering = [&](const std::set<std::uint32_t>& faces, const std::vector<std::string>& exclude) {
         std::vector<std::string> out;
@@ -1610,6 +1669,7 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
             e.fill.push_back(es.mesh);
             e.fillReach.push_back((flat ? 0.0 : dims[0]) + 0.1);
         }
+        measureHeld(gone);
         return {};
     }
     case EKind::Offset: {
@@ -1645,6 +1705,7 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
                     e.fillReach.push_back(std::abs(e.amount) + 0.1);
                 }
         e.grown = bordering(moved, e.targets);
+        measureHeld(moved);
         const Owners O1 = withEdit();
         for (const std::string& t : e.targets) {
             if (O1.undescribable.count(t) != 0)
@@ -1708,6 +1769,13 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
                         e.fillReach.push_back(std::abs(e.amount - T->c.r) + 0.1);
                     }
             e.grown = ends;
+        }
+        {
+            std::set<std::uint32_t> boreFaces;
+            for (const std::string& r : e.resized)
+                for (const std::uint32_t x : facesOn(r, O0, before))
+                    boreFaces.insert(x);
+            measureHeld(boreFaces);
         }
         const Owners O1 = withEdit();
         for (const std::string& r : e.resized)
@@ -2120,6 +2188,48 @@ bool beyondPickBoundary(const ElemSamples& s, const Owners& before)
     return false;
 }
 
+// The same sweep in both scripts up to a rigid move: the same profile, distance and operation, the frame free.
+bool sameSweepShape(const Feature& a, const Feature& b)
+{
+    if (a.op != b.op || a.dist != b.dist || a.loops.size() != b.loops.size())
+        return false;
+    for (std::size_t i = 0; i < a.loops.size(); ++i) {
+        if (a.loops[i].ents.size() != b.loops[i].ents.size())
+            return false;
+        for (std::size_t k = 0; k < a.loops[i].ents.size(); ++k) {
+            const Ent &x = a.loops[i].ents[k], &y = b.loops[i].ents[k];
+            if (x.k != y.k || x.x0 != y.x0 || x.y0 != y.y0 || x.x1 != y.x1 || x.y1 != y.y1 || x.cx != y.cx ||
+                x.cy != y.cy || x.r != y.r)
+                return false;
+        }
+    }
+    return true;
+}
+
+// Is every owner of description `d` where it was or moved rigidly, so that the oracle's map of a point on it is exact:
+// an imported face no direct edit changed, or a side or cap of a sweep whose profile, distance and operation are
+// unchanged (its frame free), and no owner touched by a direct edit? (A blend, a sweep whose profile changed, a face a
+// direct edit moved or resized: the map is an approximation there.) The structural check's scope (judgeAnswer).
+bool rigidOrStill(const TruthDesc& d, const Owners& before, const Owners& after)
+{
+    for (const Constraint& c : d.cons)
+        for (const std::string& alt : c.alts) {
+            if (after.touchedByEdit.count(alt) != 0 || before.touchedByEdit.count(alt) != 0)
+                return false;
+            if (alt.compare(0, 2, "I/") == 0) {
+                if (before.importEdited || after.importEdited)
+                    return false;
+                continue;
+            }
+            const std::string f = featureOfOwner(alt);
+            const auto a = before.sweeps.find(f);
+            const auto b = after.sweeps.find(f);
+            if (a == before.sweeps.end() || b == after.sweeps.end() || !sameSweepShape(a->second, b->second))
+                return false;
+        }
+    return !d.cons.empty();
+}
+
 // The same sweep in both scripts (nothing about it edited).
 bool sameSweep(const Feature& a, const Feature& b)
 {
@@ -2154,9 +2264,10 @@ struct RayGrid {
 const RayGrid& rayGridOf(const ImportBase& base)
 {
     static std::mutex lock;
-    static std::map<const ImportBase*, std::unique_ptr<RayGrid>> grids;
+    // By the base's serial, not its address (ImportBase::serial).
+    static std::map<std::uint64_t, std::unique_ptr<RayGrid>> grids;
     const std::lock_guard<std::mutex> guard(lock);
-    auto& slot = grids[&base];
+    auto& slot = grids[base.serial];
     if (slot)
         return *slot;
     auto g = std::make_unique<RayGrid>();
@@ -2689,9 +2800,79 @@ bool seamVertex(const Samples& smp, std::uint32_t v)
     return faces.size() == 2;
 }
 
+// Does face `a` hold any of the picked ground, in place or mapped through the edit (the structural check's test)?
+bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expectation& x)
+{
+    // Any sample of either on the other (within the overlap tolerance, boundaries included): a face that only touches
+    // the picked ground, or holds a strip of it, is not called another element here; one apart from it is.
+    const auto holds = [&](const ElemSamples& ground) {
+        return shareOn(a, ground, SubKind::Face) > 0.0 || shareOn(ground, a, SubKind::Face) > 0.0;
+    };
+    // A rigid copy of the picked face (the same surface type, area within 2 % by the samples' weights, sorted extents
+    // within a hundredth) is the pick moved, wherever the map takes the picked points: a feature's surface the part
+    // clips, moved along itself (holdout1 8:23 face 1, a cut's wall through the part, the cut moved 12 mm down its
+    // profile: the same wall, its points elsewhere on the moved surface).
+    {
+        const ElemSamples& P = pick.picked();
+        double wa = 0, wp = 0;
+        for (const double w : a.w)
+            wa += w;
+        for (const double w : P.w)
+            wp += w;
+        std::array<double, 3> da{a.boxMax.x - a.boxMin.x, a.boxMax.y - a.boxMin.y, a.boxMax.z - a.boxMin.z};
+        std::array<double, 3> dp{P.boxMax.x - P.boxMin.x, P.boxMax.y - P.boxMin.y, P.boxMax.z - P.boxMin.z};
+        std::sort(da.begin(), da.end());
+        std::sort(dp.begin(), dp.end());
+        bool copy = a.type == P.type && wp > 0 && std::abs(wa - wp) <= 0.02 * wp;
+        for (std::size_t i = 0; i < 3 && copy; ++i)
+            copy = std::abs(da[i] - dp[i]) <= 0.01 * std::max(da[i], dp[i]) + 2e-3;
+        if (copy)
+            return true;
+    }
+    if (std::getenv("RAYCAD_ORACLE_DEBUG_STRUCTURAL") != nullptr) {
+        const ElemSamples& P = pick.picked();
+        std::printf(
+            "structural: answer n%zu mesh %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f); pick n%zu mesh %d box (%.3f "
+            "%.3f %.3f)-(%.3f %.3f %.3f); mapped n%zu mesh %d box (%.3f %.3f %.3f)-(%.3f %.3f %.3f); in place "
+            "%.3f/%.3f mapped %.3f/%.3f\n",
+            a.pts.size(), a.mesh ? 1 : 0, a.boxMin.x, a.boxMin.y, a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z,
+            P.pts.size(), P.mesh ? 1 : 0, P.boxMin.x, P.boxMin.y, P.boxMin.z, P.boxMax.x, P.boxMax.y, P.boxMax.z,
+            x.mapped.pts.size(), x.mapped.mesh ? 1 : 0, x.mapped.boxMin.x, x.mapped.boxMin.y, x.mapped.boxMin.z,
+            x.mapped.boxMax.x, x.mapped.boxMax.y, x.mapped.boxMax.z, interiorShare(a, P, SubKind::Face),
+            interiorShare(P, a, SubKind::Face), interiorShare(a, x.mapped, SubKind::Face),
+            interiorShare(x.mapped, a, SubKind::Face));
+    }
+    return a.pts.empty() || holds(pick.picked()) || holds(x.mapped);
+}
+
+// Does the structural check apply to this reference (judgeAnswer): a face, its map known and exact?
+bool structuralScope(const PickRecord& pick, const Owners& now, const Expectation& x)
+{
+    return !mutated("structural") && x.kind == SubKind::Face && !x.mapped.pts.empty() && !pick.picked().pts.empty() &&
+           rigidOrStill(pick.truth, *pick.owners, now);
+}
+
+Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
+
 } // namespace
 
 Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
+{
+    Expectation x = expectCore(pick, now, smp);
+    // The structural check applies to the expectation too (round 3): a single expected face that holds none of the
+    // picked ground, in place or where the edit's exact map takes it, is not the pick's continuation but another patch
+    // of its surface (holdout1 17:10 face 5; T-081a holdout2 11:6 face 24, 13:5 face 19): the pick is gone.
+    if (x.expected.elems.size() == 1 && x.noAnchor.empty() && structuralScope(pick, now, x) &&
+        !holdsPickedGround(smp.of(SubKind::Face)[x.expected.elems.front()], pick, x)) {
+        x.expected = TruthEval{};
+        x.structuralGone = true;
+    }
+    return x;
+}
+
+namespace {
+
+Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp)
 {
     Expectation x;
     const TruthDesc& d = pick.truth;
@@ -2869,6 +3050,7 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                           (containers.count(x.logical[i]) != 0 || overlap(N[x.logical[i]], x.mapped, x.kind, pickTol))))
                             ? 1
                             : 0;
+    std::vector<ElemSamples> mappedSiblings; // the other pieces at pick time, mapped (empty where they cannot be)
     if (x.weak) {
         // The other pieces of the logical element at pick time, mapped through the edit: what overlaps one of
         // them is that piece's continuation.
@@ -2879,6 +3061,7 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             ++x.siblings;
             bool unused = false;
             const ElemSamples sibling = mapElement(*pick.baseline, SubId{x.kind, s}, d, *pick.owners, now, unused);
+            mappedSiblings.push_back(sibling);
             if (sibling.pts.empty())
                 continue;
             const double tol = anchorTolerance(x.kind, unmovedMap(pick.baseline->of(x.kind)[s], sibling));
@@ -3278,6 +3461,7 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     // told.
     // A Merged answer with exactly E is right either way; only an Exact one cannot be judged (Expectation::
     // mergeUnknown).
+    const bool mergeUnknownBefore = x.mergeUnknown;
     if (x.weak && x.moved)
         for (const std::uint32_t e : x.expected.elems)
             if (x.isAnchored(e) && x.isClaimed(e)) {
@@ -3305,6 +3489,43 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             x.expected = kept;
         }
     }
+    // The same for an edge that moved with its carriers (round 3, the reviewer's rule for T-081b tuned 12:33: a top
+    // face pushed down, the edge between it and a coplanar pair of faces of a join now two edges, the picked stretch
+    // moved and another one past its old end). Its old ends, mapped through the edit, are the ends of the mapped pick:
+    // an expected edge that holds none of the mapped pick and lies wholly past them (outside the mapped pick's box) is
+    // new ground beyond the pick's old end, not its continuation, while another expected edge holds the mapped pick.
+    if (!mutated("past-mapped-end") && x.kind == SubKind::Edge && x.moved && !x.inPlace && !x.mapped.pts.empty() &&
+        x.expected.elems.size() >= 2) {
+        // Holds the mapped pick: overlaps it (Expectation::anchored); past its ends: all but a stretch within the
+        // tolerance of the shared end vertex (a tenth of its samples) outside the mapped pick's box.
+        const auto holdsMapped = [&](std::uint32_t e) {
+            return x.isAnchored(e);
+        };
+        const auto pastEnds = [&](std::uint32_t e) {
+            if (N[e].pts.empty())
+                return false;
+            std::size_t outside = 0;
+            for (const Vec3& p : N[e].pts)
+                outside += outsideBox(p, x.mapped.boxMin, x.mapped.boxMax, overlapTolerance(x.kind)) ? 1 : 0;
+            return 10 * outside >= 9 * N[e].pts.size();
+        };
+        TruthEval kept;
+        bool anyHolds = false;
+        for (const std::uint32_t e : x.expected.elems) {
+            const bool holds = holdsMapped(e);
+            anyHolds = anyHolds || holds;
+            if (holds || !pastEnds(e))
+                kept.elems.push_back(e);
+        }
+        if (anyHolds && !kept.elems.empty() && kept.elems.size() < x.expected.elems.size()) {
+            for (const std::uint32_t e : x.expected.partial)
+                if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
+                    kept.partial.push_back(e);
+            kept.merged = !kept.partial.empty();
+            x.expected = kept;
+            x.pastMappedEnd = true;
+        }
+    }
     // Two vertices of the logical element both near the mapped pick (the ends of an edge a few micrometres long, both
     // on the description's faces: T-081b holdout1 17:7), and the mapped pick on exactly one of them: a vertex continues
     // as one vertex, the one it lies on.
@@ -3323,18 +3544,92 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             x.expected.elems = on;
         }
     }
-    // A shared anchor (as above) for pieces of an edge or vertex that a moved feature bounds, when the mapped pick
-    // reaches over as many pieces as there were at pick time: each may continue the pick or one of its siblings, whose
-    // own map may not settle (T-081b holdout2 17:24: two stretches of a chamfer's edge on a resized cut, the pick
-    // mapped over both). Told on the E that the rules narrowing it (past the old end, the vertex the mapped pick lies
-    // on) leave: where they settle the continuation, the other pieces are judged as usual (holdout1 3:31 and 17:7).
+    // Pieces of an edge or vertex that a moved feature bounds, when the mapped pick reaches over as many pieces as
+    // there were at pick time (T-081b holdout2 17:24: two stretches of a chamfer's edge on a resized cut, split at a
+    // vertex on their two faces only, the pick mapped over both). The pieces are matched sibling to sibling, by their
+    // order along the run (the round-3 reviewer: decidable sibling to sibling; the lower stretch continues the lower
+    // stretch): when there are as many pieces now as then and every pick-time piece can be mapped, the mapped pick and
+    // its mapped siblings are ranked along the line through the first and the last of them (by their centres), the
+    // pieces now along the same line, each rank apart from the next by more than the anchor tolerance; the piece now at
+    // the pick's rank continues it, E is that piece alone, and every other answer is judged against it. A map that
+    // slides every piece along the run by the same error keeps the order. Otherwise each piece may continue the pick or
+    // a sibling whose own map does not settle: a shared anchor, and an answer inside the logical element other than E
+    // is not judged. Told on the E the rules narrowing it (past the old end, the vertex the mapped pick lies on) leave
+    // (holdout1 3:31, 17:7).
     if (x.weak && x.moved && x.kind != SubKind::Face && x.expected.elems.size() >= 2 &&
         static_cast<std::size_t>(x.siblings) + 1 >= x.expected.elems.size()) {
         std::size_t anchored = 0;
         for (const std::uint32_t e : x.expected.elems)
             anchored += x.isAnchored(e) ? 1 : 0;
-        if (anchored >= 2)
-            x.sharedAnchor = true;
+        if (anchored >= 2) {
+            const auto centre = [](const ElemSamples& s) {
+                const std::vector<Vec3>& pts = s.pts.empty() ? s.nodes : s.pts;
+                Vec3 m{0, 0, 0};
+                for (const Vec3& q : pts)
+                    m = add(m, mul(q, 1.0 / static_cast<double>(pts.size())));
+                return m;
+            };
+            std::vector<Vec3> then{centre(x.mapped)}; // the mapped pick first, then its mapped siblings
+            bool mappable = !x.mapped.pts.empty() || !x.mapped.nodes.empty();
+            for (const ElemSamples& s : mappedSiblings) {
+                mappable = mappable && (!s.pts.empty() || !s.nodes.empty());
+                if (mappable)
+                    then.push_back(centre(s));
+            }
+            long match = -1;
+            if (mappable && then.size() == x.expected.elems.size()) {
+                // The direction of the run: from the lowest to the highest centre along the pieces now's spread.
+                std::vector<Vec3> later;
+                for (const std::uint32_t e : x.expected.elems)
+                    later.push_back(centre(N[e]));
+                Vec3 dir = sub(later.back(), later.front());
+                for (std::size_t i = 0; i < later.size(); ++i)
+                    for (std::size_t j = i + 1; j < later.size(); ++j)
+                        if (norm(sub(later[j], later[i])) > norm(dir))
+                            dir = sub(later[j], later[i]);
+                const double len = norm(dir);
+                if (len > 0) {
+                    dir = mul(dir, 1.0 / len);
+                    const auto rankOf = [&](const std::vector<Vec3>& pts, std::size_t which, bool& apart) {
+                        std::vector<double> t;
+                        for (const Vec3& p : pts)
+                            t.push_back(dot(p, dir));
+                        std::vector<double> sorted = t;
+                        std::sort(sorted.begin(), sorted.end());
+                        for (std::size_t i = 1; i < sorted.size(); ++i)
+                            apart = apart && sorted[i] - sorted[i - 1] > kAnchorTolerance;
+                        return static_cast<std::size_t>(std::lower_bound(sorted.begin(), sorted.end(), t[which]) -
+                                                        sorted.begin());
+                    };
+                    bool apart = true;
+                    const std::size_t pickRank = rankOf(then, 0, apart);
+                    for (std::size_t i = 0; i < later.size() && apart; ++i)
+                        if (rankOf(later, i, apart) == pickRank)
+                            match = static_cast<long>(x.expected.elems[i]);
+                    if (!apart)
+                        match = -1;
+                }
+            }
+            if (std::getenv("RAYCAD_ORACLE_DEBUG_MATCH") != nullptr)
+                std::printf("match: pieces then %zu now %zu mappable %d -> %ld\n", then.size(), x.expected.elems.size(),
+                            mappable ? 1 : 0, match);
+            if (match >= 0 && !mutated("sibling-match")) {
+                TruthEval one;
+                one.elems = {static_cast<std::uint32_t>(match)};
+                // Larger than described only by the description (a sibling's claim is settled by the match).
+                if (std::find(x.strict.partial.begin(), x.strict.partial.end(), static_cast<std::uint32_t>(match)) !=
+                    x.strict.partial.end())
+                    one.partial = one.elems;
+                one.merged = !one.partial.empty();
+                x.expected = one;
+                x.siblingMatch = true;
+                // The match tells which piece continues which: neither the shared anchor above nor its merge doubt.
+                x.sharedAnchor = false;
+                x.mergeUnknown = mergeUnknownBefore;
+            } else {
+                x.sharedAnchor = true;
+            }
+        }
     }
     if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
         x.twins = true;
@@ -3470,6 +3765,8 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     return x;
 }
 
+} // namespace
+
 namespace {
 
 // The new-territory rule (oracle.h). `v` is the set verdict.
@@ -3552,9 +3849,37 @@ namespace {
 // Accepted when (a) the answer holds all the picked ground that survives (the mapped pick, or the pick in place when
 // its carriers did not move: Expectation::inPlace), and some of it; (b) every element of the answer that is not
 // expected is on the picked element's own carriers, on no ground any element held at pick time (the picked one
-// included: an extra piece is new ground, not ground the pick had), and not beyond a boundary the pick had then
-// (beyondPickBoundary); (c) the
-// answer is flagged. Never for an Exact answer. Returns why, or nothing.
+// included: an extra piece is new ground, not ground the pick had), and inside the pick-time outline (round 3: a planar
+// face's outline, all its loops; none for any other element, see below); (c) the answer is flagged. Never for an
+// Exact answer. Returns why, or nothing.
+// The pick-time outline of a planar face (all its boundary loops, as the resolver's TopoRef::outline): is p, projected
+// onto its plane, inside it (even-odd over the mesh's boundary segments)? False for a face without a mesh boundary.
+bool insideOutline(const ElemSamples& face, const Vec3& p)
+{
+    if (!face.mesh || face.mesh->boundary.empty())
+        return false;
+    const Vec3 n = face.nrm;
+    Vec3 e1 = std::abs(n.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    e1 = sub(e1, mul(n, dot(e1, n)));
+    const double l1 = norm(e1);
+    if (l1 < 1e-9)
+        return false;
+    e1 = mul(e1, 1.0 / l1);
+    const Vec3 e2 = cross(n, e1);
+    const Vec3 o = face.mesh->boundary.front()[0];
+    const auto uv = [&](const Vec3& q) {
+        const Vec3 d = sub(q, o);
+        return std::array<double, 2>{dot(d, e1), dot(d, e2)};
+    };
+    const auto q = uv(p);
+    bool in = false;
+    for (const auto& s : face.mesh->boundary) {
+        const auto a = uv(s[0]), b = uv(s[1]);
+        if ((a[1] > q[1]) != (b[1] > q[1]) && q[0] < (b[0] - a[0]) * (q[1] - a[1]) / (b[1] - a[1]) + a[0])
+            in = !in;
+    }
+    return in;
+}
 std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Samples& smp, Answer answer,
                           const std::vector<std::uint32_t>& X)
 {
@@ -3595,13 +3920,26 @@ std::string newGroundRule(const Expectation& x, const PickRecord& pick, const Sa
             for (std::uint32_t i = 0; i < B.size(); ++i)
                 if (sameSheet(N[e], B[i], kind) && nearElement(p, B[i], kind, tol))
                     return {};
-        if (beyondPickBoundary(N[e], *pick.owners))
-            return {};
-        // Past the picked element's ends (its box at pick time): beyond the faces or edge ends that bounded it then.
         const ElemSamples& P = pick.picked();
-        for (const Vec3& p : N[e].pts)
-            if (outsideBox(p, P.boxMin, P.boxMax, tol))
+        if (mutated("ground-outline")) {
+            // Round 2's bound: no pick-time sweep's volume, and the picked element's box.
+            if (beyondPickBoundary(N[e], *pick.owners))
                 return {};
+            for (const Vec3& p : N[e].pts)
+                if (outsideBox(p, P.boxMin, P.boxMax, tol))
+                    return {};
+        } else {
+            // The bound (round 3, the coordinator's option (b)): the pick-time outline, all its loops, as the resolver
+            // records it (TopoRef::outline): every sample of an extra piece inside it. A non-planar face has no
+            // outline (the resolver records none), nor an edge or a vertex a region: no new ground is accepted for
+            // them, and an extra piece is judged as any other. (An extra piece is on no ground the picked element held,
+            // so inside the outline means new ground inside the picked face's own region: in practice, none.)
+            if (kind != SubKind::Face || P.type != static_cast<int>(kernel::SurfaceType::Plane) || !P.mesh)
+                return {};
+            for (const Vec3& p : N[e].pts)
+                if (!insideOutline(P, p))
+                    return {};
+        }
         ++extras;
     }
     std::size_t missing = 0;
@@ -3621,6 +3959,25 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
                       Answer answer, std::vector<std::uint32_t> X)
 {
     Judgement j = judgeCore(x, pick, now, smp, answer, X);
+    // THE STRUCTURAL CHECK (T-081b round 3, the independent reviewer's; independent of the description and of every
+    // rule above): an Exact (or Repaired) answer of one face that holds none of the picked ground, neither in place
+    // nor where the edit's map takes it, is another element, whatever names it carries (holdout2 7:44 face 27: a name
+    // that followed a moved feature's start cap to a patch of its plane that holds none of the pick). Faces only: an
+    // edge or vertex where a moved face crosses one that stayed slides along it, off both the pick and its map
+    // (expect: SLIDING CROSSINGS), and is told there. Only where the map is known (the mapped pick has samples) and
+    // exact: every owner of the description still or moved rigidly (rigidOrStill; a blend or a sweep whose profile
+    // changed changes shape, and its map is an approximation: S4 D02, D03, D09).
+    if ((answer == Answer::Exact || answer == Answer::Repaired) && X.size() == 1 &&
+        X[0] < smp.of(SubKind::Face).size() && structuralScope(pick, now, x) &&
+        !holdsPickedGround(smp.of(SubKind::Face)[X[0]], pick, x)) {
+        j.verdict = x.expected.elems.empty() ? Verdict::WrongGhost : Verdict::WrongOther;
+        j.unjudged = false;
+        j.newGround.clear();
+        j.accepted.clear();
+        j.structural = std::string(answerName(answer)) + " {" + std::to_string(X[0]) +
+                       "} holds none of the picked ground, in place or mapped through the edit";
+        return j;
+    }
     if (isWrong(j.verdict)) {
         std::sort(X.begin(), X.end());
         X.erase(std::unique(X.begin(), X.end()), X.end());

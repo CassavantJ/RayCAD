@@ -224,6 +224,9 @@ struct ImportBase {
     std::vector<Carrier> carriers;                       // per face of `shape`
     std::vector<std::shared_ptr<const FaceMesh>> meshes; // per face
     double meshTolerance = 0;
+    // Unique per analyseImport call, for caches of things made from it: an address can be reused once a base is freed
+    // (T-081b round 3: a ray grid cached by address served another part's grid in Debug and ASan builds).
+    std::uint64_t serial = 0;
 };
 // Analyses an imported shape once: carrier and fine mesh of every face. KernelFailure if the kernel fails.
 Result<std::shared_ptr<const ImportBase>> analyseImport(const kernel::Shape& shape);
@@ -255,6 +258,10 @@ struct EditSpec {
     std::vector<double> fillReach;    // parallel to fill: how far a face around may run on over it
     std::vector<std::string> grown;   // Delete, Resize (measured): owners that bordered the removed faces
     std::vector<std::string> resized; // Resize (measured)
+    // Per grown owner (measured): the meshes of the other faces on its carrier before the edit. Its grown extent never
+    // takes in their ground: that was another element's at pick time (round 3, the reviewer's two-hole case: a hole
+    // opened up over a smaller one at the same depth, the floors joined, is a merge, not the floor widening).
+    std::map<std::string, std::vector<std::shared_ptr<const FaceMesh>>> held;
 };
 
 struct Feature {
@@ -280,6 +287,10 @@ struct Owner {
     Carrier c;
     std::function<bool(const Vec3&, double)> in; // inside the extent, with a margin
     std::string cat;
+    // Ground another face on this carrier held before a direct edit that grew this owner's extent (EditSpec::held):
+    // an element of the description with any sample there took that face's ground in (larger than described, however
+    // little of it). Empty when no edit grew the owner.
+    std::function<bool(const Vec3&)> heldByOther;
 };
 struct Owners {
     std::vector<Owner> v;
@@ -494,6 +505,14 @@ struct Expectation {
     // logical element's parts continues the pick cannot be told either: any other answer inside the logical element is
     // not judged (T-081b directedit 6:3: a cut moved across a hole, its wall's two crossings with the hole wall).
     bool sharedAnchor = false;
+    // The pieces were matched sibling to sibling (expect, round 3): E is the one piece mutually nearest the mapped
+    // pick.
+    bool siblingMatch = false;
+    // An expected edge past the mapped pick's ends was dropped (expect, round 3: a moved edge's old end).
+    bool pastMappedEnd = false;
+    // The one expected face held none of the picked ground, in place or mapped (the structural check, expect): the
+    // pick is gone, E emptied.
+    bool structuralGone = false;
     // Every carrier of the description is as it was at pick time (only separators or bounding features moved): the
     // picked element's ground is where it was (T-081b round 2: remnants, and the new-ground rule's coverage).
     bool inPlace = false;
@@ -506,10 +525,11 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& sam
 
 struct Judgement {
     Verdict verdict = Verdict::Correct;
-    bool unjudged = false; // a non-Broken answer to a reference whose continuation cannot be told
-    std::string accepted;  // non-empty: accepted by the new-territory rule (why, in words)
-    std::string newGround; // non-empty: a flagged answer accepted by the new-ground rule (judgeAnswer; why, in words)
-    bool twin = false;     // Exact on one of coincident vertices (Expectation::twins)
+    bool unjudged = false;  // a non-Broken answer to a reference whose continuation cannot be told
+    std::string accepted;   // non-empty: accepted by the new-territory rule (why, in words)
+    std::string newGround;  // non-empty: a flagged answer accepted by the new-ground rule (judgeAnswer; why, in words)
+    bool twin = false;      // Exact on one of coincident vertices (Expectation::twins)
+    std::string structural; // non-empty: WRONG by the structural check (judgeAnswer; why, in words)
 };
 Judgement judgeAnswer(const Expectation& e, const PickRecord& pick, const Owners& now, const Samples& samples,
                       Answer answer, std::vector<std::uint32_t> elements);
