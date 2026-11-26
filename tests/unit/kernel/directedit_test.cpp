@@ -568,13 +568,15 @@ TEST_CASE("an edge of a pushed face whose neighbour is not extended has no count
     }
 }
 
-TEST_CASE("an edge of a pushed face whose counterpart runs on into another edge on the same surfaces stays Deleted",
+TEST_CASE("an edge of a pushed face whose counterpart runs on into another edge is Modified to the moved stretch",
           "[kernel][directedit]")
 {
     // T-081b: the input of one push/pull in the randomised naming block, saved as it was
     // (data/directedit_offset_edge_runs_on.rbrep): a plate whose top (z 4) meets a joined block's side along a 0.71 mm
     // edge (edge 5). Pushed down 1.537 mm, the top meets that side along the same line in two edges: the picked stretch
-    // moved down, and a 3.3 mm stretch past its end. Which of them carries the old edge is not the kernel's to say.
+    // moved down, and a 3.3 mm stretch past its end. The edge is Modified to the moved stretch, the one between the
+    // images of its faces (T-081b round 3: the reviewer ruled it the continuation, the other new ground past its old
+    // end).
     const Shape plate = savedShape("directedit_offset_edge_runs_on.rbrep");
     const SubId edge{SubKind::Edge, 5};
     const CurveInfo was = take(curveInfo(plate, edge));
@@ -603,7 +605,13 @@ TEST_CASE("an edge of a pushed face whose counterpart runs on into another edge 
             ++onLine;
     }
     REQUIRE(onLine >= 2);
-    CHECK(primary(out, edge) == Relation::Deleted);
+    REQUIRE(primary(out, edge) == Relation::Modified);
+    const std::vector<SubId> now = modifiedTo(out, 0, edge);
+    REQUIRE(now.size() == 1);
+    const CurveInfo is = take(curveInfo(out.shape, now.front()));
+    CHECK(close(is.length, was.length, 1e-6));
+    CHECK(onOldLine(is.start));
+    CHECK(onOldLine(is.end));
 }
 
 TEST_CASE("offsetFaces raises a pocket floor and warns about angled neighbours", "[kernel][directedit]")

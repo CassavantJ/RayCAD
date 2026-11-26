@@ -68,7 +68,6 @@
 #include "io_internal.h"
 
 #include <BOPAlgo_Alerts.hxx>
-#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
@@ -599,54 +598,15 @@ std::vector<std::uint32_t> facesAround(const Shape& shape, SubKind kind, std::ui
     return out;
 }
 
-// Whether `p` lies on the (unbounded) surface of `face`, within 0.1 um (faces a boolean split from one surface can
-// differ by a few 1e-6 mm).
-bool onSurfaceOf(const TopoDS_Face& face, const gp_Pnt& p)
-{
-    GeomAPI_ProjectPointOnSurf proj(p, BRep_Tool::Surface(face));
-    return proj.NbPoints() > 0 && proj.LowerDistance() <= 1e-4;
-}
-
-// Whether result edge `edge` runs on into another edge on the same two surfaces (it meets, at one of its vertices, an
-// edge whose middle lies on the surfaces of both of `edge`'s faces): the edited boundary is then longer than the input
-// edge in some direction, and which stretch carries the input edge's identity is not for the kernel to decide.
-bool continuesOnSameSurfaces(const Shape& result, std::uint32_t edge, const std::vector<std::uint32_t>& faces)
-{
-    if (faces.size() != 2)
-        return false;
-    const detail::ShapeIndex& edges = result.impl->subs[detail::kindSlot(SubKind::Edge)];
-    const detail::ShapeIndex& vertices = result.impl->subs[detail::kindSlot(SubKind::Vertex)];
-    const detail::ShapeIndex& resultFaces = result.impl->subs[detail::kindSlot(SubKind::Face)];
-    const detail::AncestorIndex& vertexEdges = result.impl->ancestors(SubKind::Vertex, SubKind::Edge);
-    const TopoDS_Shape& self = edges.FindKey(static_cast<int>(edge) + 1);
-    const TopoDS_Face a = TopoDS::Face(resultFaces.FindKey(static_cast<int>(faces[0]) + 1));
-    const TopoDS_Face b = TopoDS::Face(resultFaces.FindKey(static_cast<int>(faces[1]) + 1));
-    for (TopExp_Explorer v(self, TopAbs_VERTEX); v.More(); v.Next()) {
-        if (vertices.FindIndex(v.Current()) == 0)
-            continue;
-        const int k = vertexEdges.FindIndex(v.Current());
-        if (k == 0)
-            continue;
-        for (const TopoDS_Shape& other : vertexEdges.FindFromIndex(k)) {
-            if (other.IsSame(self) || BRep_Tool::Degenerated(TopoDS::Edge(other)))
-                continue;
-            const BRepAdaptor_Curve curve(TopoDS::Edge(other));
-            const gp_Pnt mid = curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter()));
-            if (onSurfaceOf(a, mid) && onSurfaceOf(b, mid))
-                return true;
-        }
-    }
-    return false;
-}
-
 // See "HISTORY" (kernel.h, T-081b): the edges and vertices of a face a push/pull moves or a resize resizes are Modified
 // to their counterparts on the edited face when that counterpart is unique. The counterpart of an edge or vertex is the
 // one result element whose faces are exactly one image of each face around it (an edge between two faces: the result
 // edge between their images; a seam: the seam of the face's image; a vertex: the result vertex on an image of each of
 // its faces and on no other face). Only an element the boolean reported Deleted gets one, and only a result element no
-// other input element is Modified to, not an edge that runs on into another edge on the same two surfaces (the
-// edited boundary grew, see continuesOnSameSurfaces), and not a vertex on fewer than three faces that is not where the
-// edit takes its point (see whereMoved); anything else stays as it was (Deleted, its counterpart new).
+// other input element is Modified to, and not a vertex on fewer than three faces that is not where the edit takes its
+// point (see whereMoved); anything else stays as it was (Deleted, its counterpart new). An edge whose counterpart runs
+// on into another edge on the same two surfaces is paired with it (T-081b round 3: the reviewer ruled the moved
+// stretch the continuation, and the stretch past its old end new ground; the naming oracle pins both).
 // `planarEndsOnly` (a resize): only elements whose other faces are planes square to the bore's axis (its flat end
 // faces: a rim; a line where a plane along the axis cuts the bore moves along the bore and is left alone).
 void modifyEditedBoundaries(ShapeHistory& history, const Shape& input, const Shape& result, std::span<const int> edited,
@@ -757,8 +717,6 @@ void modifyEditedBoundaries(ShapeHistory& history, const Shape& input, const Sha
                     only = SubId{kind, r};
             }
             if (!unique || !only || taken.count(*only) != 0)
-                continue;
-            if (kind == SubKind::Edge && continuesOnSameSurfaces(result, only->index, resultFaces[only->index]))
                 continue;
             if (kind == SubKind::Vertex && around.size() < 3 &&
                 !whereMoved(BRep_Tool::Pnt(TopoDS::Vertex(subs.FindKey(static_cast<int>(c) + 1))),

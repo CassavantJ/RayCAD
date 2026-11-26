@@ -176,9 +176,8 @@ Result<OpResult> splitBody(const Shape&, Plane, JobContext&);                   
 // result where no input face accounts for them are Generated from the edge they were swept from (push/pull) or from
 // the edited hole face (resize); the tool never appears as an input. T-081b: the edges and vertices of a face a direct
 // edit moves or resizes are Modified to their counterparts on the edited face (the element between the images of the
-// same faces; for a resized bore, the rim on a flat end face square to its axis), only when that counterpart is unique
-// and is not an edge that runs on into another edge on the same two surfaces; otherwise they are Deleted and the
-// counterpart is new, as before.
+// same faces; for a resized bore, the rim on a flat end face square to its axis), only when that counterpart is unique;
+// otherwise they are Deleted and the counterpart is new, as before.
 // deleteFaces: BRepAlgoAPI_Defeaturing. A hole is removed with its counterbore/countersink/chamfer stack,
 //   falling back to the bore alone. Removing one face out of a blend run usually fails: pass the whole run.
 //   Any face of a hole (its wall, bottom, counterbore floor) stands for the hole; the bore-alone fall-back adds a
