@@ -3066,8 +3066,9 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
          "linux",
          "a line held in place, owners' extents changed by failed features",
          {{Answer::Exact, {18}}},
-         // (The bore's rim at the top, z 2.159, found by a point on it.)
-         {{Answer::Exact, {}, -1, {Vec3{-1.7844, 0, 2.159}}}, {Answer::Split, {18}, -1, {Vec3{-1.7844, 0, 2.159}}}}},
+         // (The bore's rim at the top, z 2.159, found by a point on it. One negative only: Split with the rim is
+         // accepted by the oracle's new-ground rule, so it is no negative.)
+         {{Answer::Exact, {}, -1, {Vec3{-1.7844, 0, 2.159}}}}},
     };
     std::vector<std::string> offPlatform;
     for (const P& p : ps) {
