@@ -598,7 +598,9 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
             out.log.wrongs.push_back("  baseline edges:\n" + dumpElements(b, **smp0, SubKind::Edge) +
                                      "  replay edges:\n" + dumpElements(replay, **smp1, SubKind::Edge) +
                                      "  baseline faces:\n" + dumpElements(b, **smp0, SubKind::Face) +
-                                     "  replay faces:\n" + dumpElements(replay, **smp1, SubKind::Face));
+                                     "  replay faces:\n" + dumpElements(replay, **smp1, SubKind::Face) +
+                                     "  baseline vertices:\n" + dumpElements(b, **smp0, SubKind::Vertex) +
+                                     "  replay vertices:\n" + dumpElements(replay, **smp1, SubKind::Vertex));
         for (const std::string& f : replay.failed())
             out.log.wrongs.push_back("  replay failure: " + f);
     }
