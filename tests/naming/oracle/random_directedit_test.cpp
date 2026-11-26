@@ -3001,13 +3001,15 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
     // T-081b round 5, item 3 (the reviewer's round-3 rulings), each with the answer that is right and two that must
     // stay wrong; the rules' mutation switches (new-piece, held-in-place) fail the right answers.
     //  a. NEW PIECES ARE NEVER REQUIRED: sorted 17:32 edge 32 (Windows): cut R1 moved by its width, the hole R3
-    //  deleted;
-    //     edge 30 is the moved stretch, edge 31 (0.436 mm, z 0.425 -> 0) runs past where the plane F11 bounded the
-    //     pick, holding none of it, on ground no baseline edge held: E {30}. Linux holdout2 18:24 face 3: the bore wall
-    //     F1 and F12 (0.26 mm2 at z 0..1.37, on ground that was boss R2's material at pick time): E {1}.
+    //     deleted; edge 30 is the moved stretch, edge 31 (0.436 mm, z 0.425 -> 0) runs past where the plane F11
+    //     bounded the pick, holding none of it, on ground no baseline edge held: E {30}. Linux holdout2 18:24 face 3:
+    //     the bore wall F1 and F12 (0.26 mm2 at z 0..1.37, on ground that was boss R2's material at pick time): E {1}.
     //  b. HELD IN PLACE: Linux review1 18:6 face 11 and edge 25: R2's delete and R5's join fail on Linux, so the
     //     owners' extents change; face 4 is the same bore wall (99 % of the pick on it), edge 18 the same line between
     //     R3's wall and the bore, every owner on its carrier: they are the pick, not "gone".
+    //  c. STRUCTURAL PIECES (round 4, the case it decides, round 5): tuned 17:16 edge 36: a piece holding none of the
+    //     pick on ground that was another baseline element's (27) is left out of E: Exact {28} right, with 27 WRONG;
+    //     with the rule off E is {27, 28} and Exact {28} incomplete.
     struct P {
         int part, seq;
         std::string id;
@@ -3019,6 +3021,15 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
     };
     const std::uint64_t h2 = 0xB2081B00ull, r1 = 0x6B1D3F5A2C800000ull;
     const std::vector<P> ps{
+        {17,
+         16,
+         "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #16|edge 36",
+         true,
+         0,
+         "windows",
+         "a piece on another element's ground is not required (structural-pieces)",
+         {{Answer::Exact, {28}}},
+         {{Answer::Split, {27, 28}}, {Answer::Exact, {27}}}},
         {17,
          32,
          "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #32|edge 32",
