@@ -17,7 +17,11 @@
 #pragma once
 #include <ray/kernel.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -55,6 +59,7 @@ struct DirectEditCase {
     // DeleteFillet: "isolated" (touches no other blend face) or "chain_member"; DeleteHole: "plain" or "in_stack";
     // push/pull: "square" (every neighbour square to the face) or "angled".
     std::string note;
+    Box3 region{};             // where the edit may change the body (the volume change is measured there)
     int sign = 0;              // expected sign of the volume change (0: either)
     double lo = 0.0, hi = 0.0; // plausible |volume change|
     std::vector<PointCheck> checks;
@@ -64,12 +69,24 @@ struct DirectEditCase {
 Result<std::vector<DirectEditCase>> directEditCases(const Shape& solid);
 
 // category: "ok", "invalid" (not one valid closed solid), "no_op", or "wrong" (not the intended change); detail says
-// why.
+// why. The volume change is measured inside 'region' when the whole-body change is under 1e-4 of the body (whole-body
+// integration is off by tens of mm3 on large imported bodies), and then must agree with the whole-body change within
+// 2e-5 of the body (else "wrong": the body changed away from the edit).
 struct DirectEditVerdict {
     std::string category;
     std::string detail;
 };
 DirectEditVerdict judgeDirectEdit(const Shape& input, const DirectEditCase& edit, const Shape& result);
+
+// Why the request of a push/pull or a hole enlargement cannot be met by any body, decided from the input alone by a
+// geometric test independent of the kernel's edit (empty if it can): pushed out, the moved face's sample point lies
+// inside the body's material; pulled in, it lies outside the body, or the body minus the swept face falls apart;
+// enlarged, the body minus the new hole's cylinder falls apart. For reporting rates both ways (T-080 round 2).
+std::string infeasibleRequest(const Shape& input, const DirectEditCase& edit);
+
+// What BRepCheck_Analyzer finds wrong with 'shape', one line per faulty sub-shape (kind, SubId index, statuses), at
+// most 'limit' lines; empty if it is valid. For diagnosing imported files.
+std::vector<std::string> validityFaults(const Shape& shape, int limit);
 
 // While one lives, the next `count` direct edits fault inside their guarded OCCT work (directedit_internal.h): on
 // Windows a structured exception, which the guard must turn into KernelFailure with the process still healthy.
@@ -96,5 +113,28 @@ public:
 // (io_internal.h: direct edits share the import threads).
 void waitForAbandonedEdits();
 int runningEditThreads();
+
+// When the kernel thread of a direct edit ended its work, also after the caller was released by a cancel: how long a
+// cancelled edit ran on. Copies share one record, which the last edit started under an EditEndScope with it writes.
+class EditEnd {
+public:
+    EditEnd();
+    std::optional<std::chrono::steady_clock::time_point> time() const; // empty while the edit runs (or none ran)
+
+private:
+    friend class EditEndScope;
+    std::shared_ptr<std::atomic<std::int64_t>> ticks_;
+};
+// While one lives, the direct edits started on this thread record their end in `end`.
+class EditEndScope {
+public:
+    explicit EditEndScope(const EditEnd& end);
+    ~EditEndScope();
+    EditEndScope(const EditEndScope&) = delete;
+    EditEndScope& operator=(const EditEndScope&) = delete;
+
+private:
+    std::shared_ptr<std::atomic<std::int64_t>> previous_;
+};
 
 } // namespace ray::kernel::testing

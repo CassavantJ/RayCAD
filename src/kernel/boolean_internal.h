@@ -18,6 +18,7 @@
 #include "shape_impl.h"
 
 #include <BRepBuilderAPI_MakeShape.hxx>
+#include <Bnd_Box.hxx>
 #include <Message_ProgressIndicator.hxx>
 #include <Message_ProgressRange.hxx>
 #include <Message_ProgressScope.hxx>
@@ -132,6 +133,22 @@ std::atomic<std::uint64_t>& validationDisagreementCount() noexcept;
 
 // Volume of the solids of `shape` (0 if it has none). May throw.
 double solidVolume(const TopoDS_Shape& shape);
+
+// LOCAL VOLUME CHANGE (T-080). The volume of a whole body is integrated face by face, and on large imported bodies it
+// is off by much more than a small edit changes: NIST CTC 02 (47,098,068 mm3, 487 faces) gave changes of +2.2 and
+// -36.1 mm3 for a push and a pull that both moved exactly 12.4 mm3 (BRepGProp, default precision; its adaptive mode
+// differed by up to 2,000 mm3 between precisions). An edit that changes the body only inside a known box is measured
+// there: vol(after inside box) - vol(before inside box), each intersection made by BRepAlgoAPI_Common on private
+// copies (non-destructive, OCCT parallelism off). The volume of such a small piece is integrated to about 1e-6 of
+// itself, and to about 1e-2 for pieces under 0.01 mm3. Empty if either intersection fails. May throw.
+std::optional<double>
+localVolumeChange(const TopoDS_Shape& before, const TopoDS_Shape& after,
+                  const Bnd_Box& region); // Whole-body volume changes below this fraction of the body are measured
+                                          // locally (they may be integration noise).
+inline constexpr double kLocalVolumeRelative = 1e-4;
+// What the whole-body change may differ from the local one by when the edit changed nothing outside the box: the
+// integration noise seen on the corpus (7.7e-7 of the body on CTC 02, 4e-6 on the NIST/MTC cover), with a margin.
+inline constexpr double kVolumeNoiseRelative = 2e-5;
 
 // SLIVERS. Material or a gap thinner than kSliverWidth (mm) is never meant: it comes from two faces that were meant
 // to lie on one plane but are a rounding error apart, such as a sketch placed through a single-precision point

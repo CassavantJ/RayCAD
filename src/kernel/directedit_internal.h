@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -141,6 +142,10 @@ std::atomic<int>& directEditFaultRequests() noexcept;
 void raiseTestFault();
 // Tests only (testing::RawDirectEditHistory): while above 0, demoteReversedImages leaves the history as OCCT gave it.
 std::atomic<int>& rawDirectEditHistory() noexcept;
+// Tests only (testing::EditEndScope): this thread's record of when its direct edits' kernel threads end their work
+// (std::chrono::steady_clock ticks; kEditRunning until then); null: none is kept.
+inline constexpr std::int64_t kEditRunning = INT64_MIN;
+std::shared_ptr<std::atomic<std::int64_t>>& editEndRecord() noexcept;
 
 // Distance along `axis` and from `axis`.
 double axialParameter(const gp_Ax1& axis, const gp_Pnt& point);

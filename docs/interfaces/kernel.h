@@ -169,8 +169,9 @@ Result<OpResult> splitBody(const Shape&, Plane, JobContext&);                   
 // ---------- Direct editing (works on history-free imported solids) ----------
 // Built as measured in spike S9 (spikes/s9-directedit/REPORT.md). BRepOffset_MakeOffset is NOT used.
 // All four run their OCCT work on a kernel thread (as imports do): on cancel the caller gets Error{Cancelled} within
-// about 10 ms and the thread stops at OCCT's next poll (within 10 s on the S9 set with port patch 0011). A failure is
-// KernelFailure with a message for the user that ends "Nothing was changed."; a bad request is InvalidArgument.
+// about 10 ms and the thread stops at OCCT's next poll (within 10 s on the S9 and NIST sets with port patches 0011 and
+// 0012). A failure is KernelFailure with a message for the user that ends "Nothing was changed."; a bad request is
+// InvalidArgument.
 // History (T-080): the edited face is Modified to its new face(s); faces of the internal tool body that end on the
 // result where no input face accounts for them are Generated from the edge they were swept from (push/pull) or from
 // the edited hole face (resize); the tool never appears as an input. T-081b: the edges and vertices of a face a direct

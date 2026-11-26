@@ -6,7 +6,8 @@
 //
 // Every case runs with a time limit (kCaseLimit: 20 s, 200 s in a Debug build): a runaway Defeaturing call is
 // cancelled, counted as a failure
-// ("timeout"), and abandoned to the kernel thread it runs on. The cases run on kWorkers threads.
+// ("timeout"), and abandoned to the kernel thread it runs on; the call must return within 100 ms of the cancel and its
+// work on that thread must end within 10 s of it (testing::EditEnd). The cases run on kWorkers threads.
 //
 // RAY_DIRECTEDIT_RESULTS=<file> writes one tab-separated line per case (part, kind, edit, k, note, outcome, ms,
 // message) for the report. RAY_DIRECTEDIT_ONLY=<part>:<edit>:<k> runs that one case alone and checks nothing (for
@@ -153,8 +154,12 @@ struct Outcome {
     std::string message; // the kernel's message, or the oracle's detail
     double ms = 0.0;
     double cancelMs = -1.0;   // timeout: from the cancel to the call's return
+    Clock::time_point fired;  // timeout: when it was cancelled
+    testing::EditEnd end;     // when the edit's kernel thread ended its work
+    double stopMs = -1.0;     // timeout: from the cancel to the end of the edit's work (after every case ran)
     bool wrongCode = false;   // a failure that is not KernelFailure
     std::string historyFault; // a success whose history breaks the kernel.h normalisation (empty: none)
+    std::string infeasible;   // a failed push/pull or enlargement that no body could meet (testing::infeasibleRequest)
 };
 
 // kernel.h ShapeHistory for a direct edit: only input 0, every input element exactly one Modified or Deleted entry,
@@ -205,6 +210,7 @@ Outcome runCase(const Part& part, const Shape& solid, const testing::DirectEditC
     const Clock::time_point start = Clock::now();
     const int watch = watchdog.add(source, start + kCaseLimit);
     Result<OpResult> result = tl::unexpected(Error{ErrorCode::Internal, "not run", {}});
+    const testing::EditEndScope recordEnd(o.end);
     switch (c.edit) {
     case testing::DirectEdit::DeleteFillet:
     case testing::DirectEdit::DeleteBlendRun:
@@ -233,6 +239,7 @@ Outcome runCase(const Part& part, const Shape& solid, const testing::DirectEditC
             o.historyFault = historyFault(solid, c, *result);
     } else if (result.error().code == ErrorCode::Cancelled && fired) {
         o.result = "timeout";
+        o.fired = *fired;
         o.cancelMs = std::chrono::duration<double, std::milli>(end - *fired).count();
         o.message = "stopped after " + std::to_string(kCaseLimit.count()) + " s";
     } else {
@@ -240,6 +247,10 @@ Outcome runCase(const Part& part, const Shape& solid, const testing::DirectEditC
         o.wrongCode = result.error().code != ErrorCode::KernelFailure;
         o.message = result.error().message;
     }
+    // Refused requests that are impossible by geometry, told by the oracle's own test (rates are given both ways).
+    if (o.result == "refused" && (c.edit == testing::DirectEdit::PushOut || c.edit == testing::DirectEdit::PushIn ||
+                                  c.edit == testing::DirectEdit::ResizeLarger))
+        o.infeasible = testing::infeasibleRequest(solid, c);
     return o;
 }
 
@@ -339,6 +350,13 @@ void measureSet(const SetSpec& spec)
     const double seconds = std::chrono::duration<double>(Clock::now() - began).count();
     testing::waitForAbandonedEdits();
     const double withAbandoned = std::chrono::duration<double>(Clock::now() - began).count();
+    for (Outcome& o : outcomes)
+        if (o.result == "timeout") {
+            const std::optional<Clock::time_point> ended = o.end.time();
+            o.stopMs = ended ? std::chrono::duration<double, std::milli>(*ended - o.fired).count() : 1e9;
+            o.message +=
+                "; the edit ran on for " + std::to_string(static_cast<long long>(o.stopMs)) + " ms after the cancel";
+        }
 
     std::sort(outcomes.begin(), outcomes.end(), [](const Outcome& a, const Outcome& b) {
         return std::tie(a.part, a.edit, a.k) < std::tie(b.part, b.edit, b.k);
@@ -347,7 +365,8 @@ void measureSet(const SetSpec& spec)
         std::ofstream out(file);
         for (const Outcome& o : outcomes)
             out << o.part << '\t' << o.kind << '\t' << o.edit << '\t' << o.k << '\t' << o.note << '\t' << o.result
-                << '\t' << static_cast<long long>(o.ms) << '\t' << clean(o.message) << '\n';
+                << '\t' << static_cast<long long>(o.ms) << '\t' << clean(o.message) << '\t' << clean(o.infeasible)
+                << '\n';
     }
 
     // The acceptance lines of PLAN.md T-080.
@@ -393,15 +412,23 @@ void measureSet(const SetSpec& spec)
         std::printf("  NOT LOADED: %s\n", f.c_str());
     std::vector<std::pair<const Line*, Tally>> tallies;
     for (const Line& line : lines) {
-        Tally t;
+        Tally t, feasible;
         for (const Outcome& o : outcomes)
             if (inLine(line, o)) {
                 ++t.total;
                 t.ok += o.result == "ok" ? 1 : 0;
+                if (o.infeasible.empty()) {
+                    ++feasible.total;
+                    feasible.ok += o.result == "ok" ? 1 : 0;
+                }
             }
         tallies.emplace_back(&line, t);
-        std::printf("  %-58s %4d of %4d  %5.1f%%  (at least %.0f%%)\n", line.name, t.ok, t.total, 100.0 * t.rate(),
+        std::printf("  %-58s %4d of %4d  %5.1f%%  (at least %.0f%%)", line.name, t.ok, t.total, 100.0 * t.rate(),
                     100.0 * line.required);
+        if (feasible.total != t.total)
+            std::printf("; without %d infeasible requests %d of %d  %5.1f%%", t.total - feasible.total, feasible.ok,
+                        feasible.total, 100.0 * feasible.rate());
+        std::printf("\n");
     }
     // All edits, real and synthetic, for the record.
     std::map<std::string, std::map<std::string, Tally>> byEdit;
@@ -413,23 +440,32 @@ void measureSet(const SetSpec& spec)
     for (const auto& [edit, rows] : byEdit)
         for (const auto& [group, t] : rows)
             std::printf("    %-18s %-22s %4d of %4d\n", edit.c_str(), group.c_str(), t.ok, t.total);
-    std::map<std::string, std::pair<double, double>> times; // edit -> (max ms of a finished call, max cancel ms)
+    struct Times {
+        double slowest = 0.0, cancel = 0.0,
+               stop = 0.0; // max ms of a finished call, of a return and a stop after a cancel
+    };
+    std::map<std::string, Times> times;
     int failures = 0;
     for (const Outcome& o : outcomes) {
-        auto& [slowest, cancel] = times[o.edit];
+        Times& t = times[o.edit];
         if (o.result != "timeout")
-            slowest = std::max(slowest, o.ms);
-        else
-            cancel = std::max(cancel, o.cancelMs);
+            t.slowest = std::max(t.slowest, o.ms);
+        else {
+            t.cancel = std::max(t.cancel, o.cancelMs);
+            t.stop = std::max(t.stop, o.stopMs);
+        }
         if (o.result != "ok") {
             ++failures;
-            std::printf("  FAIL %-14s %-17s k%d %-12s %-10s %7.0f ms  %s\n", o.part.c_str(), o.edit.c_str(), o.k,
-                        o.note.c_str(), o.result.c_str(), o.ms, o.message.c_str());
+            std::printf("  FAIL %-14s %-17s k%d %-12s %-10s %7.0f ms  %s%s%s\n", o.part.c_str(), o.edit.c_str(), o.k,
+                        o.note.c_str(), o.result.c_str(), o.ms, o.message.c_str(),
+                        o.infeasible.empty() ? "" : "  [INFEASIBLE: ",
+                        o.infeasible.empty() ? "" : (o.infeasible + "]").c_str());
         }
     }
     for (const auto& [edit, t] : times)
-        std::printf("  time %-18s slowest finished call %8.0f ms, slowest return after a timeout %6.0f ms\n",
-                    edit.c_str(), t.first, t.second);
+        std::printf("  time %-18s slowest finished call %8.0f ms; after a timeout's cancel: slowest return %6.0f ms, "
+                    "slowest stop %6.0f ms\n",
+                    edit.c_str(), t.slowest, t.cancel, t.stop);
 
     if (!only.empty())
         return; // one case for profiling: nothing to judge
@@ -454,10 +490,12 @@ void measureSet(const SetSpec& spec)
             CHECK_FALSE(o.message.empty());
             CHECK(o.message.rfind("The geometry kernel failed:", 0) == std::string::npos);
         }
-        if (o.result == "timeout")
+        if (o.result == "timeout") {
             CHECK(o.cancelMs < 100.0);
+            CHECK(o.stopMs < 10000.0); // the abandoned edit's own work stopped within 10 s of the cancel
+        }
     }
-    // An edit abandoned for its time limit stops within 10 s: none is still running 10 s after the last case returned.
+    // And none is still running 10 s after the last case returned.
     INFO("abandoned edits ran on for " << withAbandoned - seconds << " s after the last case");
     CHECK(withAbandoned - seconds < 10.0);
     CHECK(testing::structuredExceptions() == 0);
