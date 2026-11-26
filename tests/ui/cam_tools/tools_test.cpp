@@ -977,7 +977,9 @@ TEST_CASE("picking a library tool for an operation embeds it; the document's too
         REQUIRE(t);
         return *t;
     }();
-    REQUIRE(w.stack()->library(1) != nullptr);
+    // My library is read in the background (LibraryStack::setRootsInBackground): not open until that read is merged
+    // (CI run 45646624932, macOS Release: it was null here).
+    REQUIRE(QTest::qWaitFor([&] { return w.stack()->library(1) != nullptr; }, 30000));
     REQUIRE(w.stack()->library(1)->save(mine));
     w.stack()->remerge();
     const QString body = qs(w.host->scene()->body(0)->id.value.toString());
