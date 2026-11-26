@@ -15,6 +15,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <thread>
@@ -509,6 +513,99 @@ TEST_CASE("offsetFaces pushes and pulls a face square to its neighbours", "[kern
     }
 }
 
+TEST_CASE("offsetFaces reports the moved face's edges and vertices Modified to their counterparts",
+          "[kernel][directedit]")
+{
+    // kernel.h HISTORY (T-081b): an edge or vertex of the moved face is Modified to the one result element between the
+    // images of the same faces, here the top's edges and corners moved with it.
+    const Shape block = box({0, 0, 0}, {10, 20, 30});
+    const SubId top = planeAt(block, {5, 10, 30});
+    for (const double d : {2.0, -2.0}) {
+        INFO("distance " << d);
+        const OpResult out = take(pushing(block, {top}, d));
+        const std::vector<SubId> edges = adjacent(block, top, SubKind::Edge);
+        REQUIRE(edges.size() == 4);
+        for (const SubId& e : edges) {
+            INFO("edge " << e.index);
+            REQUIRE(primary(out, e) == Relation::Modified);
+            const std::vector<SubId> now = modifiedTo(out, 0, e);
+            REQUIRE(now.size() == 1);
+            const CurveInfo was = take(curveInfo(block, e)), is = take(curveInfo(out.shape, now.front()));
+            CHECK(close(is.length, was.length, 1e-9));
+            CHECK(std::abs(is.start.z - (30 + d)) < 1e-9);
+            CHECK(std::abs(is.end.z - (30 + d)) < 1e-9);
+        }
+        const std::vector<SubId> corners = adjacent(block, top, SubKind::Vertex);
+        REQUIRE(corners.size() == 4);
+        for (const SubId& v : corners) {
+            INFO("vertex " << v.index);
+            REQUIRE(primary(out, v) == Relation::Modified);
+            const std::vector<SubId> now = modifiedTo(out, 0, v);
+            REQUIRE(now.size() == 1);
+            const Vec3 was = take(vertexPoint(block, v)), is = take(vertexPoint(out.shape, now.front()));
+            CHECK(close(is, Vec3{was.x, was.y, was.z + d}, 1e-9));
+        }
+    }
+}
+
+TEST_CASE("an edge of a pushed face whose neighbour is not extended has no counterpart and stays Deleted",
+          "[kernel][directedit]")
+{
+    // The pocket floor raised as a slab: its edges meet the slab's sides now, not the pocket walls; the edge between
+    // the floor and a wall has no counterpart between their images.
+    const Shape block = pocketBlock();
+    const SubId floor = planeAt(block, {15, 15, 5});
+    const OpResult out = take(pushing(block, {floor}, 2.0));
+    for (const SubId& e : adjacent(block, floor, SubKind::Edge)) {
+        INFO("edge " << e.index);
+        const auto relation = primary(out, e);
+        REQUIRE(relation.has_value());
+        if (*relation == Relation::Modified)
+            for (const SubId& now : modifiedTo(out, 0, e)) {
+                const CurveInfo is = take(curveInfo(out.shape, now));
+                CHECK(std::abs(is.start.z - 7.0) < 1e-9); // only ever its counterpart on the raised floor
+            }
+    }
+}
+
+TEST_CASE("an edge of a pushed face whose counterpart runs on into another edge on the same surfaces stays Deleted",
+          "[kernel][directedit]")
+{
+    // T-081b: the input of one push/pull in the randomised naming block, saved as it was
+    // (data/directedit_offset_edge_runs_on.rbrep): a plate whose top (z 4) meets a joined block's side along a 0.71 mm
+    // edge (edge 5). Pushed down 1.537 mm, the top meets that side along the same line in two edges: the picked stretch
+    // moved down, and a 3.3 mm stretch past its end. Which of them carries the old edge is not the kernel's to say.
+    const Shape plate = savedShape("directedit_offset_edge_runs_on.rbrep");
+    const SubId edge{SubKind::Edge, 5};
+    const CurveInfo was = take(curveInfo(plate, edge));
+    REQUIRE(was.type == CurveType::Line);
+    // The top: its faces at z 4 (the naming block's pick of the imported top, which the cut left in pieces).
+    std::vector<SubId> top;
+    for (const SubId& f : facesOf(plate, SurfaceType::Plane)) {
+        const SurfaceInfo info = take(surfaceInfo(plate, f));
+        if (std::abs(info.centroid.z - 4.0) < 1e-6 && (info.reversed ? -info.axis.z : info.axis.z) > 0.5)
+            top.push_back(f);
+    }
+    REQUIRE_FALSE(top.empty());
+    const double d = -1.537;
+    const OpResult out = take(pushing(plate, top, d));
+    checkValidResult(out, plate);
+    // The case the rule is for: two edges at the new height on the old edge's line.
+    const auto onOldLine = [&was, d](Vec3 p) {
+        const double dx = was.end.x - was.start.x, dy = was.end.y - was.start.y;
+        const double across = ((p.x - was.start.x) * dy - (p.y - was.start.y) * dx) / std::hypot(dx, dy);
+        return std::abs(across) < 1e-4 && std::abs(p.z - (was.start.z + d)) < 1e-4;
+    };
+    int onLine = 0;
+    for (std::uint32_t i = 0; i < out.shape.count(SubKind::Edge); ++i) {
+        const CurveInfo is = take(curveInfo(out.shape, SubId{SubKind::Edge, i}));
+        if (is.type == CurveType::Line && onOldLine(is.start) && onOldLine(is.end))
+            ++onLine;
+    }
+    REQUIRE(onLine >= 2);
+    CHECK(primary(out, edge) == Relation::Deleted);
+}
+
 TEST_CASE("offsetFaces raises a pocket floor and warns about angled neighbours", "[kernel][directedit]")
 {
     const Shape block = pocketBlock();
@@ -569,6 +666,108 @@ TEST_CASE("resizeHole opens up and closes down a through hole", "[kernel][direct
             }
         }
         CHECK(orphans(out).empty());
+    }
+}
+
+TEST_CASE("resizeHole reports the bore's rims Modified to the rims at the new radius", "[kernel][directedit]")
+{
+    // kernel.h HISTORY (T-081b): the rim between the bore and an end face is Modified to the rim on the same end face.
+    const Shape plate = take(testing::makeHolePlate(1, 1)); // radius 3, 5 deep
+    const std::vector<SubId> wall = facesOf(plate, SurfaceType::Cylinder);
+    REQUIRE_FALSE(wall.empty());
+    for (const double diameter : {8.0, 4.0}) {
+        INFO("diameter " << diameter);
+        const OpResult out = take(resizing(plate, wall.back(), diameter));
+        int rims = 0;
+        for (const SubId& f : wall)
+            for (const SubId& e : adjacent(plate, f, SubKind::Edge)) {
+                const CurveInfo was = take(curveInfo(plate, e));
+                if (was.type != CurveType::Circle)
+                    continue;
+                ++rims;
+                INFO("rim edge " << e.index);
+                REQUIRE(primary(out, e) == Relation::Modified);
+                for (const SubId& now : modifiedTo(out, 0, e)) {
+                    const CurveInfo is = take(curveInfo(out.shape, now));
+                    CHECK(is.type == CurveType::Circle);
+                    CHECK(close(is.radius, diameter / 2.0, 1e-9));
+                    CHECK(std::abs(is.center.z - was.center.z) < 1e-9);
+                }
+            }
+        CHECK(rims >= 2);
+    }
+}
+
+TEST_CASE("resizeHole pairs a rim's seam vertex only with the vertex at the same angle and height",
+          "[kernel][directedit]")
+{
+    // kernel.h HISTORY (T-081b): a vertex on only the bore and an end face (where a closed rim starts) is not fixed by
+    // its faces, so it is Modified only to the vertex the resize takes its point to; else it stays Deleted. The plate
+    // is also tried turned 13 degrees about the hole's axis, so that its bore's seam is not where a new bore's would
+    // be.
+    const Shape plate = take(testing::makeHolePlate(1, 1)); // radius 3, 5 deep
+    const Vec3 c = take(surfaceInfo(plate, facesOf(plate, SurfaceType::Cylinder).front())).origin;
+    const double a = 13.0 * kPiValue / 180.0, ca = std::cos(a), sa = std::sin(a);
+    const Xform turn{{ca, -sa, 0, c.x - (ca * c.x - sa * c.y), sa, ca, 0, c.y - (sa * c.x + ca * c.y), 0, 0, 1, 0}};
+    const Shape turned = take(transformed(plate, turn)).shape;
+    int paired = 0;
+    for (const Shape* body : {&plate, &turned}) {
+        const std::vector<SubId> wall = facesOf(*body, SurfaceType::Cylinder);
+        REQUIRE_FALSE(wall.empty());
+        const Vec3 axis = take(surfaceInfo(*body, wall.front())).origin;
+        const auto angle = [&axis](Vec3 p) {
+            return std::atan2(p.y - axis.y, p.x - axis.x);
+        };
+        for (const double diameter : {8.0, 4.0}) {
+            INFO((body == &plate ? "as made" : "turned") << ", diameter " << diameter);
+            const OpResult out = take(resizing(*body, wall.back(), diameter));
+            for (const SubId& f : wall)
+                for (const SubId& v : adjacent(*body, f, SubKind::Vertex)) {
+                    if (adjacent(*body, v, SubKind::Face).size() >= 3 || primary(out, v) != Relation::Modified)
+                        continue;
+                    INFO("vertex " << v.index);
+                    const Vec3 was = take(vertexPoint(*body, v));
+                    for (const SubId& now : modifiedTo(out, 0, v)) {
+                        const Vec3 is = take(vertexPoint(out.shape, now));
+                        CHECK(std::abs(is.z - was.z) < 1e-6);
+                        CHECK(std::abs(std::remainder(angle(is) - angle(was), 2 * kPiValue)) < 1e-6);
+                        ++paired;
+                    }
+                }
+        }
+    }
+    CHECK(paired >= 2); // the plate as made: its rims' seam vertices are paired
+}
+
+TEST_CASE("resizeHole leaves the lines where a plane along the axis cuts the bore Deleted", "[kernel][directedit]")
+{
+    // kernel.h HISTORY (T-081b): only a rim on a flat end face square to the axis is Modified. A slot across the top of
+    // a radius 3 through hole cuts the bore along lines (its walls at y 9 and 11 run along the axis); at another radius
+    // they cut it along other lines, which are not where the old ones were.
+    const Shape bored = cut(box({0, 0, 0}, {20, 20, 10}), take(makeCylinder({10, 10, -1}, {0, 0, 1}, 3.0, 12.0)));
+    const Shape slotted = cut(bored, box({0, 9, 6}, {20, 11, 11}));
+    const std::vector<SubId> wall = facesOf(slotted, SurfaceType::Cylinder, 3.0);
+    REQUIRE_FALSE(wall.empty());
+    for (const double diameter : {4.0, 5.0}) {
+        INFO("diameter " << diameter);
+        const OpResult out = take(resizing(slotted, wall.front(), diameter));
+        checkValidResult(out, slotted);
+        int lines = 0, rims = 0;
+        for (const SubId& f : wall)
+            for (const SubId& e : adjacent(slotted, f, SubKind::Edge)) {
+                const CurveInfo was = take(curveInfo(slotted, e));
+                INFO("edge " << e.index);
+                if (was.type == CurveType::Line &&
+                    (std::abs(was.start.y - 9.0) < 1e-6 || std::abs(was.start.y - 11.0) < 1e-6)) {
+                    ++lines;
+                    CHECK(primary(out, e) == Relation::Deleted);
+                } else if (was.type == CurveType::Circle && std::abs(was.center.z) < 1e-6) {
+                    ++rims; // the bottom rim, on the bottom face
+                    CHECK(primary(out, e) == Relation::Modified);
+                }
+            }
+        CHECK(lines >= 2);
+        CHECK(rims >= 1);
     }
 }
 
@@ -754,4 +953,104 @@ TEST_CASE("a fault inside a direct edit is contained and the next edit works", "
     }
     const OpResult fine = take(deleting(plate, {wall.front()}));
     CHECK(close(volumeOf(fine.shape), 500.0, 1e-7));
+}
+
+namespace {
+
+// A body written by kernel::serialize() into tests/unit/kernel/data.
+Shape loadSavedBody(const char* name)
+{
+    const std::filesystem::path file = std::filesystem::path(RAY_KERNEL_TEST_DATA_DIR) / name;
+    std::ifstream in(file, std::ios::binary);
+    INFO(file.string());
+    REQUIRE(in.good());
+    const std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<std::byte> bytes(raw.size());
+    std::memcpy(bytes.data(), raw.data(), raw.size());
+    return take(deserialize(bytes));
+}
+
+// vol(shape inside the box around `centre` with half-size `half`), through the public kernel.
+double volumeNear(const Shape& shape, Vec3 centre, double half)
+{
+    JobContext ctx;
+    const Shape box = take(makeBox({centre.x - half, centre.y - half, centre.z - half},
+                                   {centre.x + half, centre.y + half, centre.z + half}));
+    return volumeOf(take(boolean(BoolOp::Intersect, shape, box, ctx)).shape);
+}
+
+} // namespace
+
+TEST_CASE("a small push/pull on a large imported body is judged by the volume near the face", "[kernel][directedit]")
+{
+    // NIST CTC 02, AP203 with PMI (47,098,068 mm3, 487 faces), as imported: its whole-body volume, integrated face by
+    // face, is off by tens of mm3, so a correct 12.41 mm3 push and pull measured +2.2 and -36.1 mm3 and the S9 checker
+    // called them wrong (T-080 round 2). The edit is right: inside a box around the face it moved exactly the prism.
+    const Shape body = loadSavedBody("nist_ctc_02_ap203pmi_body.rbrep");
+    REQUIRE(body.count(SubKind::Face) == 487);
+    std::optional<SubId> face;
+    for (std::uint32_t i = 0; i < body.count(SubKind::Face) && !face; ++i) {
+        const SurfaceInfo info = take(surfaceInfo(body, SubId{SubKind::Face, i}));
+        if (info.type == SurfaceType::Plane && close(info.area, 6.204985, 1e-6) &&
+            close(info.centroid, Vec3{-151.5512, 1.5229, -14.9560}, 1e-5))
+            face = SubId{SubKind::Face, i};
+    }
+    REQUIRE(face.has_value());
+    const SurfaceInfo info = take(surfaceInfo(body, *face));
+    const double prism = info.area * 2.0;
+    const double before = volumeNear(body, info.centroid, 6.0);
+    for (const double d : {2.0, -2.0}) {
+        INFO("distance " << d);
+        const OpResult out = take(pushing(body, {*face}, d));
+        checkValidResult(out, body);
+        const double change = volumeNear(out.shape, info.centroid, 6.0) - before;
+        CHECK(close(change, d > 0 ? prism : -prism, 1e-6));
+        // The moved face is the image of the old one, 2 mm along its outward normal.
+        const std::vector<SubId> moved = modifiedTo(out, 0, *face);
+        REQUIRE(moved.size() == 1);
+        const FaceSample was = take(faceSample(body, *face));
+        const Vec3 shifted{info.centroid.x + was.normal.x * d, info.centroid.y + was.normal.y * d,
+                           info.centroid.z + was.normal.z * d};
+        CHECK(close(take(surfaceInfo(out.shape, moved.front())).centroid, shifted, 1e-6));
+    }
+}
+
+TEST_CASE("a push/pull whose result would be an invalid body is refused with a clear message", "[kernel][directedit]")
+{
+    // The two feasible requests of the NIST set whose boolean gives an invalid body (T-080 round 2, group C), pinned as
+    // the corpus measurement picks them (testing::directEditCases) on the bodies as imported:
+    //   - NIST D2MI 827-9999-904: pushing face 107 out by 1.25425 mm (the union leaves face 94 unorientable);
+    //   - NIST CTC 02, AP203 with PMI: pulling face 4 in by 2 mm (free or badly oriented edges; the plain cut does not
+    //     fall apart, so it is not "would cut the part in two").
+    // Neither may come back as a body; each is a KernelFailure that says what went wrong and that nothing changed.
+    struct Pinned {
+        const char* file;
+        testing::DirectEdit edit;
+        int k;
+        std::uint32_t face;
+        double distance;
+    };
+    for (const Pinned& p : {Pinned{"nist_d2mi_904_body.rbrep", testing::DirectEdit::PushOut, 2, 107, 1.254252},
+                            Pinned{"nist_ctc_02_ap203pmi_body.rbrep", testing::DirectEdit::PushIn, 2, 4, -2.0}}) {
+        INFO(p.file);
+        const Shape body = loadSavedBody(p.file);
+        const std::string before = testing::rawState(body);
+        const std::vector<testing::DirectEditCase> cases = take(testing::directEditCases(body));
+        const auto it = std::find_if(cases.begin(), cases.end(),
+                                     [&](const testing::DirectEditCase& c) { return c.edit == p.edit && c.k == p.k; });
+        REQUIRE(it != cases.end());
+        REQUIRE(it->faces.size() == 1);
+        CHECK(it->faces.front().index == p.face);
+        CHECK(close(it->distance, p.distance, 1e-6));
+        JobContext ctx;
+        const Result<OpResult> out = offsetFaces(body, it->faces, it->distance, ctx);
+        REQUIRE_FALSE(out.has_value());
+        CHECK(out.error().code == ErrorCode::KernelFailure);
+        const std::string& message = out.error().message;
+        INFO(message);
+        CHECK(message.find("gives an invalid body") != std::string::npos);
+        CHECK(message.find("face " + std::to_string(p.face)) != std::string::npos);
+        CHECK(message.ends_with("Nothing was changed."));
+        CHECK(testing::rawState(body) == before);
+    }
 }

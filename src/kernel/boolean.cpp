@@ -11,7 +11,9 @@
 //   2. not a no-op: the volume changed (beyond 1e-12 relative), and some face of the result comes from the tool
 //      (removing or adding material always leaves tool faces on the boundary);
 //   3. the volume moved the expected way: a cut shrinks the target, a union grows it by at most the tool, an
-//      intersection is no larger than either input;
+//      intersection is no larger than either input (T-080: a cut's or union's change below 1e-4 of the body is
+//      measured inside the tool's box, boolean_internal.h LOCAL VOLUME CHANGE, and a cut then removes at most the
+//      tool);
 //   4. a union is one solid. A cut or intersection may leave several solids; they are returned as a compound and
 //      `warnings` says so.
 // If the unified result fails check 1 but the plain boolean passes, the plain result is returned with a warning
@@ -48,7 +50,9 @@
 #include <BOPAlgo_Alerts.hxx>
 #include <BOPAlgo_Operation.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <Bnd_Box.hxx>
 #include <NCollection_List.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
@@ -75,6 +79,10 @@ constexpr double kNoOpRelative = 1e-12;
 constexpr double kNoiseRelative = 1e-6;
 // Slack on the upper and lower volume bounds of check 3.
 constexpr double kBoundRelative = 1e-7;
+// Slack on "a cut removes, a union adds, at most the tool" when both are measured locally: the volumes of tiny pieces
+// are integrated less precisely (a 0.3 mm3 prism and the 0.3 mm3 it cut measured 1e-4 apart, a 0.0016 mm3
+// wedge 2.5e-3). The check is there for gross errors.
+constexpr double kLocalToolSlack = 1e-2;
 // Whether the private copies of the inputs get their own curves and surfaces too (see "IMMUTABLE INPUTS").
 constexpr bool kCopyGeometry = true;
 
@@ -256,26 +264,48 @@ Attempt attempt(BoolOp op, const Shape& target, const Shape& tool, bool unify, d
             toolContributes = true;
 
     const double scale = std::max({targetVolume, toolVolume, 1.0});
-    const double change = std::abs(volume - targetVolume);
-    if (change <= kNoOpRelative * scale || (!toolContributes && change <= kNoiseRelative * scale))
+    // When the whole-body change is small next to the body, whole-body integration noise can hide it or turn its sign
+    // (boolean_internal.h LOCAL VOLUME CHANGE): it is then measured inside the tool's box, and the whole-body
+    // change must agree with it within that noise.
+    std::optional<double> local;
+    if (op != BoolOp::Intersect && std::abs(volume - targetVolume) < detail::kLocalVolumeRelative * targetVolume) {
+        Bnd_Box region;
+        BRepBndLib::Add(detail::occt(toolCopy->shape), region, false);
+        region.Enlarge(1e-3 + 0.05 * std::sqrt(region.SquareExtent()));
+        local = detail::localVolumeChange(detail::occt(targetCopy->shape), solids, region);
+    }
+    const double change = local ? std::abs(*local) : std::abs(volume - targetVolume);
+    const double changeScale = local ? std::max(toolVolume, 1.0) : scale;
+    if (change <= kNoOpRelative * changeScale || (!toolContributes && change <= kNoiseRelative * changeScale))
         return failed(kernelFailure(noOpMessage(op), where));
     const double slack = kBoundRelative * scale;
+    // A union adds at most the tool, judged on the whole bodies with their integration noise (T-080: NIST CTC 02 and
+    // the NIST/MTC cover came out 34 and 4.7 mm3 over for correct unions; 1e-7 of the body refused them).
+    const double unionSlack = std::max(slack, detail::kVolumeNoiseRelative * targetVolume + 1e-3 * toolVolume);
     bool expected = true;
     switch (op) {
     case BoolOp::Cut:
-        expected = volume < targetVolume;
+        expected =
+            local ? (*local < 0.0 && -*local <= toolVolume * (1.0 + kLocalToolSlack) + 1e-6) : volume < targetVolume;
         break;
     case BoolOp::Union:
-        expected = volume > targetVolume && volume <= targetVolume + toolVolume + slack;
+        expected = local ? (*local > 0.0 && *local <= toolVolume * (1.0 + kLocalToolSlack) + 1e-6)
+                         : volume > targetVolume && volume <= targetVolume + toolVolume + unionSlack;
         break;
     case BoolOp::Intersect:
         expected = volume <= std::min(targetVolume, toolVolume) + slack;
         break;
     }
+    if (local && std::abs((volume - targetVolume) - *local) > detail::kVolumeNoiseRelative * targetVolume)
+        expected = false; // the body changed away from the tool
     if (!expected) {
         Error error = kernelFailure(invalidMessage(op), where);
-        error.context.insert(error.context.begin(), "volume " + std::to_string(targetVolume) + " -> " +
-                                                        std::to_string(volume) + " is not the expected change");
+        error.context.insert(error.context.begin(),
+                             "volume " + std::to_string(targetVolume) + " -> " + std::to_string(volume) +
+                                 (local ? " (" + std::to_string(*local) + " inside the tool's box, tool " +
+                                              std::to_string(toolVolume) + ")"
+                                        : std::string()) +
+                                 " is not the expected change");
         return failed(std::move(error), true);
     }
 

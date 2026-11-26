@@ -1,0 +1,408 @@
+RayCAD patch to OCCT 8.0.1 (LGPL-2.1 with the OCCT exception; this file is under the same terms).
+
+What: a cancel reaches more stages of a boolean, which a boolean or a feature removal can spend seconds to minutes in.
+  - Message_ProgressIndicator gets a per-thread "current range" (ThreadRange, SetThreadRange, ThreadUserBreak and the
+    scope helper ThreadRangeScope), for searches deep in TKGeomAlgo whose interfaces take no progress range.
+  - BOPAlgo_EdgeFace and BOPAlgo_FaceFace (the edge/face and face/face jobs of BOPAlgo_PaveFiller) set their job's
+    range as the thread's range while they run.
+  - IntCurveSurface_InterUtils (the curve/surface intersection under IntTools_BeanFaceIntersector) checks it between
+    the passes of its start-point sort and between start points; IntWalk_PWalking (the surface/surface walk under
+    IntTools_FaceFace) checks it in its marching loop and while extending a line through a tangent zone. On a break
+    they stop: the sort and the search return, the walk returns not done.
+  - BOPAlgo_Builder::PostTreat sets its range as the thread's range while it corrects tolerances; the per-edge and
+    per-face corrections under it (BOPTools_AlgoTools::CorrectPointOnCurve and CorrectCurveOnSurface, and in
+    CorrectWires between vertices) skip their work on a break, and PostTreat then ends with BOPAlgo_AlertUserBreak.
+  - BOPAlgo_PaveFiller::Perform sets its range as the thread's range for the whole run (a job's own range replaces it
+    while the job runs). Under it, RemoveMicroSectionEdges stops between section edges (MakeBlocks then ends with
+    BOPAlgo_AlertUserBreak), the shrunk-range jobs of FillShrunkData are skipped (left not done, which the filler
+    already handles as a warning before its next check), and Approx_ComputeLine (the approximation of an intersection
+    line in IntTools_FaceFace::MakeCurve) stops between its segments, not all done.
+
+Why: RayCAD runs direct edits on a kernel thread it abandons on cancel and requires the abandoned OCCT work to stop
+within 10 s (task T-080). On the NIST test models (tests/corpus/directedit/set_nist.tsv) edits ran on long after a
+cancel: resizing a hole of NIST CTC 02 (AP203 with PMI) 161 and 167 s, removing a blend run of it 80 s (inside the
+PaveFiller of BOPAlgo_MakerVolume), removing a hole stack of NIST D2MI 827-9999-904 40 s on Linux. gdb stack samples
+taken while the abandoned thread ran showed one edge/face job inside IntCurveSurface_HInter::Perform
+(IntCurveSurface_InterUtils::SortStartPoints, a bubble sort, and ProcessSortedPoints) and one face/face job inside
+IntWalk_PWalking::Perform / ExtendLineInCommonZone, each for minutes; patch 0011 made jobs stop only between such
+calls. With those searches stopped, the D2MI hole stack still ran on for up to 10.4 s, depending on when the cancel
+came (cancels at 2 to 32 s), in stages that take seconds each on its long section curves: PostTreat's CorrectWires
+(which intersects the 2D curves at every vertex of every face of the result), RemoveMicroSectionEdges and FillShrunkData
+(which measure the length and box of every section edge), and GeomInt_WLApprox (which approximates a walked line).
+A partial result is never used: BOPAlgo_PaveFiller checks the break after its jobs, after RemoveMicroSectionEdges and
+in the steps after FillShrunkData, PostTreat after its corrections, and the operation ends with
+BOPAlgo_AlertUserBreak. A run that is not cancelled is unchanged (nothing but the break is read).
+
+Upstream: not reported.
+
+diff --git a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx
+--- a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx
++++ b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.cxx
+@@ -15,6 +15,36 @@
+ 
+ IMPLEMENT_STANDARD_RTTIEXT(Message_ProgressIndicator, Standard_Transient)
+ 
++namespace
++{
++// RayCAD (patch 0012): see Message_ProgressIndicator::ThreadRange().
++thread_local const Message_ProgressRange* THE_THREAD_RANGE = nullptr;
++} // namespace
++
++//=================================================================================================
++
++const Message_ProgressRange* Message_ProgressIndicator::ThreadRange()
++{
++  return THE_THREAD_RANGE;
++}
++
++//=================================================================================================
++
++const Message_ProgressRange* Message_ProgressIndicator::SetThreadRange(
++  const Message_ProgressRange* theRange)
++{
++  const Message_ProgressRange* aPrevious = THE_THREAD_RANGE;
++  THE_THREAD_RANGE                       = theRange;
++  return aPrevious;
++}
++
++//=================================================================================================
++
++bool Message_ProgressIndicator::ThreadUserBreak()
++{
++  return THE_THREAD_RANGE != nullptr && THE_THREAD_RANGE->UserBreak();
++}
++
+ //=================================================================================================
+ 
+ Message_ProgressIndicator::Message_ProgressIndicator()
+diff --git a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx
+--- a/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx
++++ b/src/FoundationClasses/TKernel/Message/Message_ProgressIndicator.hxx
+@@ -74,6 +74,31 @@
+   Standard_EXPORT static Message_ProgressRange Start(
+     const occ::handle<Message_ProgressIndicator>& theProgress);
+ 
++  //!@name RayCAD (patch 0012): a user break for long geometric searches that take no progress range
++  //! The range whose user break the calling thread's long geometric searches poll (the start points of a
++  //! curve/surface intersection, a surface/surface walk), or null. Set by the jobs of a boolean that own a range.
++  Standard_EXPORT static const Message_ProgressRange* ThreadRange();
++  //! Sets the calling thread's range (null: none) and returns the previous one, to be restored.
++  Standard_EXPORT static const Message_ProgressRange* SetThreadRange(const Message_ProgressRange* theRange);
++  //! True if the calling thread has a range and its indicator signals a user break.
++  Standard_EXPORT static bool ThreadUserBreak();
++
++  //! Sets the calling thread's range for its lifetime and restores the previous one after.
++  class ThreadRangeScope
++  {
++  public:
++    explicit ThreadRangeScope(const Message_ProgressRange& theRange)
++        : myPrevious(SetThreadRange(&theRange))
++    {
++    }
++    ~ThreadRangeScope() { SetThreadRange(myPrevious); }
++    ThreadRangeScope(const ThreadRangeScope&)            = delete;
++    ThreadRangeScope& operator=(const ThreadRangeScope&) = delete;
++
++  private:
++    const Message_ProgressRange* myPrevious;
++  };
++
+ protected:
+   //!@name Virtual methods to be defined by descendant.
+ 
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_5.cxx
+@@ -15,6 +15,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Bnd_Box.hxx>
+ #include <Bnd_Tools.hxx>
+ #include <BOPAlgo_PaveFiller.hxx>
+@@ -128,7 +129,10 @@
+       }
+ 
+       // RayCAD (patch 0011): the edge/face search polls the job's range, so a cancel stops a long one.
+-      IntTools_EdgeFace::Perform(aPS.Next());
++      const Message_ProgressRange aRange = aPS.Next();
++      // RayCAD (patch 0012): the curve/surface searches under it poll the same range.
++      const Message_ProgressIndicator::ThreadRangeScope aThreadRange(aRange);
++      IntTools_EdgeFace::Perform(aRange);
+     }
+     catch (Standard_Failure const&)
+     {
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_6.cxx
+@@ -15,6 +15,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <BOPAlgo_PaveFiller.hxx>
+ #include <Bnd_Box.hxx>
+ #include <BOPAlgo_Alerts.hxx>
+@@ -232,6 +233,9 @@
+         myTrsf = aTrsf.Inverted();
+       }
+ 
++      // RayCAD (patch 0012): the surface/surface walks under it poll the job's range.
++      const Message_ProgressRange                         aRange = aPS.Next();
++      const Message_ProgressIndicator::ThreadRangeScope aThreadRange(aRange);
+       IntTools_FaceFace::Perform(aF1, aF2, myRunParallel);
+     }
+     catch (Standard_Failure const&)
+@@ -1108,6 +1112,11 @@
+ 
+   // Remove "micro" section edges
+   RemoveMicroSectionEdges(aMSCPB, aMicroPB);
++  // RayCAD (patch 0012): measuring every section edge takes seconds on large parts; it stops on a user break.
++  if (UserBreak(aPSOuter))
++  {
++    return;
++  }
+ 
+   // post treatment
+   MakeSDVerticesFF(aDMVLV, aDMNewSD);
+@@ -4345,6 +4354,10 @@
+       continue;
+     }
+ 
++    if (Message_ProgressIndicator::ThreadUserBreak()) // RayCAD (patch 0012); the caller then stops
++    {
++      return;
++    }
+     if (!BOPTools_AlgoTools::IsMicroEdge(TopoDS::Edge(aSI), myContext, false))
+     {
+       // Normal edge
+diff --git a/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx b/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx
+--- a/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx
++++ b/src/ModelingAlgorithms/TKGeomAlgo/IntCurveSurface/IntCurveSurface_InterUtils.pxx
+@@ -15,6 +15,7 @@
+ #ifndef IntCurveSurface_InterUtils_HeaderFile
+ #define IntCurveSurface_InterUtils_HeaderFile
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Adaptor3d_Curve.hxx>
+ #include <Adaptor3d_Surface.hxx>
+ #include <Bnd_Box.hxx>
+@@ -1391,6 +1392,11 @@
+   bool Triok;
+   do
+   {
++    // RayCAD (patch 0012): a user break stops the sort (the points are then not used).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return;
++    }
+     Triok = true;
+     for (int i = 1; i < NbStartPoints; i++)
+     {
+@@ -1483,6 +1489,11 @@
+ 
+   for (int i = 0; i < NbStartPoints; i++)
+   {
++    // RayCAD (patch 0012): a user break stops the search (the result is then not used).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return;
++    }
+     double u = thePoints.TabU(i);
+     double v = thePoints.TabV(i);
+     double w = thePoints.TabW(i);
+diff --git a/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx b/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx
+--- a/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx
++++ b/src/ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx
+@@ -12,6 +12,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Adaptor3d_Surface.hxx>
+ #include <Adaptor3d_HSurfaceTool.hxx>
+ #include <Extrema_GenLocateExtPS.hxx>
+@@ -880,6 +881,12 @@
+   Arrive = false;
+   while (!Arrive) // 010
+   {
++    // RayCAD (patch 0012): a user break stops the walk, not done (the line is then not used).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      done = false;
++      return;
++    }
+     aPrevStatus = aStatus;
+ 
+     LevelOfIterWithoutAppend++;
+@@ -1894,6 +1901,11 @@
+ 
+   while (!bStop)
+   {
++    // RayCAD (patch 0012): a user break stops extending the line.
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return bOutOfTangentZone;
++    }
+     nbIterWithoutAppend++;
+ 
+     if ((nbIterWithoutAppend > 20) || (nbEqualPoints > 20))
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.cxx
+@@ -15,6 +15,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <BOPAlgo_Builder.hxx>
+ #include <BOPAlgo_Alerts.hxx>
+ #include <BOPAlgo_BuilderSolid.hxx>
+@@ -469,7 +470,15 @@
+   }
+   //
+   Message_ProgressScope aPS(theRange, "Post treatment of result shape", 2);
+-  BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel);
++  {
++    // RayCAD (patch 0012): the edge and wire corrections poll the range, so a cancel stops them.
++    const Message_ProgressIndicator::ThreadRangeScope aThreadRange(theRange);
++    BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel);
++  }
++  if (UserBreak(aPS))
++  {
++    return;
++  }
+   aPS.Next();
+   BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel);
+ }
+diff --git a/src/ModelingAlgorithms/TKBO/BOPTools/BOPTools_AlgoTools_1.cxx b/src/ModelingAlgorithms/TKBO/BOPTools/BOPTools_AlgoTools_1.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPTools/BOPTools_AlgoTools_1.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPTools/BOPTools_AlgoTools_1.cxx
+@@ -12,6 +12,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <Adaptor3d_CurveOnSurface.hxx>
+ #include <BOPTools_AlgoTools.hxx>
+ #include <BOPTools_Parallel.hxx>
+@@ -125,6 +126,10 @@
+   void Perform()
+   {
+     Standard_ProgramError_Raise_if(!mypMapToAvoid, "mypMapToAvoid is null");
++    if (Message_ProgressIndicator::ThreadUserBreak()) // RayCAD (patch 0012)
++    {
++      return;
++    }
+     CheckEdge(myEdge, myMaxTol, *mypMapToAvoid);
+   }
+ 
+@@ -165,6 +170,10 @@
+   void Perform()
+   {
+     Standard_ProgramError_Raise_if(!mypMapToAvoid, "mypMapToAvoid is null");
++    if (Message_ProgressIndicator::ThreadUserBreak()) // RayCAD (patch 0012)
++    {
++      return;
++    }
+     CorrectWires(myFace, *mypMapToAvoid);
+   }
+ 
+@@ -211,6 +220,10 @@
+   void Perform()
+   {
+     Standard_ProgramError_Raise_if(!mypMapToAvoid, "mypMapToAvoid is null");
++    if (Message_ProgressIndicator::ThreadUserBreak()) // RayCAD (patch 0012)
++    {
++      return;
++    }
+     CorrectEdgeTolerance(myEdge, myFace, myMaxTol, *mypMapToAvoid);
+   }
+ 
+@@ -684,6 +697,11 @@
+   aNbV = aMVE.Extent();
+   for (i = 1; i <= aNbV; ++i)
+   {
++    // RayCAD (patch 0012): a face with many edges takes seconds; a user break stops it between vertices.
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return;
++    }
+     const TopoDS_Vertex& aV = *((TopoDS_Vertex*)&aMVE.FindKey(i));
+     aPV                     = BRep_Tool::Pnt(aV);
+     aTol                    = BRep_Tool::Tolerance(aV);
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.cxx
+@@ -15,6 +15,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <BOPAlgo_PaveFiller.hxx>
+ #include <BOPAlgo_SectionAttribute.hxx>
+ #include <BOPAlgo_Alerts.hxx>
+@@ -220,6 +221,8 @@
+   {
+     OCC_CATCH_SIGNALS
+     //
++    // RayCAD (patch 0012): the steps that take no range poll this one (see ThreadUserBreak).
++    const Message_ProgressIndicator::ThreadRangeScope aThreadRange(theRange);
+     PerformInternal(theRange);
+   }
+   //
+diff --git a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_9.cxx b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_9.cxx
+--- a/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_9.cxx
++++ b/src/ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller_9.cxx
+@@ -12,6 +12,7 @@
+ // Alternatively, this file may be used under the terms of Open CASCADE
+ // commercial license or contractual agreement.
+ 
++#include <Message_ProgressIndicator.hxx>
+ #include <BOPAlgo_PaveFiller.hxx>
+ #include <BOPDS_DS.hxx>
+ #include <BOPDS_Iterator.hxx>
+@@ -49,7 +50,16 @@
+   occ::handle<BOPDS_PaveBlock>& PaveBlock() { return myPB; }
+ 
+   //
+-  virtual void Perform() { IntTools_ShrunkRange::Perform(); }
++  virtual void Perform()
++  {
++    // RayCAD (patch 0012): measuring a long section edge takes seconds; after a user break the range is left not
++    // done (the filler stops at its next check).
++    if (Message_ProgressIndicator::ThreadUserBreak())
++    {
++      return;
++    }
++    IntTools_ShrunkRange::Perform();
++  }
+ 
+   //
+ protected:
+diff --git a/src/ModelingData/TKGeomBase/Approx/Approx_ComputeLine.gxx b/src/ModelingData/TKGeomBase/Approx/Approx_ComputeLine.gxx
+--- a/src/ModelingData/TKGeomBase/Approx/Approx_ComputeLine.gxx
++++ b/src/ModelingData/TKGeomBase/Approx/Approx_ComputeLine.gxx
+@@ -27,6 +27,7 @@
+ #include <math_Gauss.hxx>
+ #include <math_Uzawa.hxx>
+ #include <Approx_MCurvesToBSpCurve.hxx>
++#include <Message_ProgressIndicator.hxx>
+ 
+ #include <stdio.h>
+ 
+@@ -917,6 +918,13 @@
+   {
+     while (!Finish)
+     {
++      // RayCAD (patch 0012): approximating a long intersection line takes seconds; a user break leaves it not
++      // all done.
++      if (Message_ProgressIndicator::ThreadUserBreak())
++      {
++        alldone = false;
++        return;
++      }
+       oldlastpt = mylastpt;
+       // Management of the multiline splitting for approximation:
+       if (!begin)

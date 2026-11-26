@@ -3,6 +3,7 @@
 #include "boolean_internal.h"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -10,6 +11,7 @@
 #include <BRepCheck_Solid.hxx>
 #include <BRepCheck_Status.hxx>
 #include <BRepGProp.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -207,6 +209,29 @@ double solidVolume(const TopoDS_Shape& shape)
     return total;
 }
 
+std::optional<double> localVolumeChange(const TopoDS_Shape& before, const TopoDS_Shape& after, const Bnd_Box& region)
+{
+    if (region.IsVoid())
+        return std::nullopt;
+    double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+    region.Get(x0, y0, z0, x1, y1, z1);
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(x0, y0, z0), gp_Pnt(x1, y1, z1)).Shape();
+    const auto inside = [&](const TopoDS_Shape& shape) -> std::optional<double> {
+        BRepBuilderAPI_Copy copier(shape, false, false);
+        BRepAlgoAPI_Common common(copier.Shape(), box);
+        common.SetRunParallel(false);
+        common.SetNonDestructive(true);
+        common.Build();
+        if (!common.IsDone() || common.HasErrors())
+            return std::nullopt;
+        return solidVolume(common.Shape());
+    };
+    const std::optional<double> a = inside(before);
+    const std::optional<double> b = a ? inside(after) : std::nullopt;
+    if (!a || !b)
+        return std::nullopt;
+    return *b - *a;
+}
 std::vector<SubId> sliverFaces(const Shape& shape, const std::vector<bool>& involved)
 {
     std::vector<bool> sliver;

@@ -50,8 +50,8 @@ set(RAY_SLOW_TESTS
     ray_render_backplot_cost  # about 200 s: mostly meshing its 500k-triangle baseline; guards src/render path drawing only
     ray_render_stock_cost     # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
     ray_ui_cam_slow_seek_tests  # the Simulate panel's slow-seek line from a real High run (2.5 GB, about 50 s)
-    ray_kernel_directedit_corpus # T-080: the direct-edit rates on the S9 set: 70 s alone, 112 s in a parallel ctest
-    ray_kernel_directedit_nist) # the same on the wider NIST set (mostly fetch-only; skipped when none is fetched)
+    ray_kernel_directedit_corpus # T-080: the direct-edit rates on the S9 set: 96 to 133 s alone on Windows
+    ray_kernel_directedit_nist) # the same on the wider NIST set (fetch-only, skipped without it): 203 to 244 s
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS

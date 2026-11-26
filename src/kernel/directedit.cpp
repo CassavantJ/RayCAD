@@ -47,9 +47,10 @@
 // cap it puts on what is left of a hole, on the plane of a counterbore floor that is now inside the material) is not
 // that face, nor is an image that shares no ground with the old face: either is Generated from it, and the old
 // face Deleted if nothing else is its image. The same holds for the faces a push/pull or a resize does not move.
-// T-081b: naming would otherwise
-// resolve a reference to the floor to a face on the other side of the material, or a reference to a fillet to a face
-// somewhere else.
+// The edges and vertices of a face a push/pull moves or a resize resizes are Modified to their counterparts on the
+// edited face when the counterpart is unique (modifyEditedBoundaries; T-081b). T-081b: naming would otherwise resolve a
+// reference to the floor to a face on the other side of the material, or a reference to a fillet to a face somewhere
+// else.
 //
 // CANCEL AND ABANDON. Defeaturing can run for minutes on some fillets (S9: over 150 s) and polls OCCT's progress hook
 // rarely (S9: up to 9.4 s from cancel to return). So every direct edit runs its OCCT work on a kernel-owned thread
@@ -57,12 +58,17 @@
 // Error{Cancelled} at once, and the thread stops at OCCT's next poll and throws its result away. Structured exceptions
 // on that thread are caught by guarded() like everywhere else in the kernel. OCCT 8.0.1 ran the face trim of a feature
 // removal without a progress range, so a cancel there waited for the trim to end (237 s on a NIST CTC 05 fillet);
-// ports/opencascade/0011-bopalgo-removefeatures-cancel.patch passes the range down to the edge/face searches.
+// ports/opencascade/0011-bopalgo-removefeatures-cancel.patch passes the range down to the edge/face searches, and
+// 0012-geometric-searches-cancel.patch makes the intersection searches, the approximation of intersection lines, the
+// section-edge measurements and the tolerance correction of a boolean poll it (NIST CTC 02 and D2MI 904 ran on for 80
+// to 167 s and up to 40 s without it). The corpus tests time how long each abandoned edit runs on after its cancel
+// (testing::EditEnd).
 #include "directedit_internal.h"
 
 #include "io_internal.h"
 
 #include <BOPAlgo_Alerts.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
@@ -104,9 +110,11 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -125,6 +133,11 @@ std::atomic<int>& rawDirectEditHistory() noexcept
 {
     static std::atomic<int> count{0};
     return count;
+}
+std::shared_ptr<std::atomic<std::int64_t>>& editEndRecord() noexcept
+{
+    thread_local std::shared_ptr<std::atomic<std::int64_t>> record;
+    return record;
 }
 } // namespace detail
 
@@ -222,16 +235,23 @@ Result<OpResult> runEdit(JobContext& ctx, std::string_view where, Work work)
     if (auto ok = ctx.cancel.check(); !ok)
         return tl::unexpected(detail::cancelledError(where));
     CancelToken token = ctx.cancel;
+    std::shared_ptr<std::atomic<std::int64_t>> endRecord = detail::editEndRecord(); // tests only
+    if (endRecord)
+        endRecord->store(detail::kEditRunning);
     Result<OpResult> result = detail::runAbandonable<OpResult>(
-        ctx, where, [token, where, work = std::move(work)](detail::IoTask& task) mutable -> Result<OpResult> {
+        ctx, where,
+        [token, where, endRecord, work = std::move(work)](detail::IoTask& task) mutable -> Result<OpResult> {
             Progress progress([&task](double fraction, std::string_view) { task.report(fraction, kStage); });
             JobContext inner{token, progress};
-            return detail::guarded(where, [&]() -> Result<OpResult> {
+            Result<OpResult> out = detail::guarded(where, [&]() -> Result<OpResult> {
                 if (detail::directEditFaultRequests().load(std::memory_order_relaxed) > 0 &&
                     detail::directEditFaultRequests().fetch_sub(1, std::memory_order_relaxed) > 0)
                     detail::raiseTestFault();
                 return work(inner);
             });
+            if (endRecord)
+                endRecord->store(std::chrono::steady_clock::now().time_since_epoch().count());
+            return out;
         });
     if (!result && result.error().code == ErrorCode::KernelFailure &&
         result.error().message.rfind("The geometry kernel failed:", 0) == 0) {
@@ -561,6 +581,208 @@ std::optional<HistoryEntry::Relation> primaryRelation(const ShapeHistory& histor
     return std::nullopt;
 }
 
+// The faces around `index` (an edge or a vertex of `shape`, by kind), as 0-based face indices, sorted, each once.
+std::vector<std::uint32_t> facesAround(const Shape& shape, SubKind kind, std::uint32_t index)
+{
+    const detail::AncestorIndex& map = shape.impl->ancestors(kind, SubKind::Face);
+    const detail::ShapeIndex& subs = shape.impl->subs[detail::kindSlot(kind)];
+    const detail::ShapeIndex& faces = shape.impl->subs[detail::kindSlot(SubKind::Face)];
+    std::vector<std::uint32_t> out;
+    const int k = map.FindIndex(subs.FindKey(static_cast<int>(index) + 1));
+    if (k == 0)
+        return out;
+    for (const TopoDS_Shape& f : map.FindFromIndex(k))
+        if (const int i = faces.FindIndex(f); i > 0)
+            out.push_back(static_cast<std::uint32_t>(i - 1));
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+// Whether `p` lies on the (unbounded) surface of `face`, within 0.1 um (faces a boolean split from one surface can
+// differ by a few 1e-6 mm).
+bool onSurfaceOf(const TopoDS_Face& face, const gp_Pnt& p)
+{
+    GeomAPI_ProjectPointOnSurf proj(p, BRep_Tool::Surface(face));
+    return proj.NbPoints() > 0 && proj.LowerDistance() <= 1e-4;
+}
+
+// Whether result edge `edge` runs on into another edge on the same two surfaces (it meets, at one of its vertices, an
+// edge whose middle lies on the surfaces of both of `edge`'s faces): the edited boundary is then longer than the input
+// edge in some direction, and which stretch carries the input edge's identity is not for the kernel to decide.
+bool continuesOnSameSurfaces(const Shape& result, std::uint32_t edge, const std::vector<std::uint32_t>& faces)
+{
+    if (faces.size() != 2)
+        return false;
+    const detail::ShapeIndex& edges = result.impl->subs[detail::kindSlot(SubKind::Edge)];
+    const detail::ShapeIndex& vertices = result.impl->subs[detail::kindSlot(SubKind::Vertex)];
+    const detail::ShapeIndex& resultFaces = result.impl->subs[detail::kindSlot(SubKind::Face)];
+    const detail::AncestorIndex& vertexEdges = result.impl->ancestors(SubKind::Vertex, SubKind::Edge);
+    const TopoDS_Shape& self = edges.FindKey(static_cast<int>(edge) + 1);
+    const TopoDS_Face a = TopoDS::Face(resultFaces.FindKey(static_cast<int>(faces[0]) + 1));
+    const TopoDS_Face b = TopoDS::Face(resultFaces.FindKey(static_cast<int>(faces[1]) + 1));
+    for (TopExp_Explorer v(self, TopAbs_VERTEX); v.More(); v.Next()) {
+        if (vertices.FindIndex(v.Current()) == 0)
+            continue;
+        const int k = vertexEdges.FindIndex(v.Current());
+        if (k == 0)
+            continue;
+        for (const TopoDS_Shape& other : vertexEdges.FindFromIndex(k)) {
+            if (other.IsSame(self) || BRep_Tool::Degenerated(TopoDS::Edge(other)))
+                continue;
+            const BRepAdaptor_Curve curve(TopoDS::Edge(other));
+            const gp_Pnt mid = curve.Value(0.5 * (curve.FirstParameter() + curve.LastParameter()));
+            if (onSurfaceOf(a, mid) && onSurfaceOf(b, mid))
+                return true;
+        }
+    }
+    return false;
+}
+
+// See "HISTORY" (kernel.h, T-081b): the edges and vertices of a face a push/pull moves or a resize resizes are Modified
+// to their counterparts on the edited face when that counterpart is unique. The counterpart of an edge or vertex is the
+// one result element whose faces are exactly one image of each face around it (an edge between two faces: the result
+// edge between their images; a seam: the seam of the face's image; a vertex: the result vertex on an image of each of
+// its faces and on no other face). Only an element the boolean reported Deleted gets one, and only a result element no
+// other input element is Modified to, not an edge that runs on into another edge on the same two surfaces (the
+// edited boundary grew, see continuesOnSameSurfaces), and not a vertex on fewer than three faces that is not where the
+// edit takes its point (see whereMoved); anything else stays as it was (Deleted, its counterpart new).
+// `planarEndsOnly` (a resize): only elements whose other faces are planes square to the bore's axis (its flat end
+// faces: a rim; a line where a plane along the axis cuts the bore moves along the bore and is left alone).
+void modifyEditedBoundaries(ShapeHistory& history, const Shape& input, const Shape& result, std::span<const int> edited,
+                            bool planarEndsOnly = false)
+{
+    std::vector<gp_Ax1> axes; // the edited faces' axes (a resize) or normals (a push/pull)
+    for (const int f : edited) {
+        const BRepAdaptor_Surface s(TopoDS::Face(input.impl->subs[detail::kindSlot(SubKind::Face)].FindKey(f + 1)));
+        if (s.GetType() == GeomAbs_Cylinder)
+            axes.push_back(s.Cylinder().Axis());
+        else if (s.GetType() == GeomAbs_Cone)
+            axes.push_back(s.Cone().Axis());
+        else if (s.GetType() == GeomAbs_Plane)
+            axes.push_back(s.Plane().Axis());
+    }
+    const auto endFace = [&axes](const BRepAdaptor_Surface& s) {
+        if (s.GetType() != GeomAbs_Plane || axes.empty())
+            return false;
+        const gp_Dir n = s.Plane().Axis().Direction();
+        return std::all_of(axes.begin(), axes.end(),
+                           [&n](const gp_Ax1& a) { return n.IsParallel(a.Direction(), 1e-6); });
+    };
+    // A vertex on fewer than three faces (where a closed rim starts, at the seam) is not fixed by its faces: it is
+    // paired only where the edit takes its point, square to the moved plane (a push/pull) or out from the bore's axis
+    // at the same angle and height (a resize).
+    const auto whereMoved = [&axes, planarEndsOnly](const gp_Pnt& was, const gp_Pnt& is) {
+        const double tol = 1e-6;
+        return std::any_of(axes.begin(), axes.end(), [&](const gp_Ax1& a) {
+            const gp_Vec d(a.Direction());
+            if (!planarEndsOnly)
+                return gp_Vec(was, is).Crossed(d).Magnitude() < tol;
+            const gp_Vec v0(a.Location(), was), v1(a.Location(), is);
+            const double h0 = v0.Dot(d), h1 = v1.Dot(d);
+            const gp_Vec r0 = v0 - d * h0, r1 = v1 - d * h1;
+            return std::abs(h0 - h1) < tol && r0.Magnitude() > tol && r1.Magnitude() > tol && r0.Angle(r1) < tol;
+        });
+    };
+    std::map<std::uint32_t, std::set<std::uint32_t>> images; // input face -> its Modified result faces
+    std::set<SubId> taken; // result edges and vertices an input element is already Modified to
+    for (const HistoryEntry& e : history.entries) {
+        if (e.inputIndex != 0 || e.relation != HistoryEntry::Relation::Modified)
+            continue;
+        if (e.source.kind == SubKind::Face) {
+            for (const SubId& r : e.results)
+                if (r.kind == SubKind::Face)
+                    images[e.source.index].insert(r.index);
+        } else {
+            taken.insert(e.results.begin(), e.results.end());
+        }
+    }
+    const detail::ShapeIndex& inFaces = input.impl->subs[detail::kindSlot(SubKind::Face)];
+    std::map<SubId, SubId> found;
+    std::map<SubId, int> claims;
+    for (const SubKind kind : {SubKind::Edge, SubKind::Vertex}) {
+        const detail::ShapeIndex& subs = input.impl->subs[detail::kindSlot(kind)];
+        std::set<std::uint32_t> candidates;
+        for (const int f : edited)
+            for (TopExp_Explorer it(inFaces.FindKey(f + 1), detail::occtKind(kind)); it.More(); it.Next())
+                if (const int i = subs.FindIndex(it.Current()); i > 0)
+                    candidates.insert(static_cast<std::uint32_t>(i - 1));
+        // Result elements of this kind with their faces, made once.
+        std::vector<std::vector<std::uint32_t>> resultFaces(result.count(kind));
+        for (std::uint32_t r = 0; r < result.count(kind); ++r)
+            resultFaces[r] = facesAround(result, kind, r);
+        for (const std::uint32_t c : candidates) {
+            const SubId source{kind, c};
+            if (primaryRelation(history, source) != HistoryEntry::Relation::Deleted)
+                continue;
+            const std::vector<std::uint32_t> around = facesAround(input, kind, c);
+            std::vector<const std::set<std::uint32_t>*> imageSets;
+            bool mapped = !around.empty();
+            // A resized bore: only where it meets flat end faces (a rim on a countersink's cone moves along the cone).
+            if (planarEndsOnly)
+                for (const std::uint32_t f : around)
+                    if (std::find(edited.begin(), edited.end(), static_cast<int>(f)) == edited.end() &&
+                        !endFace(BRepAdaptor_Surface(TopoDS::Face(inFaces.FindKey(static_cast<int>(f) + 1)))))
+                        mapped = false;
+            for (const std::uint32_t f : around) {
+                const auto it = images.find(f);
+                mapped = mapped && it != images.end() && !it->second.empty();
+                if (mapped)
+                    imageSets.push_back(&it->second);
+            }
+            if (!mapped)
+                continue;
+            std::optional<SubId> only;
+            bool unique = true;
+            for (std::uint32_t r = 0; r < result.count(kind) && unique; ++r) {
+                const std::vector<std::uint32_t>& faces = resultFaces[r];
+                if (faces.size() != around.size())
+                    continue;
+                std::vector<bool> used(faces.size(), false);
+                bool match = true;
+                for (const auto* set : imageSets) {
+                    bool hit = false;
+                    for (std::size_t j = 0; j < faces.size() && !hit; ++j)
+                        if (!used[j] && set->count(faces[j]) != 0) {
+                            used[j] = true;
+                            hit = true;
+                        }
+                    match = match && hit;
+                }
+                if (!match)
+                    continue;
+                if (only)
+                    unique = false;
+                else
+                    only = SubId{kind, r};
+            }
+            if (!unique || !only || taken.count(*only) != 0)
+                continue;
+            if (kind == SubKind::Edge && continuesOnSameSurfaces(result, only->index, resultFaces[only->index]))
+                continue;
+            if (kind == SubKind::Vertex && around.size() < 3 &&
+                !whereMoved(BRep_Tool::Pnt(TopoDS::Vertex(subs.FindKey(static_cast<int>(c) + 1))),
+                            BRep_Tool::Pnt(TopoDS::Vertex(result.impl->subs[detail::kindSlot(SubKind::Vertex)].FindKey(
+                                static_cast<int>(only->index) + 1)))))
+                continue;
+            found[source] = *only;
+            ++claims[*only];
+        }
+    }
+    bool changed = false;
+    for (HistoryEntry& e : history.entries) {
+        if (e.inputIndex != 0 || e.relation != HistoryEntry::Relation::Deleted)
+            continue;
+        const auto it = found.find(e.source);
+        if (it == found.end() || claims[it->second] != 1)
+            continue;
+        e.relation = HistoryEntry::Relation::Modified;
+        e.results = {it->second};
+        changed = true;
+    }
+    if (changed)
+        canonicalise(history);
+}
 // ShapeAnalysis_Shell finds no free and no badly oriented edge. validateSolids' incremental BRepCheck passed two
 // blend-run removals on NIST CTC 02 whose shells had badly oriented edges (T-080 measurement), so the direct edits
 // check this too. May throw.
@@ -572,6 +794,44 @@ bool orientedAndClosed(const TopoDS_Shape& shape)
     return !shells.HasFreeEdges() && !shells.HasBadEdges();
 }
 
+// The volume change of an edit that can change the body only inside `region`: the whole-body change, or, when that is
+// small next to the body, the change measured inside `region` (boolean_internal.h LOCAL VOLUME CHANGE). `elsewhere` is
+// set when the whole-body change disagrees with the local one beyond integration noise: the body changed outside the
+// region. `scale` is what a no-op is judged against. May throw.
+struct MeasuredChange {
+    double change = 0.0;
+    double scale = 1.0;
+    bool elsewhere = false;
+};
+MeasuredChange measureChange(const TopoDS_Shape& before, const TopoDS_Shape& after, double beforeVolume,
+                             double afterVolume, Bnd_Box region)
+{
+    MeasuredChange m;
+    m.change = afterVolume - beforeVolume;
+    m.scale = std::max(1.0, std::abs(beforeVolume));
+    if (std::abs(m.change) >= detail::kLocalVolumeRelative * std::abs(beforeVolume) || region.IsVoid())
+        return m;
+    region.Enlarge(1e-3);
+    if (const std::optional<double> local = detail::localVolumeChange(before, after, region)) {
+        m.elsewhere = std::abs(m.change - *local) > detail::kVolumeNoiseRelative * std::abs(beforeVolume);
+        m.change = *local;
+        m.scale = 1.0;
+    }
+    return m;
+}
+
+// The box of `faces` of `shape`, enlarged by its own diagonal: what removing them can change (the corner a removed
+// convex round leaves lies outside the round's own box).
+Bnd_Box removalRegion(const Shape& shape, const std::vector<int>& faces)
+{
+    Bnd_Box box;
+    const detail::ShapeIndex& index = shape.impl->subs[detail::kindSlot(SubKind::Face)];
+    for (const int k : faces)
+        BRepBndLib::Add(index.FindKey(k + 1), box, false);
+    if (!box.IsVoid())
+        box.Enlarge(std::sqrt(box.SquareExtent()));
+    return box;
+}
 void addOrphanWarning(OpResult& out)
 {
     const std::vector<SubId> orphans = detail::orphanFaces(out.history, out.shape);
@@ -753,9 +1013,13 @@ DeleteOutcome defeature(const Shape& input, const std::vector<int>& faces, const
         return fail(Why::Invalid, mapped.error().message);
     demoteReversedImages(out.history, input, out.shape);
 
-    const double change = after - before;
-    if (std::abs(change) <= kNoOpRelative * std::max(1.0, std::abs(before)))
+    const MeasuredChange measured =
+        measureChange(detail::occt(input), solids, before, after, removalRegion(input, faces));
+    const double change = measured.change;
+    if (std::abs(change) <= kNoOpRelative * measured.scale)
         return fail(Why::NotRemoved, "volume unchanged");
+    if (measured.elsewhere)
+        return fail(Why::Wrong, "the body changed away from the removed faces");
     for (const int k : faces)
         if (primaryRelation(out.history, SubId{SubKind::Face, static_cast<std::uint32_t>(k)}) !=
             HistoryEntry::Relation::Deleted)
@@ -912,6 +1176,9 @@ Result<OpResult> deleteWork(const Shape& shape, const std::vector<int>& picked, 
             return wedged;
         if (wedged)
             return wedged;
+        firstDetail += "; rebuilding the corner: " + wedged.error().message;
+        for (const std::string& c : wedged.error().context)
+            firstDetail += "; " + c;
     }
     return tl::unexpected(failure(deleteMessage(firstWhy, runHint), where, firstDetail));
 }
@@ -927,7 +1194,10 @@ Result<OpResult> booleanWithTool(BoolOp op, const Shape& body, const Shape& tool
         out = tl::unexpected(failure("free or badly oriented edges", where));
     if (out || out.error().code == ErrorCode::Cancelled)
         return out;
+    // The boolean's own message and context (OCCT's alerts, the failed check) go to the log.
     std::string context = out.error().message;
+    for (const std::string& c : out.error().context)
+        context += "; " + c;
     if (out.error().code == ErrorCode::InvalidArgument)
         return tl::unexpected(failure(subject + " could not be built." + kNothingChanged, where, context));
     return tl::unexpected(failure(subject +
@@ -935,6 +1205,44 @@ Result<OpResult> booleanWithTool(BoolOp op, const Shape& body, const Shape& tool
                                       "another face or edge of the part. Try a slightly different size." +
                                       kNothingChanged,
                                   where, context));
+}
+
+// Stops OCCT on a cancel or once a time budget is spent (for a diagnosis that must not hold up a refusal).
+class BudgetIndicator final : public Message_ProgressIndicator {
+public:
+    BudgetIndicator(CancelToken cancel, std::chrono::steady_clock::duration budget)
+        : cancel_(std::move(cancel)), until_(std::chrono::steady_clock::now() + budget)
+    {
+    }
+    bool UserBreak() override { return cancel_.cancelled() || std::chrono::steady_clock::now() > until_; }
+    void Show(const Message_ProgressScope&, const bool) override {}
+
+private:
+    CancelToken cancel_;
+    std::chrono::steady_clock::time_point until_;
+};
+
+// Whether cutting `tool` out of `body` leaves more than one solid: a plain BRepAlgoAPI_Cut on a private copy (OCCT
+// parallelism off), without the checks and the unification of kernel::boolean, given at most 5 s. Used to say why a
+// pull-in whose boolean gave an invalid body was refused: when the cut falls apart the request cannot be met at all
+// (the pieces touch along an edge or a point, which no valid solid can do). Empty if the cut fails, runs out of time or
+// is cancelled. May throw.
+std::optional<bool> cutFallsApart(const Shape& body, const TopoDS_Shape& tool, JobContext& ctx)
+{
+    BRepBuilderAPI_Copy copier(detail::occt(body), false, false);
+    BRepAlgoAPI_Cut cut;
+    NCollection_List<TopoDS_Shape> arguments, tools;
+    arguments.Append(copier.Shape());
+    tools.Append(tool);
+    cut.SetArguments(arguments);
+    cut.SetTools(tools);
+    cut.SetRunParallel(false);
+    cut.SetNonDestructive(true);
+    occ::handle<BudgetIndicator> indicator = new BudgetIndicator(ctx.cancel, std::chrono::seconds(5));
+    cut.Build(indicator->Start());
+    if (!cut.IsDone() || cut.HasErrors())
+        return std::nullopt;
+    return detail::solidsOf(cut.Shape()).size() > 1;
 }
 
 // Warnings of a boolean that still apply to the edit (not its "separate solids" note, which the edits refuse).
@@ -1065,9 +1373,13 @@ Result<OpResult> removeByWedges(const Shape& shape, FaceModel& model, const std:
             HistoryEntry::Relation::Deleted)
             return tl::unexpected(failure("the round is still there", where));
     const Expectation expect = expectationFor(model, fillets, {});
-    const double change = detail::volumeOf(op->shape) - detail::volumeOf(shape);
-    if ((expect.sign != 0 && change * expect.sign < 0.0) ||
-        (expect.bounded && (std::abs(change) < expect.lo || std::abs(change) > expect.hi)))
+    // kernel::boolean checked the direction, and a change below kLocalVolumeRelative of the body inside the wedges'
+    // box; a larger change is checked here against the blend's plausible size.
+    const double before = detail::volumeOf(shape);
+    const double change = detail::volumeOf(op->shape) - before;
+    const bool large = std::abs(change) >= detail::kLocalVolumeRelative * before;
+    if (large && ((expect.sign != 0 && change * expect.sign < 0.0) ||
+                  (expect.bounded && (std::abs(change) < expect.lo || std::abs(change) > expect.hi))))
         return tl::unexpected(failure("unexpected volume", where));
     for (const auto& [point, want] : expect.points)
         if (detail::classifyPointFast(detail::occt(op->shape), point, kOnTolerance) != want)
@@ -1145,10 +1457,36 @@ Result<OpResult> offsetWork(const Shape& shape, const std::vector<int>& picked, 
     ctx.progress.set(0.1, kStage);
 
     auto op = booleanWithTool(outward ? BoolOp::Union : BoolOp::Cut, shape, tool, ctx, subject, where);
-    if (!op)
+
+    if (!op) {
+        // A pull-in that gave an invalid body: say so if the request itself cannot be met (the cut falls apart).
+        if (!outward && op.error().code == ErrorCode::KernelFailure)
+            if (const std::optional<bool> apart = cutFallsApart(shape, toolShape, ctx); apart && *apart) {
+                Error error = op.error();
+                error.message = subject + " would cut the part in two." + kNothingChanged;
+                return tl::unexpected(std::move(error));
+            }
         return tl::unexpected(op.error());
+    }
     if (op->shape.count(SubKind::Solid) != shape.count(SubKind::Solid))
         return tl::unexpected(failure(subject + " would cut the part in two." + kNothingChanged, where));
+    {
+        // The change lies inside the prisms: a cut removes at most them, a union adds at most them. kernel::boolean
+        // checks a change below kLocalVolumeRelative of the body inside the prisms' box itself; a larger one is checked
+        // here on the whole body, with its integration noise.
+        const double prisms = detail::solidVolume(toolShape);
+        const double before = detail::volumeOf(shape);
+        const double whole = detail::volumeOf(op->shape) - before;
+        const double moved = outward ? whole : -whole;
+        const bool large = std::abs(whole) >= detail::kLocalVolumeRelative * before;
+        if (large && (!(moved > 0.0) || moved > prisms * (1.0 + 1e-3) + detail::kVolumeNoiseRelative * before))
+            return tl::unexpected(
+                failure(subject +
+                            " gives an invalid body, usually because the new face would land exactly "
+                            "on another face or edge of the part. Try a slightly different size." +
+                            kNothingChanged,
+                        where, "volume change " + std::to_string(whole) + " for prisms of " + std::to_string(prisms)));
+    }
 
     std::vector<EditedFace> edited;
     std::vector<ToolOrigin> origins;
@@ -1181,6 +1519,7 @@ Result<OpResult> offsetWork(const Shape& shape, const std::vector<int>& picked, 
                                      SubId{SubKind::Face, static_cast<std::uint32_t>(picked.front())});
     // (The moved faces' images lie apart from them by design; any other face keeps its place.)
     demoteReversedImages(out.history, shape, out.shape, picked);
+    modifyEditedBoundaries(out.history, shape, out.shape, picked);
     for (const int f : picked) {
         bool square = true;
         for (const detail::FaceLink& link : model.links(f))
@@ -1293,6 +1632,7 @@ Result<OpResult> finishResize(FaceModel& model, const std::vector<int>& bore, co
     out.history = rewriteToolHistory(std::move(body), op.history, edited, {},
                                      SubId{SubKind::Face, static_cast<std::uint32_t>(bore.front())});
     demoteReversedImages(out.history, input, out.shape, bore);
+    modifyEditedBoundaries(out.history, input, out.shape, bore, true);
     keepBooleanWarnings(op, out);
     addOrphanWarning(out);
     return out;
@@ -1380,9 +1720,11 @@ Result<OpResult> resizeWork(const Shape& shape, int picked, double newDiameter, 
     auto op = booleanWithTool(BoolOp::Cut, mid, tool, ctx, subject, where);
     if (!op)
         return tl::unexpected(op.error());
+    // Filling the bore and cutting it again were each checked; the two together must add material, which the whole
+    // body shows when the change is large next to it (a small one is within its integration noise).
     const double before = detail::volumeOf(shape);
-    const double after = detail::volumeOf(op->shape);
-    if (!(after > before))
+    const double change = detail::volumeOf(op->shape) - before;
+    if (std::abs(change) >= detail::kLocalVolumeRelative * before && !(change > 0.0))
         return tl::unexpected(failure(subject + " did not add material to the hole wall." + kNothingChanged, where));
     return finishResize(model, boreFaces, hole, newRadius, shape, tool, *op,
                         compose(filled.result->history, entriesOf(op->history, 0)), subject, where);

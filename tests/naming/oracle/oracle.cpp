@@ -1684,6 +1684,31 @@ std::string measureEdit(Feature& f, const Script& built, const Samples& before, 
                     e.fillReach.push_back(std::abs(T->c.r - e.amount) + 0.1);
                 }
         e.grown = bordering(bore, e.resized);
+        // Opening up, the flat faces square to the axis at the bore's ends run on over the ring between the radii (a
+        // blind hole's flat bottom widens with it: T-081b holdout2 9:35); at an open end that ring is air, where no
+        // element lies.
+        if (e.amount > T->c.r) {
+            std::vector<std::string> ends;
+            for (const std::string& key : bordering(
+                     [&] {
+                         std::set<std::uint32_t> s;
+                         for (const std::string& r : e.resized)
+                             for (const std::uint32_t x : facesOn(r, O0, before))
+                                 s.insert(x);
+                         return s;
+                     }(),
+                     e.resized))
+                if (const Owner* o = O0.get(key);
+                    o != nullptr && o->c.k == Carrier::K::Plane && norm(cross(o->c.a, T->c.a)) < 1e-7)
+                    ends.push_back(key);
+            for (const std::string& r : e.resized)
+                for (const std::uint32_t x : facesOn(r, O0, before))
+                    if (before.of(SubKind::Face)[x].mesh) {
+                        e.fill.push_back(before.of(SubKind::Face)[x].mesh);
+                        e.fillReach.push_back(std::abs(e.amount - T->c.r) + 0.1);
+                    }
+            e.grown = ends;
+        }
         const Owners O1 = withEdit();
         for (const std::string& r : e.resized)
             if (facesOn(r, O1, after).empty())
@@ -3297,6 +3322,19 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             x.expected = TruthEval{};
             x.expected.elems = on;
         }
+    }
+    // A shared anchor (as above) for pieces of an edge or vertex that a moved feature bounds, when the mapped pick
+    // reaches over as many pieces as there were at pick time: each may continue the pick or one of its siblings, whose
+    // own map may not settle (T-081b holdout2 17:24: two stretches of a chamfer's edge on a resized cut, the pick
+    // mapped over both). Told on the E that the rules narrowing it (past the old end, the vertex the mapped pick lies
+    // on) leave: where they settle the continuation, the other pieces are judged as usual (holdout1 3:31 and 17:7).
+    if (x.weak && x.moved && x.kind != SubKind::Face && x.expected.elems.size() >= 2 &&
+        static_cast<std::size_t>(x.siblings) + 1 >= x.expected.elems.size()) {
+        std::size_t anchored = 0;
+        for (const std::uint32_t e : x.expected.elems)
+            anchored += x.isAnchored(e) ? 1 : 0;
+        if (anchored >= 2)
+            x.sharedAnchor = true;
     }
     if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
         x.twins = true;
