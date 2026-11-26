@@ -3284,17 +3284,6 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
                 x.mergeUnknown = true;
                 x.sharedAnchor = true;
             }
-    // The same for pieces of an edge or vertex that a moved feature bounds, when the mapped pick reaches over as many
-    // pieces as there were at pick time: each may continue the pick or one of its siblings, whose own map may not
-    // settle (T-081b holdout2 17:24: two stretches of a chamfer's edge on a resized cut, the pick mapped over both).
-    if (x.weak && x.moved && x.kind != SubKind::Face && x.expected.elems.size() >= 2 &&
-        static_cast<std::size_t>(x.siblings) + 1 >= x.expected.elems.size()) {
-        std::size_t anchored = 0;
-        for (const std::uint32_t e : x.expected.elems)
-            anchored += x.isAnchored(e) ? 1 : 0;
-        if (anchored >= 2)
-            x.sharedAnchor = true;
-    }
     // Only what bounds the picked element moved (Expectation::inPlace), and some of it is still where it was: an
     // expected element that holds none of the pick in place and lies beyond a boundary the pick had at pick time is new
     // ground past the pick's old end, not its continuation (T-081b holdout1 3:31: an arc piece past the seam vertex,
@@ -3333,6 +3322,19 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             x.expected = TruthEval{};
             x.expected.elems = on;
         }
+    }
+    // A shared anchor (as above) for pieces of an edge or vertex that a moved feature bounds, when the mapped pick
+    // reaches over as many pieces as there were at pick time: each may continue the pick or one of its siblings, whose
+    // own map may not settle (T-081b holdout2 17:24: two stretches of a chamfer's edge on a resized cut, the pick
+    // mapped over both). Told on the E that the rules narrowing it (past the old end, the vertex the mapped pick lies
+    // on) leave: where they settle the continuation, the other pieces are judged as usual (holdout1 3:31 and 17:7).
+    if (x.weak && x.moved && x.kind != SubKind::Face && x.expected.elems.size() >= 2 &&
+        static_cast<std::size_t>(x.siblings) + 1 >= x.expected.elems.size()) {
+        std::size_t anchored = 0;
+        for (const std::uint32_t e : x.expected.elems)
+            anchored += x.isAnchored(e) ? 1 : 0;
+        if (anchored >= 2)
+            x.sharedAnchor = true;
     }
     if (x.kind == SubKind::Vertex && x.expected.elems.size() >= 2) {
         x.twins = true;
