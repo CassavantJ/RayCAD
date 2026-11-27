@@ -473,8 +473,9 @@ private:
             out.warnings.push_back(where + ": " + w);
         }
         const std::array<const naming::ElementMap*, 1> maps{&map};
-        const naming::NamingInput input{f.id, std::string(kTransformBodyType), maps, &moved->history, &moved->shape, {},
-                                        {}};
+        naming::NamingInput input{f.id, std::string(kTransformBodyType), maps, &moved->history, &moved->shape, {}, {}};
+        // The move of the whole body (naming.h NamingInput::bodyPlacement): what was picked on it is followed by it.
+        input.bodyPlacement = xform;
         auto named = naming::propagate(input);
         if (!named) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + named.error().message);

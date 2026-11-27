@@ -2532,6 +2532,36 @@ TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its featur
     }
 }
 
+TEST_CASE("Pick-time ground pin (round 9): a split piece's owner is known at pick time though its parent is gone",
+          "[naming][directedit-replays]")
+{
+    // T-081a random 14:11 face 24 (pinned_scripts.txt "random 14:11", random_test.cpp's RAYCAD_DUMP_SCRIPTS): a piece
+    // of cut R1's floor, split by R4's wall; at pick time the map holds no element with the floor's own name any more,
+    // only the pieces' split names. R1 moves by its width, out of the part. The pick's ground is R1's (followed up the
+    // split record's parents, which the map keeps as ancestors), so the piece moved with R1 and left the part: Broken
+    // (the oracle: gone). Exact {24}, the piece over the old place, is WRONG. The mutation check: with the ancestors
+    // off (naming::testing::setAncestorsEnabled) the piece's owner is not known at pick time and the answer is Exact
+    // {24}.
+    const auto [baseline, edited] = pinnedScripts("random 14:11");
+    const Vec3 at{69.4673, 15.3139, 2.1166};
+    const std::vector<Probe> wrong{{Answer::Exact, {}, -1, {Vec3{69.4673, 15.6, 2.0}}}};
+    const std::vector<Looked> looked = replayScriptedAndLook(14, baseline, edited, SubKind::Face, at, 18.2416, wrong);
+    REQUIRE(looked.size() == 1);
+    INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+    CHECK(looked[0].answer == Answer::Broken);
+    CHECK(looked[0].judgement.verdict == Verdict::BrokenGone);
+    REQUIRE(looked[0].probes.size() == 1);
+    INFO("probe: " << verdictName(looked[0].probes[0].verdict) << "; " << looked[0].probed[0]);
+    CHECK(looked[0].probed[0].rfind("asked;", 0) != 0);
+    CHECK(isWrong(looked[0].probes[0].verdict));
+    naming::testing::setAncestorsEnabled(false);
+    const std::vector<Looked> off = replayScriptedAndLook(14, baseline, edited, SubKind::Face, at, 18.2416, {}, false);
+    naming::testing::setAncestorsEnabled(true);
+    REQUIRE(off.size() == 1);
+    INFO("ancestors off: " << off[0].signature);
+    CHECK(off[0].answer == Answer::Exact);
+}
+
 TEST_CASE("Oracle pins (round 7): a corner moved along a floor of several coplanar import faces",
           "[naming][directedit-replays]")
 {

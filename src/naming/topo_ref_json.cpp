@@ -116,26 +116,48 @@ void writePlacements(std::string& out, const std::vector<FeaturePlacement>& plac
 
 void writeSamples(std::string& out, const PickSamples& s)
 {
+    // (Version 1, read from an older reference, is written back as it was: nine integers per carrier, no grounds.)
+    const bool v2 = s.version >= 2;
     out += "{\"carriers\":[";
     for (std::size_t i = 0; i < s.carriers.size(); ++i) {
         const SampleCarrier& c = s.carriers[i];
         if (i > 0)
             out += ',';
-        const std::array<std::int64_t, 9> v{static_cast<std::int64_t>(c.type),
-                                            c.qOrigin[0],
-                                            c.qOrigin[1],
-                                            c.qOrigin[2],
-                                            c.qAxis[0],
-                                            c.qAxis[1],
-                                            c.qAxis[2],
-                                            c.qRadius,
-                                            c.owner};
-        writeIntegers(out, v);
+        const std::array<std::int64_t, 10> v{static_cast<std::int64_t>(c.type),
+                                             c.qOrigin[0],
+                                             c.qOrigin[1],
+                                             c.qOrigin[2],
+                                             c.qAxis[0],
+                                             c.qAxis[1],
+                                             c.qAxis[2],
+                                             c.qRadius,
+                                             c.owner,
+                                             c.ground};
+        writeIntegers(out, std::span<const std::int64_t>(v.data(), v2 ? 10 : 9));
     }
     out += "],\"ends\":";
     writeIntegers(out, s.ends);
     out += ",\"firstEnd\":";
     writeInteger(out, s.firstEndCarriers);
+    if (v2) {
+        out += ",\"grounds\":[";
+        for (std::size_t i = 0; i < s.grounds.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            out += "{\"feature\":\"";
+            out += s.grounds[i].feature.value.toString();
+            out += "\",\"moved\":";
+            writeIntegers(out, s.grounds[i].moved);
+            out += '}';
+        }
+        out += "],\"neighbourGrounds\":[";
+        for (std::size_t i = 0; i < s.neighbourGrounds.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            writeInteger(out, s.neighbourGrounds[i]);
+        }
+        out += ']';
+    }
     out += ",\"neighbourOwners\":[";
     for (std::size_t i = 0; i < s.neighbourOwners.size(); ++i) {
         if (i > 0)
@@ -156,6 +178,8 @@ void writeSamples(std::string& out, const PickSamples& s)
     writeInteger(out, s.qSpacing);
     out += ",\"version\":";
     writeInteger(out, s.version);
+    if (v2)
+        out += s.whole ? ",\"whole\":true" : ",\"whole\":false";
     out += '}';
 }
 
@@ -624,17 +648,55 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
 {
     if (v.type != Node::Type::Object)
         return fieldError(field, "must be a JSON object");
-    if (auto ok = onlyKeys(
-            v, {"carriers", "ends", "firstEnd", "neighbourOwners", "own", "placements", "points", "spacing", "version"},
-            field + ".");
-        !ok)
-        return tl::unexpected(ok.error());
     PickSamples s;
     const Node* version = v.find("version");
     const auto ver = version != nullptr ? wholeNumber(*version) : std::nullopt;
-    if (!ver || *ver != kPickSamplesVersion)
-        return fieldError(field + ".version", "must be " + std::to_string(kPickSamplesVersion));
-    s.version = kPickSamplesVersion;
+    if (!ver || *ver < 1 || *ver > kPickSamplesVersion)
+        return fieldError(field + ".version", "must be 1 or " + std::to_string(kPickSamplesVersion));
+    s.version = static_cast<std::uint32_t>(*ver);
+    const bool v2 = s.version >= 2;
+    if (auto ok = v2 ? onlyKeys(v,
+                                {"carriers", "ends", "firstEnd", "grounds", "neighbourGrounds", "neighbourOwners",
+                                 "own", "placements", "points", "spacing", "version", "whole"},
+                                field + ".")
+                     : onlyKeys(v,
+                                {"carriers", "ends", "firstEnd", "neighbourOwners", "own", "placements", "points",
+                                 "spacing", "version"},
+                                field + ".");
+        !ok)
+        return tl::unexpected(ok.error());
+    if (v2) {
+        if (const Node* whole = v.find("whole")) {
+            if (whole->type != Node::Type::Bool)
+                return fieldError(field + ".whole", "must be true or false");
+            s.whole = whole->b;
+        }
+        if (const Node* grounds = v.find("grounds")) {
+            if (grounds->type != Node::Type::Array)
+                return fieldError(field + ".grounds", "must be an array");
+            for (std::size_t i = 0; i < grounds->items.size(); ++i) {
+                const Node& item = grounds->items[i];
+                const std::string at = field + ".grounds[" + std::to_string(i) + "]";
+                if (item.type != Node::Type::Object)
+                    return fieldError(at, "must be a JSON object");
+                if (auto ok = onlyKeys(item, {"feature", "moved"}, at + "."); !ok)
+                    return tl::unexpected(ok.error());
+                const Node* feature = item.find("feature");
+                if (feature == nullptr || feature->type != Node::Type::String)
+                    return fieldError(at + ".feature", "must be a lower-case UUID");
+                const Uuid id = Uuid::fromString(feature->text);
+                if (id.toString() != feature->text || id == Uuid{})
+                    return fieldError(at + ".feature", "must be a lower-case UUID other than the nil one");
+                SampleGround g;
+                g.feature = FeatureId{id};
+                if (!readIntegers(item.find("moved"), 12, g.moved.data()))
+                    return fieldError(at + ".moved", "must be twelve whole numbers");
+                if (!s.grounds.empty() && !(s.grounds.back().feature < g.feature))
+                    return fieldError(field + ".grounds", "must be sorted by feature, each feature once");
+                s.grounds.push_back(g);
+            }
+        }
+    }
     if (const Node* placements = v.find("placements")) {
         auto p = readPlacements(*placements, field + ".placements");
         if (!p)
@@ -648,7 +710,8 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
     };
     const Node* points = v.find("points");
     const char* badPoints = "must be an array of points, each three whole numbers";
-    if (points == nullptr || points->type != Node::Type::Array || points->items.empty())
+    // (Version 2 may have none: an element that had none to give.)
+    if (points == nullptr || points->type != Node::Type::Array || (points->items.empty() && !v2))
         return fieldError(field + ".points", badPoints);
     if (points->items.size() > kMaxPickSamples)
         return fieldError(field + ".points", "must hold at most " + std::to_string(kMaxPickSamples) + " points");
@@ -666,13 +729,22 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
             return fieldError(field + ".spacing", "must be a whole number, 0 or more");
         s.qSpacing = *n;
     }
+    // -1 or an index into grounds (version 2).
+    const auto ground = [&](std::int64_t g) {
+        return g >= -1 && g < static_cast<std::int64_t>(s.grounds.size());
+    };
     if (const Node* carriers = v.find("carriers")) {
-        const char* bad = "must be an array of carriers, each nine whole numbers (type, origin, axis, radius, owner)";
+        const char* bad =
+            v2 ? "must be an array of carriers, each ten whole numbers (type, origin, axis, radius, "
+                 "owner, ground)"
+               : "must be an array of carriers, each nine whole numbers (type, origin, axis, radius, owner)";
+        const std::size_t n = v2 ? 10 : 9;
         if (carriers->type != Node::Type::Array || carriers->items.size() > kMaxSampleCarriers)
             return fieldError(field + ".carriers", bad);
         for (const Node& c : carriers->items) {
-            std::array<std::int64_t, 9> q{};
-            if (!readIntegers(&c, 9, q.data()) || q[0] < 0 || q[0] > 2 || !owner(q[8]))
+            std::array<std::int64_t, 10> q{};
+            q[9] = -1;
+            if (!readIntegers(&c, n, q.data()) || q[0] < 0 || q[0] > 2 || !owner(q[8]) || !ground(q[9]))
                 return fieldError(field + ".carriers", bad);
             SampleCarrier carrier;
             carrier.type = static_cast<SampleCarrier::Type>(q[0]);
@@ -680,7 +752,19 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
             carrier.qAxis = {q[4], q[5], q[6]};
             carrier.qRadius = q[7];
             carrier.owner = static_cast<std::int32_t>(q[8]);
+            carrier.ground = static_cast<std::int32_t>(q[9]);
             s.carriers.push_back(carrier);
+        }
+    }
+    if (const Node* grounds = v2 ? v.find("neighbourGrounds") : nullptr) {
+        const char* bad = "must hold one ground (-1 or an index into grounds) per pick neighbour";
+        if (grounds->type != Node::Type::Array || (!grounds->items.empty() && grounds->items.size() != neighbours))
+            return fieldError(field + ".neighbourGrounds", bad);
+        for (const Node& g : grounds->items) {
+            const auto n = wholeNumber(g);
+            if (!n || !ground(*n))
+                return fieldError(field + ".neighbourGrounds", bad);
+            s.neighbourGrounds.push_back(static_cast<std::int32_t>(*n));
         }
     }
     s.ownCarriers = static_cast<std::uint32_t>(s.carriers.size());
@@ -779,7 +863,7 @@ std::string toJson(const TopoRef& ref)
     }
     out += ",\"repairConfirmed\":";
     out += ref.repairConfirmed ? "true" : "false";
-    if (ref.samples.known()) {
+    if (ref.samples.known() || ref.samples.version >= 2) {
         out += ",\"samples\":";
         writeSamples(out, ref.samples);
     }

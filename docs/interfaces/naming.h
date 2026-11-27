@@ -14,6 +14,10 @@
 // was moved is followed by the feature's own move. Additive in the same way.
 // Amended by T-081b round 8: TopoRef::samples (PickSamples, JSON member "samples", versioned), the evidence of the
 // resolver's one post-condition on every answer. Additive in the same way; a reference without it still loads.
+// Amended by T-081b round 9: PickSamples version 2 (the whole-generator flag, the ground each surface lies on and the
+// body moves that had carried it), NamingInput::bodyPlacement (a rigid move of a whole body, such as transform_body's)
+// and Resolved::identity (an Exact answer by generator identity). Version-1 samples and references without samples
+// still load.
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -90,7 +94,11 @@ public:
     // The placement of `feature` in this build (NamingInput::placement, carried from map to map); null when the feature
     // gave none or is not upstream of this map.
     const FeaturePlacement* placement(FeatureId feature) const;
-    std::vector<std::byte> serialize() const;                       // canonical, deterministic
+    // Canonical, deterministic. Not written (T-081b round 9): the lineage a map keeps in memory for pick-time evidence
+    // only (the records of names that split pieces came from and no element holds any more, the body moves of
+    // NamingInput::bodyPlacement). A map read back has none; a pick on it records what its evidence cannot tell as
+    // unknown (PickSamples).
+    std::vector<std::byte> serialize() const;
     static Result<ElementMap> deserialize(std::span<const std::byte>);
     struct Impl; std::shared_ptr<const Impl> impl;   // opaque, immutable, shared by copies; null = empty map
 };
@@ -126,6 +134,11 @@ struct NamingInput {
     // placement) the resolver follows the pick by the feature's own move instead of guessing it from the geometry.
     // A feature whose size or depth changed but not its placement, and a direct edit (no placement), are guessed.
     std::optional<Xform> placement;
+    // Optional (T-081b round 9): this feature moves the whole input body rigidly by this transform (transform_body: a
+    // fixture or a part placed in the model). Every element of the input moves with it: the result map records the move
+    // with the features whose elements it carried, so that a reference picked before the move (or with the move placed
+    // otherwise) follows the pick by it, as a moved sketch's faces follow their feature's placement.
+    std::optional<Xform> bodyPlacement;
 };
 struct NamingOutput { ElementMap map; std::vector<LineageEvent> lineage; };
 Result<NamingOutput> propagate(const NamingInput&);
@@ -207,8 +220,12 @@ struct PickOutline {
 // check every answer against the pick as its features moved it (the post-condition, src/naming/postcondition.cpp: an
 // answer must hold the pick, hold nothing another pick-time element held, and be all of it). Quantised like Territory
 // (1e-4 mm; directions to 1e-6 like Fingerprint's axis). A reference made before samples existed has version 0 and
-// none; it resolves as one whose features' moves are not known.
-inline constexpr std::uint32_t kPickSamplesVersion = 1;
+// none; it resolves as one whose features' moves are not known, and may come back Exact only by generator identity
+// (Resolved::identity). Version 2 (T-081b round 9) adds `whole`, the grounds (SampleCarrier::ground, neighbourGrounds,
+// grounds); a version-1 reference still loads and resolves as version 1 did, its grounds unknown. A version-2 reference
+// may have no points: its element had none to give (a surface or curve whose points cannot be read); it is not a
+// reference made before samples, and is checked with what evidence it has.
+inline constexpr std::uint32_t kPickSamplesVersion = 2;
 inline constexpr std::size_t kMaxPickSamples = 24;  // points of a face; an edge has its two ends and up to 11 more
 inline constexpr std::size_t kMaxSampleCarriers = 8; // the surfaces the element lies on
 // A surface the picked element lay on: a face's own, an edge's or a vertex's faces'.
@@ -220,11 +237,22 @@ struct SampleCarrier {
     // Index into PickSamples::placements of the feature whose placement carries this surface (a sweep's side or cap, a
     // hole's wall or floor): the surface moves when that feature is placed elsewhere. -1: no such feature (an imported
     // face, a direct edit's): the surface is taken to stay where it was. -2 - i: a piece split off by the feature
-    // placements[i], which may or may not carry it (its own face split as it was made, or an imported face it cut).
+    // placements[i], which may or may not carry it (its own face split as it was made, or an imported face it cut);
+    // since version 2 only where the map no longer knew what the piece was split from.
     std::int32_t owner = -1;
+    // Version 2: index into PickSamples::grounds of the feature whose element the surface is (a split piece's: the
+    // feature that made the face it was split from, followed up its split parents at pick time), -1 when not known.
+    std::int32_t ground = -1;
+};
+// Version 2: a feature that made ground the pick lay on, and the body moves (NamingInput::bodyPlacement) that had carried
+// that feature's elements at pick time, composed in order (the q of a FeaturePlacement: rotation to 1e-9, translation to
+// 1e-4 mm; the identity when none had). The ground now lies where the moves that carry it now put it.
+struct SampleGround {
+    FeatureId feature;
+    std::array<std::int64_t, 12> moved{};
 };
 struct PickSamples {
-    std::uint32_t version = 0; // kPickSamplesVersion; 0: none recorded
+    std::uint32_t version = 0; // kPickSamplesVersion (or 1, read from an older reference); 0: none recorded
     //  face: up to kMaxPickSamples points on it, each at least 2e-3 mm inside its boundary, spread farthest-first (the
     //        first the deepest, the later ones out to its boundary); empty for a surface other than a plane bounded by
     //        lines and arcs or a cylinder bounded by lines along it and circles about it (the territory points stand in);
@@ -243,6 +271,16 @@ struct PickSamples {
     // Parallel to TopoRef::pickNeighbours: the index into `placements` of the feature that carries each one, or -1.
     std::vector<std::int32_t> neighbourOwners;
     std::vector<FeaturePlacement> placements; // the owners' pick-time placements, sorted by feature
+    // Version 2: the pick is a WHOLE GENERATOR ELEMENT: its one name is pure lineage (made by a feature from its sketch
+    // entities: a sweep's side or cap; or where such faces meet: an edge or vertex named from them), with no split, no
+    // merge, no sibling told apart by its surroundings or by an ordinal, held by this element alone. Recorded at pick
+    // time, never inferred later. Such a pick whose name leads again to one whole element, every generator of its
+    // lineage still there, is that element (Resolved::identity).
+    bool whole = false;
+    // Version 2: parallel to TopoRef::pickNeighbours: the index into `grounds` of each one's ground, or -1 (empty: all
+    // -1).
+    std::vector<std::int32_t> neighbourGrounds;
+    std::vector<SampleGround> grounds; // sorted by feature, each once
     bool known() const { return version != 0 && !points.empty(); }
 };
 
@@ -300,14 +338,16 @@ struct TopoRef {
 //    "samples": S,                             optional (T-081b round 8), PickSamples
 //    "territory": T}                           optional
 // where T = {"box": [xmin, ymin, zmin, xmax, ymax, zmax], "measure": n, "points": [[x, y, z], ...]} in quanta, and
-// S = {"carriers": [[type, ox, oy, oz, ax, ay, az, radius, owner], ...], "ends": [6 integers], "firstEnd": n,
+// S = {"carriers": [[type, ox, oy, oz, ax, ay, az, radius, owner, ground], ...], "ends": [6 integers], "firstEnd": n,
+//      "grounds": [{"feature": "<uuid>", "moved": [12 integers]}, ...], "neighbourGrounds": [n, ...],
 //      "neighbourOwners": [n, ...], "own": n, "placements": [as above], "points": [[x, y, z], ...], "spacing": n,
-//      "version": 1}
-// (type 0 plane, 1 cylinder, 2 other; a version this build does not know is refused).
+//      "version": 2, "whole": bool}
+// (type 0 plane, 1 cylinder, 2 other; version 1, as written before T-081b round 9, has nine integers per carrier and no
+// "grounds", "neighbourGrounds" or "whole", and still loads; a version this build does not know is refused).
 // Every integer is a JSON number, or a decimal string when beyond +-2^53. toJson writes every member (empty arrays
 // included) except territory, pickNeighbours, outline, placements and samples, which it writes only when the territory,
-// the outline or the samples are known / the list is not empty, so a reference made without evidence is written
-// exactly as references were before the evidence existed.
+// the outline or the samples are known (samples also when of version 2, points or none) / the list is not empty, so a
+// reference made without evidence is written exactly as references were before the evidence existed.
 std::string toJson(const TopoRef&);
 // Reads the JSON form. Every member but body, kind and names is optional; unknown members are refused. Errors are
 // InvalidArgument, with the problem in `message` ("must list at least one name") and the member in context[0]
@@ -330,6 +370,17 @@ struct Resolved {
     // The reference's TopoRef::repairConfirmed, copied by IResolver::resolve(). Only a Repaired answer
     // looks at it.
     bool repairConfirmed = false;
+    // Exact by generator identity (T-081b round 9): the pick was a whole generator element (PickSamples::whole; for a
+    // reference without samples, its one name pure lineage and held by one element, read from the current map), its name
+    // leads to exactly one element, that element is whole again and every generator of its lineage still exists. The
+    // pick IS that element, so that it holds the pick (as its features moved it) is not checked; that it holds nothing
+    // another pick-time element held still is (else Merged). Not where the pick, as its features moved it, lands on
+    // another element; nor where the element still lies on the pick's own surfaces (where picked or as moved): there
+    // whether it holds the pick can be told, and its samples decide as for any answer, except that holding most of the
+    // pick where it was picked (its feature's placement changed by a dimension edit, not moved) is identity's to
+    // tell. False on every other answer, an Exact one included.
+    // A reference without samples comes back Exact only so: any other answer to it is Repaired or Broken.
+    bool identity = false;
     // Usable for a rebuild: Exact, Split and Merged, and Repaired when repairConfirmed; never Broken, never an answer
     // without elements. A feature rebuild may consume `elements` only when this is true. (S4: an unconfirmed repair
     // built a chamfer on the wrong edge.) Split and Merged may still change what the feature makes (all pieces, the

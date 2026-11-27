@@ -828,7 +828,90 @@ private:
                     placements.emplace(p.feature, p);
         for (const auto& [feature, p] : placements)
             table.placements.push_back(p);
+        keepAncestors(table);
+        keepBodyMoves(table);
         return detail::finishMap(std::move(table), false);
+    }
+
+    // The record of a name that no result element holds, as this build or an input map knew it (held or an ancestor).
+    const TopoName* knownRecord(const Hash256& name) const
+    {
+        const auto it = std::lower_bound(sortedRecords_.begin(), sortedRecords_.end(), name,
+                                         [](const TopoName& r, const Hash256& h) { return r.id < h; });
+        if (it != sortedRecords_.end() && it->id == name)
+            return &*it;
+        for (const ElementMap* map : in_.inputMaps)
+            if (map != nullptr)
+                if (const TopoName* r = detail::recordOrAncestor(*map, name))
+                    return r;
+        return nullptr;
+    }
+
+    // ElementMap::Impl::ancestors (T-081b round 9): the records of the names held split pieces came from, up their
+    // split parents, that no result element holds.
+    void keepAncestors(ElementMap::Impl& table) const
+    {
+        std::vector<TopoName> found;
+        std::vector<const TopoName*> level;
+        for (const TopoName& r : table.records)
+            if (r.role == detail::kSplitRole)
+                level.push_back(&r);
+        auto held = [&](const Hash256& name) {
+            const auto it = std::lower_bound(table.records.begin(), table.records.end(), name,
+                                             [](const TopoName& r, const Hash256& h) { return r.id < h; });
+            return it != table.records.end() && it->id == name;
+        };
+        std::vector<Hash256> seen;
+        // (A chain of pieces of pieces is as long as the features that split it; the bound only guards a cycle, which
+        // names made from their parents' hashes cannot form.)
+        for (int depth = 0; depth < 64 && !level.empty(); ++depth) {
+            std::vector<const TopoName*> next;
+            for (const TopoName* r : level)
+                for (const Hash256& parent : r->parents) {
+                    if (held(parent) || std::binary_search(seen.begin(), seen.end(), parent))
+                        continue;
+                    seen.insert(std::upper_bound(seen.begin(), seen.end(), parent), parent);
+                    const TopoName* p = knownRecord(parent);
+                    if (p == nullptr)
+                        continue;
+                    found.push_back(*p);
+                    if (p->role == detail::kSplitRole)
+                        next.push_back(p); // (p lives in this build's or an input map's table, not in `found`)
+                }
+            level = std::move(next);
+        }
+        std::sort(found.begin(), found.end(), [](const TopoName& a, const TopoName& b) { return a.id < b.id; });
+        found.erase(
+            std::unique(found.begin(), found.end(), [](const TopoName& a, const TopoName& b) { return a.id == b.id; }),
+            found.end());
+        table.ancestors = std::move(found);
+    }
+
+    // ElementMap::Impl::bodyMoves (T-081b round 9): the input maps' moves, then this feature's own when it moves the
+    // body (NamingInput::bodyPlacement), carrying every feature an input map has a record or an ancestor of.
+    void keepBodyMoves(ElementMap::Impl& table) const
+    {
+        for (const ElementMap* map : in_.inputMaps)
+            if (map != nullptr && map->impl)
+                for (const ElementMap::Impl::BodyMove& m : map->impl->bodyMoves)
+                    if (std::none_of(table.bodyMoves.begin(), table.bodyMoves.end(),
+                                     [&](const ElementMap::Impl::BodyMove& k) {
+                                         return k.placement.feature == m.placement.feature;
+                                     }))
+                        table.bodyMoves.push_back(m);
+        if (!in_.bodyPlacement)
+            return;
+        ElementMap::Impl::BodyMove move{placementOf(in_.feature, *in_.bodyPlacement), {}};
+        for (const ElementMap* map : in_.inputMaps)
+            if (map != nullptr && map->impl) {
+                for (const TopoName& r : map->impl->records)
+                    move.carried.push_back(r.origin);
+                for (const TopoName& r : map->impl->ancestors)
+                    move.carried.push_back(r.origin);
+            }
+        std::sort(move.carried.begin(), move.carried.end());
+        move.carried.erase(std::unique(move.carried.begin(), move.carried.end()), move.carried.end());
+        table.bodyMoves.push_back(std::move(move));
     }
 
     const NamingInput& in_;

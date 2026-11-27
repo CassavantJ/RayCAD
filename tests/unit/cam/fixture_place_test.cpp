@@ -24,6 +24,8 @@
 #include "parametric_test_util.h"
 
 #include "features/transform_body_feature.h"
+#include "naming/naming_internal.h"
+#include "naming/naming_testing.h"
 #include "sim/verify.h"
 
 #include <ray/cam.h>
@@ -1016,4 +1018,64 @@ TEST_CASE("each taller pair placed on the stock: no setup event, no motion event
         CHECK(on.setupStats.capped == 0);
         CHECK(on.events.empty());
     }
+}
+
+// After T-081b round 9: the transform_body feature that places a fixture passes its move as a body placement
+// (naming::NamingInput::bodyPlacement), so the vise's map carries it and a face picked on the vise as its library file
+// has it (the mate faces are) follows the vise wherever the placement puts it, decided by its samples, not by a guess.
+TEST_CASE("the vise's placement is a body placement: a face picked before it follows the vise",
+          "[cam][fixtures][place]")
+{
+    Shop shop;
+    shop.make();
+    shop.addSetup(1, shop.ids({shop.parA, shop.parB}));
+    shop.rebuild();
+    // The vise's largest planar face, picked as the library file has it.
+    const kernel::Shape& library = shop.build->bodies.at(shop.vise).shape;
+    std::optional<kernel::SubId> face;
+    double largest = 0;
+    Vec3 centroid{};
+    for (std::uint32_t i = 0; i < library.count(kernel::SubKind::Face); ++i) {
+        const kernel::SubId sub{kernel::SubKind::Face, i};
+        auto info = kernel::surfaceInfo(library, sub);
+        if (info && info->type == kernel::SurfaceType::Plane && info->area > largest + 1e-9) {
+            largest = info->area;
+            face = sub;
+            centroid = info->centroid;
+        }
+    }
+    REQUIRE(face);
+    const naming::TopoRef ref = shop.ref(shop.vise, *face);
+    const Library lib;
+
+    shop.place(1, cf::Grip::Shorter, true);
+    const doc::BuiltBody& placed = shop.build->bodies.at(shop.vise);
+    // The vise's map: one body move, carrying the import's elements, that takes the library box to where the vise is.
+    const std::vector<const naming::FeaturePlacement*> moves =
+        naming::detail::bodyMovesOf(placed.map, dt::featureId(7));
+    REQUIRE(moves.size() == 1);
+    Xform move{};
+    for (int i = 0; i < 12; ++i) {
+        move.m[i] = static_cast<double>(moves[0]->q[i]) / (i % 4 == 3 ? 1e4 : 1e9);
+    }
+    checkBox(kernel::bounds(placed.shape), moved(lib.vise, move), "the vise moved by its body placement", 1e-3);
+    // The face picked before the placement: Exact on the moved face (its centroid moved by the placement), by its
+    // samples (an imported face is no whole generator element).
+    const auto resolver = naming::makeResolver({naming::ResolverBody{shop.vise, placed.map, placed.shape}});
+    const naming::Resolved r = resolver->resolve(ref);
+    INFO(r.reason);
+    REQUIRE(r.state == naming::ResolveState::Exact);
+    CHECK_FALSE(r.identity);
+    REQUIRE(r.elements.size() == 1);
+    auto info = kernel::surfaceInfo(placed.shape, r.elements.front());
+    REQUIRE(info);
+    const Vec3 want = apply(move, centroid);
+    CHECK(info->centroid.x == Catch::Approx(want.x).margin(1e-3));
+    CHECK(info->centroid.y == Catch::Approx(want.y).margin(1e-3));
+    CHECK(info->centroid.z == Catch::Approx(want.z).margin(1e-3));
+    // The mutation check: the body moves ignored, the move is not known and the answer is no longer Exact.
+    naming::testing::setBodyMovesEnabled(false);
+    const naming::Resolved off = resolver->resolve(ref);
+    naming::testing::setBodyMovesEnabled(true);
+    CHECK(off.state != naming::ResolveState::Exact);
 }

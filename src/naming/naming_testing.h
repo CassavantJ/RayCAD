@@ -10,4 +10,18 @@ namespace ray::naming::testing {
 void setPostconditionEnabled(bool on) noexcept;
 bool postconditionEnabled() noexcept;
 
+// T-081b round 9, one switch per mechanism, each on by default, for the pins' mutation checks (never call while another
+// thread may be resolving or making references):
+//  - Generator identity (naming.h Resolved::identity): off, no answer is Exact by identity (the post-condition decides
+//    every answer by its samples, as in round 8).
+//  - Pick-time grounds through ancestor records (ElementMap::Impl::ancestors): off, a split piece's owner and
+//    ground are found from the records the map holds only, as in round 8 (references made while it is off).
+//  - Body moves (NamingInput::bodyPlacement): off, the post-condition ignores them, as if no body had a placement.
+void setGeneratorIdentityEnabled(bool on) noexcept;
+bool generatorIdentityEnabled() noexcept;
+void setAncestorsEnabled(bool on) noexcept;
+bool ancestorsEnabled() noexcept;
+void setBodyMovesEnabled(bool on) noexcept;
+bool bodyMovesEnabled() noexcept;
+
 } // namespace ray::naming::testing

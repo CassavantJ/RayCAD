@@ -4,6 +4,7 @@
 
 #include "naming_test_util.h"
 
+#include <naming_testing.h>
 #include <propagate.h>
 #include <shape_testing.h>
 #include <territory.h>
@@ -478,9 +479,12 @@ TEST_CASE("An Exact answer part of whose picked territory is now another element
     REQUIRE(movedRight);
     REQUIRE(movedLeft);
     REQUIRE(*movedRight != *movedLeft);
-    // By its names the reference leads to the right piece: without evidence (an older document) it is Exact there.
+    // By its names the reference leads to the right piece: without evidence (an older document) it is suggested there
+    // (T-081b round 9: a reference without samples is Exact only by generator identity, and a piece is not a whole
+    // generator element): Repaired, not usable until confirmed.
     const Resolved old = resolverFor(moved)->resolve(withoutEvidence(ref));
-    CHECK(old.state == ResolveState::Exact);
+    CHECK(old.state == ResolveState::Repaired);
+    CHECK_FALSE(old.usable());
     CHECK(old.elements == std::vector<SubId>{*movedRight});
     const Resolved r = resolverFor(moved)->resolve(ref);
     CHECK(r.state == ResolveState::Broken);
@@ -894,12 +898,16 @@ TEST_CASE("A feature's placement is carried from map to map, recorded by a refer
     // The pocket moved to x 95: clipped by the block's end, its floor half as large and nowhere where it was. Carried
     // by
     // the pocket's own move it lies wholly inside the picked floor: Exact. Without the placement the move is guessed
-    // (the floor neither in place nor over its place along its normal): Broken.
+    // (the floor neither in place nor over its place along its normal): Broken. (T-081b round 9: the floor, the
+    // pocket's cap, is a whole generator element, but it still lies on the picked plane, so its samples decide, not
+    // generator identity.)
     const Body moved = placedPocket(95, true);
     const auto movedFloor = faceAt(moved.shape, Vec3{97, 30, 15}, Vec3{0, 0, 1});
     REQUIRE(movedFloor);
+    CHECK(ref.samples.whole);
     const Resolved r = resolverFor(moved)->resolve(ref);
     CHECK(r.state == ResolveState::Exact);
+    CHECK_FALSE(r.identity);
     CHECK(r.elements == std::vector<SubId>{*movedFloor});
     TopoRef unplaced = ref;
     unplaced.placements.clear();
@@ -914,4 +922,199 @@ TEST_CASE("A feature's placement is carried from map to map, recorded by a refer
     const auto refused = topoRefFromJson(twice);
     REQUIRE_FALSE(refused.has_value());
     CHECK(refused.error().context.front() == "placements");
+}
+
+// ---------------------------------------------------------------- T-081b round 9
+namespace {
+
+const FeatureId kImport = test::featureId(64);
+const FeatureId kMove = test::featureId(65);
+
+// The quadrilateral of setup_document_test.cpp: (0, 0), (40, y2), (40, 20), (0, 20), line 1 from the first point to the
+// second; extruded `height` with its placement (naming::sweepPlacement), as the document extrudes it.
+Body placedPrism(double y2, double height)
+{
+    JobContext ctx;
+    const kernel::Plane plane{Vec3{0, 0, 0}, Vec3{0, 0, 1}, Vec3{1, 0, 0}};
+    const std::vector<kernel::ProfileLoop> loops{kernel::ProfileLoop{
+        {line({0, 0}, {40, y2}, 1), line({40, y2}, {40, 20}, 2), line({40, 20}, {0, 20}, 3), line({0, 20}, {0, 0}, 4)},
+        9}};
+    auto sweep = take(kernel::extrude(kernel::Profile{plane, loops}, height, 0.0, ctx));
+    NamingInput in{kBlock, "extrude", {}, nullptr, &sweep.op.shape, sweep.origins};
+    in.placement = sweepPlacement(plane, std::span<const kernel::ProfileLoop>(loops));
+    return Body{sweep.op.shape, take(propagate(in)).map};
+}
+
+// An imported box 0..10 x 0..20 x 0..5 (feature kImport), moved by `by` with a body placement (kMove) or not.
+Body movedImport(Vec3 by, bool bodyPlacement)
+{
+    const kernel::Shape box = take(kernel::makeBox(Vec3{0, 0, 0}, Vec3{10, 20, 5}));
+    const ElementMap map = nameImported(kImport, box);
+    const Xform move{{1, 0, 0, by.x, 0, 1, 0, by.y, 0, 0, 1, by.z}};
+    auto moved = take(kernel::transformed(box, move));
+    const std::array<const ElementMap*, 1> maps{&map};
+    NamingInput in{kMove, "transform_body", maps, &moved.history, &moved.shape, {}, {}};
+    if (bodyPlacement)
+        in.bodyPlacement = move;
+    return Body{moved.shape, take(propagate(in)).map};
+}
+
+} // namespace
+
+TEST_CASE("Generator identity (round 9): a whole generator element its generator reshaped is the element its name "
+          "leads to",
+          "[naming][evidence][identity]")
+{
+    // setup_document_test.cpp's WCS edge: the top edge over sketch line 1, then the line turned (its second point up
+    // to y 10) and the prism made taller (10 -> 15). The placement (the centre of the profile's box) did not change, so
+    // the samples stay where they were, and nothing of them lies on the edge or the face now: round 8 said Broken for
+    // the edge and kept the face by a guess (the plane moved along its normal). Both are whole generator elements,
+    // their surfaces reshaped by their own generator: Exact by identity.
+    const Body before = placedPrism(0, 10);
+    const auto edge = lineEdge(before.shape, Vec3{0, 0, 10}, Vec3{40, 0, 10});
+    const auto top = faceAt(before.shape, Vec3{20, 10, 10}, Vec3{0, 0, 1});
+    const auto kept = lineEdge(before.shape, Vec3{0, 20, 0}, Vec3{0, 0, 0});
+    REQUIRE(edge);
+    REQUIRE(top);
+    REQUIRE(kept);
+    const auto pick = resolverFor(before);
+    const TopoRef edgeRef = pick->makeRef(kBody, *edge);
+    const TopoRef topRef = pick->makeRef(kBody, *top);
+    const TopoRef keptRef = pick->makeRef(kBody, *kept);
+    CHECK(edgeRef.samples.version == kPickSamplesVersion);
+    CHECK(edgeRef.samples.whole);
+    CHECK(topRef.samples.whole);
+    CHECK(keptRef.samples.whole);
+    // The flag is evidence: the JSON form keeps it (version 2), and a version-1 form still loads (as version 1).
+    const std::string text = toJson(edgeRef);
+    CHECK(text.find("\"version\":2,\"whole\":true}") != std::string::npos);
+    CHECK(take(topoRefFromJson(text)).samples.whole);
+    CHECK(toJson(take(topoRefFromJson(text))) == text);
+
+    const Body after = placedPrism(10, 15);
+    const auto edgeNow = lineEdge(after.shape, Vec3{0, 0, 15}, Vec3{40, 10, 15});
+    const auto topNow = faceAt(after.shape, Vec3{20, 12, 15}, Vec3{0, 0, 1});
+    const auto keptNow = lineEdge(after.shape, Vec3{0, 20, 0}, Vec3{0, 0, 0});
+    REQUIRE(edgeNow);
+    REQUIRE(topNow);
+    REQUIRE(keptNow);
+    const auto now = resolverFor(after);
+    Resolved r = now->resolve(edgeRef);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+    CHECK(r.elements == std::vector<SubId>{*edgeNow});
+    CHECK(r.postableWithoutReview());
+    r = now->resolve(topRef);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+    CHECK(r.elements == std::vector<SubId>{*topNow});
+    // On its own surfaces still (the bottom edge over line 4): decided by its samples, which it holds. Exact, not by
+    // identity.
+    r = now->resolve(keptRef);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK_FALSE(r.identity);
+    CHECK(r.elements == std::vector<SubId>{*keptNow});
+    // A reference without samples (an older document): the name alone, pure and held by one element, decides.
+    r = now->resolve(withoutEvidence(edgeRef));
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+
+    // The mutation check: identity off, the edge is Broken (round 8) and the face only a suggestion (the guess).
+    naming::testing::setGeneratorIdentityEnabled(false);
+    const Resolved offEdge = now->resolve(edgeRef);
+    const Resolved offTop = now->resolve(topRef);
+    const Resolved offOld = now->resolve(withoutEvidence(edgeRef));
+    naming::testing::setGeneratorIdentityEnabled(true);
+    CHECK(offEdge.state == ResolveState::Broken);
+    CHECK(offTop.state == ResolveState::Repaired);
+    CHECK_FALSE(offTop.usable());
+    CHECK(offOld.state != ResolveState::Exact);
+}
+
+TEST_CASE("Generator identity (round 9): a piece of a split face never is; its ground is known at pick time",
+          "[naming][evidence][identity]")
+{
+    // slotted(): the slot splits the block's top face in two; the right piece is picked. Its one name is a split
+    // piece's: not a whole generator element, at pick time or later, whatever its reference says.
+    const Body picked = slotted(40);
+    const auto right = faceAt(picked.shape, Vec3{80, 30, 20}, Vec3{0, 0, 1});
+    const auto front = faceAt(picked.shape, Vec3{5, 0, 10}, Vec3{0, -1, 0});
+    REQUIRE(right);
+    REQUIRE(front);
+    const TopoRef ref = resolverFor(picked)->makeRef(kBody, *right);
+    REQUIRE(ref.names.size() == 1);
+    const TopoName* piece = picked.map.record(ref.names[0]);
+    REQUIRE(piece != nullptr);
+    REQUIRE(piece->role == "split");
+    CHECK_FALSE(ref.samples.whole);
+    CHECK(resolverFor(picked)->makeRef(kBody, *front).samples.whole); // the block's side, notched, is whole
+    // Its ground: the block's, up the split record's parent, which no element holds any more (the map keeps it as an
+    // ancestor record).
+    for (const Hash256& parent : piece->parents) {
+        CHECK(picked.map.record(parent) == nullptr);
+        CHECK(naming::detail::recordOrAncestor(picked.map, parent) != nullptr);
+    }
+    REQUIRE(!ref.samples.carriers.empty());
+    REQUIRE(ref.samples.carriers[0].ground >= 0);
+    CHECK(ref.samples.grounds[static_cast<std::size_t>(ref.samples.carriers[0].ground)].feature == kBlock);
+    naming::testing::setAncestorsEnabled(false);
+    const TopoRef without = resolverFor(picked)->makeRef(kBody, *right);
+    naming::testing::setAncestorsEnabled(true);
+    CHECK(without.samples.carriers[0].ground == -1); // the mutation: only the records the map holds
+
+    // The slot moved past its own width: the piece's name is still on the right piece, which holds part of the pick
+    // and part of it is now the left piece's (an Exact answer part of whose territory is another element): Broken. A
+    // reference forged to say the piece was whole is still no identity (the name is a split piece's now too), and
+    // neither is one without samples (Repaired, a suggestion).
+    const Body moved = slotted(62);
+    TopoRef forged = ref;
+    forged.samples.whole = true;
+    for (const TopoRef* r : std::array<const TopoRef*, 2>{&ref, &forged}) {
+        const Resolved res = resolverFor(moved)->resolve(*r);
+        CHECK(res.state == ResolveState::Broken);
+        CHECK_FALSE(res.identity);
+    }
+    const Resolved old = resolverFor(moved)->resolve(withoutEvidence(ref));
+    CHECK(old.state == ResolveState::Repaired);
+    CHECK_FALSE(old.identity);
+}
+
+TEST_CASE("Body moves (round 9): a body moved rigidly carries what was picked on it", "[naming][evidence][body]")
+{
+    // An imported box (no feature places its faces) moved by 30 along x with a body placement (transform_body's): the
+    // map records the move with the features it carried; a face picked before the move is followed by it. Without the
+    // body placement only a guess (a rigid copy somewhere else) is left: a suggestion.
+    const Body still = movedImport(Vec3{0, 0, 0}, false);
+    const auto top = faceAt(still.shape, Vec3{5, 10, 5}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    const TopoRef ref = resolverFor(still)->makeRef(kBody, *top);
+    CHECK_FALSE(ref.samples.whole); // an imported face's name is made from its geometry
+    REQUIRE(ref.samples.carriers.size() == 1);
+    REQUIRE(ref.samples.carriers[0].ground >= 0);
+    CHECK(ref.samples.grounds[0].feature == kImport);
+
+    const Body moved = movedImport(Vec3{30, 0, 0}, true);
+    const std::vector<const FeaturePlacement*> moves = naming::detail::bodyMovesOf(moved.map, kImport);
+    REQUIRE(moves.size() == 1);
+    CHECK(samePlacement(*moves[0], placementOf(kMove, Xform{{1, 0, 0, 30, 0, 1, 0, 0, 0, 0, 1, 0}})));
+    const auto movedTop = faceAt(moved.shape, Vec3{35, 10, 5}, Vec3{0, 0, 1});
+    REQUIRE(movedTop);
+    Resolved r = resolverFor(moved)->resolve(ref);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK_FALSE(r.identity);
+    CHECK(r.elements == std::vector<SubId>{*movedTop});
+    // Picked after the move, the move then edited (30 -> 50): followed from the one to the other.
+    const TopoRef afterMove = resolverFor(moved)->makeRef(kBody, *movedTop);
+    const Body further = movedImport(Vec3{50, 0, 0}, true);
+    const auto furtherTop = faceAt(further.shape, Vec3{55, 10, 5}, Vec3{0, 0, 1});
+    REQUIRE(furtherTop);
+    r = resolverFor(further)->resolve(afterMove);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.elements == std::vector<SubId>{*furtherTop});
+    // Without the body placement, and the mutation check (body moves off): a suggestion, never Exact.
+    CHECK(resolverFor(movedImport(Vec3{30, 0, 0}, false))->resolve(ref).state == ResolveState::Repaired);
+    naming::testing::setBodyMovesEnabled(false);
+    const Resolved off = resolverFor(moved)->resolve(ref);
+    naming::testing::setBodyMovesEnabled(true);
+    CHECK(off.state != ResolveState::Exact);
 }

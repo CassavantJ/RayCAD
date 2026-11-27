@@ -15,7 +15,9 @@
 //       Uuid feature, 12 x i64 (FeaturePlacement::q)
 //   Hash256 checksum: BLAKE3 of every byte before it.
 // The byte string is a function of the table alone, so equal maps serialise to equal bytes. deserialize()
-// rejects anything that does not follow this layout or the rules of detail::finishMap.
+// rejects anything that does not follow this layout or the rules of detail::finishMap. The lineage propagate() keeps in
+// memory for pick-time evidence (ElementMap::Impl::ancestors and bodyMoves, T-081b round 9) is not part of the table:
+// it is not written, and a map read back has none.
 #include "naming_internal.h"
 
 #include <algorithm>
@@ -418,6 +420,9 @@ Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile)
     for (std::size_t i = 1; i < table.placements.size(); ++i)
         if (!(table.placements[i - 1].feature < table.placements[i].feature))
             return bad("placements are not in order");
+    for (std::size_t i = 1; i < table.ancestors.size(); ++i)
+        if (!(table.ancestors[i - 1].id < table.ancestors[i].id))
+            return bad("ancestor records are not in order");
 
     std::vector<std::pair<Hash256, Hash256>> members;
     members.reserve(table.records.size());
@@ -433,6 +438,29 @@ Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile)
     ElementMap map;
     map.impl = std::make_shared<const ElementMap::Impl>(std::move(table));
     return map;
+}
+
+const TopoName* recordOrAncestor(const ElementMap& map, const Hash256& name)
+{
+    if (const TopoName* record = map.record(name))
+        return record;
+    if (!map.impl)
+        return nullptr;
+    const std::vector<TopoName>& a = map.impl->ancestors;
+    const auto it =
+        std::lower_bound(a.begin(), a.end(), name, [](const TopoName& r, const Hash256& h) { return r.id < h; });
+    return it != a.end() && it->id == name ? &*it : nullptr;
+}
+
+std::vector<const FeaturePlacement*> bodyMovesOf(const ElementMap& map, const FeatureId& feature)
+{
+    std::vector<const FeaturePlacement*> out;
+    if (!map.impl)
+        return out;
+    for (const ElementMap::Impl::BodyMove& m : map.impl->bodyMoves)
+        if (std::binary_search(m.carried.begin(), m.carried.end(), feature))
+            out.push_back(&m.placement);
+    return out;
 }
 
 } // namespace detail

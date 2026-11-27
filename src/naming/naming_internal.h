@@ -29,6 +29,20 @@ struct ElementMap::Impl {
     std::vector<TopoName> records;            // sorted by id, no duplicates; every one is held by at least one element
     std::vector<FeaturePlacement> placements; // sorted by feature, no duplicates (T-081b round 4)
 
+    // Kept by propagate() in memory for pick-time evidence (T-081b round 9), never serialised (naming.h
+    // ElementMap::serialize):
+    // The records of names no element holds any more that held split pieces came from (a split record's parents, and
+    // theirs, as far as the input maps knew them), sorted by id, no duplicates: what a piece lies on (whose feature
+    // made the face it was split from) stays known after the face it was split from is gone as a whole.
+    std::vector<TopoName> ancestors;
+    // The rigid moves of the whole body (NamingInput::bodyPlacement), oldest first, each with the features whose
+    // elements it carried (every origin of a record or ancestor of its input maps), sorted.
+    struct BodyMove {
+        FeaturePlacement placement;
+        std::vector<FeatureId> carried;
+    };
+    std::vector<BodyMove> bodyMoves;
+
     // Derived by detail::finishMap, never serialised:
     // name -> element, for names held by EXACTLY one element. A name held by several elements (they could not
     // be told apart by anything but sub-shape order) is deliberately absent, so find() never picks one of them.
@@ -79,6 +93,13 @@ inline constexpr double kZeroWidth = 1e-4;
 // Checks the table (sorted, every name has a record, ids and families recomputed, kinds agree) and builds
 // the derived indexes. A table that breaks a rule is an Internal error, or FormatError when `fromFile`.
 Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile);
+
+// The record of `name`: the map's own (a held name), else an ancestor's (ElementMap::Impl::ancestors); null when the
+// map knows neither.
+const TopoName* recordOrAncestor(const ElementMap& map, const Hash256& name);
+
+// The body moves (ElementMap::Impl::bodyMoves) that carried elements of `feature`, oldest first.
+std::vector<const FeaturePlacement*> bodyMovesOf(const ElementMap& map, const FeatureId& feature);
 
 // ---------- Fingerprints ----------
 // Quantisation steps (naming.h): 1e-4 mm for lengths, areas and positions, 1e-6 for unit-vector components.

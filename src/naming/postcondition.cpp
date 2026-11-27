@@ -13,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace ray::naming {
@@ -32,6 +33,33 @@ bool postconditionEnabled() noexcept
         return v == 1;
     static const bool off = std::getenv("RAYCAD_NAMING_NO_POSTCONDITION") != nullptr;
     return !off;
+}
+namespace {
+std::atomic<bool> g_identity{true}, g_ancestors{true}, g_bodyMoves{true};
+}
+void setGeneratorIdentityEnabled(bool on) noexcept
+{
+    g_identity.store(on);
+}
+bool generatorIdentityEnabled() noexcept
+{
+    return g_identity.load();
+}
+void setAncestorsEnabled(bool on) noexcept
+{
+    g_ancestors.store(on);
+}
+bool ancestorsEnabled() noexcept
+{
+    return g_ancestors.load();
+}
+void setBodyMovesEnabled(bool on) noexcept
+{
+    g_bodyMoves.store(on);
+}
+bool bodyMovesEnabled() noexcept
+{
+    return g_bodyMoves.load();
 }
 } // namespace testing
 
@@ -89,6 +117,17 @@ Resolved brokenBecause(std::string reason)
 {
     return Resolved{ResolveState::Broken, {}, std::move(reason)};
 }
+// An Exact answer kept by a guess, without the pick (as its features moved it) on it: a suggestion, Repaired, that the
+// user confirms or not (T-081b round 9: a guess never keeps Exact). Any other answer as it is.
+Resolved suggestion(Resolved r, std::string reason)
+{
+    if (r.state != ResolveState::Exact)
+        return r;
+    r.state = ResolveState::Repaired;
+    r.reason = std::move(reason);
+    r.identity = false;
+    return r;
+}
 
 // ---------------------------------------------------------------- placements as moves
 struct Rigid {
@@ -119,6 +158,37 @@ Vec3 turn(const Rigid& from, const Rigid& to, const Vec3& d)
 Vec3 carry(const Rigid& from, const Rigid& to, const Vec3& x)
 {
     return add(turn(from, to, sub(x, from.t)), to.t);
+}
+// a after b.
+Rigid compose(const Rigid& a, const Rigid& b)
+{
+    Rigid out;
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 3; ++j)
+            out.r[i * 3 + j] = a.r[i * 3] * b.r[j] + a.r[i * 3 + 1] * b.r[3 + j] + a.r[i * 3 + 2] * b.r[6 + j];
+    out.t = {a.r[0] * b.t.x + a.r[1] * b.t.y + a.r[2] * b.t.z + a.t.x,
+             a.r[3] * b.t.x + a.r[4] * b.t.y + a.r[5] * b.t.z + a.t.y,
+             a.r[6] * b.t.x + a.r[7] * b.t.y + a.r[8] * b.t.z + a.t.z};
+    return out;
+}
+// Quantised as a FeaturePlacement (naming.h placementOf).
+std::array<std::int64_t, 12> quantaOf(const Rigid& x)
+{
+    const Xform m{{x.r[0], x.r[1], x.r[2], x.t.x, x.r[3], x.r[4], x.r[5], x.t.y, x.r[6], x.r[7], x.r[8], x.t.z}};
+    return placementOf(FeatureId{}, m).q;
+}
+// Within samePlacement's tolerances (rotations 1e-6 per entry, translations 1e-3 mm)?
+bool sameRigid(const Rigid& a, const Rigid& b)
+{
+    return samePlacement(FeaturePlacement{FeatureId{}, quantaOf(a)}, FeaturePlacement{FeatureId{}, quantaOf(b)});
+}
+// The body moves that carry elements of `feature` in `map` (NamingInput::bodyPlacement), composed, the latest last.
+Rigid bodyMoveOf(const ElementMap& map, const FeatureId& feature)
+{
+    Rigid out;
+    for (const FeaturePlacement* m : bodyMovesOf(map, feature))
+        out = compose(rigidOf(*m), out);
+    return out;
 }
 
 // ---------------------------------------------------------------- surfaces
@@ -293,7 +363,29 @@ double offSurface(const Surface& s, const Vec3& p)
 // owner the piece's own origin, the feature that split it, does not say: an imported face a cut runs through stays
 // where it is), when no such name has an origin without one (a face unified from an imported face and a sweep's cap
 // stays where the imported one is). nullopt: none; `unknownSplit` set when a split piece's parents have no record in
-// the map (no element holds their names any more), so whose surface it lies on is not known.
+// the map, held or kept as an ancestor (detail::recordOrAncestor; a map read back from a file keeps none), so whose
+// surface it lies on is not known.
+std::vector<const TopoName*> rootsOf(const ElementMap& map, const TopoName* record)
+{
+    std::vector<const TopoName*> roots;
+    if (record->role != kSplitRole) {
+        roots.push_back(record);
+        return roots;
+    }
+    // Up the chain of split parents (a piece of a piece), as far as the map knows their records.
+    std::vector<const TopoName*> level{record};
+    for (int depth = 0; depth < 64 && !level.empty(); ++depth) {
+        std::vector<const TopoName*> next;
+        for (const TopoName* r : level)
+            for (const Hash256& parent : r->parents)
+                if (const TopoName* p =
+                        testing::ancestorsEnabled() ? recordOrAncestor(map, parent) : map.record(parent))
+                    (p->role == kSplitRole ? next : roots).push_back(p);
+        level = std::move(next);
+    }
+    return roots;
+}
+
 std::optional<FeatureId> ownerOf(const ElementMap& map, std::span<const Hash256> names, bool& unknownSplit)
 {
     std::optional<FeatureId> out;
@@ -301,24 +393,10 @@ std::optional<FeatureId> ownerOf(const ElementMap& map, std::span<const Hash256>
         const TopoName* record = map.record(name);
         if (record == nullptr)
             continue;
-        std::vector<const TopoName*> roots;
-        if (record->role == kSplitRole) {
-            // Up the chain of split parents (a piece of a piece), as far as the map keeps their records.
-            std::vector<const TopoName*> level{record};
-            for (int depth = 0; depth < 4 && !level.empty(); ++depth) {
-                std::vector<const TopoName*> next;
-                for (const TopoName* r : level)
-                    for (const Hash256& parent : r->parents)
-                        if (const TopoName* p = map.record(parent))
-                            (p->role == kSplitRole ? next : roots).push_back(p);
-                level = std::move(next);
-            }
-            if (roots.empty()) {
-                unknownSplit = true;
-                continue;
-            }
-        } else {
-            roots.push_back(record);
+        const std::vector<const TopoName*> roots = rootsOf(map, record);
+        if (roots.empty()) {
+            unknownSplit = true;
+            continue;
         }
         for (const TopoName* root : roots) {
             if (map.placement(root->origin) == nullptr)
@@ -373,6 +451,139 @@ std::int32_t splitOwnerIndex(const ElementMap& map, std::vector<FeaturePlacement
             return -2 - static_cast<std::int32_t>(i);
     placements.push_back(*map.placement(*origin));
     return -2 - static_cast<std::int32_t>(placements.size() - 1);
+}
+
+// The feature whose element ground with these names is (PickSamples version 2, SampleGround): of the roots of its
+// names (a split piece's up its split parents, rootsOf), the one without a placement when there is one (a face unified
+// from an imported face and a sweep's cap lies on the imported one, as ownerOf), else the one with; nullopt when the
+// roots are not known or do not agree.
+std::optional<FeatureId> groundOf(const ElementMap& map, std::span<const Hash256> names)
+{
+    std::vector<FeatureId> unplaced, placed;
+    for (const Hash256& name : names) {
+        const TopoName* record = map.record(name);
+        if (record == nullptr)
+            continue;
+        const std::vector<const TopoName*> roots = rootsOf(map, record);
+        if (roots.empty())
+            return std::nullopt;
+        for (const TopoName* root : roots)
+            (map.placement(root->origin) == nullptr ? unplaced : placed).push_back(root->origin);
+    }
+    for (std::vector<FeatureId>* list : {&unplaced, &placed}) {
+        std::sort(list->begin(), list->end());
+        list->erase(std::unique(list->begin(), list->end()), list->end());
+    }
+    if (!unplaced.empty())
+        return unplaced.size() == 1 ? std::optional<FeatureId>(unplaced.front()) : std::nullopt;
+    return placed.size() == 1 ? std::optional<FeatureId>(placed.front()) : std::nullopt;
+}
+
+// The index into `grounds` of the ground with these names (added, with the body moves that carry it now), or -1.
+std::int32_t groundIndex(const ElementMap& map, std::vector<SampleGround>& grounds, std::span<const Hash256> names)
+{
+    const auto feature = groundOf(map, names);
+    if (!feature)
+        return -1;
+    for (std::size_t i = 0; i < grounds.size(); ++i)
+        if (grounds[i].feature == *feature)
+            return static_cast<std::int32_t>(i);
+    grounds.push_back(SampleGround{*feature, quantaOf(bodyMoveOf(map, *feature))});
+    return static_cast<std::int32_t>(grounds.size() - 1);
+}
+
+// ---------------------------------------------------------------- generator identity
+// Is `name` pure lineage in `map` (naming.h PickSamples::whole): held by exactly one element, no split piece, no
+// ordinal, alone in its family (no discriminator, which tells siblings apart by their surroundings), and either a
+// sweep's side or cap (made from its sketch curve or profile loop: the hashes of those are its parents), or an edge or
+// vertex named from the faces it lies on (rule 3), every one of them pure lineage too. An imported element's name is
+// made from its geometry, a generated one's from elements its feature consumed, a face named from its edges from what
+// happens to bound it: none of them is a generator's own.
+bool pureLineage(const ElementMap& map, const Hash256& name, int depth)
+{
+    const TopoName* r = map.record(name);
+    if (r == nullptr || !map.find(name) || r->role == kSplitRole || r->ordinal != 0 || r->siblingCount != 1 ||
+        !r->discriminator.empty() || needsHint(*r))
+        return false;
+    const auto endsWith = [&](std::string_view suffix) {
+        return r->role.size() > suffix.size() &&
+               r->role.compare(r->role.size() - suffix.size(), suffix.size(), suffix.data(), suffix.size()) == 0;
+    };
+    if (r->kind == SubKind::Face)
+        return endsWith(".side") || endsWith(".startcap") || endsWith(".endcap");
+    if ((r->role != "nb.edge" && r->role != "nb.vertex") || r->parents.empty() || depth > 0)
+        return false;
+    for (const Hash256& parent : r->parents) {
+        const TopoName* p = map.record(parent);
+        if (p == nullptr || p->kind != SubKind::Face || !pureLineage(map, parent, depth + 1))
+            return false;
+    }
+    return true;
+}
+
+// Is `sub` a whole generator element (naming.h PickSamples::whole): one name, pure lineage, held by it alone?
+bool wholeGenerator(const ElementMap& map, SubId sub)
+{
+    const std::span<const Hash256> names = map.namesOf(sub);
+    return names.size() == 1 && map.find(names.front()) == sub && pureLineage(map, names.front(), 0);
+}
+
+// Is `element` the pick by generator identity (naming.h Resolved::identity): the pick whole (recorded at pick time; a
+// reference with samples older than version 2, or none, from its one name and the current map), its name leading to
+// `element` alone, `element` whole again (one name, the same) and every generator of its lineage still there
+// (pureLineage now: an edge's faces still held, each by one element, each a sweep's)?
+bool identityHolds(const ElementMap& map, const TopoRef& ref, SubId element)
+{
+    if (!testing::generatorIdentityEnabled() || ref.names.size() != 1 || element.kind != ref.kind)
+        return false;
+    if (ref.samples.version >= 2 && !ref.samples.whole)
+        return false;
+    return map.find(ref.names.front()) == element && wholeGenerator(map, element);
+}
+
+// How what lies on a pick-time surface (or a neighbour's ground) was carried from pick time to now (postcondition.h):
+// by its owner's placement (`owner`, SampleCarrier::owner; a split-off piece's only when `carrySplit`) and by the body
+// moves that carry its ground (`ground`, SampleCarrier::ground, version 2), composed: the frame (to the model) then and
+// now.
+struct Frames {
+    bool placed = false; // an owner or a body move carries it: its move is known
+    bool gone = false;   // its owner has no placement now: its move is not known
+    bool moved = false;
+    Rigid then, now;
+};
+Frames framesOf(const ElementMap& map, const PickSamples& s, std::int32_t owner, std::int32_t ground, bool carrySplit)
+{
+    Frames f;
+    const bool split = owner <= -2;
+    const std::int32_t index = split ? -2 - owner : owner;
+    Rigid placedThen, placedNow;
+    bool placementMoved = false;
+    if (index >= 0 && static_cast<std::size_t>(index) < s.placements.size() && (!split || carrySplit)) {
+        const FeaturePlacement& then = s.placements[static_cast<std::size_t>(index)];
+        const FeaturePlacement* now = map.placement(then.feature);
+        if (now == nullptr) {
+            f.gone = true;
+            return f;
+        }
+        placedThen = rigidOf(then);
+        placedNow = rigidOf(*now);
+        placementMoved = !samePlacement(then, *now);
+        f.placed = true;
+    }
+    Rigid bodyThen, bodyNow;
+    bool bodies = false;
+    if (testing::bodyMovesEnabled() && s.version >= 2 && ground >= 0 &&
+        static_cast<std::size_t>(ground) < s.grounds.size()) {
+        const SampleGround& g = s.grounds[static_cast<std::size_t>(ground)];
+        bodyThen = rigidOf(FeaturePlacement{g.feature, g.moved});
+        bodyNow = bodyMoveOf(map, g.feature);
+        bodies = !bodyMovesOf(map, g.feature).empty() || !sameRigid(bodyThen, Rigid{});
+        f.placed = f.placed || bodies;
+    }
+    f.then = compose(bodyThen, placedThen);
+    f.now = compose(bodyNow, placedNow);
+    f.moved = bodies ? !sameRigid(f.then, f.now) : placementMoved;
+    return f;
 }
 
 std::array<std::int64_t, 3> axisQuanta(const Vec3& d)
@@ -445,13 +656,22 @@ public:
         length_ = static_cast<double>(ref.hint.qArea) / kLengthQuantaPerMm;
         // An edge or vertex whose surfaces all lie where they did (those that moved moved along themselves: a boss's
         // cap moved within its plane, a wall moved along itself, where it crosses a face that stayed) lies on the same
-        // crossing, and moves along it only with what bounds it, as the oracle maps such crossings: a vertex not at
-        // all; an edge on a cap or on an imported face not at all (what lies in the imported base stays: block 4 19:40
-        // edge 191, T-081a random 4:5 edges 4 and 8, review1 9:13 edge 9); another only when a face at one of its ends
-        // was moved off itself (directedit "an edge moved along its line with its feature": the pocket's end wall, the
-        // pocket moved along its side walls); else it lies where it did, whatever slid along it.
-        // (A cap of the moved feature, moved within its plane, carries no crossing with it whatever bounds it: block 4
-        // 19:40 edge 191, the boss's start cap where it crosses the plane x 400, between the moved boss's walls.)
+        // crossing; only what bounds it there can move it along it. The product's rules, as geometry and as what a
+        // reference to such an element stands for:
+        //  - A vertex is the point where its surfaces meet; they all lie where they did, so it does: it stays.
+        //  - An edge's ends are where its crossing meets the faces at its end vertices. When none of those was moved
+        //    off itself (a face moved within its own plane or along its own cylinder crosses the line where it did),
+        //    its ends are where they were: it stays, whatever slid along it.
+        //  - When an end face was moved off itself by the edge's own feature (the pocket's end wall, the pocket moved
+        //    along its side walls: directedit "an edge moved along its line with its feature"), the edge is that
+        //    feature's, bounded by it: it moves along the crossing with the feature.
+        //  - Except where the edge is the boundary of material that did not move: an edge on a surface no feature
+        //    places (an imported face: the base is where it is, and its boundary where a feature meets it is ground of
+        //    the base; T-081a random 4:5 edges 4 and 8, review1 9:13 edge 9), or on a cap of the moved feature that
+        //    moved only within its plane, where the cap meets a face that stayed (the face's boundary under the
+        //    feature, which the feature's walls only re-bound: block 4 19:40 edge 191, the boss's start cap where it
+        //    crosses the plane x 400, between the moved boss's walls). Such an edge's ground stays where it was: what
+        //    of it the answer still holds is the pick, and the stretch the walls brought is new ground.
         bool caps = moved_;
         const Vec3 z{to_.r[2], to_.r[5], to_.r[8]};
         for (std::size_t i = 0; i < now_.size(); ++i)
@@ -470,14 +690,15 @@ public:
         return movedOff(own, s.carriers.size());
     }
 
-    // Does the pick lie on a surface of material that stays whatever moves along it: an own surface without an owner
-    // (an imported face; the oracle keeps what lies in the imported base where it was: T-081a random 4:5, review1
-    // 9:13)?
+    // Does the pick lie on a surface of material that stays whatever moves along it: an own surface that nothing places
+    // (no owner, no body move: an imported face, whose material no feature moves, so what lies on it stays where it
+    // is; T-081a random 4:5, review1 9:13)?
     bool onUnownedSurface() const
     {
         const PickSamples& s = ref_.samples;
         for (std::size_t i = 0; i < then_.size(); ++i)
-            if (s.carriers[i].owner == -1 && analytic(then_[i]))
+            if (const SampleCarrier& c = s.carriers[i];
+                c.owner == -1 && analytic(then_[i]) && !framesOf(map_, s, c.owner, c.ground, false).placed)
                 return true;
         return false;
     }
@@ -491,20 +712,17 @@ public:
             // (Only a face its feature owns: a piece split off by a feature may lie on another's surface, which bounds
             // the edge where it was: T-081a random 1:0 edge 31.)
             const SampleCarrier& c = s.carriers[i];
-            const std::int32_t index = c.owner;
-            if (index < 0 || static_cast<std::size_t>(index) >= s.placements.size())
+            if (c.owner <= -2)
                 continue;
-            const FeaturePlacement& then = s.placements[static_cast<std::size_t>(index)];
-            const FeaturePlacement* now = map_.placement(then.feature);
-            if (now == nullptr || samePlacement(then, *now))
+            const Frames f = framesOf(map_, s, c.owner, c.ground, false);
+            if (f.gone || !f.placed || !f.moved)
                 continue;
             const Surface& was = ends_[i - own];
             if (!analytic(was))
                 return true;
-            const Rigid a = rigidOf(then), b = rigidOf(*now);
             Surface moved = was;
-            moved.o = carry(a, b, was.o);
-            moved.a = turn(a, b, was.a);
+            moved.o = carry(f.then, f.now, was.o);
+            moved.a = turn(f.then, f.now, was.a);
             if (!sameSurface(moved, was, tol_))
                 return true;
         }
@@ -536,6 +754,112 @@ public:
     bool splitterMoved() const { return splitterMoved_; }
     // How many mapped samples the answer last decided held.
     std::size_t held() const { return held_; }
+    // P2 alone: does a recorded neighbour's ground, where it was or as its own feature moved it, land on e?
+    bool holdsNeighbourGround(SubId e) const { return holdsANeighbour(e); }
+
+    // Does the pick, where it was picked or as its features moved it, lie on the surfaces e lies on (a face's own, an
+    // edge's or a vertex's faces'), every point of it on every one of them? Then e is the pick's element on the pick's
+    // own surfaces, and whether it holds the pick there is a question the samples answer (P1 computable). Not when e's
+    // surfaces are others (its generator reshaped it: a cap pushed by a new depth, a side turned with its sketch line,
+    // their edges): only then does generator identity decide. A surface other than a plane or a cylinder cannot be
+    // compared: P1 is taken as computable.
+    bool pickOnSurfacesOf(SubId e) const
+    {
+        // With samples: the pick's own surfaces as recorded (PickSamples::carriers), where they were and as moved: a
+        // face of e on each (onMappedCarriers), the surfaces themselves compared, not points on them (a bore moved by
+        // its diameter passes through its old seam). Without (an older reference): its territory points on e's
+        // surfaces.
+        if (ref_.samples.known() && !then_.empty()) {
+            if (!std::all_of(then_.begin(), then_.end(), analytic))
+                return true;
+            const auto onAll = [&](const std::vector<Surface>& own) {
+                if (e.kind == SubKind::Face)
+                    return t_.surface(e).has_value() && sameSurface(faceSurfaceOf(t_, e), own.front(), tol_);
+                const std::vector<SubId> faces = kernel::adjacent(t_.shape(), e, SubKind::Face);
+                for (const Surface& m : own) {
+                    bool found = false;
+                    for (const SubId& f : faces)
+                        found = found || (t_.surface(f).has_value() && sameSurface(faceSurfaceOf(t_, f), m, tol_));
+                    if (!found)
+                        return false;
+                }
+                return true;
+            };
+            return onAll(then_) || onAll(now_);
+        }
+        std::vector<Surface> surfaces;
+        if (e.kind == SubKind::Face)
+            surfaces.push_back(faceSurfaceOf(t_, e));
+        else
+            for (const SubId& f : kernel::adjacent(t_.shape(), e, SubKind::Face))
+                surfaces.push_back(faceSurfaceOf(t_, f));
+        if (surfaces.empty() || !std::all_of(surfaces.begin(), surfaces.end(), analytic))
+            return true;
+        const auto onAll = [&](const std::vector<Sample>& points) {
+            if (points.empty())
+                return false;
+            for (const Sample& p : points)
+                for (const Surface& s : surfaces)
+                    if (offSurface(s, p.p) > tol_)
+                        return false;
+            return true;
+        };
+        return onAll(picked_) || onAll(mapped_);
+    }
+
+    // How many of the mapped samples e holds (an edge that holds only an end of the pick, none of the points along it,
+    // holds none: decide()).
+    std::size_t holdCount(SubId e) const
+    {
+        std::size_t on = 0, interior = 0;
+        bool interiors = false;
+        for (const Sample& s : mapped_) {
+            interiors = interiors || !s.end;
+            if (holds(e, s)) {
+                ++on;
+                interior += s.end ? 0 : 1;
+            }
+        }
+        return ref_.kind == SubKind::Edge && interiors && interior == 0 ? 0 : on;
+    }
+    // Does another element of the pick's kind than e hold a mapped sample (the pick, as its features moved it, is
+    // elsewhere)?
+    bool heldElsewhere(SubId e) const
+    {
+        const std::uint32_t count = t_.shape().count(ref_.kind);
+        for (const Sample& s : mapped_)
+            for (std::uint32_t i = 0; i < count; ++i)
+                if (const SubId other{ref_.kind, i}; other != e && holds(other, s))
+                    return true;
+        return false;
+    }
+    // Does edge e meet a picked end, as mapped, and run from it the other way, back out of the pick (it shares only
+    // that point with the pick)? (Not an edge that runs from there another way into the pick's place: a turned line.)
+    bool endAgainstSense(SubId e) const
+    {
+        if (ref_.kind != SubKind::Edge)
+            return false;
+        const double step = endStep();
+        const Probe& probe = t_.probe(e);
+        for (const Sample& s : mapped_)
+            if (s.end && step >= 3 * tol_ && !holds(e, s) && probe.on(s.p, tol_) &&
+                probe.on(sub(s.p, mul(s.into, step)), std::max(tol_, 0.3 * step)))
+                return true;
+        return false;
+    }
+    // Does e hold most of the mapped pick: at least half of its samples, and of an edge's points along it?
+    bool holdsMost(SubId e) const
+    {
+        std::size_t n = 0, on = 0, along = 0, alongOn = 0;
+        for (const Sample& s : mapped_) {
+            const bool h = holds(e, s);
+            ++n;
+            on += h ? 1 : 0;
+            along += s.end ? 0 : 1;
+            alongOn += !s.end && h ? 1 : 0;
+        }
+        return n > 0 && 2 * on >= n && 2 * alongOn >= along && holdCount(e) > 0;
+    }
 
     Resolved decide(Resolved r) const;
 
@@ -586,29 +910,27 @@ private:
         std::vector<std::pair<Rigid, Rigid>> moves;
         for (std::size_t i = 0; i < then_.size(); ++i) {
             const SampleCarrier& c = s.carriers[i];
-            const bool split = c.owner <= -2;
-            const std::int32_t index = split ? -2 - c.owner : c.owner;
-            if (index < 0 || static_cast<std::size_t>(index) >= s.placements.size())
-                continue;
-            if (split) {
+            if (const std::int32_t index = -2 - c.owner;
+                c.owner <= -2 && static_cast<std::size_t>(index) < s.placements.size()) {
                 const FeaturePlacement* now = map_.placement(s.placements[static_cast<std::size_t>(index)].feature);
                 splitterMoved_ =
                     splitterMoved_ ||
                     (now != nullptr && !samePlacement(s.placements[static_cast<std::size_t>(index)], *now));
-                if (!carrySplit_)
-                    continue; // taken to stay where it was (and its move not known)
             }
-            owned = true;
-            const FeaturePlacement& then = s.placements[static_cast<std::size_t>(index)];
-            const FeaturePlacement* now = map_.placement(then.feature);
-            if (now == nullptr) {
+            // (A piece split off by a feature, whose own surface it may not be, is taken to stay where it was, its move
+            // not known, unless carrySplit_.)
+            const Frames f = framesOf(map_, s, c.owner, c.ground, carrySplit_);
+            if (f.gone) {
                 carried_.assign(then_.size(), false);
                 return; // the owner is gone: its move is not known
             }
-            if (samePlacement(then, *now))
+            if (!f.placed)
+                continue;
+            owned = true;
+            if (!f.moved)
                 continue;
             carried_[i] = true;
-            moves.emplace_back(rigidOf(then), rigidOf(*now));
+            moves.emplace_back(f.then, f.now);
         }
         if (!owned)
             return;
@@ -640,8 +962,10 @@ private:
         // (noSlide: the crossing nearest the point where it was picked, on the narrow face that stayed.)
         if (noSlide_)
             out.p = s.p;
-        // A crossing of a moved surface with one that stayed: slide onto the one that stayed along the moved feature's
-        // direction (or within the moved surface towards it), then settle onto all of them.
+        // A crossing of a moved surface with one that stayed: the moved surface carries the point, and the point stays
+        // on the surface that stayed, so it slides onto that one along the line the moved surface was swept along (the
+        // feature's direction: a wall is made of such lines, so the point stays on the wall), or within the moved
+        // surface towards it when that line runs along the one that stayed; then it is settled onto all of them.
         const Vec3 z{to_.r[2], to_.r[5], to_.r[8]};
         for (std::size_t i = 0; i < now_.size() && !noSlide_; ++i) {
             if (carried_[i] || !analytic(now_[i]))
@@ -858,14 +1182,11 @@ private:
             if (!n.known() || (ref_.kind != SubKind::Vertex && n.qMeasure == 0))
                 continue;
             const std::int32_t owner = i < s.neighbourOwners.size() ? s.neighbourOwners[i] : -1;
+            const std::int32_t ground = i < s.neighbourGrounds.size() ? s.neighbourGrounds[i] : -1;
             std::optional<std::pair<Rigid, Rigid>> move;
-            if (owner >= 0 && static_cast<std::size_t>(owner) < s.placements.size()) {
-                const FeaturePlacement& then = s.placements[static_cast<std::size_t>(owner)];
-                // (Its feature gone, its ground is taken where it was: a face that took it in holds that.)
-                const FeaturePlacement* now = map_.placement(then.feature);
-                if (now != nullptr && !samePlacement(then, *now))
-                    move = std::pair{rigidOf(then), rigidOf(*now)};
-            }
+            // (Its feature gone, its ground is taken where it was: a face that took it in holds that.)
+            if (const Frames f = framesOf(map_, s, owner, ground, false); f.placed && !f.gone && f.moved)
+                move = std::pair{f.then, f.now};
             // Its ground as its feature moved it, and where it was at pick time: an element now on either holds what
             // was another element's then (a face grown over the place a moved boss's cap left is that and more).
             for (const auto& q : n.points) {
@@ -1331,18 +1652,24 @@ Resolved Checker::decide(Resolved r) const
         // part, moved along itself, stays where the part is). Where it was picked is where it is: the same checks in
         // place. (A face that is no copy of the pick, such as a cap that moved over the old place of a piece of it,
         // holdout2 4:6, is not.)
+        // A guess (that the part, not the feature, bounds it), so a suggestion at most (T-081b round 9).
         trace("in place", answer, onAnswer, 0, "moved along itself");
         const Checker there(map_, t_, ref_, true, carrySplit_);
         Resolved out = there.decide(std::move(r));
         held_ = there.held();
-        return out;
+        return suggestion(std::move(out), "The picked face's feature moved along the face's own surface, and nothing "
+                                          "of the face so moved lies anywhere; the face its name leads to is where the "
+                                          "face was picked, the same size, and is suggested as it: confirm it.");
     }
     // P3, nothing landing anywhere: the pick, as its features moved it, left the part. Whatever now covers its old
     // place (its own feature's face moved over it included: the reviewer's v3 and the T-081a 4:6 class) is not the
-    // pick, unless it is a rigid copy of the pick (a cut's wall through the part, the cut moved along it: the part, not
-    // the feature, bounds it, as the oracle's copy exemption has it: holdout1 8:23 face 1).
-    // (Faces only, as the oracle's rule: an edge's crossing slid along its line can land outside the part's box while
-    // the crossing nearest where it was is still the pick: T-081a random 10:5, blend R3's edge.)
+    // pick: a feature moved out of the part takes what it made with it, and what covers the old place is another
+    // feature's, or ground the moved feature no longer removes. A rigid copy of the pick is let through to the guesses
+    // below (a cut's wall through the part, the cut moved along it: the part bounds the wall where it was, holdout1
+    // 8:23 face 1), which make it a suggestion at most (Repaired), never Exact. Faces only: an edge is a crossing of
+    // surfaces, and when one of them moved along the other's line the mapped crossing can slide along that line out
+    // past the part's box while the stretch of the crossing the part still bounds is the pick (T-081a random 10:5,
+    // blend R3's edge); the box tells nothing about an edge.
     if (onAnswer == 0 && moved_ && !inPlace_ && kind == SubKind::Face && imageLeftThePart() &&
         !(answer.size() == 1 && rigidCopy(answer.front()))) {
         trace("P3", answer, onAnswer, 0, "left the part");
@@ -1352,21 +1679,27 @@ Resolved Checker::decide(Resolved r) const
         // A placement that changed is not always a move of the pick: a feature's placement is the centre of the box of
         // its profile or points, so a dimension edit of one curve, or one hole's point moved, places all of the feature
         // elsewhere (the walls and holes it did not touch included: doc sketch_stability, hole). When nothing of the
-        // pick so moved lands anywhere, an Exact answer by name is checked in place too, and stands when it holds the
-        // pick there.
+        // pick so moved lands anywhere, an Exact answer by name is checked in place too; when it holds the pick there
+        // it is suggested (Repaired: that the placement change did not move the pick is a guess; T-081b round 9).
         const Checker still(map_, t_, ref_, true, carrySplit_);
         Resolved there = still.decide(r);
         if (still.held() > 0) {
             held_ = still.held();
             trace("in place", answer, still.held(), 0, "held where picked");
-            return there;
+            return suggestion(std::move(there),
+                              "The picked element's feature was placed elsewhere, yet nothing of the element so moved "
+                              "lies anywhere; the element its name leads to holds it where it was picked, and is "
+                              "suggested as it: confirm it.");
         }
     }
     if (onAnswer == 0 && moved_ && !inPlace_ && !noSlide_ && kind != SubKind::Face && slides()) {
         // A crossing slid along the moved feature's direction onto a surface that stayed can land far outside the face
         // it crosses there (a narrow chamfer strip the moved wall now cuts elsewhere along its line: T-081a random
         // 10:5, chamfer R3's edge): the crossing nearest where the pick was is tried too, and stands when the answer
-        // holds it.
+        // holds it. (T-081b round 9: kept, not made a suggestion. It is the pick's own samples on the pick's surfaces
+        // as its features moved them, settled onto their crossing from where they were picked: the move is known and
+        // applied to the surfaces, only the slide along the crossing is not assumed. Made a suggestion, R3's chamfer
+        // in random 10:5 loses its edge and fails, and the replay's other answers go wrong on the part without it.)
         const Checker nearest(map_, t_, ref_, false, carrySplit_, true);
         Resolved there = nearest.decide(r);
         if (nearest.held() > 0) {
@@ -1430,7 +1763,7 @@ Resolved Checker::decide(Resolved r) const
                 g = Guess::None;
         }
         // (c) A face that is a rigid copy of the pick (its area and sorted extents kept) moved as a whole, turned or
-        // not: a body moved onto a mate (doc transform_body), which moves every face of it and places none.
+        // not, by a move nothing recorded (a body moved without a body placement, NamingInput::bodyPlacement).
         if (g == Guess::None && !onCarriers && single && kind == SubKind::Face && rigidCopy(answer.front()))
             g = Guess::All;
         trace("guess", answer, onAnswer, 0,
@@ -1443,7 +1776,12 @@ Resolved Checker::decide(Resolved r) const
                                  "name leads to; whether that element is the one picked cannot be told.");
         if (!onCarriers && g == Guess::Most && r.state == ResolveState::Exact)
             return Resolved{ResolveState::Merged, std::move(r.elements), {}};
-        return r;
+        // Whatever kept it (the pick's place on its surfaces bounded elsewhere by the part, the pick moved along its
+        // normal, a rigid copy of it), it is a guess: never Exact (T-081b round 9), a suggestion to confirm.
+        return suggestion(std::move(r), "Nothing of the picked element, as its features moved it, lies on the element "
+                                        "its name leads to; that element is where the picked one would be had it "
+                                        "moved otherwise (along its normal, or as a whole), and is suggested as it: "
+                                        "confirm it.");
     }
     std::vector<SubId> holding;
     bool past = true;
@@ -1514,8 +1852,15 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
             for (const auto& q : territories.of(sub).points)
                 if (out.points.size() < kMaxPickSamples)
                     out.points.push_back(q);
-        if (out.points.empty())
-            return PickSamples{};
+        // Nothing to sample (a surface or curve whose points cannot be read, no territory either): recorded as version
+        // 2 without points, so that the reference says it was made with samples and its element had none to give (not a
+        // reference made before samples: postcondition()), and whether it was a whole generator element.
+        if (out.points.empty()) {
+            PickSamples none;
+            none.version = kPickSamplesVersion;
+            none.whole = wholeGenerator(map, sub);
+            return none;
+        }
         auto carrierFor = [&](const SubId& f) {
             const std::optional<kernel::SurfaceInfo>& info = territories.surface(f);
             SampleCarrier c = info ? carrierOf(faceSurfaceOf(territories, f)) : SampleCarrier{};
@@ -1523,6 +1868,7 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
             c.owner = ownerIndex(map, out.placements, map.namesOf(f), &unknownSplit);
             if (c.owner < 0 && unknownSplit)
                 c.owner = splitOwnerIndex(map, out.placements, map.namesOf(f));
+            c.ground = groundIndex(map, out.grounds, map.namesOf(f));
             if (traceLevel() >= 4)
                 for (const Hash256& n : map.namesOf(f))
                     if (const TopoName* r = map.record(n))
@@ -1565,10 +1911,36 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
                     out.firstEndCarriers = static_cast<std::uint32_t>(out.carriers.size()) - out.ownCarriers;
             }
         }
-        for (const PickNeighbour& n : neighbours)
+        for (const PickNeighbour& n : neighbours) {
             out.neighbourOwners.push_back(ownerIndex(map, out.placements, n.names));
+            out.neighbourGrounds.push_back(groundIndex(map, out.grounds, n.names));
+        }
         if (std::all_of(out.neighbourOwners.begin(), out.neighbourOwners.end(), [](std::int32_t o) { return o < 0; }))
             out.neighbourOwners.clear();
+        if (std::all_of(out.neighbourGrounds.begin(), out.neighbourGrounds.end(), [](std::int32_t o) { return o < 0; }))
+            out.neighbourGrounds.clear();
+        // The grounds sorted by feature, the indexes with them.
+        {
+            std::vector<std::size_t> order(out.grounds.size());
+            for (std::size_t i = 0; i < order.size(); ++i)
+                order[i] = i;
+            std::sort(order.begin(), order.end(),
+                      [&](std::size_t a, std::size_t b) { return out.grounds[a].feature < out.grounds[b].feature; });
+            std::vector<std::int32_t> rank(order.size());
+            std::vector<SampleGround> sorted;
+            for (std::size_t i = 0; i < order.size(); ++i) {
+                rank[order[i]] = static_cast<std::int32_t>(i);
+                sorted.push_back(out.grounds[order[i]]);
+            }
+            out.grounds = std::move(sorted);
+            for (SampleCarrier& c : out.carriers)
+                if (c.ground >= 0)
+                    c.ground = rank[static_cast<std::size_t>(c.ground)];
+            for (std::int32_t& g : out.neighbourGrounds)
+                if (g >= 0)
+                    g = rank[static_cast<std::size_t>(g)];
+        }
+        out.whole = wholeGenerator(map, sub);
         // Sorted by feature, the owners' indexes with them.
         std::vector<std::size_t> order(out.placements.size());
         for (std::size_t i = 0; i < order.size(); ++i)
@@ -1623,11 +1995,15 @@ bool leftWithAMovedFeature(const ElementMap& map, const TerritoryCache& t, const
     }
     if (first)
         return false;
-    for (const FeaturePlacement& then : s.placements) {
-        const FeaturePlacement* now = map.placement(then.feature);
-        if (now == nullptr || samePlacement(then, *now))
-            continue;
-        const Rigid a = rigidOf(then), b = rigidOf(*now);
+    // Each recorded placement that changed, and each recorded ground that the body moves carry otherwise now.
+    std::vector<std::pair<Rigid, Rigid>> moves;
+    for (const FeaturePlacement& then : s.placements)
+        if (const FeaturePlacement* now = map.placement(then.feature); now != nullptr && !samePlacement(then, *now))
+            moves.emplace_back(rigidOf(then), rigidOf(*now));
+    for (std::size_t g = 0; g < s.grounds.size() && s.version >= 2; ++g)
+        if (const Frames f = framesOf(map, s, -1, static_cast<std::int32_t>(g), false); f.placed && f.moved)
+            moves.emplace_back(f.then, f.now);
+    for (const auto& [a, b] : moves) {
         bool outside = true;
         for (const Sample& x : picked) {
             const Vec3 q = carry(a, b, x.p);
@@ -1654,6 +2030,77 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
         for (const SubId& e : r.elements)
             if (e.kind != ref.kind)
                 return r;
+        // Generator identity (naming.h Resolved::identity, T-081b round 9): the pick is the answer, so whether the
+        // answer holds it is not asked; whether it holds what another pick-time element held is (P2). Where the answer
+        // still lies on the pick's own surfaces (where it was picked, or as its features moved it), whether it holds
+        // the pick there can be told, and is: the decision below (a whole boss side whose visible patch another feature
+        // moved is another patch, holdout1 7:33 face 18; an edge on the line that stayed whose picked stretch is gone,
+        // directedit "an edge on a line that stayed"). Except that what the decision below could only guess, identity
+        // tells: an answer that holds none of the pick as its features moved it but most of it where it was picked is
+        // the pick, its feature's placement changed by a dimension edit, not moved (a placement is the centre of the
+        // box of its profile: an edit of one curve places all of the feature elsewhere).
+        const auto byIdentity = [&](SubId e) {
+            if (traceLevel() >= 4 && r.state == ResolveState::Exact && ref.names.size() == 1)
+                if (const TopoName* n = map.record(ref.names.front()))
+                    std::fprintf(stderr,
+                                 "POST identity? whole %d (v%u) role %s siblings %u ordinal %u discriminator %zu "
+                                 "parents %zu holds %d\n",
+                                 ref.samples.whole ? 1 : 0, ref.samples.version, n->role.c_str(), n->siblingCount,
+                                 n->ordinal, n->discriminator.size(), n->parents.size(),
+                                 identityHolds(map, ref, e) ? 1 : 0);
+            if (r.state != ResolveState::Exact || r.elements.size() != 1 || !identityHolds(map, ref, e))
+                return false;
+            // (Never where the pick, as its features moved it, lands on another element: that one holds it, whatever
+            // name it has; nor on an edge that meets a picked end so moved and runs from it the other way: it shares
+            // that point with the pick, nothing more; directedit "a name on the same line running the other way".)
+            const Checker moved(map, territories, ref);
+            if (moved.heldElsewhere(e) || moved.endAgainstSense(e))
+                return false;
+            if (!moved.pickOnSurfacesOf(e))
+                return true;
+            // (Not when the pick so moved left the part: a feature moved out of the part takes what it made with it,
+            // and what covers the old place is not the pick, whatever its name; random 11:43 face 8.)
+            return moved.holdCount(e) == 0 && !moved.imageLeftThePart() &&
+                   Checker(map, territories, ref, true).holdsMost(e);
+        };
+        if (byIdentity(r.elements.front())) {
+            const Checker check(map, territories, ref);
+            if (check.holdsNeighbourGround(r.elements.front())) {
+                if (traceLevel() > 0)
+                    std::fprintf(stderr, "POST identity: P2, a neighbour's ground on the answer\n");
+                if (ref.kind == SubKind::Vertex)
+                    return brokenBecause("The picked vertex now lies where another vertex was when it was picked.");
+                return Resolved{ResolveState::Merged, std::move(r.elements), {}};
+            }
+            if (traceLevel() > 1)
+                std::fprintf(stderr, "POST identity: exact\n");
+            r.identity = true;
+            return r;
+        }
+        // A reference without samples (made before them): its features' moves are not known, so nothing but generator
+        // identity makes an answer to it certain (T-081b round 9). A Split or a Merged answer claims what nothing can
+        // check: Broken. Any other answer is checked against what evidence it has (its territory, its neighbours') and
+        // is at most a suggestion: Repaired. (A reference made with samples whose element had none to give, version 2
+        // without points, is not such a reference: it is checked below with what evidence it has.)
+        if (ref.samples.version == 0) {
+            if (r.state != ResolveState::Exact)
+                return brokenBecause(std::string(r.state == ResolveState::Split
+                                                     ? "The picked element seems to have come apart"
+                                                     : "The picked element seems to be part of a larger one now") +
+                                     ", and the reference records no pick-time samples to check that against.");
+            const Checker check(map, territories, ref);
+            Resolved out = check.any() ? check.decide(std::move(r)) : std::move(r);
+            if (out.state == ResolveState::Broken || out.state == ResolveState::Repaired)
+                return out;
+            if (out.state != ResolveState::Exact)
+                return brokenBecause(
+                    "The picked element's name leads to an element that also holds what another element "
+                    "held when it was picked, and the reference records no pick-time samples to check "
+                    "it against.");
+            return suggestion(std::move(out), "The reference records no pick-time samples (an older build made it), "
+                                              "and the picked element is not one a generator makes whole; the element "
+                                              "its name leads to is suggested as it: confirm it.");
+        }
         const Checker check(map, territories, ref);
         if (!check.any())
             return r; // no evidence: as before
