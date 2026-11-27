@@ -2705,8 +2705,15 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
                 slideSweep = &a->second;
                 slideMove = *move;
             } else if (!carrierChanged(o0->c, o1->c)) {
-                if (o1->c.k == Carrier::K::Plane)
+                // (A plane that stays by itself: an imported face or a sweep's, no direct edit on it; a blend's plane
+                // follows its parents: holdout1 16:9 edge 10, a chamfer's face.)
+                const bool ownPlane = alt.compare(0, 2, "I/") == 0 ? !before.importEdited && !after.importEdited
+                                                                   : before.sweeps.count(f) != 0;
+                if (o1->c.k == Carrier::K::Plane && ownPlane && before.touchedByEdit.count(alt) == 0 &&
+                    after.touchedByEdit.count(alt) == 0)
                     stayedPlanes.push_back(&o1->c);
+                else
+                    otherChanged = true;
             } else {
                 otherChanged = true;
             }
