@@ -2140,8 +2140,10 @@ void replayCases(bool keyOnly)
         {6, 7, k + "flange_bolt_circle_1.stp #7|edge 15", Answer::Split, Verdict::Correct, "other split lines", false},
         //  - the tuned block, after the oracle changes above: a chamfer corner on a rib's end face, which the end
         //  face's
-        //    extent held only by a push/pull's fill, that push/pull suppressed: not judged (reviewed);
-        {14, 0, k + "rib_plate_1.stp #0|vertex 7", Answer::Exact, Verdict::Unjudged, "ground only an edit's fill gave"},
+        //    extent held only by a push/pull's fill, that push/pull suppressed: not judged (reviewed; round 7: a vertex
+        //    on an imported plane other imported faces share is placed by its carriers, not that face's extent, and the
+        //    oracle judges it correct, as the review ruled);
+        {14, 0, k + "rib_plate_1.stp #0|vertex 7", Answer::Exact, Verdict::Correct, "ground only an edit's fill gave"},
         //  - a fillet the kernel rebuilt as a B-spline at its new size: not judged (reviewed). (Round 8: its corner
         //    moved with the fillet's size, which no placement tells, onto surfaces the samples cannot compare: Broken,
         //    a miss.)
@@ -2441,6 +2443,20 @@ TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its featur
          Verdict::Missed,
          {},
          {{Answer::Merged, {}, -1, {Vec3{9.730118, 41.046532, 8.906930}}}}},
+        // Round 7: review block 4 13:25 face 5, cut R2 moved by its width along its end cap's plane, 22 mm down and out
+        // of the part: what is left of the cap in the part is a strip over the pick's old place, ground of the cap the
+        // part did not hold at pick time (the reviewer's v3 class: the image left the part, so the pick is gone; the
+        // oracle no longer credits its old place). Broken; Exact on the strip WRONG. (Off: Exact {5}.)
+        {"review4 13:25",
+         13,
+         SubKind::Face,
+         {110.9422, 39.0751, 5.0154},
+         181.1502,
+         "a moved cut's end cap whose image left the part, a strip of it over the old place",
+         Answer::Broken,
+         Verdict::BrokenGone,
+         {},
+         {{Answer::Exact, {}, -1, {Vec3{113.7, 39.0751, 0.85}}}}},
         {"review3 10:21",
          10,
          SubKind::Edge,

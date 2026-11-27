@@ -530,6 +530,8 @@ public:
     }
 
     bool any() const { return !picked_.empty(); }
+    // Is the move of the pick's own surfaces known (moveOf)?
+    bool known() const { return known_; }
     // Did a feature that split off one of the pick's surfaces move (moveOf)?
     bool splitterMoved() const { return splitterMoved_; }
     // How many mapped samples the answer last decided held.
@@ -1186,6 +1188,35 @@ private:
         return true;
     }
 
+    // Has the pick, as its features moved it, left the part: every mapped sample outside the box of the shape's faces
+    // (by more than the tolerance)? A dimension edit moves a feature's placement by a fraction of its size, near the
+    // part; a move that takes the pick's ground out of the part leaves nothing of it anywhere.
+public:
+    bool imageLeftThePart() const
+    {
+        if (mapped_.empty())
+            return false;
+        bool first = true;
+        Vec3 lo{}, hi{};
+        const std::uint32_t faces = t_.shape().count(SubKind::Face);
+        for (std::uint32_t i = 0; i < faces; ++i) {
+            const std::optional<Box3>& b = t_.box(SubId{SubKind::Face, i});
+            if (!b)
+                return false; // unreadable: not known
+            lo = first ? b->min : Vec3{std::min(lo.x, b->min.x), std::min(lo.y, b->min.y), std::min(lo.z, b->min.z)};
+            hi = first ? b->max : Vec3{std::max(hi.x, b->max.x), std::max(hi.y, b->max.y), std::max(hi.z, b->max.z)};
+            first = false;
+        }
+        if (first)
+            return false;
+        for (const Sample& s : mapped_)
+            if (s.p.x >= lo.x - tol_ && s.p.x <= hi.x + tol_ && s.p.y >= lo.y - tol_ && s.p.y <= hi.y + tol_ &&
+                s.p.z >= lo.z - tol_ && s.p.z <= hi.z + tol_)
+                return false;
+        return true;
+    }
+
+private:
     const ElementMap& map_;
     const TerritoryCache& t_;
     const TopoRef& ref_;
@@ -1291,6 +1322,15 @@ Resolved Checker::decide(Resolved r) const
         Resolved out = there.decide(std::move(r));
         held_ = there.held();
         return out;
+    }
+    // P3, nothing landing anywhere: the pick, as its features moved it, left the part. Whatever now covers its old
+    // place (its own feature's face moved over it included: the reviewer's v3 and the T-081a 4:6 class) is not the
+    // pick, unless it is a rigid copy of the pick (a cut's wall through the part, the cut moved along it: the part, not
+    // the feature, bounds it, as the oracle's copy exemption has it: holdout1 8:23 face 1).
+    if (onAnswer == 0 && moved_ && !inPlace_ && imageLeftThePart() &&
+        !(kind == SubKind::Face && answer.size() == 1 && rigidCopy(answer.front()))) {
+        trace("P3", answer, onAnswer, 0, "left the part");
+        return brokenBecause("The picked element, as its features moved it, is outside the part now.");
     }
     if (onAnswer == 0 && moved_ && !inPlace_ && r.state == ResolveState::Exact && answer.size() == 1) {
         // A placement that changed is not always a move of the pick: a feature's placement is the centre of the box of
@@ -1532,6 +1572,53 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
     return out;
 }
 
+namespace {
+// The move of the pick's own surfaces is not known (Checker::known: an imported face, a piece split off by what the map
+// keeps no record of), yet a feature whose placement the reference recorded (an owner of a surface at its ends, of a
+// neighbour, the feature that split it) moved, and that move takes every sample of the pick out of the part (the box
+// of the shape's faces): whether the pick went with it cannot be told, so an answer over its old place is not certain
+// (T-081b round 7: random 14:11 face 24, a piece of a boss's cap whose split parents the map no longer records, the
+// boss moved by its width out of the part, its cap still over the piece's old place).
+bool leftWithAMovedFeature(const ElementMap& map, const TerritoryCache& t, const TopoRef& ref)
+{
+    const PickSamples& s = ref.samples;
+    const std::vector<Sample> picked = samplesOf(ref);
+    if (picked.empty())
+        return false;
+    bool first = true;
+    Vec3 lo{}, hi{};
+    const std::uint32_t faces = t.shape().count(SubKind::Face);
+    for (std::uint32_t i = 0; i < faces; ++i) {
+        const std::optional<Box3>& b = t.box(SubId{SubKind::Face, i});
+        if (!b)
+            return false;
+        lo = first ? b->min : Vec3{std::min(lo.x, b->min.x), std::min(lo.y, b->min.y), std::min(lo.z, b->min.z)};
+        hi = first ? b->max : Vec3{std::max(hi.x, b->max.x), std::max(hi.y, b->max.y), std::max(hi.z, b->max.z)};
+        first = false;
+    }
+    if (first)
+        return false;
+    for (const FeaturePlacement& then : s.placements) {
+        const FeaturePlacement* now = map.placement(then.feature);
+        if (now == nullptr || samePlacement(then, *now))
+            continue;
+        const Rigid a = rigidOf(then), b = rigidOf(*now);
+        bool outside = true;
+        for (const Sample& x : picked) {
+            const Vec3 q = carry(a, b, x.p);
+            if (q.x >= lo.x - kOnTolerance && q.x <= hi.x + kOnTolerance && q.y >= lo.y - kOnTolerance &&
+                q.y <= hi.y + kOnTolerance && q.z >= lo.z - kOnTolerance && q.z <= hi.z + kOnTolerance) {
+                outside = false;
+                break;
+            }
+        }
+        if (outside)
+            return true;
+    }
+    return false;
+}
+} // namespace
+
 Resolved postcondition(const ElementMap& map, const TerritoryCache& territories, const TopoRef& ref, Resolved r)
 {
     try {
@@ -1545,8 +1632,16 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
         const Checker check(map, territories, ref);
         if (!check.any())
             return r; // no evidence: as before
-        if (!check.splitterMoved())
-            return check.decide(std::move(r));
+        if (!check.splitterMoved()) {
+            Resolved out = check.decide(std::move(r));
+            if (!check.known() && check.held() > 0 && out.state != ResolveState::Broken &&
+                leftWithAMovedFeature(map, territories, ref))
+                return brokenBecause(
+                    "A feature the picked element was recorded with moved, and the picked element may have "
+                    "moved with it, out of the part; whether the element now over its old place is the one "
+                    "picked cannot be told.");
+            return out;
+        }
         // A surface of the pick is a piece split off by a feature that has moved since, from a face whose owner is not
         // known (splitOwnerIndex: the map keeps no record of what it was split from): whether that feature carried it
         // cannot be told. A Merged answer (the names say the pick is now part of another element) is checked as moved

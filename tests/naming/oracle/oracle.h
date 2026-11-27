@@ -526,6 +526,10 @@ struct Expectation {
     bool heldInPlace = false;
     // Pieces holding none of the pick on ground nobody held were left out of E (expect: NEW PIECES ARE NEVER REQUIRED).
     bool newPiecesDropped = false;
+    // The map takes every sample of the pick out of the edited part (outside the box of its faces): the pick's image
+    // left the part (expect; holdsPickedGround then does not credit the pick's old place: T-081b round 7, the
+    // reviewer's v3).
+    bool imageOutside = false;
     // Every carrier of the description is as it was at pick time (only separators or bounding features moved): the
     // picked element's ground is where it was (T-081b round 2: remnants, and the new-ground rule's coverage).
     bool inPlace = false;

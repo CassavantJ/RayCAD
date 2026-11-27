@@ -1240,43 +1240,29 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
             if (!assign(0))
                 continue;
         }
-        // An imported face's extent, for an edge or vertex, takes in the extents of the imported faces coplanar with it
-        // when the element's face on that carrier holds ground of it: an import is often several coplanar faces that
-        // the kernel unifies into one, and a corner moved along that face lies on it, whichever import face's part of
-        // it it now sits on (T-081b round 7, the reviewer's block 4 14:45 vertex 49: the floor one face of four
-        // coplanar import faces). A separate face on the same plane that holds none of the owner's ground does not
-        // count, nor ground no imported face held (an edit's fill). Mutation "import-union".
+        // A vertex on an imported plane that other imported faces share is placed by its carriers, not by that face's
+        // extent: an import is often several coplanar faces that the kernel unifies into one, and a corner moved along
+        // that face lies on it, whichever import face's part of it it now sits on (T-081b round 7, the reviewer's block
+        // 4 14:45 vertex 49: the floor one face of four coplanar import faces). Three surfaces meet at isolated points:
+        // the description's other constraints and separators tell which corner. Mutation "import-union". (A vertex
+        // only: an edge running on over a coplanar face's ground may continue another element there, which its partial
+        // share flags as merged: review3 10:21 edge 31. The same at pick time and after the edit, whatever edits
+        // touched those faces' extents: a description made so is judged so, holdout2 14:18 vertex 33.)
         std::vector<std::vector<char>> wholeFace(cons.size());
         std::vector<std::vector<std::vector<const Owner*>>> coplanar(cons.size());
-        // (A vertex only: an edge running on over a coplanar face's ground may continue another element there, which
-        // its partial share flags as merged: review3 10:21 edge 31. Neither face moved by a direct edit.)
         if (d.kind == SubKind::Vertex && !mutated("import-union")) {
-            const auto& own = smp.facesOf[d.kind == SubKind::Edge ? 1 : 0][x];
             for (std::size_t ci = 0; ci < cons.size(); ++ci) {
                 wholeFace[ci].assign(cons[ci].alts.size(), 0);
                 coplanar[ci].assign(cons[ci].alts.size(), {});
                 for (std::size_t ai = 0; ai < cons[ci].alts.size(); ++ai) {
                     const Owner* o = cons[ci].alts[ai];
-                    if (o->key.compare(0, 2, "I/") != 0 || o->c.k != Carrier::K::Plane ||
-                        ow.touchedByEdit.count(o->key) != 0)
+                    if (o->key.compare(0, 2, "I/") != 0 || o->c.k != Carrier::K::Plane)
                         continue;
                     for (const Owner& o2 : ow.v)
                         if (&o2 != o && o2.key.compare(0, 2, "I/") == 0 && o2.c.k == Carrier::K::Plane &&
-                            ow.touchedByEdit.count(o2.key) == 0 && std::abs(dot(o->c.a, o2.c.a)) >= 1 - 1e-9 &&
-                            std::abs(o->c.dist(o2.c.p)) <= 1e-6)
+                            std::abs(dot(o->c.a, o2.c.a)) >= 1 - 1e-9 && std::abs(o->c.dist(o2.c.p)) <= 1e-6)
                             coplanar[ci][ai].push_back(&o2);
-                    if (coplanar[ci][ai].empty())
-                        continue;
-                    for (const std::uint32_t f : own) {
-                        const ElemSamples& face = smp.of(SubKind::Face)[f];
-                        if (!typeMatches(o->c, face) || !nodesOn(o->c, face.nodes, tolFor(SubKind::Face).node))
-                            continue;
-                        for (const Vec3& q : face.pts)
-                            if (o->in(q, 0.0)) {
-                                wholeFace[ci][ai] = 1;
-                                break;
-                            }
-                    }
+                    wholeFace[ci][ai] = coplanar[ci][ai].empty() ? 0 : 1;
                 }
             }
         }
@@ -1294,8 +1280,7 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
                         const Owner* o = cons[ci].alts[ai];
                         bool in = o->in(p, T.margin);
                         if (!in && !wholeFace[ci].empty() && wholeFace[ci][ai] != 0)
-                            for (const Owner* o2 : coplanar[ci][ai])
-                                in = in || o2->in(p, T.margin);
+                            in = true;
                         if (o->c.on(p, T.sample) && in) {
                             any = true;
                             break;
@@ -3239,10 +3224,12 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
     // face whose exact map moved it (its sweep moved rigidly) is where the map takes it; what its feature's face now
     // covers of its old place is not the pick (a pocket moved by -10 in x: its floor piece's image left the part, and
     // the moved floor over the piece's old place is not it). Mutation "moved-in-place".
-    bool movedAway = false;
-    if (!x.mapped.pts.empty() && !mutated("moved-in-place") && rigidOrStill(pick.truth, *pick.owners, now))
-        movedAway = norm(sub(x.mapped.boxMin, P.boxMin)) > kAnchorTolerance ||
-                    norm(sub(x.mapped.boxMax, P.boxMax)) > kAnchorTolerance;
+    // Only where the image left the part, every mapped sample outside it (Expectation::imageOutside; the reviewer's
+    // class, and no more: a map that leaves part of the pick inside is judged in place and mapped as before), and its
+    // sweeps moved (a face of a sweep that stayed is where it was, whatever the map does with points inside a moved
+    // join's volume: review1 17:7 face 4).
+    const bool movedAway = x.imageOutside && !x.mapped.pts.empty() && !mutated("moved-in-place") &&
+                           rigidOrStill(pick.truth, *pick.owners, now) && !sweepMoves(pick, now).empty();
     return a.pts.empty() || (!movedAway && holds(pick.picked())) || holds(x.mapped);
 }
 
@@ -3330,6 +3317,19 @@ bool boxesApart(const ElemSamples& a, const ElemSamples& b)
 Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
 {
     Expectation x = expectCore(pick, now, smp);
+    // Has the map taken the whole pick out of the edited part (every mapped sample outside the box of its faces)?
+    if (!x.mapped.pts.empty()) {
+        Vec3 lo{}, hi{};
+        bool first = true;
+        for (const ElemSamples& f : smp.of(SubKind::Face))
+            for (const Vec3& p : f.nodes) {
+                growBox(lo, hi, p, first);
+                first = false;
+            }
+        x.imageOutside = !first;
+        for (const Vec3& p : x.mapped.pts)
+            x.imageOutside = x.imageOutside && outsideBox(p, lo, hi, kAnchorTolerance);
+    }
     // HELD IN PLACE (T-081b round 5, item 3b; the reviewer's ruling on Linux review1 18:6). Gone, though an element of
     // the pick's kind and type lies where the pick was (each on 90 % of the other, in place; a vertex at the same
     // point), and every owner of the description is still there on the carrier it had (stillOwners): that element is
