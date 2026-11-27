@@ -1,0 +1,334 @@
+# On-demand stress of one test executable: many copies at once, every crash recorded. Started by hand only (Actions,
+# "stress", Run workflow; or gh workflow run stress.yml). Written to tell a software fault from the development PC's
+# hardware: the Linux naming segfault seen there ([random-holdout2] with RAYCAD_NAMING_NO_PLACEMENT=1, four blocks at
+# once, a different frame each time).
+#
+# Each shard (a job of its own, side by side) builds the executable once and runs `rounds` batches of `parallel`
+# processes started together (tools/ci_stress.py): on Linux each under gdb, with a backtrace of every thread when it
+# stops on a signal; on macOS and Windows plainly, by exit code. Per process it keeps the whole output; per shard a
+# table (results.tsv, summary.md, also on the run's summary page). A test that fails does not fail the job; a process
+# that dies by a signal, reports a sanitizer error or times out does. Rounds stop early when the next would not end
+# inside the time budget, so a shard stays inside the 4-hour job limit.
+# The AddressSanitizer and UndefinedBehaviorSanitizer shards (Linux only, preset linux-clang-asan) run the same
+# batches without gdb: a sanitizer report says where.
+# Actions are pinned to commit SHAs; the comment gives the release tag.
+name: stress
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Platform of the plain shards"
+        type: choice
+        options: [linux, macos, windows]
+        default: linux
+      ref:
+        description: "Branch, tag or commit (empty: the branch chosen above)"
+        type: string
+        default: ""
+      exe:
+        description: "Test executable"
+        type: string
+        default: ray_naming_oracle_tests
+      filter:
+        description: "Catch2 filter"
+        type: string
+        default: "[random-holdout2]"
+      env:
+        description: "Environment, VAR=value separated by spaces"
+        type: string
+        default: ""
+      parallel:
+        description: "Processes at once"
+        type: string
+        default: "4"
+      rounds:
+        description: "Rounds per plain shard (at most; a shard stops at its time budget)"
+        type: string
+        default: "15"
+      shards:
+        description: "Plain shards (jobs side by side; 0: none)"
+        type: string
+        default: "1"
+      asan_rounds:
+        description: "Rounds per sanitizer shard"
+        type: string
+        default: "4"
+      asan_shards:
+        description: "Sanitizer shards, Linux only (0: none)"
+        type: string
+        default: "0"
+
+permissions:
+  contents: read
+
+# Its own group per run: neither a push, a nightly nor another stress run cancels it.
+concurrency:
+  group: stress-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  QT_VERSION: "6.12.0"
+  # The time budget of a shard's rounds, from their start: the job's 4-hour limit less the setup and the build.
+  STRESS_BUDGET_MINUTES: "185"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      plain: ${{ steps.plan.outputs.plain }}
+      asan: ${{ steps.plan.outputs.asan }}
+    steps:
+      - id: plan
+        env:
+          SHARDS: ${{ inputs.shards }}
+          ASAN_SHARDS: ${{ inputs.asan_shards }}
+          OS: ${{ inputs.os }}
+        run: |
+          list() { n=$1; [ "$n" -gt 0 ] 2>/dev/null || { echo "[]"; return; }; echo "[$(seq -s, 1 "$n")]"; }
+          echo "plain=$(list "$SHARDS")" >> "$GITHUB_OUTPUT"
+          echo "asan=$(list "$ASAN_SHARDS")" >> "$GITHUB_OUTPUT"
+          echo "plain shards: $(list "$SHARDS") on $OS; sanitizer shards: $(list "$ASAN_SHARDS") on linux"
+
+  stress:
+    needs: plan
+    if: needs.plan.outputs.plain != '[]'
+    name: stress-${{ inputs.os }}-${{ matrix.shard }}
+    runs-on: ${{ inputs.os == 'windows' && 'windows-latest' || inputs.os == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.plain) }}
+    env:
+      PRESET: ${{ inputs.os == 'windows' && 'windows-msvc' || inputs.os == 'macos' && 'macos-arm64' || 'linux-gcc' }}
+      TRIPLET: ${{ inputs.os == 'windows' && 'x64-windows' || inputs.os == 'macos' && 'arm64-osx-dynamic' || 'x64-linux-dynamic' }}
+      STRESS_EXE: ${{ inputs.exe }}
+      STRESS_FILTER: ${{ inputs.filter }}
+      STRESS_ENV: ${{ inputs.env }}
+      STRESS_PARALLEL: ${{ inputs.parallel }}
+      STRESS_ROUNDS: ${{ inputs.rounds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The same setup as build-test.yml.
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config autoconf automake libtool curl zip unzip tar gdb \
+            libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxmu-dev \
+            libxkbcommon-dev libvulkan-dev libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 libarchive-tools p7zip-full
+
+      - name: Install system packages (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja pkg-config autoconf automake libtool sevenzip
+
+      - name: Restore Qt
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qt
+          key: qt-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_qt.py') }}
+
+      - name: Install Qt
+        shell: bash
+        run: |
+          python=$(command -v python3 || command -v python)
+          "$python" tools/fetch_qt.py --out "$RUNNER_TEMP/qt" --version "$QT_VERSION" --module qtshadertools
+
+      - name: Set up vcpkg
+        shell: bash
+        run: |
+          python=$(command -v python3 || command -v python)
+          baseline=$("$python" -c "import json; print(json.load(open('vcpkg-configuration.json'))['default-registry']['baseline'])")
+          temp="$RUNNER_TEMP"
+          if [ "$RUNNER_OS" = "Windows" ]; then temp=$(cygpath -u "$RUNNER_TEMP"); fi
+          root="$temp/vcpkg"
+          cache="$temp/vcpkg-cache"
+          mkdir -p "$root" "$cache"
+          git -C "$root" init -q
+          git -C "$root" remote add origin https://github.com/microsoft/vcpkg.git
+          git -C "$root" fetch -q --depth 1 origin "$baseline"
+          git -C "$root" checkout -q FETCH_HEAD
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "$root/bootstrap-vcpkg.bat" -disableMetrics
+            root=$(cygpath -w "$root")
+            cache=$(cygpath -w "$cache")
+          else
+            "$root/bootstrap-vcpkg.sh" -disableMetrics
+          fi
+          echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$cache" >> "$GITHUB_ENV"
+          echo "VCPKG_BASELINE=$baseline" >> "$GITHUB_ENV"
+
+      # Only restored: the per-push and nightly jobs keep the cache filled.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ env.TRIPLET }}-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'ports/**', 'triplets/**') }}
+          restore-keys: |
+            vcpkg-${{ env.TRIPLET }}-${{ env.VCPKG_BASELINE }}-
+            vcpkg-${{ env.TRIPLET }}-
+
+      - name: Build dependencies (vcpkg)
+        shell: bash
+        run: |
+          root="$VCPKG_ROOT"
+          if [ "$RUNNER_OS" = "Windows" ]; then root=$(cygpath -u "$VCPKG_ROOT"); fi
+          "$root/vcpkg" install --triplet "$TRIPLET" --overlay-triplets=triplets --x-install-root=build/vcpkg_installed
+
+      - name: Configure and build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call tools\win-env.cmd || exit /b 1
+          cmake --preset %PRESET% || exit /b 1
+          cmake --build --preset %PRESET%-release --target %STRESS_EXE% || exit /b 1
+
+      - name: Configure and build (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cmake --preset "$PRESET"
+          cmake --build --preset "$PRESET-release" --target "$STRESS_EXE"
+
+      - name: Stress
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: |
+          python=$(command -v python3 || command -v python)
+          exe="build/$PRESET/bin/Release/$STRESS_EXE"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            exe="$exe.exe"
+            export PATH="$(pwd)/build/vcpkg_installed/$TRIPLET/bin:$(cygpath -u "$QT_ROOT_DIR")/bin:$PATH"
+          fi
+          "$python" tools/ci_stress.py --exe "$exe" --filter "$STRESS_FILTER" --env "$STRESS_ENV" \
+            --parallel "$STRESS_PARALLEL" --rounds "$STRESS_ROUNDS" --budget-minutes "$STRESS_BUDGET_MINUTES" \
+            --timeout-minutes 90 --out stress
+
+      # A process killed for memory dies by SIGKILL: the kernel's log says so (four processes at once on a 16 GB runner).
+      - name: Out-of-memory kills
+        if: always() && runner.os == 'Linux'
+        run: |
+          mkdir -p stress
+          sudo dmesg 2>/dev/null | grep -iE "out of memory|killed process|oom-kill" | tail -40 > stress/oom.txt || true
+          if [ -s stress/oom.txt ]; then cat stress/oom.txt; else echo "no out-of-memory kill" | tee stress/oom.txt; fi
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-${{ inputs.os }}-${{ matrix.shard }}-${{ github.run_id }}
+          path: stress
+          if-no-files-found: warn
+          retention-days: 30
+
+  stress-asan:
+    needs: plan
+    if: needs.plan.outputs.asan != '[]'
+    name: stress-asan-${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.asan) }}
+    env:
+      STRESS_EXE: ${{ inputs.exe }}
+      STRESS_FILTER: ${{ inputs.filter }}
+      STRESS_ENV: ${{ inputs.env }}
+      STRESS_PARALLEL: ${{ inputs.parallel }}
+      STRESS_ROUNDS: ${{ inputs.asan_rounds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The same setup as sanitizers.yml.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang ninja-build pkg-config autoconf automake libtool curl zip unzip tar \
+            libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxmu-dev \
+            libxkbcommon-dev libvulkan-dev libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 libarchive-tools p7zip-full
+
+      - name: Restore Qt
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qt
+          key: qt-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_qt.py') }}
+
+      - name: Install Qt
+        shell: bash
+        run: |
+          python=$(command -v python3 || command -v python)
+          "$python" tools/fetch_qt.py --out "$RUNNER_TEMP/qt" --version "$QT_VERSION" --module qtshadertools
+
+      - name: Set up vcpkg
+        run: |
+          baseline=$(python3 -c "import json; print(json.load(open('vcpkg-configuration.json'))['default-registry']['baseline'])")
+          root="$RUNNER_TEMP/vcpkg"
+          cache="$RUNNER_TEMP/vcpkg-cache"
+          mkdir -p "$root" "$cache"
+          git -C "$root" init -q
+          git -C "$root" remote add origin https://github.com/microsoft/vcpkg.git
+          git -C "$root" fetch -q --depth 1 origin "$baseline"
+          git -C "$root" checkout -q FETCH_HEAD
+          "$root/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$root" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$cache" >> "$GITHUB_ENV"
+          echo "VCPKG_BASELINE=$baseline" >> "$GITHUB_ENV"
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-x64-linux-dynamic-${{ env.VCPKG_BASELINE }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'ports/**', 'triplets/**') }}
+          restore-keys: |
+            vcpkg-x64-linux-dynamic-${{ env.VCPKG_BASELINE }}-
+            vcpkg-x64-linux-dynamic-
+
+      - name: Build dependencies (vcpkg)
+        run: |
+          "$VCPKG_ROOT/vcpkg" install --triplet x64-linux-dynamic --overlay-triplets=triplets --x-install-root=build/vcpkg_installed
+
+      - name: Configure and build
+        run: |
+          cmake --preset linux-clang-asan
+          cmake --build --preset linux-clang-asan --target "$STRESS_EXE"
+
+      # As sanitizers.yml runs the tests: leaks off, UBSan non-recoverable.
+      - name: Stress
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+          ASAN_OPTIONS: detect_leaks=0:strict_string_checks=1:detect_stack_use_after_return=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          python3 tools/ci_stress.py --exe "build/linux-clang-asan/bin/$STRESS_EXE" --filter "$STRESS_FILTER" \
+            --env "$STRESS_ENV" --parallel "$STRESS_PARALLEL" --rounds "$STRESS_ROUNDS" \
+            --budget-minutes "$STRESS_BUDGET_MINUTES" --timeout-minutes 150 --debugger none --out stress
+
+      # A process killed for memory dies by SIGKILL: the kernel's log says so (four processes at once on a 16 GB runner).
+      - name: Out-of-memory kills
+        if: always() && runner.os == 'Linux'
+        run: |
+          mkdir -p stress
+          sudo dmesg 2>/dev/null | grep -iE "out of memory|killed process|oom-kill" | tail -40 > stress/oom.txt || true
+          if [ -s stress/oom.txt ]; then cat stress/oom.txt; else echo "no out-of-memory kill" | tee stress/oom.txt; fi
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-asan-${{ matrix.shard }}-${{ github.run_id }}
+          path: stress
+          if-no-files-found: warn
+          retention-days: 30
