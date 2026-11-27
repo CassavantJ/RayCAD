@@ -1240,7 +1240,7 @@ Resolved Checker::decide(Resolved r) const
     };
     // Where every mapped sample lands.
     std::vector<std::size_t> held(answer.size(), 0);
-    std::size_t onAnswer = 0, interior = 0;
+    std::size_t onAnswer = 0, interior = 0, nowhere = 0;
     std::set<SubId> elsewhere;
     bool againstSense = false;
     const std::uint32_t count = t_.shape().count(kind);
@@ -1261,15 +1261,18 @@ Resolved Checker::decide(Resolved r) const
         if (s.end)
             for (const SubId& a : answer)
                 againstSense = againstSense || t_.probe(a).on(s.p, tol_);
+        bool somewhere = false;
         for (std::uint32_t i = 0; i < count; ++i) {
             const SubId e{kind, i};
             if (!inAnswer(e) && holds(e, s)) {
                 elsewhere.insert(e);
+                somewhere = true;
                 if (traceLevel() >= 3)
                     std::fprintf(stderr, "POST   (%.4f %.4f %.4f)%s held by %u\n", s.p.x, s.p.y, s.p.z,
                                  s.end ? " end" : "", i);
             }
         }
+        nowhere += somewhere ? 0 : 1;
     }
     // An edge that holds only an end of the pick (none of the points along it) holds a point, not the pick: it may run
     // on from there over ground the pick never had (review2 2:8 edge 22: the rest of a rim, 0.07 mm of it over the
@@ -1279,6 +1282,17 @@ Resolved Checker::decide(Resolved r) const
         std::fill(held.begin(), held.end(), 0);
     }
     held_ = onAnswer;
+    // A reference made before samples were recorded (its territory points stand in, its features' moves not known): a
+    // face that holds some of its territory where it was picked while the rest lies on no element now may have been
+    // cut, or moved by its feature and only its old place covered (the reviewer's v3 class, which the reference cannot
+    // tell apart): not Exact (the motion-unknown rule; T-081b round 7, the no-placement runs).
+    if (!ref_.samples.known() && !inPlace_ && kind == SubKind::Face && onAnswer > 0 && nowhere > 0 &&
+        elsewhere.empty()) {
+        trace("P1", answer, onAnswer, 0, "no samples, part of it nowhere");
+        return brokenBecause("Part of the picked face lies on no face where it was picked, and the reference does not "
+                             "record how its features moved; whether the face its name leads to is the one picked "
+                             "cannot be told.");
+    }
     if (againstSense && onAnswer == 0) {
         trace("P1", answer, onAnswer, elsewhere.size(), "an end, the other way");
         return brokenBecause("The element the picked edge's name leads to meets the picked edge, as its features moved "
@@ -1377,6 +1391,15 @@ Resolved Checker::decide(Resolved r) const
                     return brokenBecause("The picked element, as its features moved it, lies by another element than "
                                          "the one its name leads to.");
                 }
+        // A reference made before samples were recorded (its territory points stand in, its features' moves not
+        // known): a face that holds none of its territory where it was picked is not guessed at, whatever its surface
+        // (the motion-unknown rule: never Exact without the pick in place; T-081b round 7, the no-placement runs of the
+        // reviewer's v3 class: a feature moved out of the part, its face over the pick's old place).
+        if (!ref_.samples.known() && kind == SubKind::Face) {
+            trace("P3", answer, onAnswer, 0, "no samples, nothing in place");
+            return brokenBecause("Nothing of the picked face lies where it was picked, and the reference does not "
+                                 "record how its features moved.");
+        }
         const bool single = answer.size() == 1;
         const bool onCarriers = single && known_ && onMappedCarriers(answer.front());
         if (onCarriers && !whereThePickWent(answer.front())) {
