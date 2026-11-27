@@ -54,7 +54,8 @@ set(RAY_SLOW_TESTS
     ray_render_stock_cost     # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
     ray_ui_cam_slow_seek_tests  # the Simulate panel's slow-seek line from a real High run (2.5 GB, about 50 s)
     ray_kernel_directedit_corpus # T-080: the direct-edit rates on the S9 set: 96 to 133 s alone on Windows
-    ray_kernel_directedit_nist) # the same on the wider NIST set (fetch-only, skipped without it): 203 to 244 s
+    ray_kernel_directedit_nist # the same on the wider NIST set (fetch-only, skipped without it): 203 to 244 s
+    ray_kernel_pool_stress) # T-080 round 5: meshing, distances, checks, booleans and imports at once, 120 s
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
@@ -212,7 +213,8 @@ set(RAY_TEST_PROCESSORS
     ray_cam_adaptive_slow=5
     ray_cam_adaptive_concurrency=10
     ray_kernel_directedit_corpus=8 # T-080: 8 workers over the S9 set
-    ray_kernel_directedit_nist=8)
+    ray_kernel_directedit_nist=8
+    ray_kernel_pool_stress=8) # T-080 round 5: 9 threads, most of them busy
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those
 # cases out ("~[wallclock]"); here a test <test>_wallclock runs just them ("[wallclock]"), alone, with the suite's

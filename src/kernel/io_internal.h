@@ -201,10 +201,11 @@ std::mutex& dataExchangeMutex();
 // task was stopped first (the lock is then not held).
 bool lockPolling(std::unique_lock<std::mutex>& lock, IoTask& task);
 
-// The thread team for one BRepMesh call at `chordTol` (mesh.cpp MEMORY CAP): sizes OCCT's default pool to it (the
-// pool keeps that size until a mesh call needs another). Construct it after taking the mesh lock, OUTSIDE guarded():
-// the pool is process-wide and must be idle to be resized, and only mesh calls use it (PLAN.md section 7 rule 4).
-// Never throws; if the pool cannot be resized, team() is 1 (mesh single-threaded).
+// The thread team for one BRepMesh call at `chordTol` (mesh.cpp MEMORY CAP). OCCT's default pool is NEVER resized
+// (mesh.cpp THE DEFAULT POOL: other kernel calls read its size at any time); while the scope lives it holds the pool
+// threads beyond the team, so BRepMesh's launchers find only team() - 1 of them free. Construct it after taking the
+// mesh lock, OUTSIDE guarded() (a structured exception skips destructors inside it). Never throws; if the threads
+// cannot be held, team() is 1 (mesh single-threaded).
 class MeshTeamScope {
 public:
     explicit MeshTeamScope(double chordTol) noexcept;
@@ -215,6 +216,7 @@ public:
 
 private:
     int team_ = 1;
+    std::shared_ptr<void> held_; // an OSD_ThreadPool::Launcher holding the pool threads beyond the team
 };
 
 } // namespace ray::kernel::detail

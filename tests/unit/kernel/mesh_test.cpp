@@ -638,27 +638,37 @@ int processThreads()
 
 TEST_CASE("a mesh call runs on no more threads than its memory cap allows", "[kernel][mesh][threads]")
 {
-    // OSD_Parallel ignores SetNbDefaultThreadsToLaunch, so the cap is the size of OCCT's pool (mesh.cpp MEMORY CAP).
+    // OSD_Parallel ignores SetNbDefaultThreadsToLaunch; the mesh call holds the pool threads beyond its team instead,
+    // and never resizes the pool, which other kernel calls read at any time (mesh.cpp MEMORY CAP, THE DEFAULT POOL).
     const Shape plate = take(testing::makeHolePlate(8, 8)); // 70 faces: more than the pool has threads
     const int coarseTeam = testing::meshConcurrency(0.2);
     const int fineTeam = testing::meshConcurrency(0.01);
     REQUIRE_FALSE(displayBytes(plate, MeshOptions{0.2, 0.35}).empty());
+    const int pool = testing::meshPoolThreads();
     CHECK(testing::lastMeshTeam() == coarseTeam);
-    CHECK(testing::meshPoolThreads() == coarseTeam);
+    CHECK(testing::lastMeshHeldThreads() == pool - coarseTeam);
     const int afterCoarse = processThreads();
     REQUIRE_FALSE(displayBytes(plate, MeshOptions{0.01, 0.35}).empty());
     CHECK(testing::lastMeshTeam() == fineTeam);
-    CHECK(testing::meshPoolThreads() == fineTeam);
+    CHECK(testing::lastMeshHeldThreads() == pool - fineTeam);
+    CHECK(testing::meshPoolThreads() == pool); // not resized
     const int afterFine = processThreads();
-    // The pool started up to coarseTeam - 1 threads of its own for the coarse call and kept them; resizing it to the
-    // fine team ended them and started at most fineTeam - 1 (allow one thread of slack for the rest of the process).
-    if (afterCoarse > 0 && afterFine > 0) {
+    if (afterCoarse > 0 && afterFine > 0) { // no threads were ended or started for the other team
         INFO("threads after the coarse call " << afterCoarse << ", after the fine call " << afterFine);
-        CHECK(afterFine <= afterCoarse - (coarseTeam - fineTeam) + 1);
+        CHECK(afterFine <= afterCoarse + 1);
     }
-    // Back to the coarse size for the next call, and the mesh is the same whatever the team.
+    // The work of a mesh call (OSD_Parallel::For, as BRepMesh runs it) takes part on no more threads than the team.
+    for (const double tol : {0.2, 0.05, 0.01}) {
+        INFO("chord tolerance " << tol);
+        const int used = testing::threadsUnderMeshTeam(tol, 200);
+        CHECK(used >= 1);
+        CHECK(used <= testing::meshConcurrency(tol));
+        if (testing::meshConcurrency(tol) >= 2)
+            CHECK(used >= 2); // and in parallel when the team allows it
+    }
+    // The mesh is the same whatever the team.
     const std::vector<unsigned char> again = displayBytes(plate, MeshOptions{0.2, 0.35});
-    CHECK(testing::meshPoolThreads() == coarseTeam);
+    CHECK(testing::meshPoolThreads() == pool);
     const ParallelSwitch off(false);
     CHECK(displayBytes(plate, MeshOptions{0.2, 0.35}) == again);
 }

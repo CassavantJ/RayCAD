@@ -13,13 +13,19 @@
 // Amended by T-080 (direct edits): comments only, no declaration changed. What each direct edit does with a hole, a
 // fillet out of a run and nothing to merge; which faces of the internal tool body are Generated; that direct edits run
 // on a kernel thread and are abandoned on cancel; what blendRun returns for a face that is not a blend.
+// Amended by T-080 round 5: comments only: calls on the same Shape at once are safe; OCCT's pool is never resized.
 //
 // Contract:
 //  - Shape is an immutable value handle. Every operation returns a new Shape plus a ShapeHistory.
-//  - Every function is safe to call from any worker thread. Meshing functions (tessellate,
-//    triangulateExact) take ONE PROCESS-WIDE lock: OCCT 8.0.1 BRepMesh crashed and silently dropped
-//    faces when two shapes were meshed at once (spike S3). Inside the lock OCCT's InParallel is ON
-//    (bit-identical to single-threaded in S3) and the number of faces meshed at once is capped.
+//  - Every function is safe to call from any worker thread, also on the same Shape at the same time (a
+//    Shape is only read; operations that write into OCCT shapes work on private copies. The one write OCCT
+//    makes to a shared Shape is its bookkeeping flag "Free" set to false when BRepCheck or a builder adds
+//    a sub-shape to a container of its own: the value every sub-shape of a body already has; ThreadSanitizer
+//    with an instrumented OCCT reports it, and nothing the kernel computes reads it). Meshing functions
+//    (tessellate, triangulateExact) take ONE PROCESS-WIDE lock: OCCT 8.0.1 BRepMesh crashed and silently
+//    dropped faces when two shapes were meshed at once (spike S3). Inside the lock OCCT's InParallel is ON
+//    (bit-identical to single-threaded in S3) and the number of faces meshed at once is capped by holding
+//    back threads of OCCT's default pool, which is never resized (other calls read its size at any time).
 //  - Every function catches Standard_Failure (and structured exceptions on Windows) and returns
 //    ErrorCode::KernelFailure.
 //  - Every MODIFYING function validates its result (BRepCheck, closed solid, volume changed in the
