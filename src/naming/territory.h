@@ -186,6 +186,12 @@ bool piecesFitEvidence(const ElementMap& map, const kernel::Shape& shape, const 
 // edge 83: a stretch of a moved cut's edge that lay inside a bore when it was picked), and the resolver answers Broken
 // when there is one. Dropped only while some piece is kept. All pieces when no feature of the pick was moved. Never
 // throws.
+// Of the face pieces of a Split, without the stray ones: a piece under a hundredth of the largest piece's area that
+// holds none of the picked territory (T-081b round 6, the reviewer's macOS directedit 4:31 face 23: a 0.15 mm2 piece of
+// a resized cut's arc wall below an inserted cut, holding none of the resized pick, beside the 337 mm2 wall). All
+// pieces when none is stray or every piece would be. Never throws.
+std::vector<kernel::SubId> withoutStrayPieces(const ElementMap& map, const kernel::Shape& shape,
+                                              const std::vector<kernel::SubId>& pieces, const TopoRef& ref);
 // A Merged answer of one face against the pick's feature's move (T-081b round 6, T-081a holdout2 4:6 face 31): Broken
 // when the feature moved (TopoRef::placements) and none of the pick carried by the move lands on the face, or, for a
 // reference made before placements to a face of a feature that has one now, when the face lies mostly away from the

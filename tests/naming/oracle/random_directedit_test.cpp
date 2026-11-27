@@ -3142,3 +3142,31 @@ TEST_CASE("New piece (round 6): the rule fires on the scripted sorted 17:32, and
     CHECK(isWrong(looked[0].probes[1].verdict));
     CHECK(isWrong(looked[0].probes[2].verdict));
 }
+
+TEST_CASE("Crossing slide (round 6, review3 0:45 edge 45): a moved cut's wall slides its crossing along the cut's "
+          "direction",
+          "[naming][directedit-replays]")
+{
+    // The reviewer's block-3 finding, as a fixed script (every platform): cut R4 moved by its width, (2.383, 10.317,
+    // -2.383); its wall s1, which contains R4's direction, meets the import face x 80 on a line. The crossing slides
+    // 11.365 mm along that line (the move, then along R4's direction onto x 80), not the move's projection on it
+    // (10.365): the moved pick is y 15.232..25.549, edges 42 and 53 (53 ends exactly at the moved far end). Split of
+    // both is right; the incomplete Split of 42 alone, and 53 alone, are WRONG. With the slide off (crossing-slide) the
+    // map is 1 mm short and Split of both is judged wrong, Split of 42 alone right.
+    const auto [baseline, edited] = pinnedScripts("review3 0:45");
+    const Vec3 on42{80.0, 17.1997, 29.4774}, on53{80.0, 25.2026, 25.7802};
+    const std::vector<Probe> probes{
+        {Answer::Split, {}, -1, {on42, on53}}, {Answer::Split, {}, -1, {on42}}, {Answer::Exact, {}, -1, {on53}}};
+    const std::vector<Looked> looked =
+        replayScriptedAndLook(0, baseline, edited, SubKind::Edge, Vec3{80.0, 10.0738, 32.7695}, 11.365, probes);
+    REQUIRE(looked.size() == 1);
+    REQUIRE(looked[0].probes.size() == 3);
+    for (std::size_t i = 0; i < 3; ++i) {
+        INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+        CHECK(looked[0].probed[i].rfind("asked;", 0) != 0);
+    }
+    CHECK_FALSE(isWrong(looked[0].judgement.verdict));
+    CHECK(looked[0].probes[0].verdict == Verdict::Correct);
+    CHECK(isWrong(looked[0].probes[1].verdict));
+    CHECK(isWrong(looked[0].probes[2].verdict));
+}

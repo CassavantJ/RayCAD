@@ -3085,12 +3085,22 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
             copy = off <= kAnchorTolerance;
         }
         if (copy) {
+            // Carried onto a's plane along its normal, after each move of the description's sweeps too: a face moved
+            // within its own plane with its feature lies there only after the move (T-081b round 6, the reviewer's
+            // macOS [random] 2:2 face 14: a wall moved by (1.858, -3.371, 0) in its own plane, overlap 1.000 after
+            // the move). Without a move: the move's normal part only, as before.
             const Vec3 on = a.pts.front();
-            ElemSamples carried = P;
-            for (Vec3& p : carried.pts)
-                p = sub(p, mul(n, dot(sub(p, on), n)));
-            if (shareOn(carried, a, SubKind::Face) >= 0.5) // most of it: the part clips the copy where it is now
-                return true;
+            std::vector<Vec3> inPlane = mutated("copy-move") ? std::vector<Vec3>{} : sweepMoves(pick, now);
+            inPlane.insert(inPlane.begin(), Vec3{0, 0, 0});
+            for (const Vec3& d : inPlane) {
+                ElemSamples carried = P;
+                for (Vec3& p : carried.pts) {
+                    p = add(p, d);
+                    p = sub(p, mul(n, dot(sub(p, on), n)));
+                }
+                if (shareOn(carried, a, SubKind::Face) >= 0.5) // most of it: the part clips the copy where it is now
+                    return true;
+            }
         }
     } else {
         double wa = 0, wp = 0;
@@ -3145,6 +3155,20 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
 }
 
 Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
+
+// THE STRUCTURAL CHECK's verdict on one element of an answer (judgeAnswer), shared with the expectation (expect) so
+// that the two agree by construction (T-081b round 6: the reviewer's macOS [random] 2:2 edge 58, an oracle self-check
+// failure where expect's per-piece filter kept a piece the judge's structural check rejected). `single`: the answer is
+// Exact or Repaired, the element alone; otherwise a piece of a flagged answer, which is not its piece only when it
+// holds none of the pick on ground that was not the pick's to grow into: beyond a boundary the pick had (inside a
+// pick-time sweep) or another element's (review holdout 1:39 edge 83). Slivers of a flagged answer are not judged.
+bool structurallyNotPiece(const ElemSamples& es, const PickRecord& pick, const Expectation& x, const Owners& now,
+                          bool single)
+{
+    if ((!single && sliver(es, x.kind)) || holdsPickedGround(es, pick, x, x.kind, now))
+        return false;
+    return single || foreignGround(es, pick, x.kind);
+}
 // Is element `now` of `smp` bounded as element `was` of `baseline` was: for a face, its own plane facing the same way
 // (or its cylinder on the same side); for an edge or vertex, every planar face beside `was` (with a known side) matched
 // by a planar face beside `now` facing the same way, and every cylinder beside it by one on the same side?
@@ -3365,6 +3389,27 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             const Answer best = kept.elems.size() == 1 ? (kept.merged ? Answer::Merged : Answer::Exact) : Answer::Split;
             if (judgeAnswer(y, pick, now, smp, best, kept.elems).verdict == Verdict::Correct)
                 x = y;
+        }
+    }
+    // The structural check, last, with the judge's own predicate: no piece the judge would reject stays expected
+    // (T-081b round 6: expectation and judge agree by construction; an expectation left empty by it is "gone").
+    if (!x.expected.elems.empty() && x.noAnchor.empty() && structuralScope(pick, now, x) &&
+        !mutated("structural-agree")) {
+        const bool single = x.expected.elems.size() == 1 && !x.expected.merged;
+        TruthEval kept;
+        for (const std::uint32_t e : x.expected.elems) {
+            const bool judged =
+                e < smp.of(x.kind).size() && !(single ? mutated("structural") : mutated("structural-pieces"));
+            if (!judged || !structurallyNotPiece(smp.of(x.kind)[e], pick, x, now, single))
+                kept.elems.push_back(e);
+        }
+        if (kept.elems.size() < x.expected.elems.size()) {
+            for (const std::uint32_t e : x.expected.partial)
+                if (std::binary_search(kept.elems.begin(), kept.elems.end(), e))
+                    kept.partial.push_back(e);
+            kept.merged = !kept.partial.empty();
+            x.structuralGone = kept.elems.empty();
+            x.expected = kept;
         }
     }
     return x;
@@ -4654,16 +4699,7 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
         for (const std::uint32_t e : X) {
             if (e >= smp.of(x.kind).size() || (!single && mutated("structural-pieces")) || (single && X.size() != 1))
                 continue;
-            if ((!single && sliver(smp.of(x.kind)[e], x.kind)) ||
-                holdsPickedGround(smp.of(x.kind)[e], pick, x, x.kind, now))
-                continue;
-            // A piece of a flagged answer that holds none of the pick is called another element only on ground that was
-            // not the pick's to grow into: beyond a boundary the pick had (inside a pick-time sweep) or another
-            // element's
-            // (review holdout 1:39 edge 83: a stretch of a moved cut's edge that lay inside a bore when it was picked).
-            // New
-            // ground the pick's own carriers reached is not judged here.
-            if (!single && !foreignGround(smp.of(x.kind)[e], pick, x.kind))
+            if (!structurallyNotPiece(smp.of(x.kind)[e], pick, x, now, single))
                 continue;
             j.verdict = x.expected.elems.empty() ? Verdict::WrongGhost : Verdict::WrongOther;
             j.unjudged = false;

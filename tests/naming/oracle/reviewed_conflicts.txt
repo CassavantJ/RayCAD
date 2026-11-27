@@ -4,3 +4,5 @@
 # reviewed only when it matches the signature, harness.h ReviewedEntry; entries whose answer no longer occurs were
 # dropped). The key is printed by the test ("CONFLICT <key>: ...").
 # The tests fail on any conflict that is not listed here.
+# T-081b round 6: the reviewer's macOS probe, by answer (see reviewed_unjudged.txt).
+directedit-sorted raycad-synthetic/keyway_tslot_1.stp #20|face 0 => Split face(23.9426 -0.0242 12.5000 0.0062) face(40.2423 -0.1123 -0.3476 5751.7360) => (macOS, the reviewer's ruling) face 24 is a 0.0062 mm2 sliver of the shaft at the seam (x 23.83..24.00), lying wholly on the pick in place, face 0 the rest: Split of both is right. The sliver is a healing artefact of delete_hole on macOS (for the kernel owner).

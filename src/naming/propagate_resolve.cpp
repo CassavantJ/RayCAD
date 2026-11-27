@@ -868,6 +868,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
         // suggestion): neither is ever part of the pick (new ground past its old end is not the pick, another's
         // ground is not its to take). Such pieces are left out and the pieces that hold the moved pick answered,
         // flagged (Split, however many are left).
+        elements = withoutStrayPieces(map, shape, elements, ref); // (a stray sliver of new ground: macOS 4:31 face 23)
         if (std::vector<SubId> kept = piecesInsideMovedPick(map, shape, elements, ref); kept.size() < elements.size()) {
             if (kept.empty())
                 return broken("The picked element came apart, and no piece lies where it was; whether its feature "
@@ -921,6 +922,7 @@ std::optional<Resolved> resolveImpl(const ElementMap& map, const kernel::Shape& 
                         continue; // moved, or new ground outside the outline: cannot be told (as above)
                     elements = inside;
                 }
+                elements = withoutStrayPieces(map, shape, elements, ref); // (as above)
                 if (std::vector<SubId> kept = piecesInsideMovedPick(map, shape, elements, ref);
                     kept.size() < elements.size()) {
                     if (kept.empty())

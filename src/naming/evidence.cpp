@@ -750,7 +750,10 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
         // A face whose fingerprint still matches the hint is checked too when it holds none of its territory: a patch
         // of the same surface the size of the pick passes the fingerprint (T-081b round 6, review block 3 18:23 face
         // 6: a 0.2 mm2 strip of a boss's top cap, cut away by a moved hole; the cap's name on another strip of it).
-        if (map.fingerprintOf(element).matches(ref.hint) && (own > 0 || element.kind != SubKind::Face))
+        // Edges and vertices too (T-081b round 6, the reviewer's macOS holdout3 4:7 edge 26: a boss moved by its own
+        // width, its other wall standing where the trailing one was; the name on the same ellipse running the other
+        // way from the pick's end point, holding none of the pick, its fingerprint matching): the checks below decide.
+        if (map.fingerprintOf(element).matches(ref.hint) && own > 0)
             return std::nullopt;
         bool tookOther = false;
         for (const PickNeighbour& n : ref.pickNeighbours)
@@ -1184,6 +1187,28 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
         // none is answered (empty: the caller answers Broken).
         if (placedNow)
             return kept.size() == pieces.size() ? pieces : std::vector<SubId>{};
+        return kept.empty() ? pieces : kept;
+    } catch (...) {
+        return pieces;
+    }
+}
+
+std::vector<SubId> withoutStrayPieces(const ElementMap& map, const kernel::Shape& shape,
+                                      const std::vector<SubId>& pieces, const TopoRef& ref)
+{
+    try {
+        if (pieces.size() < 2 || pieces.front().kind != SubKind::Face || !ref.territory.known())
+            return pieces;
+        double largest = 0;
+        for (const SubId& p : pieces)
+            largest = std::max(largest, static_cast<double>(map.fingerprintOf(p).qArea));
+        std::vector<SubId> kept;
+        for (const SubId& p : pieces) {
+            const bool small = static_cast<double>(map.fingerprintOf(p).qArea) < 0.01 * largest;
+            if (small && Probe(shape, p).count(ref.territory) == 0)
+                continue;
+            kept.push_back(p);
+        }
         return kept.empty() ? pieces : kept;
     } catch (...) {
         return pieces;
