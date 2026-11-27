@@ -782,6 +782,35 @@ TEST_CASE("an extrude's references record its placement, and the JSON carries it
     CHECK(again.state == naming::ResolveState::Exact);
 }
 
+TEST_CASE("a feature moved by editing its sketch has another placement, and its references follow it",
+          "[doc][parametric]")
+{
+    // T-081b round 7, the reviewer's product-path gap: the placement was the sketch plane alone, so a profile moved
+    // within its sketch (the usual way to move a feature) kept it and the resolver was told "not moved". Now the
+    // placement is the sketch plane at the centre of the profile's box (naming::sweepPlacement), so the move shows.
+    Model m;
+    block(m);
+    BuildResultPtr b = m.build();
+    const auto side = findFace(bodyOf(*b, 'b').shape, [](const kernel::SurfaceInfo& s) {
+        return s.type == kernel::SurfaceType::Plane && near(s.centroid.x, 40, 1e-3);
+    });
+    REQUIRE(side);
+    const naming::TopoRef ref = refTo(*b, 'b', *side);
+    REQUIRE(ref.placements.size() == 1);
+    m.run(editFeature("sketch", 2, sketchProps(kXY, SketchJson().rect(1, 10, 0, 50, 20))));
+    b = m.build();
+    const BuiltBody& body = bodyOf(*b, 'b');
+    const naming::FeaturePlacement* now = body.map.placement(ref.placements[0].feature);
+    REQUIRE(now != nullptr);
+    CHECK_FALSE(naming::samePlacement(*now, ref.placements[0])); // moved by 10 along x
+    const naming::Resolved r = resolveOn(*b, 'b', ref);
+    REQUIRE(r.state == naming::ResolveState::Exact);
+    REQUIRE(r.elements.size() == 1);
+    const auto info = kernel::surfaceInfo(body.shape, r.elements[0]);
+    REQUIRE(info);
+    CHECK(info->centroid.x == Catch::Approx(50).margin(1e-6)); // the moved side
+}
+
 TEST_CASE("the size of the pick-time evidence in a saved document (printed)", "[.toporef-size]")
 {
     // The document of golden/old_toporef built again with references made now (with evidence): the storage objects'

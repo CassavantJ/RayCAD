@@ -67,18 +67,16 @@ Result<std::shared_ptr<const SketchArtifact>> sketchFor(const Feature& self, Reb
 
 // Sweeps every region with `sweepOne` and combines the tools with the target as the operation says, naming each
 // step. `role` is the naming role ("extrude", "revolve"). `placement`, when given, is where the feature placed what it
-// makes (naming.h NamingInput::placement): the extrude passes its sketch's plane (sweepPlacement), so that a face of a
-// moved extrude is followed by the move itself. The hole feature passes its sketch's plane too (hole_feature.cpp); the
-// revolve passes none: the naming oracle's harness builds no revolve, and it gives the resolver exactly what the
-// document gives, feature kind by feature kind (T-081b round 6; tests/unit/doc s4_document_test "[s4doc-parity]").
+// makes (naming.h NamingInput::placement): the extrude passes naming::sweepPlacement of its sketch plane and profile,
+// so that a face of a moved extrude is followed by the move itself. The hole feature passes its sketch's plane too
+// (hole_feature.cpp); the revolve passes none: the naming oracle's harness builds no revolve, and it gives the resolver
+// exactly what the document gives, feature kind by feature kind (T-081b round 6; tests/unit/doc s4_document_test
+// "[s4doc-parity]").
 using SweepOne = std::function<Result<kernel::SweepResult>(const kernel::Profile&, JobContext&)>;
 Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const SweepCommon& props,
                                  const kernel::Plane& plane,
                                  const std::vector<std::vector<kernel::ProfileLoop>>& regions, std::string_view role,
                                  const SweepOne& sweepOne, const std::optional<Xform>& placement = std::nullopt);
-
-// A sketch plane as a rigid transform, plane to model (rows x, y, normal, origin; naming.h NamingInput::placement).
-Xform sweepPlacement(const kernel::Plane& plane);
 
 // Schema fragments shared by both.
 std::string regionsSchema();

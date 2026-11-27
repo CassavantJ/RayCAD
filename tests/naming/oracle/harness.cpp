@@ -35,13 +35,6 @@ naming::TopoRef withoutOutlineIfAsked(naming::TopoRef ref)
     return ref;
 }
 
-// A sweep's sketch frame as a rigid transform, frame to model (naming.h NamingInput::placement).
-Xform placementOf(const Frame& f)
-{
-    const Vec3 y = f.yd();
-    return Xform{{f.xd.x, y.x, f.n.x, f.o.x, f.xd.y, y.y, f.n.y, f.o.y, f.xd.z, y.z, f.n.z, f.o.z}};
-}
-
 kernel::ProfileLoop toKernel(const Loop& loop)
 {
     kernel::ProfileLoop out;
@@ -257,9 +250,14 @@ bool Builder::sweep(const Feature& f)
             failed_.push_back(f.id + " loop " + std::to_string(loop.id) + ": " + tool.error().message);
             continue;
         }
-        // The sweep's placement (naming.h NamingInput::placement): its sketch frame, as the document's extrude gives.
+        // The sweep's placement (naming.h NamingInput::placement): exactly what the document gives (T-081b round 7:
+        // naming::sweepPlacement, its sketch frame at the centre of its profile's box, all its loops).
         naming::NamingInput toolInput{fid, f.role, {}, nullptr, &tool->op.shape, tool->origins};
-        toolInput.placement = placementOf(f.frame);
+        std::vector<kernel::ProfileLoop> all;
+        for (const Loop& l : f.loops)
+            all.push_back(toKernel(l));
+        toolInput.placement = naming::sweepPlacement(kernel::Plane{f.frame.o, f.frame.n, f.frame.xd},
+                                                     std::span<const kernel::ProfileLoop>(all));
         auto toolNames = naming::propagate(toolInput);
         if (!toolNames) {
             failed_.push_back(f.id + ": naming the tool failed: " + toolNames.error().message);

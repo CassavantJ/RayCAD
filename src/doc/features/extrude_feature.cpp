@@ -236,8 +236,13 @@ public:
             }
             kernel::Plane plane = (*artifact)->plane;
             // The sketch's plane, before through-all or symmetric shift it along the normal: the frame the profile
-            // is drawn in.
-            const Xform placement = sweepPlacement(plane);
+            // is drawn in, at the centre of the profile's box in it (naming::sweepPlacement, the naming oracle's
+            // harness calls the same: a profile moved or resized in its sketch is another placement).
+            std::vector<kernel::ProfileLoop> loops;
+            for (const std::vector<kernel::ProfileLoop>& region : *regions) {
+                loops.insert(loops.end(), region.begin(), region.end());
+            }
+            const Xform placement = naming::sweepPlacement(plane, std::span<const kernel::ProfileLoop>(loops));
             double signedDistance = props->reverse ? -*distance : *distance;
             if (props->throughAll) {
                 // Through the whole target as it is now, so it stays through-all after edits upstream.
@@ -446,15 +451,6 @@ Result<std::shared_ptr<const SketchArtifact>> sketchFor(const Feature& self, Reb
                       featureLabel(self) + ": its sketch '" + featureLabel(**feature) + "' did not build.");
     }
     return artifact;
-}
-
-Xform sweepPlacement(const kernel::Plane& plane)
-{
-    const Vec3 x = plane.xDir;
-    const Vec3 y = planeYDir(plane);
-    const Vec3 n = plane.normal;
-    const Vec3 o = plane.origin;
-    return Xform{{x.x, y.x, n.x, o.x, x.y, y.y, n.y, o.y, x.z, y.z, n.z, o.z}};
 }
 
 Result<FeatureOutput> buildSweep(const Feature& self, RebuildContext& ctx, const SweepCommon& props,

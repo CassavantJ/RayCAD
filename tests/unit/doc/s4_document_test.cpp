@@ -1030,11 +1030,17 @@ TEST_CASE("harness and document give the resolver the same placements, feature k
             continue;
         }
         ++compared;
-        const bool inDocument = body->map.placement(op->second) != nullptr;
-        const bool inHarness = harness.map().placement(o::featureIdOf(f.id)) != nullptr;
-        INFO(f.id << " (" << f.role << "): document " << inDocument << ", harness " << inHarness);
-        CHECK(inDocument == inHarness);
-        placed += inDocument ? 1 : 0;
+        const ray::naming::FeaturePlacement* doc = body->map.placement(op->second);
+        const ray::naming::FeaturePlacement* own = harness.map().placement(o::featureIdOf(f.id));
+        INFO(f.id << " (" << f.role << "): document " << (doc != nullptr) << ", harness " << (own != nullptr));
+        CHECK((doc != nullptr) == (own != nullptr));
+        if (doc != nullptr && own != nullptr) {
+            // The same value (T-081b round 7: one function computes it for both, naming::sweepPlacement).
+            ray::naming::FeaturePlacement same = *doc;
+            same.feature = own->feature;
+            CHECK(ray::naming::samePlacement(same, *own));
+        }
+        placed += doc != nullptr ? 1 : 0;
     }
     CHECK(compared >= 6);
     CHECK(placed >= 3); // the base, the sweeps and the holes are placed; blends are not

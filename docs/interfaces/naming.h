@@ -20,6 +20,7 @@
 #include "kernel.h"
 #include <array>
 #include <optional>
+#include <span>
 #include <string_view>
 
 namespace ray::naming {
@@ -66,6 +67,13 @@ struct FeaturePlacement {
 FeaturePlacement placementOf(FeatureId feature, const Xform& frameToModel);
 // Do two placements put the feature in the same place: rotations within 1e-6 per entry, translations within 1e-3 mm?
 bool samePlacement(const FeaturePlacement& a, const FeaturePlacement& b);
+// A sketched feature's placement (NamingInput::placement; T-081b round 7): its sketch plane (x along the plane's x
+// direction, z along its normal), its origin moved to the centre of the box of its profile in the plane, so that a
+// profile moved or resized within its sketch shows as another placement, as a moved sketch does. `loops`: the curves'
+// points as kernel::ProfileCurve gives them (a circle: its centre and radius); `points`: reference points in the plane
+// (a hole feature's positions). The document and the naming oracle's harness both call these.
+Xform sweepPlacement(const kernel::Plane& plane, std::span<const kernel::ProfileLoop> loops);
+Xform sweepPlacement(const kernel::Plane& plane, std::span<const Vec2> points);
 
 // Per-body table: every current sub-shape of the body's Shape has ONE OR MORE names
 // (several after same-domain unification merged elements; the merged element carries every input name).

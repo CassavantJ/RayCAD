@@ -712,6 +712,13 @@ private:
         naming::ElementMap map = ctx.mapOf(props->target);
         const kernel::Plane& plane = (*artifact)->plane;
         const Vec3 drill = props->flip ? plane.normal : vmul(plane.normal, -1.0);
+        // The feature's placement: its sketch plane at the centre of the box of its positions (naming::sweepPlacement,
+        // as the naming oracle's harness gives its holes).
+        std::vector<Vec2> at;
+        for (const HolePoint& hp : *points) {
+            at.push_back(hp.at);
+        }
+        const Xform holePlacement = naming::sweepPlacement(plane, std::span<const Vec2>(at));
         const Box3 box = kernel::bounds(shape);
 
         FeatureOutput out;
@@ -778,7 +785,7 @@ private:
             // an extrude's (T-081b round 6: the naming oracle's holes are sweeps with that placement; the document's
             // must get what the oracle's get).
             naming::NamingInput toolInput{f.id, "hole", {}, nullptr, &tool->op.shape, tool->origins};
-            toolInput.placement = sweepPlacement(plane);
+            toolInput.placement = holePlacement;
             auto named = naming::propagate(toolInput);
             if (!named) {
                 return failed(ErrorCode::Internal, where + ": naming the hole faces failed: " + named.error().message);

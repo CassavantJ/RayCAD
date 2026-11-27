@@ -505,6 +505,40 @@ FeaturePlacement placementOf(FeatureId feature, const Xform& frameToModel)
     return p;
 }
 
+Xform sweepPlacement(const kernel::Plane& plane, std::span<const Vec2> points)
+{
+    double lo[2] = {0, 0}, hi[2] = {0, 0};
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const double v[2] = {points[i].x, points[i].y};
+        for (int k = 0; k < 2; ++k) {
+            lo[k] = i == 0 ? v[k] : std::min(lo[k], v[k]);
+            hi[k] = i == 0 ? v[k] : std::max(hi[k], v[k]);
+        }
+    }
+    const double u = 0.5 * (lo[0] + hi[0]), w = 0.5 * (lo[1] + hi[1]);
+    const Vec3 x = plane.xDir;
+    const Vec3 n = plane.normal;
+    const Vec3 y{n.y * x.z - n.z * x.y, n.z * x.x - n.x * x.z, n.x * x.y - n.y * x.x};
+    const Vec3 o{plane.origin.x + x.x * u + y.x * w, plane.origin.y + x.y * u + y.y * w,
+                 plane.origin.z + x.z * u + y.z * w};
+    return Xform{{x.x, y.x, n.x, o.x, x.y, y.y, n.y, o.y, x.z, y.z, n.z, o.z}};
+}
+
+Xform sweepPlacement(const kernel::Plane& plane, std::span<const kernel::ProfileLoop> loops)
+{
+    std::vector<Vec2> points;
+    for (const kernel::ProfileLoop& loop : loops)
+        for (const kernel::ProfileCurve& c : loop.curves) {
+            if (c.kind == kernel::ProfileCurve::Kind::Circle && !c.pts.empty()) {
+                points.push_back(Vec2{c.pts[0].x - c.radius, c.pts[0].y - c.radius});
+                points.push_back(Vec2{c.pts[0].x + c.radius, c.pts[0].y + c.radius});
+                continue;
+            }
+            points.insert(points.end(), c.pts.begin(), c.pts.end());
+        }
+    return sweepPlacement(plane, std::span<const Vec2>(points));
+}
+
 bool samePlacement(const FeaturePlacement& a, const FeaturePlacement& b)
 {
     for (std::size_t i = 0; i < 12; ++i) {
