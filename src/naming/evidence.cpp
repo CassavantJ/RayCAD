@@ -911,9 +911,9 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
             // pick's features not moved (TopoRef::placements: all still), or none recorded (a feature without a
             // placement cannot slide along its own surface: a direct edit moves a face off it): the picked ground is
             // gone from this surface, and the face is another patch of it (T-081b round 6, review block 3 18:23 face 6:
-            // a strip of a boss's top cap that a moved hole cut away; the cap's name on another strip, the boss where it
-            // was). A reference made before placements, to a face of a feature that has one now: the feature may have
-            // slid along the surface, and the face must be a rigid copy of the pick (below).
+            // a strip of a boss's top cap that a moved hole cut away; the cap's name on another strip, the boss where
+            // it was). A reference made before placements, to a face of a feature that has one now: the feature may
+            // have slid along the surface, and the face must be a rigid copy of the pick (below).
             bool onItsSurface = info.has_value() && n > 0;
             for (const auto& q : ref.territory.points) {
                 const Vec3 p = fromQuanta(q);
@@ -927,8 +927,9 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                         placedNow = placedNow || map.placement(record->origin) != nullptr;
             if (!carried && onItsSurface && move.kind != KnownMove::Kind::Moved &&
                 move.kind != KnownMove::Kind::Several && !placedNow)
-                return brokenBecause("The picked face's place on its surface is gone, and the face its name leads to is "
-                                     "another patch of that surface.");
+                return brokenBecause(
+                    "The picked face's place on its surface is gone, and the face its name leads to is "
+                    "another patch of that surface.");
             if (!carried && onItsSurface && placedNow) {
                 // Slid along its own surface, perhaps: only a rigid copy of the pick (the same area and sorted extents,
                 // each within a hundredth) can be it.

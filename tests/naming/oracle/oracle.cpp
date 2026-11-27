@@ -30,8 +30,9 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 // structural-edges (the structural check on edges and vertices), structural-pieces (on each piece of a flagged
 // answer), copy-position (the rigid-copy exemption's position test: off, any congruent face passes, as in round 3)
 // and rotation-exact (a turned feature's map counted as exact); round 5: new-piece (new pieces are never required) and
-// held-in-place (an element where the pick was, its owners on their carriers, is never gone). For checking the pins
-// only; never set in a gate run.
+// held-in-place (an element where the pick was, its owners on their carriers, is never gone); round 6: crossing-slide
+// (a crossing of a moved sweep's wall with a plane that stayed slides along the sweep's direction) and held-bounds
+// (held in place only if bounded as the pick was). For checking the pins only; never set in a gate run.
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
 
@@ -3201,9 +3202,9 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             if (N[e].pts.empty() || N[e].type != P.type || boxesApart(P, N[e]))
                 continue;
             bool there = x.kind == SubKind::Vertex
-                                   ? !N[e].nodes.empty() && !P.nodes.empty() &&
-                                         norm(sub(N[e].nodes.front(), P.nodes.front())) <= kExactVertexTolerance
-                                   : shareOn(P, N[e], x.kind) >= 0.9 && shareOn(N[e], P, x.kind) >= 0.9;
+                             ? !N[e].nodes.empty() && !P.nodes.empty() &&
+                                   norm(sub(N[e].nodes.front(), P.nodes.front())) <= kExactVertexTolerance
+                             : shareOn(P, N[e], x.kind) >= 0.9 && shareOn(N[e], P, x.kind) >= 0.9;
             // And bounded as the pick was (T-081b round 6, the reviewer's negative: a through hole covered by a boss
             // turns its top rim, the top face's edge with the hole's wall, into the concave corner of a blind hole's
             // ceiling on the same curve; the owners are on their carriers, but the face beside it now faces the other

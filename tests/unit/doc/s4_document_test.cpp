@@ -1007,8 +1007,8 @@ TEST_CASE("the S4 part with hole features: no reference resolves to a wrong elem
 TEST_CASE("harness and document give the resolver the same placements, feature kind by feature kind",
           "[s4doc-parity][doc]")
 {
-    // T-081b round 6, item 10 (the lead's decision): the naming oracle's harness must give the resolver exactly what the
-    // document gives. The S4 part with hole features is built both ways from one script: as document features (an
+    // T-081b round 6, item 10 (the lead's decision): the naming oracle's harness must give the resolver exactly what
+    // the document gives. The S4 part with hole features is built both ways from one script: as document features (an
     // extrude per sweep, a hole feature per drilled sweep, fillets and chamfers) and as the harness's script. For every
     // script feature, the document's element map holds a placement exactly when the harness's does.
     Env env(2);

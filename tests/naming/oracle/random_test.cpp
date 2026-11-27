@@ -1333,7 +1333,9 @@ TEST_CASE("Oracle (holdout4 4:1): where a moved hole's seam meets a face, the on
         });
     REQUIRE(looked.size() == 1);
     INFO(looked[0].crossing << looked[0].noAnchor);
-    CHECK(looked[0].crossing.compare(0, 5, "seam:") == 0);
+    // (Since round 6 the map slides the vertex along the moved hole's axis onto the top face, where the seam now meets
+    // it, and anchors it there; before, rule (a) found it.)
+    CHECK((looked[0].crossing.compare(0, 5, "seam:") == 0 || looked[0].crossing.empty()));
     CHECK(looked[0].answer == Answer::Exact);
     CHECK(looked[0].judgement.verdict == Verdict::Correct);
     CHECK(isWrong(looked[0].other.verdict));

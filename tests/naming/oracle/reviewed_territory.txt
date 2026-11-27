@@ -3,5 +3,3 @@
 # reviewed only when it matches the signature, harness.h ReviewedEntry; entries whose answer no longer occurs were
 # dropped). The key is printed by the test ("ACCEPTED <key>: ...").
 # The tests fail on any acceptance that is not listed here.
-directedit-sorted nist-d2mi/827-9999-905.stp #3|edge 8 => Split edge(1.9932 0.3939 -6.6599 0.7975) => (round 5, without placements; NEW GROUND) R2 moved by its width; the pick is the line where I/i7 meets R2's end cap (z -6.66), which stayed: answer 8 is the stretch of it still there (y 0..0.78, 40 % of the pick in place); the piece left out, 6, is 0.05 mm long at y -0.05..0 and lies wholly on another baseline edge (b5), none of the pick on it: Split {8} is right.
-directedit-sorted nist-d2mi/827-9999-905.stp #3|edge 15 => Split edge(2.7035 0.5645 -6.6599 1.1446) => (round 5, without placements; NEW GROUND) as edge 8, on I/i2: answer 13 is the stretch of the pick still there (y 0..1.11, 37 % of the pick in place, all of it on the pick); the piece left out, 17 (y -1.06..0), holds none of the pick in place and lies on ground no baseline edge held (R2's new place): new ground, never required: Split {13} is right.

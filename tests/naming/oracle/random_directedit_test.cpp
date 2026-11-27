@@ -1407,6 +1407,14 @@ TEST_CASE("Review block 2: 1,000 randomised sequences with direct edits, the rev
     runHoldout("Direct-edit review block 2", 0x93E5A0C4F1170000ull, "directedit-review2 ");
 }
 
+TEST_CASE("Review block 3: 1,000 randomised sequences with direct edits, the reviewer's third seed",
+          "[random-directedit-review3]")
+{
+    // The reviewer's frozen block 3 (seed 0x4C27E9B3D6A10000, run on oracle-freeze-3: two silent wrong answers, both
+    // fixed in round 6, its cases reproduced from the seed first), kept as a regular block: gated as the holdouts.
+    runHoldout("Direct-edit review block 3", 0x4C27E9B3D6A10000ull, "directedit-review3 ");
+}
+
 TEST_CASE("Direct-edit block of any seed: RAYCAD_NAMING_BLOCK_SEED=<hex>, choices by geometry",
           "[.random-directedit-seed]")
 {
@@ -2181,7 +2189,8 @@ void replayCases(bool keyOnly)
         {0, 19, k + "block_blind_holes_1.stp #19|face 6", Answer::Exact, Verdict::Correct, "new-territory piece"},
         // Territory of another element counts only on the description's surfaces: an arc tangent to the picked line, a
         // floor a wall stands on, a hole wall another hole crosses.
-        {8, 6, k + "l_bracket_1.stp #6|edge 26", Answer::Exact, Verdict::Correct, "tangent arc"},
+        // (Merged since round 6: the arc grew along a face that now carries another face's names too.)
+        {8, 6, k + "l_bracket_1.stp #6|edge 26", Answer::Merged, Verdict::Correct, "tangent arc"},
         {15, 25, k + "slot_through_1.stp #25|face 10", Answer::Exact, Verdict::Correct, "wall on a floor"},
         {7, 47, k + "keyway_tslot_1.stp #47|face 14", Answer::Exact, Verdict::Correct, "crossing hole walls"},
         // Faces bordering a bore closed down run on over the ring between the radii.
@@ -2979,16 +2988,27 @@ TEST_CASE("debug: replay one pinned script", "[.debug-scripted]")
     opt.edited = &s1;
     const bool all = std::getenv("RAYCAD_PIN_ALL") != nullptr;
     setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved&, const RefResult& rr, const Owners&,
-                     const Samples&) {
+                     const Samples& samples) {
         if (!all && !isWrong(rr.judgement.verdict) && rr.judgement.verdict != Verdict::Unjudged)
             return;
         const naming::Fingerprint& h = ref.ref.hint;
         std::string e;
-        for (const std::uint32_t x : rr.expected)
+        std::vector<SubId> expected;
+        for (const std::uint32_t x : rr.expected) {
             e += " " + std::to_string(x);
-        std::printf("PIN %s: %s, %s; E {%s }; pick centroid (%.6f %.6f %.6f) measure %.6f\n", id.c_str(),
-                    rr.signature.c_str(), verdictName(rr.judgement.verdict), e.c_str(), h.qCx * 1e-4, h.qCy * 1e-4,
-                    h.qCz * 1e-4, h.qArea * 1e-4);
+            expected.push_back(SubId{ref.record.base.kind, x});
+            const auto& nodes = samples.of(ref.record.base.kind)[x].nodes;
+            if (!nodes.empty()) {
+                const Vec3 m = nodes[nodes.size() / 2];
+                char b[120];
+                std::snprintf(b, sizeof b, "(mid node %.6f %.6f %.6f)", m.x, m.y, m.z);
+                e += b;
+            }
+        }
+        std::printf("PIN %s: %s, %s; E {%s } %s; pick centroid (%.6f %.6f %.6f) measure %.6f\n", id.c_str(),
+                    rr.signature.c_str(), verdictName(rr.judgement.verdict), e.c_str(),
+                    answerSignature(Answer::Split, expected, samples).c_str(), h.qCx * 1e-4, h.qCy * 1e-4, h.qCz * 1e-4,
+                    h.qArea * 1e-4);
     });
     const SequenceResult r = runSequence(part, partIndex, 0, opt);
     setInspector({});
@@ -3106,10 +3126,10 @@ TEST_CASE("New piece (round 6): the rule fires on the scripted sorted 17:32, and
     // ended the pick, over a deleted hole's place: E {30} only because NEW PIECES ARE NEVER REQUIRED left 31 out (with
     // new-piece off, E is {30, 31} and Exact {30} is incomplete). With 31, or 31 alone, WRONG.
     const auto [baseline, edited] = pinnedScripts("sorted 17:32");
-    const Vec3 on30{16.035, -6.9805, 0.9625}, on31{14.952, -5.7815, 0.2125};
-    const std::vector<Probe> probes{{Answer::Exact, {}, -1, {on30}},
-                                    {Answer::Split, {}, -1, {on30, on31}},
-                                    {Answer::Exact, {}, -1, {on31}}};
+    // (A node of each, as this script builds them.)
+    const Vec3 on30{15.874637, -7.159719, 1.497563}, on31{14.936544, -5.748230, 0.115495};
+    const std::vector<Probe> probes{
+        {Answer::Exact, {}, -1, {on30}}, {Answer::Split, {}, -1, {on30, on31}}, {Answer::Exact, {}, -1, {on31}}};
     const std::vector<Looked> looked =
         replayScriptedAndLook(17, baseline, edited, SubKind::Edge, Vec3{15.415, 8.9686, 0.9569}, 7.7465, probes);
     REQUIRE(looked.size() == 1);

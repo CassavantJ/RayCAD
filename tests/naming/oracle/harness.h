@@ -60,7 +60,8 @@ struct RefResult {
                            // correct, 2 it was not (Broken, or judged wrong); 3: the same after a move
     std::string selfCheck; // non-empty: the oracle's own expected answer was not judged correct (why)
     std::string signature; // the resolver's answer, answerSignature (matched against the reviewed lists)
-    bool ambiguous = false; // an element of the answer has a near twin in the shape (signatureAmbiguous): never reviewed
+    bool ambiguous =
+        false; // an element of the answer has a near twin in the shape (signatureAmbiguous): never reviewed
     struct Mutant {
         std::string cls;
         bool caught = false;
@@ -221,7 +222,10 @@ const ReviewedList& reviewedConflicts();
 const ReviewedList& reviewedUnjudged();
 // The gate on answers the oracle could not judge, for every block: each must be on the reviewed list by its answer
 // (T-081b round 6: it used to apply to a holdout block only once the list had an entry with the block's prefix).
-inline bool unjudgedGateOk(const Tally& t) { return t.unjudged() == t.unjudgedReviewed; }
+inline bool unjudgedGateOk(const Tally& t)
+{
+    return t.unjudged() == t.unjudgedReviewed;
+}
 // The entry of `list` for reference `id` whose reviewed answer matches `signature`, or null.
 const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature);
 // " [reviewed: <why>]", or " [NOT REVIEWED; answer <signature>]" with the listed answers when the key is listed for

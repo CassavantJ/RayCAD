@@ -754,7 +754,9 @@ std::string answerSignature(Answer answer, const std::vector<SubId>& elements, c
         std::snprintf(b, sizeof b, "%.4f", v);
         return std::string(b);
     };
-    auto point = [&](const Vec3& p) { return num(p.x) + " " + num(p.y) + " " + num(p.z); };
+    auto point = [&](const Vec3& p) {
+        return num(p.x) + " " + num(p.y) + " " + num(p.z);
+    };
     std::string out = answerText(answer);
     for (const El& e : els) {
         const SubKind k = static_cast<SubKind>(e.kind);
@@ -1116,8 +1118,11 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
         ++tally.accepted;
         if (!rr.ambiguous && reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
             ++tally.acceptedReviewed;
-        log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
-                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedTerritory(), id, rr.signature)));
+        log.notes.push_back(
+            "ACCEPTED " + id + ": " + rr.judgement.accepted +
+            (rr.ambiguous
+                 ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]"
+                 : reviewNote(reviewedTerritory(), id, rr.signature)));
     }
     if (!rr.judgement.newGround.empty()) {
         ++tally.acceptedNewGround;
@@ -1125,27 +1130,36 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
         // rule's (reviewed_territory.txt).
         if (!rr.ambiguous && reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
             ++tally.acceptedNewGroundReviewed;
-        log.notes.push_back("NEW GROUND " + id + ": " + rr.judgement.newGround +
-                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedTerritory(), id, rr.signature)));
+        log.notes.push_back(
+            "NEW GROUND " + id + ": " + rr.judgement.newGround +
+            (rr.ambiguous
+                 ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]"
+                 : reviewNote(reviewedTerritory(), id, rr.signature)));
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
         if (!rr.ambiguous && reviewedAnswer(reviewedConflicts(), id, rr.signature) != nullptr)
             ++tally.conflictsReviewed;
-        log.notes.push_back("CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) +
-                            ", oracle expects " + list(rr.expected) + ", resolver " + answer +
-                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedConflicts(), id, rr.signature)));
+        log.notes.push_back(
+            "CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) + ", oracle expects " +
+            list(rr.expected) + ", resolver " + answer +
+            (rr.ambiguous
+                 ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]"
+                 : reviewNote(reviewedConflicts(), id, rr.signature)));
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)
             log.notes.push_back(verbose());
     }
     if (v == Verdict::Unjudged) {
         if (!rr.ambiguous && reviewedAnswer(reviewedUnjudged(), id, rr.signature) != nullptr)
             ++tally.unjudgedReviewed;
-        log.notes.push_back("UNJUDGED " + id + ": resolver " + answer + ", " +
-                            (rr.noAnchor.empty() ? std::string("whether the element also continues another piece of "
-                                                               "the logical element cannot be told")
-                                                 : rr.noAnchor) +
-                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedUnjudged(), id, rr.signature)));
+        log.notes.push_back(
+            "UNJUDGED " + id + ": resolver " + answer + ", " +
+            (rr.noAnchor.empty() ? std::string("whether the element also continues another piece of "
+                                               "the logical element cannot be told")
+                                 : rr.noAnchor) +
+            (rr.ambiguous
+                 ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]"
+                 : reviewNote(reviewedUnjudged(), id, rr.signature)));
     }
     if (rr.conflict == 2)
         ++tally.conflictsOther;

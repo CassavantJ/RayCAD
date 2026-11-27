@@ -753,11 +753,12 @@ TEST_CASE("Signatures (round 6): near-twin vertices cannot be reviewed, every ed
     REQUIRE(a >= 0);
     REQUIRE(b >= 0);
     REQUIRE(far >= 0);
-    const auto ua = static_cast<std::uint32_t>(a), ub = static_cast<std::uint32_t>(b), uf = static_cast<std::uint32_t>(far);
+    const auto ua = static_cast<std::uint32_t>(a), ub = static_cast<std::uint32_t>(b),
+               uf = static_cast<std::uint32_t>(far);
     const std::string sa = answerSignature(Answer::Exact, {SubId{SubKind::Vertex, ua}}, *r.samples);
     const std::string sb = answerSignature(Answer::Exact, {SubId{SubKind::Vertex, ub}}, *r.samples);
     INFO(sa << " / " << sb);
-    CHECK(sameAnswer(sa, sb)); // the signature cannot tell them apart ...
+    CHECK(sameAnswer(sa, sb));                                           // the signature cannot tell them apart ...
     CHECK(signatureAmbiguous({SubId{SubKind::Vertex, ua}}, *r.samples)); // ... so neither is ever reviewed
     CHECK(signatureAmbiguous({SubId{SubKind::Vertex, ub}}, *r.samples));
     CHECK_FALSE(signatureAmbiguous({SubId{SubKind::Vertex, uf}}, *r.samples));
