@@ -683,6 +683,21 @@ std::optional<Resolved> completeAgainstEvidence(const ElementMap& map, const ker
     }
 }
 
+// Does the face lie mostly away from the picked place: its box centre outside the picked box (beyond the extent
+// tolerance)? (T-081b round 6: another patch of the pick's surface, 18:23 face 6, against what is left of the picked
+// face itself after a cut took the part its territory points were on, which lies within the picked place.)
+bool liesElsewhere(const kernel::Shape& shape, SubId element, const TopoRef& ref)
+{
+    const auto nowBox = elementBox(shape, element);
+    if (!nowBox)
+        return false;
+    const Box3 was = boxOf(ref.territory);
+    const double tol = extentTolerance(was);
+    const Vec3 c = centreOf(*nowBox);
+    return c.x < was.min.x - tol || c.x > was.max.x + tol || c.y < was.min.y - tol || c.y > was.max.y + tol ||
+           c.z < was.min.z - tol || c.z > was.max.z + tol;
+}
+
 std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel::Shape& shape,
                                              const TerritoryCache& territories, SubId element, const TopoRef& ref)
 {
@@ -709,15 +724,9 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                     nearEdge = nearEdge || e->on(p, kTerritoryMargin);
                 inside += nearEdge ? 0 : 1;
             }
-            // Or the face lies mostly elsewhere: its box centre outside the picked box. What is left of a face a cut
-            // took most of lies within the picked place; a patch beside it that overlaps a corner of it does not.
-            const auto nowBox = elementBox(shape, element);
-            const Box3 was = boxOf(ref.territory);
-            const double tol = extentTolerance(was);
-            const Vec3 c = nowBox ? centreOf(*nowBox) : Vec3{0, 0, 0};
-            const bool elsewhere = nowBox && (c.x < was.min.x - tol || c.x > was.max.x + tol || c.y < was.min.y - tol ||
-                                              c.y > was.max.y + tol || c.z < was.min.z - tol || c.z > was.max.z + tol);
-            if (inside == 0 || elsewhere)
+            // Or the face lies mostly elsewhere (liesElsewhere). What is left of a face a cut took most of lies within
+            // the picked place; a patch beside it that overlaps a corner of it does not.
+            if (inside == 0 || liesElsewhere(shape, element, ref))
                 own = 0;
         }
         // An edge that holds its pick and has grown, along a face that now carries the names of another face as well as
@@ -929,7 +938,7 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                     if (const TopoName* record = map.record(name))
                         placedNow = placedNow || map.placement(record->origin) != nullptr;
             if (!carried && onItsSurface && move.kind != KnownMove::Kind::Moved &&
-                move.kind != KnownMove::Kind::Several && !placedNow)
+                move.kind != KnownMove::Kind::Several && !placedNow && liesElsewhere(shape, element, ref))
                 return brokenBecause(
                     "The picked face's place on its surface is gone, and the face its name leads to is "
                     "another patch of that surface.");
