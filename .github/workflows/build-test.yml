@@ -49,8 +49,12 @@ jobs:
     # one at a time on the 4-processor runner; after everything else in one job they took Windows past the 4-hour limit
     # (run 45646624932: stopped at 114 of 121 tests), and the six direct-edit blocks in one job took Linux past it
     # (nightly 45910746033).
-    name: ${{ matrix.preset }}-${{ matrix.config }}${{ matrix.part != 'main' && format('-{0}', matrix.part) || '' }}
+    # Windows is the only platform that gates until the app is finished (PLAN.md section 12, docs/PORTING_DEBT.md): the
+    # Linux and macOS jobs still build and test on every push and nightly, as a record, but a failure there does not
+    # fail the run (continue-on-error), and their names say so.
+    name: ${{ matrix.preset }}-${{ matrix.config }}${{ matrix.part != 'main' && format('-{0}', matrix.part) || '' }}${{ matrix.preset != 'windows-msvc' && ' (not gating)' || '' }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.preset != 'windows-msvc' }}
     timeout-minutes: 240
     strategy:
       fail-fast: false

@@ -721,7 +721,9 @@ RayCAD/
 
 Every milestone ends in a build Jake can install and a demo of one workflow. Durations assume about 20 hours a week of Jake's review time with agents implementing. Review, not typing, is the bottleneck.
 
-A milestone is closed only when, besides the per-push CI jobs, one full nightly run (`.github/workflows/nightly.yml`, started by hand on the closing commit) is green: the per-push jobs run the quick tier only, the nightly run the slow tier, the naming and direct-edit blocks and their AddressSanitizer jobs.
+A milestone is closed only when, besides the per-push CI jobs, one full nightly run (`.github/workflows/nightly.yml`, started by hand on the closing commit) is green on Windows: the per-push jobs run the quick tier only, the nightly run the slow tier, the naming and direct-edit blocks and their AddressSanitizer jobs. Windows jobs and the lint are the only ones that gate.
+
+**Porting debt.** macOS and Linux are deferred until after the last milestone. Their CI jobs still build and test on every push and nightly, marked "(not gating)", as a record; what fails there is listed in `docs/PORTING_DEBT.md` and is fixed after the last milestone, not before it closes. No macOS or Linux code, preset, pin or workflow is removed meanwhile.
 
 | # | Name | Demo at the end | Estimate [guess] |
 |-|-|-|-|

@@ -41,8 +41,11 @@ jobs:
     # naming blocks still to come). The slow naming blocks have jobs of their own, the T-081a ones (naming) and the
     # T-081b direct-edit ones (directedit), labels in tests/tiers.cmake: with the rest of the slow tier they ran past it
     # again (run 45646625017: the direct-edit block still running at 4 hours).
-    name: asan-ubsan-${{ matrix.tier }}
+    # Not gating: Windows is the only platform that gates until the app is finished (PLAN.md section 12,
+    # docs/PORTING_DEBT.md), and there is no Windows sanitizer job; this one runs on Linux and reports.
+    name: asan-ubsan-${{ matrix.tier }} (not gating)
     runs-on: ubuntu-latest
+    continue-on-error: true
     timeout-minutes: 240
     strategy:
       fail-fast: false
