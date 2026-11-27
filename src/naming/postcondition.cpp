@@ -1327,8 +1327,10 @@ Resolved Checker::decide(Resolved r) const
     // place (its own feature's face moved over it included: the reviewer's v3 and the T-081a 4:6 class) is not the
     // pick, unless it is a rigid copy of the pick (a cut's wall through the part, the cut moved along it: the part, not
     // the feature, bounds it, as the oracle's copy exemption has it: holdout1 8:23 face 1).
-    if (onAnswer == 0 && moved_ && !inPlace_ && imageLeftThePart() &&
-        !(kind == SubKind::Face && answer.size() == 1 && rigidCopy(answer.front()))) {
+    // (Faces only, as the oracle's rule: an edge's crossing slid along its line can land outside the part's box while
+    // the crossing nearest where it was is still the pick: T-081a random 10:5, blend R3's edge.)
+    if (onAnswer == 0 && moved_ && !inPlace_ && kind == SubKind::Face && imageLeftThePart() &&
+        !(answer.size() == 1 && rigidCopy(answer.front()))) {
         trace("P3", answer, onAnswer, 0, "left the part");
         return brokenBecause("The picked element, as its features moved it, is outside the part now.");
     }
@@ -1634,7 +1636,7 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
             return r; // no evidence: as before
         if (!check.splitterMoved()) {
             Resolved out = check.decide(std::move(r));
-            if (!check.known() && check.held() > 0 && out.state != ResolveState::Broken &&
+            if (ref.kind == SubKind::Face && !check.known() && check.held() > 0 && out.state != ResolveState::Broken &&
                 leftWithAMovedFeature(map, territories, ref))
                 return brokenBecause(
                     "A feature the picked element was recorded with moved, and the picked element may have "
