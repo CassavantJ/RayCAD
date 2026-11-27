@@ -114,6 +114,9 @@ set_tests_properties(ray_naming_random_directedit_review2 PROPERTIES TIMEOUT 720
 add_test(NAME ray_naming_random_directedit_review3 COMMAND ray_naming_oracle_tests "[random-directedit-review3]")
 ray_test_runtime_path(ray_naming_random_directedit_review3)
 set_tests_properties(ray_naming_random_directedit_review3 PROPERTIES TIMEOUT 7200)
+add_test(NAME ray_naming_random_directedit_review4 COMMAND ray_naming_oracle_tests "[random-directedit-review4]")
+ray_test_runtime_path(ray_naming_random_directedit_review4)
+set_tests_properties(ray_naming_random_directedit_review4 PROPERTIES TIMEOUT 7200)
 # The fifth block's seeds with every cos and sin of the inputs moved by a few ulp, as another platform's libm can give.
 add_test(NAME ray_naming_random_perturbed COMMAND ray_naming_oracle_tests "[random-perturbed]")
 ray_test_runtime_path(ray_naming_random_perturbed)

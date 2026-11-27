@@ -1370,6 +1370,15 @@ TEST_CASE("Review block 3: 1,000 randomised sequences with direct edits, the rev
     runHoldout("Direct-edit review block 3", 0x4C27E9B3D6A10000ull, "directedit-review3 ");
 }
 
+TEST_CASE("Review block 4: 1,000 randomised sequences with direct edits, the reviewer's fourth seed",
+          "[random-directedit-review4]")
+{
+    // The reviewer's frozen block 4 (seed 0x5A93D1E7C46B0000, run on oracle-freeze-4: three silent wrong answers, 19:40
+    // edge 325 and 4:41 faces 17 and 28, decided by the post-condition in round 7; 14:45 vertex 49 the oracle's),
+    // kept as a regular block: gated as the holdouts.
+    runHoldout("Direct-edit review block 4", 0x5A93D1E7C46B0000ull, "directedit-review4 ");
+}
+
 TEST_CASE("Direct-edit block of any seed: RAYCAD_NAMING_BLOCK_SEED=<hex>, choices by geometry",
           "[.random-directedit-seed]")
 {
@@ -2485,6 +2494,104 @@ TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its featur
         REQUIRE(off.size() == 1);
         INFO("post-condition off: " << off[0].signature);
         CHECK((off[0].answer != looked[0].answer || off[0].elements != looked[0].elements));
+    }
+}
+
+TEST_CASE("Oracle pins (round 7): a corner moved along a floor of several coplanar import faces",
+          "[naming][directedit-replays]")
+{
+    // The reviewer's block 4 (seed 0x5A93D1E7C46B0000) 14:45 vertex 49, ruled the oracle's (pinned_scripts.txt "block4
+    // 14:45"): the corner where rib side I/i16 (x 60.75) meets the pocket wall y 39.25 and the floor z 12.99; D1 pushes
+    // I/i16 by 30 to x 30.75. Vertex 40 is the pick moved by D1 exactly, on the same three carriers, and the floor
+    // there is the one face of the four coplanar import faces I/i34, 35, 37, 39 it was at pick time, on I/i39's part of
+    // it now. The oracle's extent of an imported face, for an edge or vertex, is its element's face on that carrier
+    // when that face holds ground of it (evalTruth, mutation "import-union": E {} and Exact {40} WRONG ghost).
+    // Negatives: the neighbouring corner of the moved rib (vertex 72, y 40.75), and the corner of the rib that stayed
+    // on the same wall and floor (vertex 39, x 89.25).
+    const auto [baseline, edited] = pinnedScripts("block4 14:45");
+    const std::vector<Probe> probes{{Answer::Exact, {}, -1, {Vec3{30.75, 39.25, 12.99}}},
+                                    {Answer::Exact, {}, -1, {Vec3{30.75, 40.75, 12.99}}},
+                                    {Answer::Exact, {}, -1, {Vec3{89.25, 39.25, 12.99}}}};
+    const std::vector<Looked> looked =
+        replayScriptedAndLook(14, baseline, edited, SubKind::Vertex, Vec3{60.75, 39.25, 12.99}, 0.0, probes);
+    REQUIRE(looked.size() == 1);
+    INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+    CHECK(looked[0].answer == Answer::Exact);
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    REQUIRE(looked[0].probes.size() == probes.size());
+    for (std::size_t i = 0; i < probes.size(); ++i) {
+        INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+        CHECK(looked[0].probed[i].rfind("asked;", 0) != 0);
+        if (i == 0)
+            CHECK(looked[0].probes[i].verdict == Verdict::Correct);
+        else
+            CHECK(isWrong(looked[0].probes[i].verdict));
+    }
+}
+
+TEST_CASE("Oracle pins (round 7): the reviewer's macOS rulings, replayed from the macOS generator's scripts",
+          "[naming][directedit-replays]")
+{
+    // pinned_scripts.txt "macos review1 17:24" and "macos sorted 4:29" (the reviewer's round-8 macOS probe on round 6;
+    // Windows builds the same shapes from them).
+    //  review1 17:24 face 0 (swap R4 and R5: R5's cut no longer removes material, so the boss R1's side is one whole
+    //  cylinder again): Merged {0} is right. The oracle rejected face 0 as off R1/s1 for one boundary node 0.11 mm off
+    //  the cylinder (an edge along R3's blend, approximated within the kernel's tolerance): nodesOn's outliers (one in
+    //  twenty at most) within 0.2 mm (mutation "node-slack": E {}, WRONG ghost). Negatives: Exact {0} (an unflagged
+    //  merge), and Merged on the face beside it at its top edge (the nearest element off the cylinder).
+    //  sorted 4:29 edge 50 (offset D1 carries boss R2): the cap edge's map lands exactly on edge 56; edge 62, on R2's
+    //  wall and the offset face coplanar with the cap, beyond it, is new ground, never required (the new-piece rule,
+    //  the map known where it lands exactly: mutation "landed-map", E {56 62} and Exact {56} WRONG incomplete).
+    //  Negatives: Exact {62}, and Split {56 62}.
+    struct Pin {
+        const char* script;
+        int part;
+        SubKind kind;
+        Vec3 at;
+        double measure;
+        Answer answer;
+        std::vector<Probe> right, wrong;
+    };
+    const std::vector<Pin> pins{
+        {"macos review1 17:24",
+         17,
+         SubKind::Face,
+         {21.9411, 6.3364, -7.8837},
+         169.2334,
+         Answer::Merged,
+         {{Answer::Merged, {}, -1, {Vec3{33.564958, 0.250465, -7.882952}}}},
+         {{Answer::Exact, {}, -1, {Vec3{33.564958, 0.250465, -7.882952}}},
+          {Answer::Merged, {}, 0, {Vec3{27.606268, -7.469131, -1.5}}}}},
+        {"macos sorted 4:29",
+         4,
+         SubKind::Edge,
+         {8.4374, 46.5567, 47.2307},
+         16.5897,
+         Answer::Exact,
+         {{Answer::Exact, {}, -1, {Vec3{11.2905, 48.0498, 47.2307}}}},
+         {{Answer::Exact, {}, -1, {Vec3{15.3161, 40.3576, 47.2307}}},
+          {Answer::Split, {}, -1, {Vec3{11.2905, 48.0498, 47.2307}, Vec3{15.3161, 40.3576, 47.2307}}}}},
+    };
+    for (const Pin& p : pins) {
+        const auto [baseline, edited] = pinnedScripts(p.script);
+        std::vector<Probe> probes = p.right;
+        probes.insert(probes.end(), p.wrong.begin(), p.wrong.end());
+        const std::vector<Looked> looked =
+            replayScriptedAndLook(p.part, baseline, edited, p.kind, p.at, p.measure, probes);
+        INFO(p.script);
+        REQUIRE(looked.size() == 1);
+        INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == p.answer);
+        CHECK(looked[0].judgement.verdict == Verdict::Correct);
+        REQUIRE(looked[0].probes.size() == probes.size());
+        for (std::size_t i = 0; i < probes.size(); ++i) {
+            INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+            CHECK(looked[0].probed[i].rfind("asked;", 0) != 0);
+            if (i < p.right.size())
+                CHECK(looked[0].probes[i].verdict == Verdict::Correct);
+            else
+                CHECK(isWrong(looked[0].probes[i].verdict));
+        }
     }
 }
 

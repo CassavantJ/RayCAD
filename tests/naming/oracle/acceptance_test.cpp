@@ -753,6 +753,191 @@ TEST_CASE("Regression (random 6:21): an edge piece that only touches the picked 
         }
 }
 
+TEST_CASE("Oracle (round 7): a profile moved within its sketch moves its sweep's edges with it",
+          "[naming][acceptance][t081a-gate]")
+{
+    // The pocket of "Regression (random 6:21)", over the block's right end at x 90..106 (the block clips it at x 100),
+    // moved within its sketch to x 74..90. The edge where its floor meets its back wall (y 10, z 15) ran x 90..100 and
+    // now runs x 74..90: it holds the pick as the pocket's move carries it (x 74..84), and has grown to the wall the
+    // block no longer clips. The product's placement follows a profile moved in its sketch (naming::sweepPlacement);
+    // the oracle's sweep moves (sweepMoves) count the profile's shift in its sketch as a frame move (profileShift;
+    // mutation "profile-move": the edge is judged gone, and the resolver's Exact on it WRONG). Negatives: an edge of
+    // the pocket the pick is not (the floor's front edge, y 0) is still wrong; and a profile resized as it moves (no
+    // rigid shift) is not a move: there the edge in place holds none of the pick, and Exact on it stays wrong.
+    auto script = [](double x0, double x1) {
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("P1", BOp::Cut, top(20), rect(x0, -5, x1, 10), 5));
+        return s;
+    };
+    const auto backFloor = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "P1/c1/1") &&
+               about(o, "P1/s3");
+    };
+    const auto frontFloor = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, "P1/c1/1") &&
+               about(o, "F01/s1");
+    };
+    {
+        const Run r = run(script(90, 106), script(74, 90));
+        checkNoneWrong(r);
+        REQUIRE(count(r.out, backFloor) == 1);
+        REQUIRE(count(r.out, frontFloor) == 1);
+        std::vector<std::uint32_t> front;
+        for (const Outcome& o : r.out)
+            if (frontFloor(o))
+                front = logicalElements(r, o);
+        REQUIRE(front.size() == 1);
+        for (const Outcome& o : r.out)
+            if (backFloor(o)) {
+                INFO("resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                                 << text(o.expected.elems));
+                const std::vector<std::uint32_t> all = logicalElements(r, o);
+                REQUIRE(all.size() == 1);
+                CHECK(o.expected.elems == all);
+                CHECK(judgeOther(r, o, Answer::Exact, all).verdict == Verdict::Correct);
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, front).verdict));
+                CHECK(o.resolved.state == naming::ResolveState::Exact);
+            }
+    }
+    {
+        // Resized as it moved (x 70..88, 18 wide): no rigid shift; the edge in place (x 90..100) is gone.
+        const Run r = run(script(90, 106), script(70, 88));
+        for (const Outcome& o : r.out)
+            if (backFloor(o)) {
+                const std::vector<std::uint32_t> all = logicalElements(r, o);
+                REQUIRE(all.size() == 1);
+                CHECK(o.expected.elems.empty());
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, all).verdict));
+            }
+    }
+}
+
+TEST_CASE("Oracle (round 7, the reviewer's v4): a crossing slid along its line holds the pick for the structural check",
+          "[naming][acceptance][t081a-gate]")
+{
+    // A cut C tilted at 45 degrees on the block's edge x 100, z 40 (normal (a, 0, a)), moved by its width along its
+    // sketch x, which lies in its walls s1 and s3: those walls stay on their planes, and their crossings with the side
+    // face x 100 (which stayed) slide along their lines, 12.25 mm (the move's projection on the line is 8.16). The
+    // expectation slides the pick so (mapElement, crossing-slide) and finds the edge there; the structural check must
+    // carry the pick the same way, not by the rigid move (off the plane x 100) nor in place.
+    const double a = std::sqrt(0.5);
+    auto script = [a](double shift) {
+        Script s = block(100, 60, 40);
+        Frame fr;
+        fr.o = {100 + 0.5 * shift, 25 + a * shift, 40 - 0.5 * shift};
+        fr.n = {a, 0, a};
+        fr.xd = {0.5, a, -0.5};
+        s.push_back(sweep("C", BOp::Cut, fr, rect(-5, -3, 5, 3), 15));
+        return s;
+    };
+    const Run r = run(script(0), script(10));
+    const auto crossing = [](const std::string& wall) {
+        return [wall](const Outcome& o) {
+            return o.ref.ref.kind == SubKind::Edge && o.ref.record.truth.cons.size() == 2 && about(o, wall) &&
+                   about(o, "F01/s2");
+        };
+    };
+    INFO("references about C/s1:" << refsAbout(r, "C/s1") << "\nreferences about C/s3:" << refsAbout(r, "C/s3"));
+    REQUIRE(count(r.out, crossing("C/s1")) == 1);
+    REQUIRE(count(r.out, crossing("C/s3")) == 1);
+    std::vector<std::uint32_t> s1, s3;
+    for (const Outcome& o : r.out) {
+        if (crossing("C/s1")(o))
+            s1 = logicalElements(r, o);
+        if (crossing("C/s3")(o))
+            s3 = logicalElements(r, o);
+    }
+    REQUIRE(s1.size() == 1);
+    REQUIRE(s3.size() == 1);
+    for (const Outcome& o : r.out) {
+        const bool one = crossing("C/s1")(o);
+        if (!one && !crossing("C/s3")(o))
+            continue;
+        const std::vector<std::uint32_t>& own = one ? s1 : s3;
+        const std::vector<std::uint32_t>& other = one ? s3 : s1;
+        INFO("reference " << o.ref.record.base.index << ": resolver " << static_cast<int>(o.resolved.state) << " ("
+                          << o.resolved.reason << "), expected" << text(o.expected.elems) << ", verdict "
+                          << verdictName(o.verdict));
+        CHECK(o.expected.elems == own);
+        CHECK(judgeOther(r, o, Answer::Exact, own).verdict == Verdict::Correct);
+        CHECK(isWrong(judgeOther(r, o, Answer::Exact, other).verdict));
+        CHECK_FALSE(isWrong(o.verdict));
+    }
+    // Negative: a vertical hole at y 33 on the side face cuts the moved crossing of s3 in two (y 30.66..32 and
+    // 34..37.73). The slid pick (y 36.3..37.7) lies on the far piece only: Exact on the near one, which only the
+    // rigid-move or in-place readings could not tell apart from nothing, is wrong.
+    Script cut = script(10);
+    cut.push_back(sweep("H", BOp::Cut, top(40), circle(100, 33, 1), 40, "hole"));
+    const Run h = run(script(0), cut);
+    for (const Outcome& o : h.out) {
+        if (!crossing("C/s3")(o))
+            continue;
+        const std::vector<std::uint32_t> pieces = logicalElements(h, o);
+        INFO("pieces" << text(pieces) << ", expected" << text(o.expected.elems) << ", resolver "
+                      << static_cast<int>(o.resolved.state));
+        REQUIRE(pieces.size() == 2);
+        REQUIRE(o.expected.elems.size() == 1);
+        for (const std::uint32_t e : pieces)
+            CHECK((judgeOther(h, o, Answer::Exact, {e}).verdict == Verdict::Correct) ==
+                  (e == o.expected.elems.front()));
+        CHECK(isWrong(judgeOther(h, o, Answer::Split, pieces).verdict));
+        CHECK_FALSE(isWrong(o.verdict));
+    }
+}
+
+TEST_CASE("Oracle (round 7, the reviewer's v3): a moved face whose image left the part is gone, whatever covers its "
+          "old place",
+          "[naming][acceptance][t081a-gate]")
+{
+    // Pocket P (x -5..15, open at the block's face x 0) 8 deep, its floor split by a deeper slot S (x 6..8): floor
+    // pieces x 0..6 (the pick) and x 8..15. P moved by -10 in x: the pick's image (x -10..-4) is outside the part, and
+    // P's floor (now x 0..5) covers the pick's old place. The floor piece is the pick's feature's face over its old
+    // place, not the pick carried by its feature: gone.
+    auto script = [](double dx) {
+        Script s = block(100, 60, 20);
+        Frame fp = top(20);
+        fp.o.x = dx;
+        s.push_back(sweep("P", BOp::Cut, fp, rect(-5, 20, 15, 40), 8));
+        s.push_back(sweep("S", BOp::Cut, top(20), rect(6, 0, 8, 60), 12));
+        return s;
+    };
+    const Run r = run(script(0), script(-10));
+    const auto floorPiece = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Face && o.ref.record.truth.cons.size() == 1 && about(o, "P/c1/1") &&
+               o.ref.record.picked().boxMax.x < 6.5;
+    };
+    INFO("references about P's floor:" << refsAbout(r, "P/c1/1"));
+    REQUIRE(count(r.out, floorPiece) == 1);
+    for (const Outcome& o : r.out)
+        if (floorPiece(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            INFO("resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                             << text(o.expected.elems) << ", logical" << text(all) << ", verdict "
+                             << verdictName(o.verdict));
+            CHECK(o.expected.elems.empty());
+            REQUIRE(all.size() == 1);
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, all).verdict));
+            CHECK(isWrong(judgeOther(r, o, Answer::Merged, all).verdict));
+            CHECK(o.verdict == Verdict::BrokenGone);
+        }
+    // Negative: moved by -3 only, the pick's image (x -3..3) is half inside, on the floor piece x 0..6 left of the
+    // slot: that piece is the pick (not gone), and the piece right of the slot is not.
+    const Run s = run(script(0), script(-3));
+    REQUIRE(count(s.out, floorPiece) == 1);
+    for (const Outcome& o : s.out)
+        if (floorPiece(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(s, o);
+            INFO("resolver " << static_cast<int>(o.resolved.state) << ", expected" << text(o.expected.elems)
+                             << ", logical" << text(all));
+            REQUIRE(o.expected.elems.size() == 1);
+            CHECK(judgeOther(s, o, Answer::Exact, o.expected.elems).verdict == Verdict::Correct);
+            for (const std::uint32_t e : all)
+                if (e != o.expected.elems.front())
+                    CHECK(isWrong(judgeOther(s, o, Answer::Exact, {e}).verdict));
+            CHECK_FALSE(isWrong(o.verdict));
+        }
+}
+
 TEST_CASE("Regression (holdout 18:5): an arc on the far side of a moved hole's rim is not a piece of the picked arc",
           "[naming][acceptance][t081a-gate]")
 {

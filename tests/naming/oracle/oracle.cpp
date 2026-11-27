@@ -32,7 +32,11 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 // and rotation-exact (a turned feature's map counted as exact); round 5: new-piece (new pieces are never required) and
 // held-in-place (an element where the pick was, its owners on their carriers, is never gone); round 6: crossing-slide
 // (a crossing of a moved sweep's wall with a plane that stayed slides along the sweep's direction) and held-bounds
-// (held in place only if bounded as the pick was). For checking the pins only; never set in a gate run.
+// (held in place only if bounded as the pick was); round 7: profile-move (a profile moved within its sketch is a move
+// of its sweep), slide-still (a crossing slides though no carrier changed), moved-in-place (a face its exact map moved
+// is not judged in place), import-union (a vertex on a face of coplanar imported faces), node-slack (one node in twenty
+// within 0.2 mm) and landed-map (a map that lands exactly on an element is known there). For checking the pins only;
+// never set in a gate run.
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
 
@@ -372,9 +376,13 @@ Tol tolFor(SubKind k)
 bool nodesOn(const Carrier& c, const std::vector<Vec3>& nodes, double tol)
 {
     const bool strict = strictness().nodes;
+    // (The outliers, at most one node in twenty, within 0.2 mm at least: a face's boundary along a blend's tangent
+    // edge, which the kernel approximates within its tolerance, 0.11 mm off the face's own cylinder on the reviewer's
+    // macOS review1 17:24 face 0. T-081b round 7; mutation "node-slack": 10 x tol only.)
+    const double outer = strict ? tol : mutated("node-slack") ? 10.0 * tol : std::max(10.0 * tol, 0.2);
     std::size_t close = 0;
     for (const Vec3& p : nodes) {
-        if (!c.on(p, strict ? tol : 10.0 * tol))
+        if (!c.on(p, outer))
             return false;
         if (c.on(p, tol))
             ++close;
@@ -1232,6 +1240,46 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
             if (!assign(0))
                 continue;
         }
+        // An imported face's extent, for an edge or vertex, takes in the extents of the imported faces coplanar with it
+        // when the element's face on that carrier holds ground of it: an import is often several coplanar faces that
+        // the kernel unifies into one, and a corner moved along that face lies on it, whichever import face's part of
+        // it it now sits on (T-081b round 7, the reviewer's block 4 14:45 vertex 49: the floor one face of four
+        // coplanar import faces). A separate face on the same plane that holds none of the owner's ground does not
+        // count, nor ground no imported face held (an edit's fill). Mutation "import-union".
+        std::vector<std::vector<char>> wholeFace(cons.size());
+        std::vector<std::vector<std::vector<const Owner*>>> coplanar(cons.size());
+        // (A vertex only: an edge running on over a coplanar face's ground may continue another element there, which
+        // its partial share flags as merged: review3 10:21 edge 31. Neither face moved by a direct edit.)
+        if (d.kind == SubKind::Vertex && !mutated("import-union")) {
+            const auto& own = smp.facesOf[d.kind == SubKind::Edge ? 1 : 0][x];
+            for (std::size_t ci = 0; ci < cons.size(); ++ci) {
+                wholeFace[ci].assign(cons[ci].alts.size(), 0);
+                coplanar[ci].assign(cons[ci].alts.size(), {});
+                for (std::size_t ai = 0; ai < cons[ci].alts.size(); ++ai) {
+                    const Owner* o = cons[ci].alts[ai];
+                    if (o->key.compare(0, 2, "I/") != 0 || o->c.k != Carrier::K::Plane ||
+                        ow.touchedByEdit.count(o->key) != 0)
+                        continue;
+                    for (const Owner& o2 : ow.v)
+                        if (&o2 != o && o2.key.compare(0, 2, "I/") == 0 && o2.c.k == Carrier::K::Plane &&
+                            ow.touchedByEdit.count(o2.key) == 0 && std::abs(dot(o->c.a, o2.c.a)) >= 1 - 1e-9 &&
+                            std::abs(o->c.dist(o2.c.p)) <= 1e-6)
+                            coplanar[ci][ai].push_back(&o2);
+                    if (coplanar[ci][ai].empty())
+                        continue;
+                    for (const std::uint32_t f : own) {
+                        const ElemSamples& face = smp.of(SubKind::Face)[f];
+                        if (!typeMatches(o->c, face) || !nodesOn(o->c, face.nodes, tolFor(SubKind::Face).node))
+                            continue;
+                        for (const Vec3& q : face.pts)
+                            if (o->in(q, 0.0)) {
+                                wholeFace[ci][ai] = 1;
+                                break;
+                            }
+                    }
+                }
+            }
+        }
         double okw = 0, W = 0;
         bool tookHeld = false; // a sample on ground another face held before an edit grew an owner (Owner::heldByOther)
         std::vector<char> mask(es.pts.size(), 0);
@@ -1242,11 +1290,17 @@ TruthEval evalTruthImpl(const TruthDesc& d, const Owners& ow, const Samples& smp
             for (std::size_t ci = 0; ok && ci < cons.size(); ++ci) {
                 bool any = false;
                 if (sepsOk(cons[ci].seps, p))
-                    for (const Owner* o : cons[ci].alts)
-                        if (o->c.on(p, T.sample) && o->in(p, T.margin)) {
+                    for (std::size_t ai = 0; ai < cons[ci].alts.size(); ++ai) {
+                        const Owner* o = cons[ci].alts[ai];
+                        bool in = o->in(p, T.margin);
+                        if (!in && !wholeFace[ci].empty() && wholeFace[ci][ai] != 0)
+                            for (const Owner* o2 : coplanar[ci][ai])
+                                in = in || o2->in(p, T.margin);
+                        if (o->c.on(p, T.sample) && in) {
                             any = true;
                             break;
                         }
+                    }
                 ok = any;
             }
             if (ok) {
@@ -2764,7 +2818,10 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
             moved = true;
         // Nothing the point depends on changed: it stays exactly where it is (projecting it onto carriers that meet
         // at a small angle would slide it along them, onto a neighbouring vertex 0.04 mm away).
-        if (withSweep == nullptr && !ownChanged && (kept || !(norm(bound) > 1e-9))) {
+        // (Not a crossing that slides: its wall moved along its own plane, so no carrier changed, yet the crossing
+        // moved: T-081b round 7, the reviewer's v4, a tilted cut moved along its walls; mutation "slide-still".)
+        const bool slides = slideSweep != nullptr && !mutated("slide-still");
+        if (withSweep == nullptr && !ownChanged && (kept || !(norm(bound) > 1e-9)) && !slides) {
             q = p;
             keptPoints += kept ? 1 : 0;
             return true;
@@ -2774,7 +2831,7 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
             q = similarMap(*simA, *simB, simK, p);
         else
             q = add(p, withSweep != nullptr ? *withSweep : ownChanged ? shift : bound);
-        if (slideSweep != nullptr && (withSweep != nullptr || ownChanged || norm(bound) > 1e-9)) {
+        if (slideSweep != nullptr && (withSweep != nullptr || ownChanged || norm(bound) > 1e-9 || slides)) {
             q = add(p, slideMove);
             const Vec3 n = unit(slideSweep->frame.n);
             for (const Carrier* plane : stayedPlanes) {
@@ -2979,6 +3036,44 @@ bool seamVertex(const Samples& smp, std::uint32_t v)
 // The moves of the sweeps that own the description's faces and moved rigidly without turning (rigidOrStill): each
 // one's frame displacement. The exact map of an element those faces bound, where the oracle's map projects a crossing
 // with a face that stayed (SLIDING CROSSINGS): a wall moved along its own plane takes its edges and corners along.
+// The shift (du, dv) that takes sweep a's profile onto sweep b's in its sketch, when b's profile is a's translated
+// rigidly (the same entities, kinds and radii, every point moved by one shift), the operation, distance and the frame's
+// orientation unchanged; nullopt otherwise. (A profile moved within its sketch is a rigid move of the sweep as a frame
+// move is: T-081b round 7, the product's placement follows it, naming::sweepPlacement.)
+std::optional<std::pair<double, double>> profileShift(const Feature& a, const Feature& b)
+{
+    if (a.op != b.op || a.dist != b.dist || a.loops.size() != b.loops.size() ||
+        norm(sub(a.frame.n, b.frame.n)) > 1e-12 || norm(sub(a.frame.xd, b.frame.xd)) > 1e-12)
+        return std::nullopt;
+    bool have = false;
+    double du = 0, dv = 0;
+    auto shiftOk = [&](double x0, double y0, double x1, double y1) {
+        if (!have) {
+            du = x1 - x0;
+            dv = y1 - y0;
+            have = true;
+            return true;
+        }
+        return std::abs(x1 - x0 - du) <= 1e-9 && std::abs(y1 - y0 - dv) <= 1e-9;
+    };
+    for (std::size_t i = 0; i < a.loops.size(); ++i) {
+        if (a.loops[i].ents.size() != b.loops[i].ents.size())
+            return std::nullopt;
+        for (std::size_t k = 0; k < a.loops[i].ents.size(); ++k) {
+            const Ent &x = a.loops[i].ents[k], &y = b.loops[i].ents[k];
+            if (x.k != y.k || std::abs(x.r - y.r) > 1e-9)
+                return std::nullopt;
+            if (x.k != 'C' && (!shiftOk(x.x0, x.y0, y.x0, y.y0) || !shiftOk(x.x1, x.y1, y.x1, y.y1)))
+                return std::nullopt;
+            if (x.k != 'L' && !shiftOk(x.cx, x.cy, y.cx, y.cy))
+                return std::nullopt;
+        }
+    }
+    if (!have)
+        return std::nullopt;
+    return std::make_pair(du, dv);
+}
+
 std::vector<Vec3> sweepMoves(const PickRecord& pick, const Owners& now)
 {
     std::vector<Vec3> out;
@@ -2992,7 +3087,11 @@ std::vector<Vec3> sweepMoves(const PickRecord& pick, const Owners& now)
             const auto b = now.sweeps.find(f);
             if (a == pick.owners->sweeps.end() || b == now.sweeps.end())
                 continue;
-            const Vec3 d = sub(b->second.frame.o, a->second.frame.o);
+            Vec3 d = sub(b->second.frame.o, a->second.frame.o);
+            // And the profile's own shift in its sketch (profileShift; mutation "profile-move").
+            if (!mutated("profile-move"))
+                if (const auto s = profileShift(a->second, b->second))
+                    d = add(d, add(mul(b->second.frame.xd, s->first), mul(b->second.frame.yd(), s->second)));
             if (norm(d) > 1e-9)
                 out.push_back(d);
         }
@@ -3036,6 +3135,12 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
             return !ground.pts.empty() &&
                    (interiorShare(a, ground, SubKind::Edge) > 0.0 || interiorShare(ground, a, SubKind::Edge) > 0.0);
         };
+        if (std::getenv("RAYCAD_ORACLE_DEBUG_STRUCTURAL") != nullptr)
+            std::printf("structural edge: answer box (%.3f %.3f %.3f)-(%.3f %.3f %.3f); pick box (%.3f %.3f "
+                        "%.3f)-(%.3f %.3f %.3f); mapped n%zu box (%.3f %.3f %.3f)-(%.3f %.3f %.3f)\n",
+                        a.boxMin.x, a.boxMin.y, a.boxMin.z, a.boxMax.x, a.boxMax.y, a.boxMax.z, P.boxMin.x, P.boxMin.y,
+                        P.boxMin.z, P.boxMax.x, P.boxMax.y, P.boxMax.z, x.mapped.pts.size(), x.mapped.boxMin.x,
+                        x.mapped.boxMin.y, x.mapped.boxMin.z, x.mapped.boxMax.x, x.mapped.boxMax.y, x.mapped.boxMax.z);
         if (a.pts.empty() || holdsEdge(P) || holdsEdge(x.mapped))
             return true;
         for (const Vec3& d : moves) {
@@ -3130,7 +3235,15 @@ bool holdsPickedGround(const ElemSamples& a, const PickRecord& pick, const Expec
             interiorShare(P, a, SubKind::Face), interiorShare(a, x.mapped, SubKind::Face),
             interiorShare(x.mapped, a, SubKind::Face));
     }
-    return a.pts.empty() || holds(pick.picked()) || holds(x.mapped);
+    // In place only where the map leaves the pick in place (T-081b round 7, the reviewer's v3, the T-081a 4:6 class): a
+    // face whose exact map moved it (its sweep moved rigidly) is where the map takes it; what its feature's face now
+    // covers of its old place is not the pick (a pocket moved by -10 in x: its floor piece's image left the part, and
+    // the moved floor over the piece's old place is not it). Mutation "moved-in-place".
+    bool movedAway = false;
+    if (!x.mapped.pts.empty() && !mutated("moved-in-place") && rigidOrStill(pick.truth, *pick.owners, now))
+        movedAway = norm(sub(x.mapped.boxMin, P.boxMin)) > kAnchorTolerance ||
+                    norm(sub(x.mapped.boxMax, P.boxMax)) > kAnchorTolerance;
+    return a.pts.empty() || (!movedAway && holds(pick.picked())) || holds(x.mapped);
 }
 
 // Does the structural check apply to this reference (judgeAnswer): a face, its map known and exact?
@@ -3294,8 +3407,17 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
     // An answer that has the piece too is judged as any answer with an element outside the expectation (judgeAnswer).
     if (x.expected.elems.size() >= 2 && x.noAnchor.empty() && !mutated("new-piece") && !pick.picked().pts.empty()) {
         // (The bound needs no map: the pick in place and carried by its sweeps' moves.)
-        const bool placed = x.inPlace || (!x.mapped.pts.empty() && rigidOrStill(pick.truth, *pick.owners, now));
+        bool placed = x.inPlace || (!x.mapped.pts.empty() && rigidOrStill(pick.truth, *pick.owners, now));
         const auto& N = smp.of(x.kind);
+        // Or the map, approximate in general, lands exactly on one expected element (each wholly on the other): where
+        // the pick went is known there (T-081b round 7, the reviewer's macOS sorted 4:29 edge 50: a boss carried by
+        // an offset of its base face, its cap's edge mapped onto edge 56 exactly; edge 62, on the boss's wall and the
+        // offset face coplanar with the cap, beyond it, is new ground). Mutation "landed-map".
+        if (!placed && !x.mapped.pts.empty() && !mutated("landed-map"))
+            for (const std::uint32_t e : x.expected.elems)
+                if (e < N.size() && !N[e].pts.empty() && shareOn(x.mapped, N[e], x.kind) >= 0.98 &&
+                    shareOn(N[e], x.mapped, x.kind) >= 0.98)
+                    placed = true;
         const auto& B = pick.baseline->of(x.kind);
         const ElemSamples& P = pick.picked();
         // The planes that bounded an edge pick (faces at its vertices other than its own), still in the edited shape.
