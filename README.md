@@ -197,8 +197,9 @@ Every test has one of two CTest labels (`tests/tiers.cmake`):
 CI runs the quick tier on every push and pull request (`build-test.yml`: Debug and Release on Windows, Linux and
 macOS; `sanitizers.yml`: under AddressSanitizer), and the slow tier once a day (`nightly.yml`, at 06:23 UTC, skipped
 when `main` has no new commit since the last scheduled run; also started by hand from the Actions tab, optionally on
-another ref): per OS a Release job for the slow tests, one for the naming blocks (label `naming-blocks`) and one for
-the direct-edit blocks (`directedit-blocks`), and the same three under AddressSanitizer, there all but the few
+another ref): per OS a Release job for the slow tests, one for the naming blocks (label `naming-blocks`) and two for
+the direct-edit blocks (`directedit-blocks`, `directedit-blocks-2`), and the slow tests, the naming and the
+first direct-edit blocks under AddressSanitizer, there all but the few
 labelled `sanitizer-heavy` (too slow under ASan for the runner). Every test runs in exactly one of the two. A
 milestone closes only after one manual run of `nightly.yml` is green on its closing commit (PLAN.md section 12).
 Wrong answers of the direct-edit blocks come with an `[.evidence]` artifact per answer (`tools/ci_naming_evidence.py`).
