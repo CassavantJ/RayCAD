@@ -3,6 +3,7 @@
 #include "resolver.h"
 
 #include "naming_internal.h"
+#include "postcondition.h"
 #include "propagate.h"
 #include "territory.h"
 
@@ -254,11 +255,10 @@ private:
                 return std::move(*evidence);
             return r;
         }
+        // (Whether a Merged answer holds any of the pick as its feature moved it is the post-condition's: T-081b round
+        // 8 removed mergedAgainstMove.)
         if (r.state == ResolveState::Split || r.state == ResolveState::Merged)
             if (auto evidence = detail::completeAgainstEvidence(body.map, body.shape, territories, r.elements, ref))
-                return std::move(*evidence);
-        if (r.state == ResolveState::Merged && r.elements.size() == 1)
-            if (auto evidence = detail::mergedAgainstMove(body.map, body.shape, r.elements.front(), ref))
                 return std::move(*evidence);
         return r;
     }
@@ -271,11 +271,15 @@ private:
         if (!wellFormed(ref))
             return broken("The reference is damaged: it holds no usable name.");
         const Lookup lookup = lookUp(body->map, ref);
-        if (auto result = exact(*body, territoriesOf(body), ref, lookup))
-            return withoutZeroMeasure(body->shape, ref.hint, std::move(*result));
+        const detail::TerritoryCache& territories = territoriesOf(body);
+        // Whatever found the answer, it passes the post-condition last (postcondition.h).
+        if (auto result = exact(*body, territories, ref, lookup))
+            return detail::postcondition(body->map, territories, ref,
+                                         withoutZeroMeasure(body->shape, ref.hint, std::move(*result)));
         // T-081a, in this order: lineage (Split, Merged), the family rule (Split, Merged), Repaired.
         if (auto result = detail::resolveThroughBuild(body->map, body->shape, ref))
-            return againstEvidence(*body, territoriesOf(body), ref, std::move(*result));
+            return detail::postcondition(body->map, territories, ref,
+                                         againstEvidence(*body, territories, ref, std::move(*result)));
         return broken(brokenReason(lookup, ref));
     }
 
@@ -323,6 +327,8 @@ private:
             std::unique(ref.placements.begin(), ref.placements.end(),
                         [](const FeaturePlacement& a, const FeaturePlacement& b) { return a.feature == b.feature; }),
             ref.placements.end());
+        // The samples every answer is checked against (T-081b round 8, postcondition.h).
+        ref.samples = detail::pickSamplesOf(map, territories, sub, ref.pickNeighbours);
     }
 
     std::vector<ResolverBody> bodies_;                                 // sorted by id, unique

@@ -68,14 +68,26 @@ public:
     // A quantised description of a face's plane or cylinder (empty for any other surface): faces with equal keys lie
     // on one carrier.
     std::string carrierKey(kernel::SubId face) const;
+    // A probe of `sub`, its box (elementBox) and, for a face, its surface (kernel::surfaceInfo), each made once
+    // (T-081b round 8: the post-condition looks at every element of the shape).
+    const Probe& probe(kernel::SubId sub) const;
+    const std::optional<Box3>& box(kernel::SubId sub) const;
+    const std::optional<kernel::SurfaceInfo>& surface(kernel::SubId face) const;
+    const std::optional<kernel::CurveInfo>& curve(kernel::SubId edge) const;
+    // A face's kernel::faceSample (its outward normal at a point of it), made once.
+    const std::optional<kernel::FaceSample>& faceSample(kernel::SubId face) const;
+    const kernel::Shape& shape() const { return shape_; }
 
 private:
     struct Carrier;
+    struct Element;
     const Carrier& carrier(kernel::SubId sub) const;
+    const Element& element(kernel::SubId sub) const;
     const kernel::Shape& shape_;
     mutable std::mutex lock_;
     mutable std::map<kernel::SubId, Territory> made_;
     mutable std::map<kernel::SubId, std::unique_ptr<Carrier>> carriers_;
+    mutable std::map<kernel::SubId, std::unique_ptr<Element>> elements_;
 };
 
 // The other elements recorded with a reference to `sub` (naming.h PickNeighbour): siblings (a shared name family
@@ -124,6 +136,25 @@ bool insidePickOutline(const PickOutline& outline, const Vec3& p);
 // has no points. Never throws (false on failure).
 bool piecesHoldMostOf(const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces, const Territory& territory);
 
+// Up to `count` points on face `face`, each at least kTerritoryMargin inside its boundary, chosen farthest-first over a
+// grid as a territory's are, from at least 4 x `count` grid points when there are that many (a plane bounded by lines
+// and arcs; a cylinder bounded by lines along it and circles about it), and `cover`: the largest distance from a grid
+// point inside the margin to its nearest chosen point. Empty for any other face. Deterministic; never throws.
+std::vector<Vec3> facePointsOf(const kernel::Shape& shape, kernel::SubId face, std::size_t count, double& cover);
+
+// An open line or arc's samples (PickSamples): its ends with the unit directions from them into it, points along it at
+// the fractions 0.5, 0.3, 0.7, 0.15, 0.85, 0.05, 0.95, 0.4, 0.6, 0.25, 0.75 of its length (each at least
+// kTerritoryMargin from both ends), and `cover`: half the largest gap along it between consecutive ones. A whole circle
+// (closed) has no ends and 12 points all round it. known false for any other edge or one under twice the margin long.
+// Never throws.
+struct EdgePoints {
+    bool known = false, closed = false;
+    Vec3 start{}, end{}, intoFromStart{}, intoFromEnd{};
+    std::vector<Vec3> along;
+    double cover = 0;
+};
+EdgePoints edgePointsOf(const kernel::Shape& shape, kernel::SubId edge);
+
 // The box of element `sub` as a territory would record it (no points made). nullopt when unreadable.
 std::optional<Box3> elementBox(const kernel::Shape& shape, kernel::SubId sub);
 
@@ -160,10 +191,9 @@ std::optional<Resolved> completeAgainstEvidence(const ElementMap& map, const ker
                                                 const std::vector<kernel::SubId>& answer, const TopoRef& ref);
 
 // The Exact stage's answer `element` against the reference's evidence; nullopt when the evidence does not object (or
-// there is none, or the element is unchanged: its fingerprint matches the hint). Otherwise, the first that applies:
-//  - the element covers a point of a recorded neighbour's territory: Merged when it also still covers a point of the
-//    picked element's own territory (it took the neighbour in), else Broken (it lies over the neighbour's place and
-//    not where it was picked); a vertex is never Merged;
+// there is none). What the element holds of the pick as its features moved it, all of it, and nothing another
+// pick-time element held, is the post-condition's (postcondition.h; T-081b round 8), which every answer passes last.
+// Here, the first that applies:
 //  - the completeness check (completeAgainstEvidence) on {element} objects: its answer (Split with the fuller set, or
 //    Broken). Otherwise, covering some of its own territory, the element is not objected to;
 //  - the element covers none of its own territory (it moved, or what was picked of it is gone), grew, and every name of
@@ -180,19 +210,5 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
 // point of a recorded neighbour's territory. Yes when there is no evidence.
 bool piecesFitEvidence(const ElementMap& map, const kernel::Shape& shape, const std::vector<kernel::SubId>& pieces,
                        const TopoRef& ref, std::string& why);
-// Of the edge pieces of a Split, those that the pick's feature's own move (TopoRef::placements, a placement that
-// changed) does not take wholly outside the pick: a piece whose every territory point, carried back by the move, lies
-// outside the picked box (beyond the extent tolerance) is past the pick's old end (T-081b round 4, review holdout 1:39
-// edge 83: a stretch of a moved cut's edge that lay inside a bore when it was picked), and the resolver answers Broken
-// when there is one. Dropped only while some piece is kept. All pieces when no feature of the pick was moved. Never
-// throws.
-// A Merged answer of one face against the pick's feature's move (T-081b round 6, T-081a holdout2 4:6 face 31): Broken
-// when the feature moved (TopoRef::placements) and none of the pick carried by the move lands on the face, or, for a
-// reference made before placements to a face of a feature that has one now, when the face lies mostly away from the
-// picked place (its box centre outside the picked box). nullopt: no objection.
-std::optional<Resolved> mergedAgainstMove(const ElementMap& map, const kernel::Shape& shape, kernel::SubId element,
-                                          const TopoRef& ref);
-std::vector<kernel::SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Shape& shape,
-                                                 const std::vector<kernel::SubId>& pieces, const TopoRef& ref);
 
 } // namespace ray::naming::detail

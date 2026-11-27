@@ -152,6 +152,10 @@ Builder buildScript(const Script& script, Mode mode, FeatRefs& refs, bool keepHi
 // feature that failed (and of blends on its faces) are left out.
 Script builtOnly(const Script& script, const Builder& b);
 
+// A script written out exactly (doubles as hexadecimal floating point), as pinned_scripts.txt holds them: the
+// direct-edit test's scriptFromText reads it back (T-081b round 4; shared with the T-081a test in round 8).
+std::string scriptToText(const Script& s);
+
 // A reference recorded on a baseline build, with what the oracle keeps of it.
 struct Ref {
     naming::TopoRef ref;

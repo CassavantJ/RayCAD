@@ -585,6 +585,12 @@ SequenceResult runSequence(const Part& part, int partIndex, int seq, const Seque
         return out;
     }
     const Owners owners1 = buildOwners(builtOnly(edited, replay));
+    // RAYCAD_DUMP_SCRIPTS (T-081b round 8): both scripts exactly (scriptToText, as the direct-edit test prints them),
+    // so a sequence this platform's generator authored can be pinned as a script (pinned_scripts.txt) and replayed on
+    // every platform.
+    if (std::getenv("RAYCAD_DUMP_SCRIPTS") != nullptr)
+        std::printf("SCRIPT %s\nBASELINE\n%sEDITED\n%sEND\n", label.c_str(), scriptToText(script).c_str(),
+                    scriptToText(edited).c_str());
     // One sequence on its own (RAYCAD_NAMING_ONLY) is being diagnosed: keep every line.
     out.log.maxWrongs = std::getenv("RAYCAD_NAMING_ONLY") != nullptr ? 100000 : 20;
     judgeAll(refs, replay, owners1, **smp1, out.tally, out.log, label);
@@ -1387,7 +1393,10 @@ TEST_CASE("Oracle (holdout3 17:0): where another picked piece's mapped place fal
     INFO(looked[0].crossing);
     CHECK(looked[0].crossing.empty());
     CHECK_FALSE(looked[0].noAnchor.empty());
-    CHECK(looked[0].judgement.verdict == Verdict::Unjudged);
+    // (Since round 8 the resolver may answer Broken here, which the oracle counts as missed; any other answer is not
+    // judged.)
+    CHECK((looked[0].judgement.verdict == Verdict::Unjudged ||
+           (looked[0].answer == Answer::Broken && looked[0].judgement.verdict == Verdict::Missed)));
 }
 
 // Diagnosis (hidden): RAYCAD_NAMING_PROBE="<block prefix or -> <part>:<seq> <seed base hex>|<reference id>" prints the

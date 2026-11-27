@@ -37,186 +37,6 @@ double length(const Vec3& a)
     return std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
 }
 
-// A placement as a rigid transform, frame to model (naming.h FeaturePlacement).
-struct Rigid {
-    std::array<double, 9> r{};
-    Vec3 t{};
-};
-Rigid rigidOf(const FeaturePlacement& p)
-{
-    Rigid out;
-    for (std::size_t i = 0; i < 3; ++i)
-        for (std::size_t j = 0; j < 3; ++j)
-            out.r[i * 3 + j] = static_cast<double>(p.q[i * 4 + j]) / 1e9;
-    out.t = {static_cast<double>(p.q[3]) / kLengthQuantaPerMm, static_cast<double>(p.q[7]) / kLengthQuantaPerMm,
-             static_cast<double>(p.q[11]) / kLengthQuantaPerMm};
-    return out;
-}
-// The model point x of a feature placed at `from`, where the same point of the feature is when it is placed at `to`.
-Vec3 carry(const Rigid& from, const Rigid& to, const Vec3& x)
-{
-    const Vec3 d = minus(x, from.t);
-    const std::array<double, 3> local{from.r[0] * d.x + from.r[3] * d.y + from.r[6] * d.z,
-                                      from.r[1] * d.x + from.r[4] * d.y + from.r[7] * d.z,
-                                      from.r[2] * d.x + from.r[5] * d.y + from.r[8] * d.z};
-    return {to.r[0] * local[0] + to.r[1] * local[1] + to.r[2] * local[2] + to.t.x,
-            to.r[3] * local[0] + to.r[4] * local[1] + to.r[5] * local[2] + to.t.y,
-            to.r[6] * local[0] + to.r[7] * local[1] + to.r[8] * local[2] + to.t.z};
-}
-
-// What the reference's recorded placements (TopoRef::placements) say about the features that made the pick: none
-// recorded or none in the map now (None); all where they were (Still); one move, every moved feature moved alike
-// (Moved, from -> to); moves that differ (Several).
-struct KnownMove {
-    enum class Kind { None, Still, Moved, Several } kind = Kind::None;
-    Rigid from, to;
-};
-KnownMove knownMove(const ElementMap& map, const TopoRef& ref)
-{
-    KnownMove out;
-    std::vector<std::pair<Rigid, Rigid>> moved;
-    for (const FeaturePlacement& then : ref.placements) {
-        const FeaturePlacement* now = map.placement(then.feature);
-        if (now == nullptr)
-            continue;
-        if (samePlacement(then, *now)) {
-            if (out.kind == KnownMove::Kind::None)
-                out.kind = KnownMove::Kind::Still;
-            continue;
-        }
-        moved.emplace_back(rigidOf(then), rigidOf(*now));
-    }
-    if (moved.empty())
-        return out;
-    // Moved alike: the same images of the pick's box corners (within 1e-3 mm).
-    const Box3 box = boxOf(ref.territory);
-    for (std::size_t i = 1; i < moved.size(); ++i)
-        for (const Vec3& c :
-             {box.min, box.max, Vec3{box.min.x, box.max.y, box.min.z}, Vec3{box.max.x, box.min.y, box.max.z}})
-            if (length(minus(carry(moved[0].first, moved[0].second, c), carry(moved[i].first, moved[i].second, c))) >
-                1e-3) {
-                out.kind = KnownMove::Kind::Several;
-                return out;
-            }
-    out.kind = KnownMove::Kind::Moved;
-    out.from = moved[0].first;
-    out.to = moved[0].second;
-    return out;
-}
-
-// `p` moved onto the surface `info` describes: a plane along its normal, a cylinder straight out from its axis.
-// nullopt when it cannot be (on a cylinder's axis, or another surface).
-std::optional<Vec3> ontoSurface(const kernel::SurfaceInfo& info, const Vec3& p)
-{
-    const Vec3 o = info.origin;
-    const Vec3 a = info.axis;
-    const Vec3 d = minus(p, o);
-    const double h = d.x * a.x + d.y * a.y + d.z * a.z;
-    if (info.type == kernel::SurfaceType::Plane)
-        return Vec3{p.x - a.x * h, p.y - a.y * h, p.z - a.z * h};
-    if (info.type != kernel::SurfaceType::Cylinder)
-        return std::nullopt;
-    const Vec3 radial{d.x - a.x * h, d.y - a.y * h, d.z - a.z * h};
-    const double r = length(radial);
-    if (r < 1e-9)
-        return std::nullopt;
-    const double k = info.radius / r;
-    return Vec3{o.x + a.x * h + radial.x * k, o.y + a.y * h + radial.y * k, o.z + a.z * h + radial.z * k};
-}
-
-// Do two edge fingerprints lie on one line (lines: parallel within 1e-6, each midpoint within 1e-2 mm of the other's
-// line) or one circle (circles: the same centre within 1e-3 mm, axis within 1e-6, radius within 1e-3 mm)? (1e-2 mm:
-// a feature moved along its own wall moves that wall by the rounding of its frame, a few micrometres; the oracle's
-// structural check counts such a wall as where it was.)
-bool sameCurve(const Fingerprint& a, const Fingerprint& b)
-{
-    if (a.surface != b.surface)
-        return false;
-    const auto axis = [](const Fingerprint& f) {
-        return Vec3{static_cast<double>(f.qAxisX) / kAxisQuanta, static_cast<double>(f.qAxisY) / kAxisQuanta,
-                    static_cast<double>(f.qAxisZ) / kAxisQuanta};
-    };
-    const auto centre = [](const Fingerprint& f) {
-        return Vec3{static_cast<double>(f.qCx) / kLengthQuantaPerMm, static_cast<double>(f.qCy) / kLengthQuantaPerMm,
-                    static_cast<double>(f.qCz) / kLengthQuantaPerMm};
-    };
-    const Vec3 da = axis(a), db = axis(b);
-    const double la = length(da), lb = length(db);
-    if (la < 0.5 || lb < 0.5)
-        return false;
-    const Vec3 ua{da.x / la, da.y / la, da.z / la}, ub{db.x / lb, db.y / lb, db.z / lb};
-    const Vec3 c{ua.y * ub.z - ua.z * ub.y, ua.z * ub.x - ua.x * ub.z, ua.x * ub.y - ua.y * ub.x};
-    if (length(c) > 2e-6)
-        return false;
-    const Vec3 d = minus(centre(b), centre(a));
-    if (a.surface == static_cast<kernel::SurfaceType>(kernel::CurveType::Line)) {
-        const double along = d.x * ua.x + d.y * ua.y + d.z * ua.z;
-        return length(Vec3{d.x - ua.x * along, d.y - ua.y * along, d.z - ua.z * along}) <= 1e-2;
-    }
-    if (a.surface == static_cast<kernel::SurfaceType>(kernel::CurveType::Circle))
-        return length(d) <= 1e-3 && std::abs(static_cast<double>(a.qRadius - b.qRadius)) / kLengthQuantaPerMm <= 1e-3;
-    return false;
-}
-
-// Does every point of `territory` lie (within 1e-2 mm, as sameCurve) on the surface of every face of `edge` (a vertex:
-// of each of its
-// faces, two or more): unbounded for planes, cylinders and spheres, the face as it is for any other surface? Then the
-// picked element's place is still where those surfaces meet.
-bool onSurfacesOf(const kernel::Shape& shape, SubId edge, const Territory& territory)
-{
-    if (!territory.known())
-        return false;
-    const std::vector<SubId> faces = kernel::adjacent(shape, edge, SubKind::Face);
-    // (A vertex on only two faces is a seam vertex: where it lies on their curve is the periodic face's seam, which
-    // moves with that face's parametrisation, not a meeting point of three surfaces: T-081a random seam pin, the
-    // document's hole moved by its diameter, tests/unit/doc sketch_stability.)
-    if (edge.kind == SubKind::Edge ? faces.size() != 2 : faces.size() < 3)
-        return false;
-    for (const SubId& f : faces) {
-        const auto info = kernel::surfaceInfo(shape, f);
-        if (!info)
-            return false;
-        for (const auto& q : territory.points) {
-            const Vec3 p = fromQuanta(q);
-            const Vec3 d = minus(p, info->origin);
-            const Vec3 a = info->axis;
-            const double h = d.x * a.x + d.y * a.y + d.z * a.z;
-            double off = 1e300;
-            if (info->type == kernel::SurfaceType::Plane)
-                off = std::abs(h);
-            else if (info->type == kernel::SurfaceType::Cylinder)
-                off = std::abs(length(Vec3{d.x - a.x * h, d.y - a.y * h, d.z - a.z * h}) - info->radius);
-            else if (info->type == kernel::SurfaceType::Sphere)
-                off = std::abs(length(d) - info->radius);
-            else if (info->type == kernel::SurfaceType::Cone) {
-                // Radius `radius` at the origin, opening by `semiAngle` along the axis.
-                const double rho = length(Vec3{d.x - a.x * h, d.y - a.y * h, d.z - a.z * h});
-                off = std::abs(rho - (info->radius + h * dmath::tan(info->semiAngle))) * dmath::cos(info->semiAngle);
-            } else if (info->type == kernel::SurfaceType::Torus) {
-                // Major radius `radius` about the axis; the minor one measured at a vertex of the face.
-                const auto tube = [&](const Vec3& x) {
-                    const Vec3 dx = minus(x, info->origin);
-                    const double hx = dx.x * a.x + dx.y * a.y + dx.z * a.z;
-                    const double rho = length(Vec3{dx.x - a.x * hx, dx.y - a.y * hx, dx.z - a.z * hx});
-                    return std::sqrt((rho - info->radius) * (rho - info->radius) + hx * hx);
-                };
-                const std::vector<SubId> corners = kernel::adjacent(shape, f, SubKind::Vertex);
-                if (!corners.empty())
-                    if (const auto v = kernel::vertexPoint(shape, corners.front()))
-                        off = std::abs(tube(p) - tube(*v));
-                if (off > 1e-3 && Probe(shape, f).on(p))
-                    off = 0;
-            } else if (Probe(shape, f).on(p)) // another surface: the face itself, where it is now, holds the point
-                off = 0;
-            // (Planes within 1e-2 mm: a feature moved along its own wall moves the wall by the rounding of its frame,
-            // a few micrometres; curved surfaces within 1e-3 mm: a blend made a little larger is another surface.)
-            if (!(off <= (info->type == kernel::SurfaceType::Plane ? 1e-2 : 1e-3)))
-                return false;
-        }
-    }
-    return true;
-}
-
 // The heights along axis `a` (through `o`) between which a cylinder of radius `r` lies whose box is `box`: the box's
 // extent along the axis, less what the rims' circles add to it.
 std::pair<double, double> axialRange(const Box3& box, const Vec3& o, const Vec3& a, double r)
@@ -256,44 +76,6 @@ double gapBetween(const Box3& a, const Box3& b)
     const double gy = std::max({0.0, b.min.y - a.max.y, a.min.y - b.max.y});
     const double gz = std::max({0.0, b.min.z - a.max.z, a.min.z - b.max.z});
     return std::sqrt(gx * gx + gy * gy + gz * gz);
-}
-
-// How far apart two boxes are along the axis on which they are furthest apart, mm: positive, the gap; negative, the
-// least overlap along any axis an extent shows (an axis on which both are flat, within 1e-6 mm, counts only as a gap:
-// two parallel lines a distance apart).
-double gapOrOverlap(const Box3& a, const Box3& b)
-{
-    double out = -1e300;
-    const std::array<std::array<double, 4>, 3> axes{{{a.min.x, a.max.x, b.min.x, b.max.x},
-                                                     {a.min.y, a.max.y, b.min.y, b.max.y},
-                                                     {a.min.z, a.max.z, b.min.z, b.max.z}}};
-    bool any = false;
-    for (const auto& v : axes) {
-        if (v[1] - v[0] <= 1e-6 && v[3] - v[2] <= 1e-6) {
-            if (std::abs(v[0] - v[2]) > 1e-6)
-                return std::abs(v[0] - v[2]); // flat on both, apart: a gap
-            continue;
-        }
-        any = true;
-        out = std::max(out, std::max(v[2] - v[1], v[0] - v[3]));
-    }
-    return any ? out : gapBetween(a, b);
-}
-
-// Does no point of `t` lie in `box` (within the extent tolerance)? (An arc that is the rest of a circle has a box
-// around the picked arc's, and none of its points near it.) False when `t` has no points.
-bool noPointInside(const Territory& t, const Box3& box)
-{
-    if (!t.known())
-        return false;
-    const double tol = extentTolerance(box);
-    for (const auto& q : t.points) {
-        const Vec3 p = fromQuanta(q);
-        if (p.x >= box.min.x - tol && p.x <= box.max.x + tol && p.y >= box.min.y - tol && p.y <= box.max.y + tol &&
-            p.z >= box.min.z - tol && p.z <= box.max.z + tol)
-            return false;
-    }
-    return true;
 }
 
 // Did a recorded neighbour touch the picked element when it was picked (their boxes within the extent tolerance)?
@@ -683,58 +465,32 @@ std::optional<Resolved> completeAgainstEvidence(const ElementMap& map, const ker
     }
 }
 
-// Does the face lie mostly away from the picked place: its box centre outside the picked box (beyond the extent
-// tolerance)? (T-081b round 6: another patch of the pick's surface, 18:23 face 6, against what is left of the picked
-// face itself after a cut took the part its territory points were on, which lies within the picked place.)
-bool liesElsewhere(const kernel::Shape& shape, SubId element, const TopoRef& ref)
-{
-    const auto nowBox = elementBox(shape, element);
-    if (!nowBox)
-        return false;
-    const Box3 was = boxOf(ref.territory);
-    const double tol = extentTolerance(was);
-    const Vec3 c = centreOf(*nowBox);
-    return c.x < was.min.x - tol || c.x > was.max.x + tol || c.y < was.min.y - tol || c.y > was.max.y + tol ||
-           c.z < was.min.z - tol || c.z > was.max.z + tol;
-}
-
 std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel::Shape& shape,
                                              const TerritoryCache& territories, SubId element, const TopoRef& ref)
 {
     try {
         if (!ref.territory.known())
             return std::nullopt;
+        // T-081b round 8: whether the element holds the pick as its features moved it, all of it, and nothing that was
+        // another pick-time element's is the post-condition's (postcondition.h), which every answer passes last, with
+        // no early return on a matching fingerprint. Its rules replace the ones that stood here: the minority of
+        // territory points on the boundary or lying elsewhere, the territory of a recorded neighbour (Merged or
+        // Broken), the moved face carried by its feature's placement or guessed along its surface, the rigid-copy
+        // demand, a face on its picked surface holding none, another face on the carrier holding the place, the
+        // remnant, and another stretch of the line or meeting point. What stays here is what the samples do not see: an
+        // edge grown along a unified face, the completeness check's run along the same surfaces into another element
+        // (T-081a holdout4 9:9 and 5:9, holdout5 1:2), a bore grown along its axis, and the siblings' names and moves.
+        // (An element whose fingerprint still matches the hint and that holds some of its territory is not run along:
+        // its run into a face beside it on its plane is new territory there, not the pick come apart: block_blind_holes
+        // 0:19 face 6. The post-condition still checks it, as every answer.)
         const Probe probe(shape, element);
-        std::size_t own = probe.count(ref.territory);
-        // A face holding a minority of the territory points, every one of them on its boundary (within the territory
-        // margin of one of its edges), or lying mostly elsewhere, does not hold the picked ground: it touched or
-        // overlapped a corner of the pick (T-081b round 6, review block 3 18:23 face 6: one of five points of a
-        // 0.2 mm2 strip on a 0.1 mm2 patch of the same top cap beside it, the strip itself cut away by a moved hole).
-        if (element.kind == SubKind::Face && own > 0 && 2 * own < ref.territory.points.size()) {
-            std::vector<std::unique_ptr<Probe>> edges;
-            for (const SubId& e : kernel::adjacent(shape, element, SubKind::Edge))
-                edges.push_back(std::make_unique<Probe>(shape, e));
-            std::size_t inside = 0;
-            for (const auto& q : ref.territory.points) {
-                const Vec3 p = fromQuanta(q);
-                if (!probe.on(p))
-                    continue;
-                bool nearEdge = false;
-                for (const auto& e : edges)
-                    nearEdge = nearEdge || e->on(p, kTerritoryMargin);
-                inside += nearEdge ? 0 : 1;
-            }
-            // Or the face lies mostly elsewhere (liesElsewhere). What is left of a face a cut took most of lies within
-            // the picked place; a patch beside it that overlaps a corner of it does not.
-            if (inside == 0 || liesElsewhere(shape, element, ref))
-                own = 0;
-        }
-        // An edge that holds its pick and has grown, along a face that now carries the names of another face as well as
-        // a pick-time face of the edge (two faces unified into one): the edge along the other face's side was unified
-        // into it too, and it continues two pick-time edges: Merged, not Exact (T-081b round 6, review block 3 10:21
-        // edge 31: x 0, y 18; the front face moved onto y 18 by an offset, unified with the face the pick bordered;
-        // the edge now runs z 0..30, the pick z 18..30 and the front face's edge z 0..18).
-        // (Wherever it lies: there the face the pick bordered was offset, and the edge with it.)
+        const std::size_t own = probe.count(ref.territory);
+        // An edge that has grown along a face that now carries the names of another face as well as a pick-time face
+        // of the edge (two faces unified into one): the edge along the other face's side was unified into it too, and
+        // it continues two pick-time edges: Merged, not Exact (T-081b round 6, review block 3 10:21 edge 31: the front
+        // face moved onto y 18 by an offset, unified with the face the pick bordered; the edge now runs z 0..30, the
+        // pick z 18..30 and the front face's edge z 0..18). The post-condition does not see it: that edge came onto the
+        // pick's line by a direct edit, which no placement tells, and its pick-time ground lay elsewhere.
         if (element.kind == SubKind::Edge && ref.hint.qArea > 0 &&
             static_cast<double>(map.fingerprintOf(element).qArea) >
                 static_cast<double>(ref.hint.qArea) * 1.01 + kGrowthSlackQuanta) {
@@ -756,287 +512,30 @@ std::optional<Resolved> exactAgainstEvidence(const ElementMap& map, const kernel
                     return Resolved{ResolveState::Merged, {element}, {}};
             }
         }
-        // A face whose fingerprint still matches the hint is checked too when it holds none of its territory: a patch
-        // of the same surface the size of the pick passes the fingerprint (T-081b round 6, review block 3 18:23 face
-        // 6: a 0.2 mm2 strip of a boss's top cap, cut away by a moved hole; the cap's name on another strip of it).
-        // Edges and vertices too (T-081b round 6, the reviewer's macOS holdout3 4:7 edge 26: a boss moved by its own
-        // width, its other wall standing where the trailing one was; the name on the same ellipse running the other
-        // way from the pick's end point, holding none of the pick, its fingerprint matching): the checks below decide.
-        if (map.fingerprintOf(element).matches(ref.hint) && own > 0)
+        if (own > 0 && map.fingerprintOf(element).matches(ref.hint))
             return std::nullopt;
-        bool tookOther = false;
-        for (const PickNeighbour& n : ref.pickNeighbours)
-            tookOther = tookOther || (n.territory.known() && probe.count(n.territory) > 0);
-        if (tookOther) {
-            if (own > 0 && element.kind != SubKind::Vertex)
-                return Resolved{ResolveState::Merged, {element}, {}};
-            return brokenBecause(own > 0 ? "The picked vertex now lies where another vertex was when it was picked."
-                                         : "The picked element now lies over another element's place, and no longer "
-                                           "where it was picked.");
-        }
-        // An Exact answer says the element is all of what was picked: the completeness check (T-081a holdout4 9:9
-        // and 5:9, holdout5 1:2).
         if (auto incomplete = completeAgainstEvidence(map, shape, territories, {element}, ref))
             return incomplete;
-        // A face that holds the pick's old place while the pick's feature moved (TopoRef::placements) and none of the
-        // pick carried by that move lands on it: the face covers the old place only because it, or what bounds it,
-        // moved over it; the pick went with its feature, and where it went is not this face (T-081b round 6, T-081a
-        // holdout2 4:6 face 31: a corner piece of a cut's ceiling, the cut moved, the piece's image off the part; the
-        // ceiling moved over the old corner).
-        if (own > 0 && element.kind == SubKind::Face) {
-            const KnownMove move = knownMove(map, ref);
-            if (move.kind == KnownMove::Kind::Moved) {
-                const auto info = kernel::surfaceInfo(shape, element);
-                std::size_t landed = 0;
-                for (const auto& q : ref.territory.points) {
-                    const Vec3 there = carry(move.from, move.to, fromQuanta(q));
-                    bool on = probe.on(there);
-                    if (!on && info)
-                        if (const auto onto = ontoSurface(*info, there))
-                            on = probe.on(*onto);
-                    landed += on ? 1 : 0;
-                }
-                if (landed == 0)
-                    return brokenBecause("The picked face's feature moved and took the picked place with it; the face "
-                                         "its name leads to lies over the old place but holds none of the moved one.");
-            }
-        }
         if (own > 0)
             return std::nullopt;
-        // A face that holds none of its own territory while another face on its carrier (the same plane on the same
-        // side, the same cylinder) holds some of it: the picked place is still there, on the picked face's own surface,
-        // under another face; the face the names lead to is another patch of that surface, not the pick moved (T-081b
-        // holdout2 7:44 face 27: a window of a boss's start cap at the bottom of a hole; the boss moved by its width,
-        // the window's ground went to the hole's floor, and the start cap's name led to a patch of the same plane
-        // sticking out below the part). Which of them continues the pick cannot be told from the names: Broken.
-        if (element.kind == SubKind::Face)
-            for (std::uint32_t i = 0; i < shape.count(SubKind::Face); ++i) {
-                const SubId other{SubKind::Face, i};
-                if (other == element || !territories.sameCarrier(element, other))
-                    continue;
-                if (Probe(shape, other).count(ref.territory) > 0)
-                    return brokenBecause("The picked face's place is now part of another face on the same surface, and "
-                                         "the face its name leads to lies elsewhere on that surface.");
-            }
-        // An edge or face that holds none of its own territory and is now less than a twentieth of its picked size is a
-        // remnant where the rest of it went, not the element (T-081b round 3, holdout2 9:3 edge 33: a 2.6 mm arc of a
-        // bore's rim, its name left on a 9 um stub of it).
-        if (element.kind != SubKind::Vertex && ref.hint.qArea > 0 &&
-            static_cast<double>(map.fingerprintOf(element).qArea) < 0.05 * static_cast<double>(ref.hint.qArea))
-            return brokenBecause("Only a small remnant of the picked element is left, and not where it was picked.");
-        // An edge or vertex that holds none of its territory, in place (within 1e-2 mm) or carried by its feature's
-        // move
-        // (TopoRef::placements), while it lies on the very line (or circle) the picked edge lay on, or between faces on
-        // whose surfaces every picked territory point still lies (the curve or point where those surfaces meet), is
-        // another stretch of that curve (another of those meeting points): the curve stayed, what bounded the pick or
-        // the pick's own feature moved along it, and what was picked of it is gone (T-081b round 4: the reviewer's
-        // holdout1 4:33 edge 9 and holdout2 1:3 edge 42, a cut moved along its own wall's line, the wall's other end
-        // now
-        // where the picked end was; holdout1 7:33 edges 10 and 14, a boss moved along its own side's plane; holdout2
-        // 6:8
-        // edge 7, an imported arc, the cut that ended it moved, the rest of the circle now; holdout1 6:26 vertex 11, a
-        // corner of a boss moved along its side, another corner of that side now). An edge that holds some of the pick
-        // carried by its feature's move moved with the feature, clipped otherwise.
-        if (element.kind != SubKind::Face) {
-            const KnownMove move = knownMove(map, ref);
-            bool holds = false;
-            for (const auto& q : ref.territory.points) {
-                holds = holds || probe.on(fromQuanta(q), 1e-2);
-                if (move.kind == KnownMove::Kind::Moved)
-                    holds = holds || probe.on(carry(move.from, move.to, fromQuanta(q)), 1e-2);
-            }
-            const auto box = element.kind == SubKind::Edge ? elementBox(shape, element) : std::nullopt;
-            const bool apart = element.kind == SubKind::Vertex ||
-                               (box && (gapOrOverlap(*box, boxOf(ref.territory)) >= -1e-3 ||
-                                        noPointInside(territories.of(element), boxOf(ref.territory))));
-            const bool sameCarrier =
-                (element.kind == SubKind::Edge && sameCurve(map.fingerprintOf(element), ref.hint)) ||
-                onSurfacesOf(shape, element, ref.territory);
-            if (!holds && apart && sameCarrier)
-                return brokenBecause(element.kind == SubKind::Edge
-                                         ? "The picked edge's feature slid along the line the edge lies on, and the "
-                                           "edge its name leads to is another stretch of it that holds none of the "
-                                           "picked one."
-                                         : "The picked vertex's feature slid along the faces the vertex lies on, and "
-                                           "the vertex its name leads to is another of their meeting points.");
-        }
-        // A face that holds none of its own territory moved (or what was picked of it is gone).
-        //  - A feature of the pick was moved (TopoRef::placements, another placement now; T-081b round 4): the face is
-        //    the pick moved with it when the picked territory carried by the feature's own move (then onto the face's
-        //    surface as it is now, for a feature that also changed size or depth) lands on it, at least half of it; or
-        //    when the face lies wholly inside the pick so carried (clipped smaller where it is now: every territory
-        // point
-        //    of the face carried back lies inside the picked outline, or the picked box for a face without an outline).
-        //  - Otherwise (that failed: a face the part clips, such as a cut's wall through the part, stays where the part
-        //    is while its feature moves along it, holdout1 8:23; or the pick's features are where they were and one
-        //    changed size or depth, a direct edit moved the face, or nothing was recorded) the move is guessed. A face
-        //    that moved with its feature, or that a push/pull moved, still lies
-        //    over its picked place seen along its surface: the picked territory carried onto the face's surface as it
-        // is
-        //    now (a plane: along its normal; a cylinder: straight out from its axis) lands on it, at least half of it,
-        //    and so does the territory shifted as the face's box centre moved. Another patch of the same feature's
-        //    surface, exposed elsewhere, does not; which it is cannot be told from the names (holdout1 7:33 face 18, a
-        //    boss's side whose visible patch slid along it as a join moved over it; tuned 18:49 face 13). Another
-        // surface
-        //    (a sphere, a torus, a B-spline): moved and resized by more than a fifth. A face whose surface changed size
-        // (a
-        //    bore resized: another radius) is the same face at another size; there the bound is twice or half its area.
-        if (element.kind == SubKind::Face && ref.hint.qArea > 0) {
-            const Fingerprint print = map.fingerprintOf(element);
-            const double now = static_cast<double>(print.qArea);
-            const double then = static_cast<double>(ref.hint.qArea);
-            const bool sameShape =
-                print.surface == ref.hint.surface && std::abs(print.qRadius - ref.hint.qRadius) <= 10; // 1 um
-            const auto info = kernel::surfaceInfo(shape, element);
-            const KnownMove move = knownMove(map, ref);
-            const std::size_t n = ref.territory.points.size();
-            bool changed = false;
-            bool carried = false;
-            if (move.kind == KnownMove::Kind::Moved) {
-                std::size_t landed = 0;
-                for (const auto& q : ref.territory.points) {
-                    const Vec3 there = carry(move.from, move.to, fromQuanta(q));
-                    bool on = probe.on(there);
-                    if (!on && info)
-                        if (const auto onto = ontoSurface(*info, there))
-                            on = probe.on(*onto);
-                    landed += on ? 1 : 0;
+        // A bore at another radius that now runs along its axis past either end it had at pick time took in the ground
+        // along its axis that other faces held there (a step, a cone, an upper bore; a resize does not change how deep
+        // a bore is): the same bore, and more, however much larger (T-081b round 4, the lead's decision on review
+        // holdout 18:33 face 2: never Exact). The post-condition does not see it: that ground lay at another radius,
+        // where no other pick-time element's place was.
+        if (element.kind == SubKind::Face && ref.hint.surface == kernel::SurfaceType::Cylinder &&
+            std::abs(map.fingerprintOf(element).qRadius - ref.hint.qRadius) > 10) // 1 um
+            if (const auto info = kernel::surfaceInfo(shape, element);
+                info && info->type == kernel::SurfaceType::Cylinder)
+                if (const auto nowBox = elementBox(shape, element)) {
+                    const double wasRadius = static_cast<double>(ref.hint.qRadius) / kLengthQuantaPerMm;
+                    const auto [wasLo, wasHi] = axialRange(boxOf(ref.territory), info->origin, info->axis, wasRadius);
+                    const auto [nowLo, nowHi] = axialRange(*nowBox, info->origin, info->axis, info->radius);
+                    const double tol = 1e-2 + 1e-2 * std::max(wasRadius, info->radius);
+                    if (nowLo < wasLo - tol || nowHi > wasHi + tol)
+                        return Resolved{ResolveState::Merged, {element}, {}};
                 }
-                bool inside = false;
-                const Territory& held = territories.of(element);
-                if (2 * landed < n && held.known()) {
-                    const Box3 was = boxOf(ref.territory);
-                    const double tol = extentTolerance(was);
-                    inside = true;
-                    for (const auto& q : held.points) {
-                        const Vec3 back = carry(move.to, move.from, fromQuanta(q));
-                        inside = inside &&
-                                 (ref.outline.known() ? insidePickOutline(ref.outline, back)
-                                                      : back.x >= was.min.x - tol && back.x <= was.max.x + tol &&
-                                                            back.y >= was.min.y - tol && back.y <= was.max.y + tol &&
-                                                            back.z >= was.min.z - tol && back.z <= was.max.z + tol);
-                    }
-                }
-                carried = 2 * landed >= n || inside;
-            }
-            // Its surface where the pick's was (every territory point on it), the face holding none of them, and the
-            // pick's features not moved (TopoRef::placements: all still), or none recorded (a feature without a
-            // placement cannot slide along its own surface: a direct edit moves a face off it): the picked ground is
-            // gone from this surface, and the face is another patch of it (T-081b round 6, review block 3 18:23 face 6:
-            // a strip of a boss's top cap that a moved hole cut away; the cap's name on another strip, the boss where
-            // it was). A reference made before placements, to a face of a feature that has one now: the feature may
-            // have slid along the surface, and the face must be a rigid copy of the pick (below).
-            bool onItsSurface = info.has_value() && n > 0;
-            for (const auto& q : ref.territory.points) {
-                const Vec3 p = fromQuanta(q);
-                const auto onto = onItsSurface ? ontoSurface(*info, p) : std::nullopt;
-                onItsSurface = onto && length(minus(*onto, p)) <= 1e-3;
-            }
-            bool placedNow = false;
-            if (ref.placements.empty())
-                for (const Hash256& name : map.namesOf(element))
-                    if (const TopoName* record = map.record(name))
-                        placedNow = placedNow || map.placement(record->origin) != nullptr;
-            if (!carried && onItsSurface && move.kind != KnownMove::Kind::Moved &&
-                move.kind != KnownMove::Kind::Several && !placedNow && liesElsewhere(shape, element, ref))
-                return brokenBecause(
-                    "The picked face's place on its surface is gone, and the face its name leads to is "
-                    "another patch of that surface.");
-            if (!carried && onItsSurface && placedNow) {
-                // Slid along its own surface, perhaps: only a rigid copy of the pick (the same area and sorted extents,
-                // each within a hundredth) can be it.
-                const auto nowBox = elementBox(shape, element);
-                changed = !nowBox || std::abs(now - then) > 0.01 * then + kGrowthSlackQuanta;
-                if (nowBox) {
-                    const Box3 was = boxOf(ref.territory);
-                    std::array<double, 3> da{was.max.x - was.min.x, was.max.y - was.min.y, was.max.z - was.min.z};
-                    std::array<double, 3> db{nowBox->max.x - nowBox->min.x, nowBox->max.y - nowBox->min.y,
-                                             nowBox->max.z - nowBox->min.z};
-                    std::sort(da.begin(), da.end());
-                    std::sort(db.begin(), db.end());
-                    for (std::size_t i = 0; i < 3; ++i)
-                        changed = changed || std::abs(da[i] - db[i]) > 0.01 * std::max(da[i], db[i]) + 2e-3;
-                }
-            } else if (carried) {
-                changed = false;
-            } else if (!sameShape) {
-                changed = now > 2.0 * then + kGrowthSlackQuanta || 2.0 * now + kGrowthSlackQuanta < then;
-                // A bore at another radius that now runs along its axis past either end it had at pick time took in
-                // the ground along its axis that other faces held there (a step, a cone, an upper bore; a resize does
-                // not change how deep a bore is): the same bore, and more, however much larger (T-081b round 4, the
-                // lead's decision on review holdout 18:33 face 2: never Exact).
-                if (info && info->type == kernel::SurfaceType::Cylinder &&
-                    ref.hint.surface == kernel::SurfaceType::Cylinder)
-                    if (const auto nowBox = elementBox(shape, element)) {
-                        const double wasRadius = static_cast<double>(ref.hint.qRadius) / kLengthQuantaPerMm;
-                        const auto [wasLo, wasHi] =
-                            axialRange(boxOf(ref.territory), info->origin, info->axis, wasRadius);
-                        const auto [nowLo, nowHi] = axialRange(*nowBox, info->origin, info->axis, info->radius);
-                        const double tol = 1e-2 + 1e-2 * std::max(wasRadius, info->radius);
-                        if (nowLo < wasLo - tol || nowHi > wasHi + tol)
-                            return Resolved{ResolveState::Merged, {element}, {}};
-                    }
-            } else if (liesOnOutline(shape, element, ref.outline, territories)) {
-                // Still on its own pick-time ground (inside its outline, on its plane): what was picked of it shrank
-                // where it was (a cut took the part its territory points were on), and it did not move.
-                changed = false;
-            } else if (std::abs(now - then) <= 0.01 * then + kGrowthSlackQuanta && !(placedNow && onItsSurface)) {
-                // Its area kept within a hundredth: the face moved as a whole, turned or not (a body moved onto a mate,
-                // tests/unit/doc transform_body; a cut's wall through the part moved along itself, holdout1 8:23).
-                changed = false;
-            } else if (info &&
-                       (info->type == kernel::SurfaceType::Plane || info->type == kernel::SurfaceType::Cylinder)) {
-                // And carried by the face's own shift (box centre to box centre): a face that moved as a whole holds
-                // its picked territory moved with it (holdout1 8:23 face 1 holds both; a cut's arc wall whose visible
-                // part changed as the cut moved, sorted 15:49 face 14, holds the first only).
-                const auto nowBox = elementBox(shape, element);
-                const Vec3 shift = nowBox ? minus(centreOf(*nowBox), centreOf(boxOf(ref.territory))) : Vec3{0, 0, 0};
-                std::size_t landed = 0, shifted = 0;
-                for (const auto& q : ref.territory.points) {
-                    const Vec3 p = fromQuanta(q);
-                    shifted += probe.on(Vec3{p.x + shift.x, p.y + shift.y, p.z + shift.z}) ? 1 : 0;
-                    if (const auto onto = ontoSurface(*info, p))
-                        landed += probe.on(*onto) ? 1 : 0;
-                }
-                changed = 2 * landed < n || 2 * shifted < n || !nowBox;
-                // Where a feature of the pick was moved (and its move did not carry the pick onto the face, above), or
-                // may
-                // have been (a reference made before placements were recorded, to a face of a feature that has one
-                // now):
-                // a plane that moved along itself (its shift has a part in its plane, as a feature moved sideways does)
-                // must be a rigid copy of itself: the same area and the same sorted extents, each within a hundredth. A
-                // face the part clips differently where it is now is another patch of the feature's surface (T-081a
-                // random 3:23 face 14: a cut's wall where it met the part's corner, the cut moved, its name on the
-                // wall's
-                // patch at the corner now). Where the pick's features are known to be where they were, the face was
-                // moved by a resize, a depth or a direct edit, which may change its shape: no such demand (T-081b round
-                // 4: 19 of 20 sampled faces this demand broke were the pick).
-                const bool demandRigid =
-                    move.kind == KnownMove::Kind::Moved || move.kind == KnownMove::Kind::Several || placedNow;
-                if (!changed && demandRigid && nowBox && info->type == kernel::SurfaceType::Plane) {
-                    const Vec3 a = info->axis;
-                    const double along = shift.x * a.x + shift.y * a.y + shift.z * a.z;
-                    const double tangential =
-                        length(Vec3{shift.x - a.x * along, shift.y - a.y * along, shift.z - a.z * along});
-                    if (tangential > 1e-2) {
-                        const Box3 was = boxOf(ref.territory);
-                        std::array<double, 3> da{was.max.x - was.min.x, was.max.y - was.min.y, was.max.z - was.min.z};
-                        std::array<double, 3> db{nowBox->max.x - nowBox->min.x, nowBox->max.y - nowBox->min.y,
-                                                 nowBox->max.z - nowBox->min.z};
-                        std::sort(da.begin(), da.end());
-                        std::sort(db.begin(), db.end());
-                        changed = std::abs(now - then) > 0.01 * then + kGrowthSlackQuanta;
-                        for (std::size_t i = 0; i < 3; ++i)
-                            changed = changed || std::abs(da[i] - db[i]) > 0.01 * std::max(da[i], db[i]) + 2e-3;
-                    }
-                }
-            } else {
-                changed = std::abs(now - then) > 0.2 * then + kGrowthSlackQuanta;
-            }
-            if (changed)
-                return brokenBecause("The picked face is no longer where it was picked, nor over that place along its "
-                                     "surface; whether the face its name leads to is the one picked cannot be told.");
-        } // Moved, and grown while a recorded sibling's names are gone: the pieces may have joined (they were apart
+        // Moved, and grown while a recorded sibling's names are gone: the pieces may have joined (they were apart
         // where the element was picked, and are one element where it is now). The names say the element continues the
         // pick; whether it also holds the siblings cannot be told, so it is not Exact (T-081a random 17:44).
         const Fingerprint print = map.fingerprintOf(element);
@@ -1131,119 +630,6 @@ bool piecesFitEvidence(const ElementMap& map, const kernel::Shape& shape, const 
     } catch (...) {
         why = "The reference could not be checked because of an internal failure.";
         return false;
-    }
-}
-
-std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Shape& shape,
-                                         const std::vector<SubId>& pieces, const TopoRef& ref)
-{
-    try {
-        // Edges only: a face piece outside the carried pick may be new ground the moved face now reaches (a face the
-        // part
-        // clips otherwise where it is now), which is the pick's (holdout1-tuned 11:36 face 19).
-        if (pieces.size() < 2 || !ref.territory.known() || pieces.front().kind != SubKind::Edge)
-            return pieces;
-        KnownMove move = knownMove(map, ref);
-        // A reference made before placements were recorded, to an edge of a feature that has one now (T-081b round
-        // 5: an old document's reference): whether that feature moved cannot be told. If a piece lies wholly outside
-        // the pick as it was, none is answered: the caller answers Broken (review1 1:39 edge 83 without placements:
-        // Split {104, 106} with 106 inside a bore at pick time).
-        bool placedNow = false;
-        // (By the reference's own names and their families, as fillRef records placements: one of their features has
-        // a placement now, so a reference made now would carry it. Not every name of the pieces: an edge of a chamfer
-        // split by a groove has the groove's names too, and a chamfer has no placement: review1 15:10 edge 8.)
-        if (move.kind == KnownMove::Kind::None && ref.placements.empty()) {
-            auto placed = [&](const Hash256& name) {
-                const TopoName* record = map.record(name);
-                return record != nullptr && map.placement(record->origin) != nullptr;
-            };
-            for (const Hash256& name : ref.names)
-                placedNow = placedNow || placed(name);
-            for (const Hash256& family : ref.families)
-                for (const Hash256& member : map.family(family))
-                    placedNow = placedNow || placed(member);
-            // An edge's names come from the boolean that made it; the faces it lay between say whose it was.
-            for (const Hash256& name : ref.neighbourNames)
-                placedNow = placedNow || placed(name);
-        }
-        if (move.kind != KnownMove::Kind::Moved && !placedNow)
-            return pieces;
-        if (placedNow) {
-            move.from = Rigid{{1, 0, 0, 0, 1, 0, 0, 0, 1}, Vec3{0, 0, 0}};
-            move.to = move.from;
-        }
-        const Box3 was = boxOf(ref.territory);
-        const double tol = extentTolerance(was);
-        const bool outline = pieces.front().kind == SubKind::Face && ref.outline.known();
-        const TerritoryCache territories(shape);
-        std::vector<SubId> kept;
-        for (const SubId& piece : pieces) {
-            const Territory& t = territories.of(piece);
-            bool outside = t.known();
-            for (const auto& q : t.points) {
-                const Vec3 back = carry(move.to, move.from, fromQuanta(q));
-                const bool in = outline ? insidePickOutline(ref.outline, back)
-                                        : back.x >= was.min.x - tol && back.x <= was.max.x + tol &&
-                                              back.y >= was.min.y - tol && back.y <= was.max.y + tol &&
-                                              back.z >= was.min.z - tol && back.z <= was.max.z + tol;
-                outside = outside && !in;
-            }
-            if (!outside)
-                kept.push_back(piece);
-        }
-        // Its move unknown, a piece where the pick was may be another element the move brought there (the scripted
-        // 8:18: a hole moved up by its width, its lower crossing where the picked upper one was): any piece outside,
-        // none is answered (empty: the caller answers Broken).
-        if (placedNow)
-            return kept.size() == pieces.size() ? pieces : std::vector<SubId>{};
-        return kept.empty() ? pieces : kept;
-    } catch (...) {
-        return pieces;
-    }
-}
-
-std::optional<Resolved> mergedAgainstMove(const ElementMap& map, const kernel::Shape& shape, SubId element,
-                                          const TopoRef& ref)
-{
-    try {
-        if (element.kind != SubKind::Face || !ref.territory.known())
-            return std::nullopt;
-        const KnownMove move = knownMove(map, ref);
-        if (move.kind == KnownMove::Kind::Moved) {
-            const Probe probe(shape, element);
-            const auto info = kernel::surfaceInfo(shape, element);
-            std::size_t landed = 0;
-            for (const auto& q : ref.territory.points) {
-                const Vec3 there = carry(move.from, move.to, fromQuanta(q));
-                bool on = probe.on(there);
-                if (!on && info)
-                    if (const auto onto = ontoSurface(*info, there))
-                        on = probe.on(*onto);
-                landed += on ? 1 : 0;
-            }
-            if (landed == 0)
-                return brokenBecause("The picked face's feature moved and took the picked place with it; the face its "
-                                     "names lead to holds none of the moved place.");
-            return std::nullopt;
-        }
-        bool placedNow = false;
-        if (move.kind == KnownMove::Kind::None && ref.placements.empty())
-            for (const Hash256& name : map.namesOf(element))
-                if (const TopoName* record = map.record(name))
-                    placedNow = placedNow || map.placement(record->origin) != nullptr;
-        if (!placedNow)
-            return std::nullopt;
-        const auto nowBox = elementBox(shape, element);
-        const Box3 was = boxOf(ref.territory);
-        const double tol = extentTolerance(was);
-        const Vec3 c = nowBox ? centreOf(*nowBox) : Vec3{0, 0, 0};
-        if (nowBox && (c.x < was.min.x - tol || c.x > was.max.x + tol || c.y < was.min.y - tol ||
-                       c.y > was.max.y + tol || c.z < was.min.z - tol || c.z > was.max.z + tol))
-            return brokenBecause("The picked face's feature may have moved (the reference was made before feature "
-                                 "placements were recorded), and the face its names lead to lies mostly elsewhere.");
-        return std::nullopt;
-    } catch (...) {
-        return std::nullopt;
     }
 }
 

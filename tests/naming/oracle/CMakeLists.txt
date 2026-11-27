@@ -24,7 +24,10 @@ target_link_libraries(ray_naming_oracle_tests PRIVATE ray_naming_harness ray_nam
 target_compile_definitions(ray_naming_oracle_tests PRIVATE RAY_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/files"
     RAY_ORACLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 # shape_testing.h (private to src/kernel, no OCCT header): the count of OCCT faults the kernel guard caught.
-target_include_directories(ray_naming_oracle_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
+# naming_testing.h (private to src/naming, no kernel header; T-081b round 8): the resolver's post-condition switch for
+# the pins' mutation checks. The oracle library above still links neither.
+target_include_directories(ray_naming_oracle_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel"
+    "${CMAKE_SOURCE_DIR}/src/naming")
 set_property(TARGET ray_naming_oracle_tests PROPERTY FOLDER "tests")
 
 # The scripted acceptance scenarios, and the replays that pin the T-081a gate fixes and the oracle's rules, in three

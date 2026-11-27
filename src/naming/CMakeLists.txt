@@ -6,6 +6,7 @@ add_library(ray_naming STATIC
     resolver.h resolver.cpp
     propagate.h propagate.cpp propagate_resolve.cpp
     territory.h territory.cpp evidence.cpp
+    postcondition.h postcondition.cpp naming_testing.h # T-081b round 8: the resolver's post-condition
     rematch.h rematch.cpp # T-084: rematchImported
     topo_ref_json.cpp)
 ray_module(ray_naming DETERMINISTIC)

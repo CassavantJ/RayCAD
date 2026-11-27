@@ -29,9 +29,17 @@ naming::TopoRef withoutOutlineIfAsked(naming::TopoRef ref)
         ref.outline = naming::PickOutline{};
     // RAYCAD_NAMING_NO_PLACEMENT: references without TopoRef::placements, as a build before round 4 made them (the
     // moved-face rule then guesses every move, as round 3 did: the before/after of the round-4 change).
+    // Such a reference has no TopoRef::samples either (round 8).
     static const bool unplaced = std::getenv("RAYCAD_NAMING_NO_PLACEMENT") != nullptr;
-    if (unplaced)
+    if (unplaced) {
         ref.placements.clear();
+        ref.samples = naming::PickSamples{};
+    }
+    // RAYCAD_NAMING_NO_SAMPLES: references without TopoRef::samples, as a build of rounds 4 to 7 made them (the
+    // post-condition then knows no move and has the territory points only).
+    static const bool unsampled = std::getenv("RAYCAD_NAMING_NO_SAMPLES") != nullptr;
+    if (unsampled)
+        ref.samples = naming::PickSamples{};
     return ref;
 }
 
@@ -1344,6 +1352,54 @@ void printTally(const char* title, const Tally& t)
     std::printf("  mutants: %ld of %ld caught\n", t.mutantsCaught(), t.mutantsMade());
     for (const auto& [k, m] : t.mutants)
         std::printf("    %-40s %8ld of %8ld caught (%ld only by the review gate)\n", k.c_str(), m[1], m[0], m[2]);
+}
+
+// A script written out exactly (doubles as hexadecimal floating point, which every platform's strtod reads back to the
+// same value), so that a sequence one platform's generator authored is replayed as it is on every platform: the
+// platform-independent pins (item 8 of round 4). One token stream, whitespace-separated: per feature
+//   F <id> <type> <op> <role> <suppressed> o x y z xd x y z n x y z <dist> <size> <loops> {<loop id> <ents> {<k> x0 y0
+//   x1 y1 cx cy r tag}} <targets> {<a> <b> <convex> <picked>} <edit kind> <amount> <edit targets> {<target>}
+// The import's base is not written: it is the part's.
+std::string scriptToText(const Script& s)
+{
+    std::string out;
+    char buf[64];
+    auto num = [&](double v) {
+        std::snprintf(buf, sizeof buf, " %a", v);
+        out += buf;
+    };
+    for (const Feature& f : s) {
+        out += "F " + f.id + " " + std::to_string(static_cast<int>(f.type)) + " " +
+               std::to_string(static_cast<int>(f.op)) + " " + (f.role.empty() ? "-" : f.role) + " " +
+               (f.suppressed ? "1" : "0");
+        for (const Vec3& v : {f.frame.o, f.frame.xd, f.frame.n}) {
+            num(v.x);
+            num(v.y);
+            num(v.z);
+        }
+        num(f.dist);
+        num(f.size);
+        out += " " + std::to_string(f.loops.size());
+        for (const Loop& l : f.loops) {
+            out += " " + std::to_string(l.id) + " " + std::to_string(l.ents.size());
+            for (const Ent& e : l.ents) {
+                out += std::string(" ") + e.k;
+                for (const double v : {e.x0, e.y0, e.x1, e.y1, e.cx, e.cy, e.r})
+                    num(v);
+                out += " " + std::to_string(e.tag);
+            }
+        }
+        out += " " + std::to_string(f.targets.size());
+        for (const Target& t : f.targets)
+            out += " " + t.a + " " + t.b + (t.convex ? " 1" : " 0") + (t.picked ? " 1" : " 0");
+        out += " " + std::to_string(static_cast<int>(f.edit.kind));
+        num(f.edit.amount);
+        out += " " + std::to_string(f.edit.targets.size());
+        for (const std::string& t : f.edit.targets)
+            out += " " + t;
+        out += "\n";
+    }
+    return out;
 }
 
 } // namespace ray::naming_oracle

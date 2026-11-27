@@ -110,6 +110,7 @@ TopoRef withoutEvidence(TopoRef ref)
     ref.territory = Territory{};
     ref.pickNeighbours.clear();
     ref.outline = PickOutline{};
+    ref.samples = naming::PickSamples{}; // (round 8: an older document has no samples either)
     return ref;
 }
 
@@ -902,6 +903,7 @@ TEST_CASE("A feature's placement is carried from map to map, recorded by a refer
     CHECK(r.elements == std::vector<SubId>{*movedFloor});
     TopoRef unplaced = ref;
     unplaced.placements.clear();
+    unplaced.samples = naming::PickSamples{}; // a reference made before placements has no samples (round 8) either
     CHECK(resolverFor(moved)->resolve(unplaced).state == ResolveState::Broken);
     // Sorted by feature, each once: a damaged list is refused, naming the member.
     std::string twice = text;

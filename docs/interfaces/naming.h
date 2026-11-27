@@ -12,6 +12,8 @@
 // Amended by T-081b round 4: feature placements (FeaturePlacement) in NamingInput, ElementMap (element-map format
 // version 2, written only when a map holds one) and TopoRef (its JSON member "placements"), so that a face whose feature
 // was moved is followed by the feature's own move. Additive in the same way.
+// Amended by T-081b round 8: TopoRef::samples (PickSamples, JSON member "samples", versioned), the evidence of the
+// resolver's one post-condition on every answer. Additive in the same way; a reference without it still loads.
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -201,6 +203,49 @@ struct PickOutline {
     bool known() const { return !chords.empty(); }
 };
 
+// Pick-time samples (T-081b round 8, version 1): where the picked element lay, densely enough that the resolver can
+// check every answer against the pick as its features moved it (the post-condition, src/naming/postcondition.cpp: an
+// answer must hold the pick, hold nothing another pick-time element held, and be all of it). Quantised like Territory
+// (1e-4 mm; directions to 1e-6 like Fingerprint's axis). A reference made before samples existed has version 0 and
+// none; it resolves as one whose features' moves are not known.
+inline constexpr std::uint32_t kPickSamplesVersion = 1;
+inline constexpr std::size_t kMaxPickSamples = 24;  // points of a face; an edge has its two ends and up to 11 more
+inline constexpr std::size_t kMaxSampleCarriers = 8; // the surfaces the element lies on
+// A surface the picked element lay on: a face's own, an edge's or a vertex's faces'.
+struct SampleCarrier {
+    enum class Type : std::uint8_t { Plane, Cylinder, Other } type = Type::Other;
+    std::array<std::int64_t, 3> qOrigin{}; // plane: a point of it; cylinder: a point of its axis (1e-4 mm)
+    std::array<std::int64_t, 3> qAxis{};   // plane: its outward normal; cylinder: its axis (1e-6)
+    std::int64_t qRadius = 0;              // cylinder: its radius (1e-4 mm), negative when the face looks at the axis
+    // Index into PickSamples::placements of the feature whose placement carries this surface (a sweep's side or cap, a
+    // hole's wall or floor): the surface moves when that feature is placed elsewhere. -1: no such feature (an imported
+    // face, a direct edit's): the surface is taken to stay where it was. -2 - i: a piece split off by the feature
+    // placements[i], which may or may not carry it (its own face split as it was made, or an imported face it cut).
+    std::int32_t owner = -1;
+};
+struct PickSamples {
+    std::uint32_t version = 0; // kPickSamplesVersion; 0: none recorded
+    //  face: up to kMaxPickSamples points on it, each at least 2e-3 mm inside its boundary, spread farthest-first (the
+    //        first the deepest, the later ones out to its boundary); empty for a surface other than a plane bounded by
+    //        lines and arcs or a cylinder bounded by lines along it and circles about it (the territory points stand in);
+    //  edge: its start, its end, then points along it at fixed fractions of its length;
+    //  vertex: its point.
+    std::vector<std::array<std::int64_t, 3>> points;
+    // An edge's unit directions from its start into it (0..2) and from its end into it (3..5), 1e-6; zero otherwise.
+    std::array<std::int64_t, 6> ends{};
+    // How far a point of the element may lie from its nearest sample (a face: within the margin; an edge: along it).
+    std::int64_t qSpacing = 0;
+    std::vector<SampleCarrier> carriers;
+    // How many of `carriers`, the first, are the element's own surfaces; the rest are the other faces at an edge's end
+    // vertices (what bounds it: a crossing whose own surfaces did not move moves only with them), those at its first
+    // vertex (`firstEndCarriers` of them) before those at its other.
+    std::uint32_t ownCarriers = 0, firstEndCarriers = 0;
+    // Parallel to TopoRef::pickNeighbours: the index into `placements` of the feature that carries each one, or -1.
+    std::vector<std::int32_t> neighbourOwners;
+    std::vector<FeaturePlacement> placements; // the owners' pick-time placements, sorted by feature
+    bool known() const { return version != 0 && !points.empty(); }
+};
+
 struct TopoRef {
     BodyId body;
     kernel::SubKind kind;
@@ -221,7 +266,9 @@ struct TopoRef {
     //  - Split pieces that together do not fit in the picked element's box (translated), or one of which covers a
     //    neighbour's territory, are Broken; and a Split face piece that lies wholly outside the picked face's
     //    outline on its plane is not a piece (ground the picked face never had, past a bound that moved).
-    // An element that merely grew into territory nobody recorded (a dimension change) stays Exact.
+    // An element that merely grew into territory nobody recorded (a dimension change) stays Exact. Since T-081b round 8
+    // every answer also passes one post-condition last, against `samples` (PickSamples): it holds the pick as its
+    // features moved it, all of it, and nothing another pick-time element held.
     Territory territory;                 // the picked element's own
     std::vector<PickNeighbour> pickNeighbours;
     PickOutline outline;                 // a planar face's (T-081b round 2)
@@ -230,6 +277,8 @@ struct TopoRef {
     // feature has another placement now, is the pick moved with its feature when the territory carried by the feature's
     // move lands on it (at least half of it), or when it lies wholly inside the pick so carried; else Broken.
     std::vector<FeaturePlacement> placements;
+    // Pick-time samples (T-081b round 8): what every answer is checked against last (PickSamples).
+    PickSamples samples;
 };
 
 // ---- The JSON form of a TopoRef ----
@@ -248,12 +297,17 @@ struct TopoRef {
 //    "pickNeighbours": [{"names": [...], "relation": "sibling" | "carrier", "territory": T}, ...],   optional
 //    "placements": [{"feature": "<uuid>", "q": [12 integers]}, ...],  optional, FeaturePlacement, sorted by feature
 //    "repairConfirmed": bool,
+//    "samples": S,                             optional (T-081b round 8), PickSamples
 //    "territory": T}                           optional
-// where T = {"box": [xmin, ymin, zmin, xmax, ymax, zmax], "measure": n, "points": [[x, y, z], ...]} in quanta.
+// where T = {"box": [xmin, ymin, zmin, xmax, ymax, zmax], "measure": n, "points": [[x, y, z], ...]} in quanta, and
+// S = {"carriers": [[type, ox, oy, oz, ax, ay, az, radius, owner], ...], "ends": [6 integers], "firstEnd": n,
+//      "neighbourOwners": [n, ...], "own": n, "placements": [as above], "points": [[x, y, z], ...], "spacing": n,
+//      "version": 1}
+// (type 0 plane, 1 cylinder, 2 other; a version this build does not know is refused).
 // Every integer is a JSON number, or a decimal string when beyond +-2^53. toJson writes every member (empty arrays
-// included) except territory, pickNeighbours, outline and placements, which it writes only when the territory or the
-// outline is known / the list is not empty, so a reference made without evidence is written exactly as references
-// were before the evidence existed.
+// included) except territory, pickNeighbours, outline, placements and samples, which it writes only when the territory,
+// the outline or the samples are known / the list is not empty, so a reference made without evidence is written
+// exactly as references were before the evidence existed.
 std::string toJson(const TopoRef&);
 // Reads the JSON form. Every member but body, kind and names is optional; unknown members are refused. Errors are
 // InvalidArgument, with the problem in `message` ("must list at least one name") and the member in context[0]

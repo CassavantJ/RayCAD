@@ -34,6 +34,7 @@
 #include "harness.h"
 
 #include <directedit_testing.h>
+#include <naming_testing.h>
 #include <shape_testing.h>
 
 #include <algorithm>
@@ -602,53 +603,7 @@ std::optional<Feature> proposeEdit(const Script& built, const kernel::Shape& sha
 }
 
 // ---------------------------------------------------------------- scripts as text (T-081b round 4)
-// A script written out exactly (doubles as hexadecimal floating point, which every platform's strtod reads back to the
-// same value), so that a sequence one platform's generator authored is replayed as it is on every platform: the
-// platform-independent pins (item 8 of round 4). One token stream, whitespace-separated: per feature
-//   F <id> <type> <op> <role> <suppressed> o x y z xd x y z n x y z <dist> <size> <loops> {<loop id> <ents> {<k> x0 y0
-//   x1 y1 cx cy r tag}} <targets> {<a> <b> <convex> <picked>} <edit kind> <amount> <edit targets> {<target>}
-// The import's base is not written: it is the part's.
-std::string scriptToText(const Script& s)
-{
-    std::string out;
-    char buf[64];
-    auto num = [&](double v) {
-        std::snprintf(buf, sizeof buf, " %a", v);
-        out += buf;
-    };
-    for (const Feature& f : s) {
-        out += "F " + f.id + " " + std::to_string(static_cast<int>(f.type)) + " " +
-               std::to_string(static_cast<int>(f.op)) + " " + (f.role.empty() ? "-" : f.role) + " " +
-               (f.suppressed ? "1" : "0");
-        for (const Vec3& v : {f.frame.o, f.frame.xd, f.frame.n}) {
-            num(v.x);
-            num(v.y);
-            num(v.z);
-        }
-        num(f.dist);
-        num(f.size);
-        out += " " + std::to_string(f.loops.size());
-        for (const Loop& l : f.loops) {
-            out += " " + std::to_string(l.id) + " " + std::to_string(l.ents.size());
-            for (const Ent& e : l.ents) {
-                out += std::string(" ") + e.k;
-                for (const double v : {e.x0, e.y0, e.x1, e.y1, e.cx, e.cy, e.r})
-                    num(v);
-                out += " " + std::to_string(e.tag);
-            }
-        }
-        out += " " + std::to_string(f.targets.size());
-        for (const Target& t : f.targets)
-            out += " " + t.a + " " + t.b + (t.convex ? " 1" : " 0") + (t.picked ? " 1" : " 0");
-        out += " " + std::to_string(static_cast<int>(f.edit.kind));
-        num(f.edit.amount);
-        out += " " + std::to_string(f.edit.targets.size());
-        for (const std::string& t : f.edit.targets)
-            out += " " + t;
-        out += "\n";
-    }
-    return out;
-}
+// scriptToText (harness.h) writes a script out exactly; scriptFromText reads it back.
 
 Script scriptFromText(const std::string& text, const std::shared_ptr<const ImportBase>& base)
 {
@@ -1597,9 +1552,10 @@ std::vector<Looked> replayAndLook(int partIndex, int seq, const std::vector<std:
 // on part `partIndex`: the references to the element whose pick-time fingerprint has centroid `at` (within 1e-3 mm) and
 // area or length `measure` (within a thousandth), looked at as replayAndLook does. Element numbers are not used, so the
 // pin holds on every platform whose kernel builds the scripts alike (T-081b round 4, item 8).
+// `judgeSequence` false: the sequence's other answers are not checked (a mutation check's replay, which must fail).
 std::vector<Looked> replayScriptedAndLook(int partIndex, const std::string& baseline, const std::string& edited,
                                           SubKind kind, const Vec3& at, double measure,
-                                          const std::vector<Probe>& probes = {})
+                                          const std::vector<Probe>& probes = {}, bool judgeSequence = true)
 {
     const Part part = loadPart(kParts[partIndex]);
     REQUIRE(part.base != nullptr);
@@ -1625,8 +1581,10 @@ std::vector<Looked> replayScriptedAndLook(int partIndex, const std::string& base
     setInspector({});
     INFO(kParts[partIndex] << " scripted: " << r.edit);
     CHECK_FALSE(r.skipped);
-    CHECK(r.tally.wrong() == 0);
-    CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    if (judgeSequence) {
+        CHECK(r.tally.wrong() == 0);
+        CHECK(r.tally.mutantsCaught() == r.tally.mutantsMade());
+    }
     return out;
 }
 
@@ -2080,13 +2038,13 @@ void replayCases(bool keyOnly)
         // The reviewer's own block (round 4 rulings), authored on Windows:
         //  - a stretch of a moved cut's edge past its old start, ground inside a bore at pick time, is not a piece; the
         //    resolver cannot tell such ground from new ground the pick grew into (sorted 17:32 edge 32): Broken (a
-        //    miss:
-        //    {104} is right); with that stretch, or it alone, WRONG;
+        //    miss: {104} is right); with that stretch, or it alone, WRONG. (Round 8: the post-condition leaves out the
+        //    stretch that holds none of the pick as its cut moved it: Split {104}, right.)
         {1,
          39,
          "directedit raycad-synthetic/chamfer_block_2.stp #39|edge 83",
-         Answer::Broken,
-         Verdict::Missed,
+         Answer::Split,
+         Verdict::Correct,
          "piece past the moved pick's old start",
          false,
          0x6B1D3F5A2C800000ull,
@@ -2175,8 +2133,10 @@ void replayCases(bool keyOnly)
         //  face's
         //    extent held only by a push/pull's fill, that push/pull suppressed: not judged (reviewed);
         {14, 0, k + "rib_plate_1.stp #0|vertex 7", Answer::Exact, Verdict::Unjudged, "ground only an edit's fill gave"},
-        //  - a fillet the kernel rebuilt as a B-spline at its new size: not judged (reviewed);
-        {18, 35, "directedit nist-d2mi/827-9999-905.stp #35|vertex 0", Answer::Exact, Verdict::Unjudged,
+        //  - a fillet the kernel rebuilt as a B-spline at its new size: not judged (reviewed). (Round 8: its corner
+        //    moved with the fillet's size, which no placement tells, onto surfaces the samples cannot compare: Broken,
+        //    a miss.)
+        {18, 35, "directedit nist-d2mi/827-9999-905.stp #35|vertex 0", Answer::Broken, Verdict::Missed,
          "blend built as a B-spline", false},
         // A vertex where two pieces of a blend met a face, the pieces joined by a later push/pull's boolean.
         {7, 0, k + "keyway_tslot_1.stp #0|vertex 0", Answer::Exact, Verdict::Correct, "joined blend pieces"},
@@ -2197,7 +2157,8 @@ void replayCases(bool keyOnly)
         {3, 49, k + "closed_pocket_3.stp #49|edge 5", Answer::Exact, Verdict::Correct, "bore closed down"},
         // Not judged (each on reviewed_unjudged.txt): the pick and another piece mapped onto one place; merged only for
         // an element that cannot be mapped; the owner gone while an element holds all of the pick's ground.
-        {6, 3, k + "flange_bolt_circle_1.stp #3|edge 23", Answer::Split, Verdict::Unjudged, "shared anchor"},
+        // (Round 8: the pick as its cut moved it lands on other stretches of the crossing as well: Broken, a miss.)
+        {6, 3, k + "flange_bolt_circle_1.stp #3|edge 23", Answer::Broken, Verdict::Missed, "shared anchor"},
 
         {17, 20, "directedit nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #20|face 13", Answer::Merged, Verdict::Unjudged,
          "owner gone, ground held"},
@@ -2381,6 +2342,152 @@ TEST_CASE("Pinned sequences as scripts (round 4): the Windows-authored pins, on 
     }
 }
 
+TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its features moved it, all of it, and nothing "
+          "another pick-time element held",
+          "[naming][directedit-replays]")
+{
+    // T-081b round 8, the architect's post-condition (src/naming/postcondition.h), as fixed scripts
+    // (pinned_scripts.txt): each answer, its verdict, the answers that must stay wrong, and the mutation check: with
+    // the post-condition off (naming::testing::setPostconditionEnabled) the pin fails, the resolver giving another
+    // answer.
+    //  a. block 4 (seed 0x5A93D1E7C46B0000) 19:40 edge 325: boss R3 moved by its width, cut by the plane x 400 into two
+    //     lines either side of its axis; the pick's line mapped by the move (carried, slid onto x 400, settled where
+    //     the moved cylinder meets it) lies on edge 185, and the name on 323, the line on the other side. Broken (the
+    //     oracle cannot judge 185 merged: a miss); Exact on 323 is never right. (Off: Exact {323}.)
+    //  b. block 4 4:41: hole R1 moved; its floor was two coplanar faces split at z 25 (17 below, 28 above). Face 17 as
+    //     moved straddles the split, 23 % on 28: Split {17 28}; face 28 now holds half of 17's moved ground: Merged.
+    //     Exact on either is not right. (Off: Exact, both.)
+    //  d. macOS 4:31 face 23 (the macOS generator's script; Windows builds it alike): R1 resized, cut X1 inserted; the
+    //     arc wall's names lead to 28 and to 21, a 0.15 mm2 piece below X1 holding none of the pick. Every member of a
+    //     Split must hold part of the mapped pick: Broken (a miss: {28} is right); Split {21 28} WRONG. (Off: that.)
+    //  e. T-081a holdout2 4:6 face 31 (replayed here): a moved cut's ceiling piece whose image left the part, the
+    //     ceiling moved over its old place: Broken; Merged {29} is not right. (Off: Merged {29}.)
+    //     review3 10:21 edge 31: the front face moved onto y 18 by an offset and unified with the face the pick
+    //     bordered; the edge grew along it, continuing the front face's edge too: Merged {13}, Exact on it WRONG.
+    //     Decided by the rule that survived the post-condition (an edge grown along a unified face, evidence.cpp): the
+    //     post-condition cannot see it (the other edge came onto the pick's line by a direct edit), so no mutation
+    //     check here. review3 18:23 face 6 (a 0.2 mm2 strip of a boss's top cap that the moved hole cut away in the
+    //     round-6 block, Exact on another patch then WRONG): replayed as a script with this build's feature picks, the
+    //     strip is not cut away (the oracle expects {9}, the answer): pinned as it builds, no mutation check.
+    struct Pin {
+        const char* script;
+        int part;
+        SubKind kind;
+        Vec3 at;
+        double measure;
+        const char* about;
+        Answer answer;
+        Verdict verdict;
+        std::vector<Probe> right, wrong;
+        bool decidedByPostcondition = true; // else no mutation check (see above)
+    };
+    const std::vector<Pin> pins{
+        {"block4 19:40",
+         19,
+         SubKind::Edge,
+         {400.0, -144.6768, -81.8043},
+         53.6007,
+         "a moved boss's line on the plane x 400: the other side's line",
+         Answer::Broken,
+         Verdict::Missed,
+         {},
+         {{Answer::Exact, {}, -1, {Vec3{400.0, -102.638039, -25.686457}}}}},
+        {"block4 4:41",
+         4,
+         SubKind::Face,
+         {14.1389, 16.8333, 21.2987},
+         76.3695,
+         "a moved hole's floor piece straddling the split",
+         Answer::Split,
+         Verdict::Correct,
+         {{Answer::Split, {}, -1, {Vec3{14.138855, 13.3729, 21.0}, Vec3{14.138855, 13.3729, 26.5}}}},
+         {{Answer::Exact, {}, -1, {Vec3{14.138855, 13.3729, 21.0}}}}},
+        {"block4 4:41",
+         4,
+         SubKind::Face,
+         {14.1389, 16.8333, 26.5581},
+         29.4756,
+         "the floor piece holding half of the other's moved ground",
+         Answer::Merged,
+         Verdict::Correct,
+         {{Answer::Merged, {}, -1, {Vec3{14.138855, 13.3729, 26.5}}}},
+         {{Answer::Exact, {}, -1, {Vec3{14.138855, 13.3729, 26.5}}}}},
+        {"macos 4:31",
+         4,
+         SubKind::Face,
+         {68.7305, 17.7822, 12.645},
+         400.7397,
+         "a Split member holding none of the pick",
+         Answer::Broken,
+         Verdict::Missed,
+         {},
+         {{Answer::Split, {}, -1, {Vec3{68.666786, 23.852047, 3.875991}, Vec3{67.543083, 18.586119, 12.5}}}}},
+        {"holdout2 4:6",
+         4,
+         SubKind::Face,
+         {0.9397, 29.9462, 8.9069},
+         2.3884,
+         "a moved cut's ceiling piece whose image left the part",
+         Answer::Broken,
+         Verdict::Missed,
+         {},
+         {{Answer::Merged, {}, -1, {Vec3{9.730118, 41.046532, 8.906930}}}}},
+        {"review3 10:21",
+         10,
+         SubKind::Edge,
+         {4.5731, 18.0, 24.0},
+         12.0,
+         "an edge grown along a unified face",
+         Answer::Merged,
+         Verdict::Correct,
+         {{Answer::Merged, {}, -1, {Vec3{0.0, 18.0, 15.0}}}},
+         {{Answer::Exact, {}, -1, {Vec3{0.0, 18.0, 15.0}}}},
+         false},
+        {"review3 18:23",
+         18,
+         SubKind::Face,
+         {1.7669, 0.8145, 3.5649},
+         0.2052,
+         "a strip of a boss's top cap (the moved hole no longer cuts it away here)",
+         Answer::Exact,
+         Verdict::Correct,
+         {{Answer::Exact, {}, -1, {Vec3{1.3624, 1.0225, 3.5649}}}},
+         {},
+         false},
+    };
+    for (const Pin& p : pins) {
+        const auto [baseline, edited] = pinnedScripts(p.script);
+        std::vector<Probe> probes = p.right;
+        probes.insert(probes.end(), p.wrong.begin(), p.wrong.end());
+        const std::vector<Looked> looked =
+            replayScriptedAndLook(p.part, baseline, edited, p.kind, p.at, p.measure, probes);
+        INFO(p.script << ": " << p.about);
+        REQUIRE(looked.size() == 1);
+        INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == p.answer);
+        CHECK(looked[0].judgement.verdict == p.verdict);
+        REQUIRE(looked[0].probes.size() == probes.size());
+        for (std::size_t i = 0; i < probes.size(); ++i) {
+            INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+            CHECK(looked[0].probed[i].rfind("asked;", 0) != 0); // it found its elements
+            if (i < p.right.size())
+                CHECK(looked[0].probes[i].verdict == Verdict::Correct);
+            else
+                CHECK(looked[0].probes[i].verdict != Verdict::Correct);
+        }
+        // The mutation check: without the post-condition the resolver answers otherwise.
+        if (!p.decidedByPostcondition)
+            continue;
+        naming::testing::setPostconditionEnabled(false);
+        const std::vector<Looked> off =
+            replayScriptedAndLook(p.part, baseline, edited, p.kind, p.at, p.measure, {}, false);
+        naming::testing::setPostconditionEnabled(true);
+        REQUIRE(off.size() == 1);
+        INFO("post-condition off: " << off[0].signature);
+        CHECK((off[0].answer != looked[0].answer || off[0].elements != looked[0].elements));
+    }
+}
+
 TEST_CASE("Oracle (directedit 7:12, 15:46; hidden 6:47): edits the oracle's model does not describe are not modelled",
           "[naming][directedit-replays]")
 {
@@ -2439,7 +2546,9 @@ TEST_CASE("debug: look at one sequence", "[.debug-directedit]")
             std::string els;
             for (const SubId& s : res.elements)
                 els += " " + std::to_string(s.index);
-            std::printf("LOOK outline %zu chords\n", ref.ref.outline.chords.size());
+            const naming::Fingerprint& h = ref.ref.hint;
+            std::printf("LOOK outline %zu chords; hint (%.4f %.4f %.4f) %.4f\n", ref.ref.outline.chords.size(),
+                        h.qCx * 1e-4, h.qCy * 1e-4, h.qCz * 1e-4, h.qArea * 1e-4);
             std::printf("LOOK %s: names %s; answer %d {%s }, verdict %s; desc %s\n", id.c_str(), ref.names.c_str(),
                         static_cast<int>(rr.answer), els.c_str(), verdictName(rr.judgement.verdict),
                         explain(ref.record.truth, *ref.record.owners, *ref.record.baseline,
@@ -2987,8 +3096,8 @@ TEST_CASE("debug: replay one pinned script", "[.debug-scripted]")
     opt.script = &s0;
     opt.edited = &s1;
     const bool all = std::getenv("RAYCAD_PIN_ALL") != nullptr;
-    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved&, const RefResult& rr, const Owners&,
-                     const Samples& samples) {
+    setInspector([&](const std::string& id, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners&, const Samples& samples) {
         if (!all && !isWrong(rr.judgement.verdict) && rr.judgement.verdict != Verdict::Unjudged)
             return;
         const naming::Fingerprint& h = ref.ref.hint;
@@ -3005,8 +3114,20 @@ TEST_CASE("debug: replay one pinned script", "[.debug-scripted]")
                 e += b;
             }
         }
-        std::printf("PIN %s: %s, %s; E {%s } %s; pick centroid (%.6f %.6f %.6f) measure %.6f\n", id.c_str(),
-                    rr.signature.c_str(), verdictName(rr.judgement.verdict), e.c_str(),
+        // (A mid node of each answer element too: a point a pin's negative can find it by.)
+        std::string a;
+        for (const SubId& s : res.elements) {
+            const auto& nodes = samples.of(s.kind)[s.index].nodes;
+            char b[200];
+            if (!nodes.empty()) {
+                const Vec3 m = nodes[nodes.size() / 2], t = nodes[nodes.size() / 3];
+                std::snprintf(b, sizeof b, " %u(mid node %.6f %.6f %.6f; %.6f %.6f %.6f)", s.index, m.x, m.y, m.z, t.x,
+                              t.y, t.z);
+                a += b;
+            }
+        }
+        std::printf("PIN %s: %s, %s; answer {%s }; E {%s } %s; pick centroid (%.6f %.6f %.6f) measure %.6f\n",
+                    id.c_str(), rr.signature.c_str(), verdictName(rr.judgement.verdict), a.c_str(), e.c_str(),
                     answerSignature(Answer::Split, expected, samples).c_str(), h.qCx * 1e-4, h.qCy * 1e-4, h.qCz * 1e-4,
                     h.qArea * 1e-4);
     });

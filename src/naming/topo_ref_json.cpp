@@ -2,8 +2,11 @@
 // model.reference action, CAM operations). The reader is a small strict RFC 8259 parser for this one schema.
 #include "naming_internal.h"
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -83,6 +86,77 @@ void writeOutline(std::string& out, const PickOutline& o)
         out += ']';
     }
     out += "]}";
+}
+
+void writeIntegers(std::string& out, std::span<const std::int64_t> values)
+{
+    out += '[';
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0)
+            out += ',';
+        writeInteger(out, values[i]);
+    }
+    out += ']';
+}
+
+void writePlacements(std::string& out, const std::vector<FeaturePlacement>& placements)
+{
+    out += '[';
+    for (std::size_t i = 0; i < placements.size(); ++i) {
+        if (i > 0)
+            out += ',';
+        out += "{\"feature\":\"";
+        out += placements[i].feature.value.toString();
+        out += "\",\"q\":";
+        writeIntegers(out, placements[i].q);
+        out += '}';
+    }
+    out += ']';
+}
+
+void writeSamples(std::string& out, const PickSamples& s)
+{
+    out += "{\"carriers\":[";
+    for (std::size_t i = 0; i < s.carriers.size(); ++i) {
+        const SampleCarrier& c = s.carriers[i];
+        if (i > 0)
+            out += ',';
+        const std::array<std::int64_t, 9> v{static_cast<std::int64_t>(c.type),
+                                            c.qOrigin[0],
+                                            c.qOrigin[1],
+                                            c.qOrigin[2],
+                                            c.qAxis[0],
+                                            c.qAxis[1],
+                                            c.qAxis[2],
+                                            c.qRadius,
+                                            c.owner};
+        writeIntegers(out, v);
+    }
+    out += "],\"ends\":";
+    writeIntegers(out, s.ends);
+    out += ",\"firstEnd\":";
+    writeInteger(out, s.firstEndCarriers);
+    out += ",\"neighbourOwners\":[";
+    for (std::size_t i = 0; i < s.neighbourOwners.size(); ++i) {
+        if (i > 0)
+            out += ',';
+        writeInteger(out, s.neighbourOwners[i]);
+    }
+    out += "],\"own\":";
+    writeInteger(out, s.ownCarriers);
+    out += ",\"placements\":";
+    writePlacements(out, s.placements);
+    out += ",\"points\":[";
+    for (std::size_t i = 0; i < s.points.size(); ++i) {
+        if (i > 0)
+            out += ',';
+        writePoint(out, s.points[i]);
+    }
+    out += "],\"spacing\":";
+    writeInteger(out, s.qSpacing);
+    out += ",\"version\":";
+    writeInteger(out, s.version);
+    out += '}';
 }
 
 const char* kindName(kernel::SubKind kind)
@@ -496,6 +570,146 @@ Result<Territory> readTerritory(const Node& v, const std::string& field)
     return t;
 }
 
+Result<std::vector<FeaturePlacement>> readPlacements(const Node& list, const std::string& field)
+{
+    std::vector<FeaturePlacement> out;
+    if (list.type != Node::Type::Array)
+        return fieldError(field, "must be an array");
+    for (std::size_t i = 0; i < list.items.size(); ++i) {
+        const Node& item = list.items[i];
+        const std::string at = field + "[" + std::to_string(i) + "]";
+        if (item.type != Node::Type::Object)
+            return fieldError(at, "must be a JSON object");
+        if (auto ok = onlyKeys(item, {"feature", "q"}, at + "."); !ok)
+            return tl::unexpected(ok.error());
+        FeaturePlacement p;
+        const Node* feature = item.find("feature");
+        if (feature == nullptr || feature->type != Node::Type::String)
+            return fieldError(at + ".feature", "must be a lower-case UUID");
+        const Uuid id = Uuid::fromString(feature->text);
+        if (id.toString() != feature->text || id == Uuid{})
+            return fieldError(at + ".feature", "must be a lower-case UUID other than the nil one");
+        p.feature = FeatureId{id};
+        const Node* q = item.find("q");
+        if (q == nullptr || q->type != Node::Type::Array || q->items.size() != 12)
+            return fieldError(at + ".q", "must be twelve whole numbers");
+        for (std::size_t k = 0; k < 12; ++k) {
+            const auto n = wholeNumber(q->items[k]);
+            if (!n)
+                return fieldError(at + ".q", "must be twelve whole numbers");
+            p.q[k] = *n;
+        }
+        if (!out.empty() && !(out.back().feature < p.feature))
+            return fieldError(field, "must be sorted by feature, each feature once");
+        out.push_back(p);
+    }
+    return out;
+}
+
+// An array of exactly `n` whole numbers into `out`.
+bool readIntegers(const Node* v, std::size_t n, std::int64_t* out)
+{
+    if (v == nullptr || v->type != Node::Type::Array || v->items.size() != n)
+        return false;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto w = wholeNumber(v->items[i]);
+        if (!w)
+            return false;
+        out[i] = *w;
+    }
+    return true;
+}
+
+Result<PickSamples> readSamples(const Node& v, const std::string& field, std::size_t neighbours)
+{
+    if (v.type != Node::Type::Object)
+        return fieldError(field, "must be a JSON object");
+    if (auto ok = onlyKeys(
+            v, {"carriers", "ends", "firstEnd", "neighbourOwners", "own", "placements", "points", "spacing", "version"},
+            field + ".");
+        !ok)
+        return tl::unexpected(ok.error());
+    PickSamples s;
+    const Node* version = v.find("version");
+    const auto ver = version != nullptr ? wholeNumber(*version) : std::nullopt;
+    if (!ver || *ver != kPickSamplesVersion)
+        return fieldError(field + ".version", "must be " + std::to_string(kPickSamplesVersion));
+    s.version = kPickSamplesVersion;
+    if (const Node* placements = v.find("placements")) {
+        auto p = readPlacements(*placements, field + ".placements");
+        if (!p)
+            return tl::unexpected(p.error());
+        s.placements = std::move(*p);
+    }
+    // -1, an index into placements, or -2 - such an index (SampleCarrier::owner).
+    const auto owner = [&](std::int64_t o) {
+        const std::int64_t n = static_cast<std::int64_t>(s.placements.size());
+        return o < n && o >= -1 - n;
+    };
+    const Node* points = v.find("points");
+    const char* badPoints = "must be an array of points, each three whole numbers";
+    if (points == nullptr || points->type != Node::Type::Array || points->items.empty())
+        return fieldError(field + ".points", badPoints);
+    if (points->items.size() > kMaxPickSamples)
+        return fieldError(field + ".points", "must hold at most " + std::to_string(kMaxPickSamples) + " points");
+    for (const Node& p : points->items) {
+        std::array<std::int64_t, 3> q{};
+        if (!readIntegers(&p, 3, q.data()))
+            return fieldError(field + ".points", badPoints);
+        s.points.push_back(q);
+    }
+    if (const Node* ends = v.find("ends"); ends != nullptr && !readIntegers(ends, 6, s.ends.data()))
+        return fieldError(field + ".ends", "must be six whole numbers");
+    if (const Node* spacing = v.find("spacing")) {
+        const auto n = wholeNumber(*spacing);
+        if (!n || *n < 0)
+            return fieldError(field + ".spacing", "must be a whole number, 0 or more");
+        s.qSpacing = *n;
+    }
+    if (const Node* carriers = v.find("carriers")) {
+        const char* bad = "must be an array of carriers, each nine whole numbers (type, origin, axis, radius, owner)";
+        if (carriers->type != Node::Type::Array || carriers->items.size() > kMaxSampleCarriers)
+            return fieldError(field + ".carriers", bad);
+        for (const Node& c : carriers->items) {
+            std::array<std::int64_t, 9> q{};
+            if (!readIntegers(&c, 9, q.data()) || q[0] < 0 || q[0] > 2 || !owner(q[8]))
+                return fieldError(field + ".carriers", bad);
+            SampleCarrier carrier;
+            carrier.type = static_cast<SampleCarrier::Type>(q[0]);
+            carrier.qOrigin = {q[1], q[2], q[3]};
+            carrier.qAxis = {q[4], q[5], q[6]};
+            carrier.qRadius = q[7];
+            carrier.owner = static_cast<std::int32_t>(q[8]);
+            s.carriers.push_back(carrier);
+        }
+    }
+    s.ownCarriers = static_cast<std::uint32_t>(s.carriers.size());
+    if (const Node* own = v.find("own")) {
+        const auto n = wholeNumber(*own);
+        if (!n || *n < 0 || *n > static_cast<std::int64_t>(s.carriers.size()))
+            return fieldError(field + ".own", "must be a whole number, at most the number of carriers");
+        s.ownCarriers = static_cast<std::uint32_t>(*n);
+    }
+    if (const Node* first = v.find("firstEnd")) {
+        const auto n = wholeNumber(*first);
+        if (!n || *n < 0 || *n > static_cast<std::int64_t>(s.carriers.size() - s.ownCarriers))
+            return fieldError(field + ".firstEnd", "must be a whole number, at most the number of end carriers");
+        s.firstEndCarriers = static_cast<std::uint32_t>(*n);
+    }
+    if (const Node* owners = v.find("neighbourOwners")) {
+        const char* bad = "must hold one owner (-1 or an index into placements) per pick neighbour";
+        if (owners->type != Node::Type::Array || (!owners->items.empty() && owners->items.size() != neighbours))
+            return fieldError(field + ".neighbourOwners", bad);
+        for (const Node& o : owners->items) {
+            const auto n = wholeNumber(o);
+            if (!n || !owner(*n))
+                return fieldError(field + ".neighbourOwners", bad);
+            s.neighbourOwners.push_back(static_cast<std::int32_t>(*n));
+        }
+    }
+    return s;
+}
+
 } // namespace
 
 std::string toJson(const TopoRef& ref)
@@ -560,24 +774,15 @@ std::string toJson(const TopoRef& ref)
         out += ']';
     }
     if (!ref.placements.empty()) {
-        out += ",\"placements\":[";
-        for (std::size_t i = 0; i < ref.placements.size(); ++i) {
-            if (i > 0)
-                out += ',';
-            out += "{\"feature\":\"";
-            out += ref.placements[i].feature.value.toString();
-            out += "\",\"q\":[";
-            for (std::size_t k = 0; k < 12; ++k) {
-                if (k > 0)
-                    out += ',';
-                writeInteger(out, ref.placements[i].q[k]);
-            }
-            out += "]}";
-        }
-        out += ']';
+        out += ",\"placements\":";
+        writePlacements(out, ref.placements);
     }
     out += ",\"repairConfirmed\":";
     out += ref.repairConfirmed ? "true" : "false";
+    if (ref.samples.known()) {
+        out += ",\"samples\":";
+        writeSamples(out, ref.samples);
+    }
     out += ",\"splitParents\":";
     writeHashes(out, ref.splitParents);
     if (ref.territory.known()) {
@@ -598,7 +803,7 @@ Result<TopoRef> topoRefFromJson(std::string_view json)
             Error{ErrorCode::InvalidArgument, "must be a reference to a face, edge or vertex (a JSON object)", {}});
     if (auto ok = onlyKeys(root,
                            {"ambiguous", "body", "families", "hint", "kind", "names", "neighbourNames", "outline",
-                            "pickNeighbours", "placements", "repairConfirmed", "splitParents", "territory"},
+                            "pickNeighbours", "placements", "repairConfirmed", "samples", "splitParents", "territory"},
                            "");
         !ok)
         return tl::unexpected(ok.error());
@@ -750,36 +955,16 @@ Result<TopoRef> topoRefFromJson(std::string_view json)
         }
     }
     if (const Node* list = root.find("placements")) {
-        if (list->type != Node::Type::Array)
-            return fieldError("placements", "must be an array");
-        for (std::size_t i = 0; i < list->items.size(); ++i) {
-            const Node& item = list->items[i];
-            const std::string at = "placements[" + std::to_string(i) + "]";
-            if (item.type != Node::Type::Object)
-                return fieldError(at, "must be a JSON object");
-            if (auto ok = onlyKeys(item, {"feature", "q"}, at + "."); !ok)
-                return tl::unexpected(ok.error());
-            FeaturePlacement p;
-            const Node* feature = item.find("feature");
-            if (feature == nullptr || feature->type != Node::Type::String)
-                return fieldError(at + ".feature", "must be a lower-case UUID");
-            const Uuid id = Uuid::fromString(feature->text);
-            if (id.toString() != feature->text || id == Uuid{})
-                return fieldError(at + ".feature", "must be a lower-case UUID other than the nil one");
-            p.feature = FeatureId{id};
-            const Node* q = item.find("q");
-            if (q == nullptr || q->type != Node::Type::Array || q->items.size() != 12)
-                return fieldError(at + ".q", "must be twelve whole numbers");
-            for (std::size_t k = 0; k < 12; ++k) {
-                const auto n = wholeNumber(q->items[k]);
-                if (!n)
-                    return fieldError(at + ".q", "must be twelve whole numbers");
-                p.q[k] = *n;
-            }
-            if (!out.placements.empty() && !(out.placements.back().feature < p.feature))
-                return fieldError("placements", "must be sorted by feature, each feature once");
-            out.placements.push_back(p);
-        }
+        auto placements = readPlacements(*list, "placements");
+        if (!placements)
+            return tl::unexpected(placements.error());
+        out.placements = std::move(*placements);
+    }
+    if (const Node* s = root.find("samples")) {
+        auto samples = readSamples(*s, "samples", out.pickNeighbours.size());
+        if (!samples)
+            return tl::unexpected(samples.error());
+        out.samples = std::move(*samples);
     }
     return out;
 }

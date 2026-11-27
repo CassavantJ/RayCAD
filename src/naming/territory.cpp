@@ -390,6 +390,37 @@ std::vector<Vec3> spread(const std::vector<Candidate>& candidates)
     return out;
 }
 
+// spread() for `count` points, and the largest distance from a candidate to its nearest chosen point (`cover`).
+std::vector<Vec3> spreadMany(const std::vector<Candidate>& candidates, std::size_t count, double& cover)
+{
+    std::vector<Vec3> out;
+    cover = 0;
+    if (candidates.empty())
+        return out;
+    std::size_t best = 0;
+    for (std::size_t i = 1; i < candidates.size(); ++i)
+        if (candidates[i].depth > candidates[best].depth)
+            best = i;
+    out.push_back(candidates[best].p);
+    std::vector<double> nearest(candidates.size(), 1e300);
+    for (;;) {
+        std::size_t pick = candidates.size();
+        double far = 0;
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            nearest[i] = std::min(nearest[i], norm(sub(candidates[i].p, out.back())));
+            if (nearest[i] > far + 1e-12) {
+                far = nearest[i];
+                pick = i;
+            }
+        }
+        cover = far;
+        if (out.size() >= count || pick == candidates.size() || far < kTerritoryMargin)
+            break;
+        out.push_back(candidates[pick].p);
+    }
+    return out;
+}
+
 void setPoints(Territory& t, const std::vector<Vec3>& points)
 {
     t.points.clear();
@@ -943,6 +974,104 @@ Territory territoryOf(const kernel::Shape& shape, SubId element)
     return Territory{};
 }
 
+std::vector<Vec3> facePointsOf(const kernel::Shape& shape, SubId face, std::size_t count, double& cover)
+{
+    cover = 0;
+    try {
+        const auto info = kernel::surfaceInfo(shape, face);
+        if (!info)
+            return {};
+        if (const auto o = outlineOf(shape, face, *info)) {
+            for (int n = 27; n <= 81; n *= 3) {
+                std::vector<Candidate> candidates;
+                const double du = (o->umax - o->umin) / n, dv = (o->vmax - o->vmin) / n;
+                for (int i = 0; i < n; ++i)
+                    for (int j = 0; j < n; ++j) {
+                        const double u = o->umin + (i + 0.5) * du, v = o->vmin + (j + 0.5) * dv;
+                        if (!o->inside(u, v))
+                            continue;
+                        const double depth = o->boundaryDistance(u, v);
+                        if (depth >= kTerritoryMargin)
+                            candidates.push_back({o->at(u, v), depth});
+                    }
+                if (candidates.size() >= 4 * count || n == 81)
+                    return spreadMany(candidates, count, cover);
+            }
+        }
+        if (const auto d = cylinderDomainOf(shape, face, *info)) {
+            double hmin = 1e300, hmax = -1e300;
+            for (const CylinderDomain::Arc& arc : d->arcs) {
+                hmin = std::min(hmin, arc.h);
+                hmax = std::max(hmax, arc.h);
+            }
+            for (int n = 27; n <= 81; n *= 3) {
+                std::vector<Candidate> candidates;
+                for (int i = 0; i < 2 * n; ++i)
+                    for (int j = 0; j < n; ++j) {
+                        const double a = kTwoPi * (i + 0.5) / (2 * n), h = hmin + (hmax - hmin) * (j + 0.5) / n;
+                        const Vec3 p = add(add(d->origin, mul(d->axis, h)), add(mul(d->e1, d->radius * dmath::cos(a)),
+                                                                                mul(d->e2, d->radius * dmath::sin(a))));
+                        if (!d->inside(p))
+                            continue;
+                        const double depth = d->boundaryDistance(p);
+                        if (depth >= kTerritoryMargin)
+                            candidates.push_back({p, depth});
+                    }
+                if (candidates.size() >= 4 * count || n == 81)
+                    return spreadMany(candidates, count, cover);
+            }
+        }
+    } catch (...) {
+    }
+    cover = 0;
+    return {};
+}
+
+EdgePoints edgePointsOf(const kernel::Shape& shape, SubId edge)
+{
+    EdgePoints out;
+    try {
+        const auto c = curveOf(shape, edge);
+        if (!c || !c->known)
+            return out;
+        const double length = c->info.length;
+        if (!(length > 2 * kTerritoryMargin))
+            return out;
+        if (c->info.closed) {
+            // A whole circle: no ends; points all round it.
+            out.closed = true;
+            for (int i = 0; i < 12; ++i)
+                out.along.push_back(curvePoint(*c, i / 12.0));
+            out.cover = length / 24;
+            out.known = true;
+            return out;
+        }
+        out.start = curvePoint(*c, 0.0);
+        out.end = curvePoint(*c, 1.0);
+        // The directions into the edge: towards a point a little way along it from each end.
+        const double h = std::min(0.25, 1e-3 / length);
+        if (!unitOf(sub(curvePoint(*c, h), out.start), out.intoFromStart) ||
+            !unitOf(sub(curvePoint(*c, 1.0 - h), out.end), out.intoFromEnd))
+            return out;
+        constexpr double fractions[] = {0.5, 0.3, 0.7, 0.15, 0.85, 0.05, 0.95, 0.4, 0.6, 0.25, 0.75};
+        std::vector<double> at{0.0, 1.0};
+        for (const double f : fractions)
+            if (f * length >= kTerritoryMargin && (1 - f) * length >= kTerritoryMargin) {
+                out.along.push_back(curvePoint(*c, f));
+                at.push_back(f);
+            }
+        std::sort(at.begin(), at.end());
+        double gap = 0;
+        for (std::size_t i = 1; i < at.size(); ++i)
+            gap = std::max(gap, (at[i] - at[i - 1]) * length);
+        out.cover = gap / 2;
+        out.known = true;
+    } catch (...) {
+        out.known = false;
+    }
+    return out;
+}
+
 std::optional<Box3> elementBox(const kernel::Shape& shape, SubId element)
 {
     try {
@@ -1095,6 +1224,26 @@ struct TerritoryCache::Carrier {
     double r = 0;
 };
 
+struct TerritoryCache::Element {
+    Element(const kernel::Shape& shape, SubId sub) : probe(shape, sub), box(elementBox(shape, sub))
+    {
+        if (sub.kind == SubKind::Face) {
+            if (auto info = kernel::surfaceInfo(shape, sub))
+                surface = *info;
+            if (auto s = kernel::faceSample(shape, sub))
+                sample = *s;
+        }
+        if (sub.kind == SubKind::Edge)
+            if (auto info = kernel::curveInfo(shape, sub))
+                curve = *info;
+    }
+    Probe probe;
+    std::optional<Box3> box;
+    std::optional<kernel::SurfaceInfo> surface;
+    std::optional<kernel::FaceSample> sample;
+    std::optional<kernel::CurveInfo> curve;
+};
+
 TerritoryCache::TerritoryCache(const kernel::Shape& shape) : shape_(shape) {}
 TerritoryCache::~TerritoryCache() = default;
 
@@ -1154,6 +1303,44 @@ const TerritoryCache::Carrier& TerritoryCache::carrier(SubId element) const
     }
     const std::lock_guard<std::mutex> guard(lock_);
     return *carriers_.emplace(element, std::move(c)).first->second;
+}
+
+const TerritoryCache::Element& TerritoryCache::element(SubId sub) const
+{
+    {
+        const std::lock_guard<std::mutex> guard(lock_);
+        const auto it = elements_.find(sub);
+        if (it != elements_.end())
+            return *it->second;
+    }
+    auto e = std::make_unique<Element>(shape_, sub); // outside the lock: slow, and deterministic
+    const std::lock_guard<std::mutex> guard(lock_);
+    return *elements_.emplace(sub, std::move(e)).first->second;
+}
+
+const Probe& TerritoryCache::probe(SubId sub) const
+{
+    return element(sub).probe;
+}
+
+const std::optional<Box3>& TerritoryCache::box(SubId sub) const
+{
+    return element(sub).box;
+}
+
+const std::optional<kernel::SurfaceInfo>& TerritoryCache::surface(SubId face) const
+{
+    return element(face).surface;
+}
+
+const std::optional<kernel::CurveInfo>& TerritoryCache::curve(SubId edge) const
+{
+    return element(edge).curve;
+}
+
+const std::optional<kernel::FaceSample>& TerritoryCache::faceSample(SubId face) const
+{
+    return element(face).sample;
 }
 
 std::string TerritoryCache::carrierKey(SubId element) const

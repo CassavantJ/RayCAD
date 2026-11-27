@@ -13,6 +13,8 @@
 
 #include "harness.h"
 
+#include <naming_testing.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -20,6 +22,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -813,4 +816,114 @@ TEST_CASE("Held in place (round 6, the reviewer's negative): a hole's top rim co
             CHECK(judgeAs(r, o, Answer::Split, corners) != Verdict::Correct);
     }
     CHECK(probed >= 1);
+}
+
+TEST_CASE("Post-condition pin (round 8, the macOS holdout3 4:7 family): a name on the same line running the other way "
+          "from the picked end is not the pick",
+          "[naming][directedit]")
+{
+    // macOS holdout3 4:7 edge 26 (T-081a; the macOS generator's sequence, not built on Windows): a boss moved by its
+    // own width, its other wall standing exactly where the trailing wall was; the pick's name survived on an edge of
+    // the same curve running the other way from the picked end, sharing only that point with it: Exact there, with and
+    // without placements. Scripted here: a cut from the front face whose profile is a Z (its left wall on x 40 at
+    // z 5..10, its right wall on x 50 at z 10..15), moved by -10 along x: the right wall stands on x 40 at z 10..15
+    // now, beside where the picked edge (the left wall's crossing with the front face, z 5..10) was, sharing its end
+    // (40, 0, 10). This kernel names the two apart, so the macOS outcome is simulated: the reference's names, and the
+    // names of the faces around it, are replaced by that edge's (its evidence kept). The post-condition must not answer
+    // Exact there: with the cut's placement the moved pick lands on the moved left wall's edge (x 30); without (an old
+    // reference, the move unknown) the picked end lands on that edge's end, which runs from it the other way. The
+    // oracle judges Exact there WRONG; with the post-condition off the resolver answers it (the pin fails).
+    auto zCut = [](double dx) {
+        const double p[8][2] = {{40, 5}, {55, 5}, {55, 10}, {50, 10}, {50, 15}, {35, 15}, {35, 10}, {40, 10}};
+        Loop l{1, {}};
+        for (std::uint64_t i = 0; i < 8; ++i) {
+            const auto& a = p[i];
+            const auto& b = p[(i + 1) % 8];
+            l.ents.push_back(line(a[0] + dx, a[1], b[0] + dx, b[1], i + 1));
+        }
+        Script s = block(100, 60, 20);
+        s.push_back(sweep("C1", BOp::Cut, front(), l, 10));
+        return s;
+    };
+    FeatRefs picks;
+    const Builder b0 = buildScript(zCut(0), Mode::Author, picks);
+    REQUIRE(b0.failed().empty());
+    auto s0 = sampleShape(b0.shape());
+    REQUIRE(s0.has_value());
+    const auto ow0 = std::make_shared<const Owners>(buildOwners(b0.builtScript()));
+    const std::vector<Ref> refs = recordReferences(b0, ow0, *s0, nullptr);
+    const Builder b1 = buildScript(zCut(-10), Mode::Replay, picks);
+    REQUIRE(b1.failed().empty());
+    auto s1 = sampleShape(b1.shape());
+    REQUIRE(s1.has_value());
+    const Owners owners = buildOwners(b1.builtScript());
+    // The edges of the edited shape by their ends.
+    auto edgeFrom = [&](const Vec3& a, const Vec3& b) -> std::optional<SubId> {
+        for (std::uint32_t i = 0; i < b1.shape().count(SubKind::Edge); ++i) {
+            const auto c = kernel::curveInfo(b1.shape(), SubId{SubKind::Edge, i});
+            if (c && c->type == kernel::CurveType::Line &&
+                ((norm(sub(c->start, a)) < 1e-6 && norm(sub(c->end, b)) < 1e-6) ||
+                 (norm(sub(c->start, b)) < 1e-6 && norm(sub(c->end, a)) < 1e-6)))
+                return SubId{SubKind::Edge, i};
+        }
+        return std::nullopt;
+    };
+    const auto other = edgeFrom(Vec3{40, 0, 10}, Vec3{40, 0, 15});
+    const auto moved = edgeFrom(Vec3{30, 0, 5}, Vec3{30, 0, 10});
+    REQUIRE(other);
+    REQUIRE(moved);
+    const Ref* picked = nullptr;
+    for (const Ref& r : refs) {
+        const naming::Fingerprint& h = r.ref.hint;
+        if (r.ref.kind == SubKind::Edge && std::abs(h.qCx * 1e-4 - 40) < 1e-3 && std::abs(h.qCy * 1e-4) < 1e-3 &&
+            std::abs(h.qCz * 1e-4 - 7.5) < 1e-3 && std::abs(h.qArea * 1e-4 - 5) < 1e-3)
+            picked = &r;
+    }
+    REQUIRE(picked != nullptr);
+    REQUIRE_FALSE(picked->ref.samples.placements.empty()); // the cut's placement is known
+    // The macOS naming: the pick's names on the other edge.
+    naming::TopoRef forged = picked->ref;
+    forged.names.clear();
+    forged.families.clear();
+    forged.ambiguous.clear();
+    forged.splitParents.clear();
+    for (const Hash256& n : b1.map().namesOf(*other)) {
+        forged.names.push_back(n);
+        const naming::TopoName* record = b1.map().record(n);
+        forged.families.push_back(record != nullptr ? record->family : Hash256{});
+        forged.ambiguous.push_back(false);
+    }
+    REQUIRE(!forged.names.empty());
+    // (And the faces around it as the surviving name had them, so that the names alone agree with the element.)
+    forged.neighbourNames.clear();
+    for (const SubId& f : kernel::adjacent(b1.shape(), *other, SubKind::Face))
+        for (const Hash256& n : b1.map().namesOf(f))
+            forged.neighbourNames.push_back(n);
+    std::sort(forged.neighbourNames.begin(), forged.neighbourNames.end());
+    forged.neighbourNames.erase(std::unique(forged.neighbourNames.begin(), forged.neighbourNames.end()),
+                                forged.neighbourNames.end());
+    // The same without the placements (an old reference: the move not known, the samples where they were picked).
+    naming::TopoRef unplaced = forged;
+    unplaced.placements.clear();
+    for (naming::SampleCarrier& c : unplaced.samples.carriers)
+        c.owner = -1;
+    unplaced.samples.neighbourOwners.clear();
+    const auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), b1.map(), b1.shape()}});
+    const Expectation x = expect(picked->record, owners, **s1);
+    // The oracle: Exact on the other edge is WRONG, Exact on the moved edge is right.
+    CHECK(isWrong(judgeAnswer(x, picked->record, owners, **s1, Answer::Exact, {other->index}).verdict));
+    CHECK(judgeAnswer(x, picked->record, owners, **s1, Answer::Exact, {moved->index}).verdict == Verdict::Correct);
+    for (const naming::TopoRef* ref : {&forged, &unplaced}) {
+        const naming::Resolved res = resolver->resolve(*ref);
+        INFO((ref == &forged ? "with placements: " : "without placements: ")
+             << static_cast<int>(res.state) << " " << res.reason);
+        CHECK_FALSE((res.state == naming::ResolveState::Exact && res.elements == std::vector<SubId>{*other}));
+        CHECK_FALSE(isWrong(judgeReference(picked->record, owners, **s1, res, "").judgement.verdict));
+        // The mutation check: without the post-condition the resolver answers Exact on the other edge.
+        naming::testing::setPostconditionEnabled(false);
+        const naming::Resolved off = resolver->resolve(*ref);
+        naming::testing::setPostconditionEnabled(true);
+        CHECK(off.state == naming::ResolveState::Exact);
+        CHECK(off.elements == std::vector<SubId>{*other});
+    }
 }
