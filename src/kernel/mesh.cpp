@@ -58,6 +58,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -66,7 +67,9 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
+#include <vector>
 
 namespace ray::kernel {
 
@@ -85,11 +88,16 @@ constexpr double kExactAngle = 0.5; // radians, OCCT's default
 // the import. The kernel does not know the tier, and CAM tolerances are not tied to one, so the smallest row
 // applies everywhere. That is 30 faces at 0.2 mm (no cap below 30 logical processors), 13 at 0.05 mm
 // and 4 at 0.01 mm. UNVERIFIED: there is no corpus file yet to measure the memory model on.
-// HOW THE CAP IS APPLIED. BRepMesh parallelises through OSD_Parallel::For/ForEach, whose launcher starts
-// min(items, pool size) threads of OSD_ThreadPool::DefaultPool() and ignores SetNbDefaultThreadsToLaunch (OCCT
-// 8.0.1), so the cap is the size of that pool: detail::MeshTeamScope re-initialises it to the team (OSD_ThreadPool::
-// Init) when the size differs, under the mesh lock. Nothing else in the process uses the pool (section 7 rule 4:
-// every other OCCT parallel switch is off), so it is idle there; it keeps the size until a call needs another.
+// HOW THE CAP IS APPLIED. BRepMesh parallelises through OSD_Parallel::For/ForEach, whose launcher locks up to
+// min(items, pool size) - 1 free threads of OSD_ThreadPool::DefaultPool() (try-locks: a thread another launcher holds
+// is skipped) and ignores SetNbDefaultThreadsToLaunch (OCCT 8.0.1). detail::MeshTeamScope, under the mesh lock, holds
+// the pool threads beyond the team with a launcher of its own that runs nothing, so BRepMesh finds team - 1 free.
+// THE DEFAULT POOL is sized once, by OCCT at its first use (the logical processors), and never resized: an earlier
+// version re-initialised it to the team (OSD_ThreadPool::Init, which frees and reallocates its thread array) on the
+// assumption that only mesh calls use it, but in OCCT 8.0.1 every BRepCheck_Analyzer::Perform (the kernel's validity
+// checks, imports) and BRepExtrema_DistShapeShape (minDistance, the edge/edge searches of every boolean, shape
+// healing) reads the pool's size even single-threaded, from any thread: ThreadSanitizer caught that race (T-080
+// round 5; the list of readers is in the T-080 round 5 report and tests/unit/kernel/pool_stress_test.cpp).
 constexpr double kMeshBudgetMb = 2560.0;
 constexpr double kFaceMbAtCoarse = 85.0;
 constexpr double kCoarseTol = 0.2;
@@ -103,14 +111,15 @@ std::mutex& meshMutex()
     return detail::processMeshMutex();
 }
 
-// The size OCCT gives its default pool (the logical processors), whatever size the last mesh call left it at.
+// The size of OCCT's default pool (the caller included): fixed at its first use. May throw.
 int fullPoolThreads()
 {
-    return std::max(1, OSD_Parallel::NbLogicalProcessors());
+    return std::max(1, OSD_ThreadPool::DefaultPool()->NbThreads());
 }
 
-// The pool size the last mesh call ran with (tests: testing::lastMeshTeam).
+// The team the last mesh call ran with, and how many pool threads it held back (tests: testing::lastMeshTeam).
 std::atomic<int> gLastTeam{0};
+std::atomic<int> gLastHeld{0};
 
 int concurrencyFor(double chordTol, int pool)
 {
@@ -475,19 +484,29 @@ Result<TriSoup> buildExactMesh(const Shape& shape, const BRepBuilderAPI_Copy& co
 
 detail::MeshTeamScope::MeshTeamScope(double chordTol) noexcept
 {
+    int held = 0;
     try {
-        // See "MEMORY CAP": OSD_Parallel::For starts min(items, pool size) threads, so the pool itself is sized to
-        // the team. Only mesh calls use the pool, one at a time (the caller holds the mesh lock), so it is idle here.
+        // See "MEMORY CAP" and "THE DEFAULT POOL": never Init; hold the threads beyond the team instead.
         const occ::handle<OSD_ThreadPool>& pool = OSD_ThreadPool::DefaultPool();
-        team_ = concurrencyFor(chordTol, fullPoolThreads());
-        if (pool->NbThreads() != team_)
-            pool->Init(team_);
-        team_ = std::max(1, pool->NbThreads());
+        const int full = fullPoolThreads();
+        team_ = concurrencyFor(chordTol, full);
+        if (team_ < full) {
+            // A launcher of n locks up to n - 1 free pool threads (and one slot for its caller) and keeps them until
+            // it is destroyed; it is never given a job.
+            auto holder = std::make_shared<OSD_ThreadPool::Launcher>(*pool, full - team_ + 1);
+            held = holder->NbThreads() - 1;
+            held_ = std::move(holder);
+            // Fewer held than asked (another launcher had some): the mesh can use those once they are free.
+            team_ = full - held;
+        }
     } catch (...) {
-        // Init refuses a pool that is in use ("active ThreadPool is reinitialized"): mesh single-threaded.
+        held_.reset();
+        held = 0;
         team_ = 1;
     }
+    team_ = std::max(1, team_);
     gLastTeam.store(team_, std::memory_order_relaxed);
+    gLastHeld.store(held, std::memory_order_relaxed);
 }
 
 detail::MeshTeamScope::~MeshTeamScope() = default;
@@ -564,6 +583,33 @@ int meshPoolThreads() noexcept
     } catch (...) {
         return 0;
     }
+}
+
+int lastMeshHeldThreads() noexcept
+{
+    return gLastHeld.load(std::memory_order_relaxed);
+}
+
+int threadsUnderMeshTeam(double chordTol, int items)
+{
+    const Result<int> used = detail::guarded("kernel::testing::threadsUnderMeshTeam", [&]() -> Result<int> {
+        const std::lock_guard<std::mutex> lock(meshMutex());
+        const detail::MeshTeamScope team(chordTol);
+        // The way BRepMesh runs its work (OSD_Parallel::For, not single-threaded): count the threads that take part.
+        std::mutex seenMutex;
+        std::vector<std::thread::id> seen;
+        OSD_Parallel::For(0, items, [&](int) {
+            const std::thread::id me = std::this_thread::get_id();
+            {
+                const std::lock_guard<std::mutex> l(seenMutex);
+                if (std::find(seen.begin(), seen.end(), me) == seen.end())
+                    seen.push_back(me);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2)); // long enough for every free thread to join
+        });
+        return static_cast<int>(seen.size());
+    });
+    return used.value_or(-1);
 }
 
 bool hasMeshData(const Shape& shape)

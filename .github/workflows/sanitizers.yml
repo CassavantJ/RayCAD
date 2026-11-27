@@ -63,7 +63,7 @@ jobs:
           args=""
           case "${{ matrix.tier }}" in
             quick) labels='-L "^quick$" -LE "^(sanitizer-heavy|bench)$"' ;;
-            slow) labels='-L "^slow$" -LE "^(sanitizer-heavy|bench|naming-blocks|directedit-blocks)$"' ;;
+            slow) labels='-L "^slow$" -LE "^(sanitizer-heavy|bench|naming-blocks|directedit-blocks|directedit-blocks-2)$"' ;;
             naming) labels='-L "^naming-blocks$" -LE "^(sanitizer-heavy|bench)$"'; args="--target ray_naming_oracle_tests" ;;
             directedit) labels='-L "^directedit-blocks$" -LE "^(sanitizer-heavy|bench)$"'; args="--target ray_naming_oracle_tests" ;;
             *) echo "no tests for tier ${{ matrix.tier }}"; exit 1 ;;

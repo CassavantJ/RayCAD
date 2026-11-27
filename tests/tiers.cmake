@@ -55,7 +55,8 @@ set(RAY_SLOW_TESTS
     ray_render_stock_cost     # T-073: a 0.05 mm stock under a 2 M-triangle budget; measurements for src/render only
     ray_ui_cam_slow_seek_tests  # the Simulate panel's slow-seek line from a real High run (2.5 GB, about 50 s)
     ray_kernel_directedit_corpus # T-080: the direct-edit rates on the S9 set: 96 to 133 s alone on Windows
-    ray_kernel_directedit_nist) # the same on the wider NIST set (fetch-only, skipped without it): 203 to 244 s
+    ray_kernel_directedit_nist # the same on the wider NIST set (fetch-only, skipped without it): 203 to 244 s
+    ray_kernel_pool_stress) # T-080 round 5: meshing, distances, checks, booleans and imports at once, 120 s
 
 # Disabled in the Debug configuration of an MSVC build only (see MSVC DEBUG above).
 set(RAY_MSVC_DEBUG_DISABLED_TESTS
@@ -150,7 +151,9 @@ set(RAY_SANITIZER_HEAVY_TESTS
 # The slow naming blocks, each in a nightly CI job of its own family (build-test.yml, sanitizers.yml): run one at a
 # time after everything else they took the Release and ASan jobs past the 4-hour limit (run 45646624932: Windows
 # Release stopped at 114 of 121 tests, the direct-edit block alone 36 minutes). Label naming-blocks: the T-081a blocks;
-# label directedit-blocks: the T-081b ones. Local runs are unchanged.
+# labels directedit-blocks and directedit-blocks-2: the T-081b ones, in two jobs since there are six blocks of 1,000
+# sequences (about 35 minutes each on the Linux runner; in one job they ran past the limit, nightly 45910746033).
+# Local runs are unchanged.
 set(RAY_NAMING_BLOCK_TESTS
     ray_naming_random
     ray_naming_session
@@ -165,7 +168,8 @@ set(RAY_DIRECTEDIT_BLOCK_TESTS
     ray_naming_random_directedit
     ray_naming_directedit_replays
     ray_naming_random_directedit_sorted
-    ray_naming_random_directedit_holdout1
+    ray_naming_random_directedit_holdout1)
+set(RAY_DIRECTEDIT_BLOCK_TESTS_2
     ray_naming_random_directedit_holdout2
     ray_naming_random_directedit_review1
     ray_naming_random_directedit_review2
@@ -217,7 +221,8 @@ set(RAY_TEST_PROCESSORS
     ray_cam_adaptive_slow=5
     ray_cam_adaptive_concurrency=10
     ray_kernel_directedit_corpus=8 # T-080: 8 workers over the S9 set
-    ray_kernel_directedit_nist=8)
+    ray_kernel_directedit_nist=8
+    ray_kernel_pool_stress=8) # T-080 round 5: 9 threads, most of them busy
 
 # Suites with test cases tagged [wallclock], as "<test>=<executable target>". The suite's own command leaves those
 # cases out ("~[wallclock]"); here a test <test>_wallclock runs just them ("[wallclock]"), alone, with the suite's
@@ -389,11 +394,13 @@ endforeach()
 foreach(_test IN LISTS RAY_BENCH_TESTS)
     ray_tier_set(${_test} APPEND LABELS bench)
 endforeach()
-foreach(_family naming-blocks directedit-blocks)
+foreach(_family naming-blocks directedit-blocks directedit-blocks-2)
     if(_family STREQUAL "naming-blocks")
         set(_list ${RAY_NAMING_BLOCK_TESTS})
-    else()
+    elseif(_family STREQUAL "directedit-blocks")
         set(_list ${RAY_DIRECTEDIT_BLOCK_TESTS})
+    else()
+        set(_list ${RAY_DIRECTEDIT_BLOCK_TESTS_2})
     endif()
     foreach(_test IN LISTS _list)
         if(NOT _test IN_LIST RAY_SLOW_TESTS)

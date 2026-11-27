@@ -1,7 +1,8 @@
 # The slow tier, once a day and on demand: what the per-push jobs leave out. build-test.yml and sanitizers.yml with
 # scope nightly: per OS a Release job for the slow tests (slow), the T-081a naming blocks (naming) and the T-081b
-# direct-edit blocks (directedit), with the [.evidence] artifacts of any direct-edit wrong answer; under
-# AddressSanitizer the same three. Every test runs in exactly one of push and nightly (tests/tiers.cmake; README,
+# direct-edit blocks in two (directedit, directedit2), with the [.evidence] artifacts of any direct-edit wrong answer;
+# under AddressSanitizer slow, naming and directedit (the second direct-edit family is all sanitizer-heavy). Every test
+# runs in exactly one of push and nightly (tests/tiers.cmake; README,
 # "Which tests to run"). A milestone closes only after a manual run of this workflow is green on its closing commit
 # (PLAN.md section 12).
 #

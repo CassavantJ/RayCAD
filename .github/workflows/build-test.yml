@@ -43,11 +43,12 @@ jobs:
     # Debug and Release are separate jobs that run side by side. In one job, one after the other, they did not fit
     # the time limit on the 4-processor Windows runner (run 45129357124: about 15 minutes of Debug build, over 100
     # of Debug tests, then the Release build and every test still to come at 4 hours).
-    # Per push the part is main (the quick tier). The nightly Release is three jobs (part): the slow tier but the
-    # naming blocks (slow), the T-081a naming blocks (naming) and the T-081b direct-edit blocks (directedit), labels
-    # naming-blocks and directedit-blocks in tests/tiers.cmake. The blocks run one at a time on the 4-processor runner;
-    # after everything else in one job they took Windows past the 4-hour limit (run 45646624932: stopped at 114 of 121
-    # tests).
+    # Per push the part is main (the quick tier). The nightly Release is four jobs (part): the slow tier but the
+    # naming blocks (slow), the T-081a naming blocks (naming) and the T-081b direct-edit blocks in two (directedit,
+    # directedit2), labels naming-blocks, directedit-blocks and directedit-blocks-2 in tests/tiers.cmake. The blocks run
+    # one at a time on the 4-processor runner; after everything else in one job they took Windows past the 4-hour limit
+    # (run 45646624932: stopped at 114 of 121 tests), and the six direct-edit blocks in one job took Linux past it
+    # (nightly 45910746033).
     name: ${{ matrix.preset }}-${{ matrix.config }}${{ matrix.part != 'main' && format('-{0}', matrix.part) || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
@@ -56,7 +57,7 @@ jobs:
       matrix:
         preset: [windows-msvc, linux-gcc, macos-arm64]
         config: ${{ fromJSON(inputs.scope == 'nightly' && '["release"]' || '["debug", "release"]') }}
-        part: ${{ fromJSON(inputs.scope == 'nightly' && '["slow", "naming", "directedit"]' || '["main"]') }}
+        part: ${{ fromJSON(inputs.scope == 'nightly' && '["slow", "naming", "directedit", "directedit2"]' || '["main"]') }}
         include:
           - preset: windows-msvc
             os: windows-latest
@@ -94,12 +95,15 @@ jobs:
             release-main)
               tests=release-quick-ci; win='-C Release -L "^quick$" -LE "^(bench|desktop)$"' ;;
             release-slow)
-              tests=release-slow-ci; win='-C Release -L "^slow$" -LE "^(bench|desktop|naming-blocks|directedit-blocks)$"' ;;
+              tests=release-slow-ci; win='-C Release -L "^slow$" -LE "^(bench|desktop|naming-blocks|directedit-blocks|directedit-blocks-2)$"' ;;
             release-naming)
               tests=release-naming-ci; win='-C Release -L "^naming-blocks$" -LE "^(bench|desktop)$"'
               args="--target ray_naming_oracle_tests" ;;
             release-directedit)
               tests=release-directedit-ci; win='-C Release -L "^directedit-blocks$" -LE "^(bench|desktop)$"'
+              args="--target ray_naming_oracle_tests" ;;
+            release-directedit2)
+              tests=release-directedit2-ci; win='-C Release -L "^directedit-blocks-2$" -LE "^(bench|desktop)$"'
               args="--target ray_naming_oracle_tests" ;;
             *) echo "no tests for ${{ matrix.config }}-${{ matrix.part }}"; exit 1 ;;
           esac

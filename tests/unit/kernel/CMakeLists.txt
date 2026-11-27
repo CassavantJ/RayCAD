@@ -12,7 +12,8 @@ add_executable(ray_kernel_tests
     blend_determinism_test.cpp
     immutability_test.cpp
     slice_test.cpp # sliceAt, silhouette, faceLoops, edgeCurves, minInternalCornerRadius (task T-050)
-    directedit_test.cpp directedit_corpus_test.cpp) # deleteFaces, offsetFaces, resizeHole, unifySameDomain (T-080)
+    directedit_test.cpp directedit_corpus_test.cpp # deleteFaces, offsetFaces, resizeHole, unifySameDomain (T-080)
+    pool_stress_test.cpp) # OCCT's thread pool under concurrent kernel calls (T-080 round 5)
 target_link_libraries(ray_kernel_tests PRIVATE ray_kernel Catch2::Catch2WithMain)
 # occt_smoke.h, shape_testing.h, mesh_testing.h and io_internal.h are private to src/kernel; no OCCT header.
 target_include_directories(ray_kernel_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/kernel")
@@ -31,11 +32,14 @@ add_test(NAME ray_kernel_tests
 # so a parallel ctest runs them beside the rest.
 add_test(NAME ray_kernel_blend COMMAND ray_kernel_tests "[blend]~[stress]")
 # The 8-thread blend stress over the corpus (task T-095) in a process of its own, with its own timeout.
-add_test(NAME ray_kernel_blend_stress COMMAND ray_kernel_tests "[stress]")
+add_test(NAME ray_kernel_blend_stress COMMAND ray_kernel_tests "[stress]~[pool_stress]")
 ray_test_runtime_path(ray_kernel_occt_smoke)
 ray_test_runtime_path(ray_kernel_tests)
 ray_test_runtime_path(ray_kernel_blend)
 ray_test_runtime_path(ray_kernel_blend_stress)
+# Meshing, distances, checks, booleans and imports at once for minutes (T-080 round 5, pool_stress_test.cpp says why).
+add_test(NAME ray_kernel_pool_stress COMMAND ray_kernel_tests "[pool_stress]")
+ray_test_runtime_path(ray_kernel_pool_stress)
 # The direct-edit success rates on the S9 set (task T-080) in a process of their own: every case has its own time limit,
 # and abandoned (timed-out) edits finish on kernel threads in the background.
 add_test(NAME ray_kernel_directedit_corpus COMMAND ray_kernel_tests "[directedit_corpus]")
@@ -45,7 +49,7 @@ ray_test_runtime_path(ray_kernel_directedit_corpus)
 add_test(NAME ray_kernel_directedit_nist COMMAND ray_kernel_tests "[directedit_nist]")
 ray_test_runtime_path(ray_kernel_directedit_nist)
 # Import, meshing and concurrency tests are slow under ThreadSanitizer and on a loaded machine.
-set_tests_properties(ray_kernel_tests ray_kernel_blend ray_kernel_blend_stress PROPERTIES TIMEOUT 900)
+set_tests_properties(ray_kernel_tests ray_kernel_blend ray_kernel_blend_stress ray_kernel_pool_stress PROPERTIES TIMEOUT 900)
 set_tests_properties(ray_kernel_directedit_corpus PROPERTIES TIMEOUT 1800)
 set_tests_properties(ray_kernel_directedit_nist PROPERTIES TIMEOUT 1800 SKIP_RETURN_CODE 4)
 
