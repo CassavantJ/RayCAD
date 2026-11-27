@@ -125,7 +125,11 @@ set(RAY_DEBUG_HEAVY_TESTS
     ray_cam_pocket2d_tests
     # The naming oracle's gate replays: past their 20-minute timeout in GCC Debug on the runner (run 45839496226; 723 s
     # there before, 435 to 747 s in the other Debug jobs); 37 s in Release, where every push still runs them.
-    ray_naming_oracle_gate)
+    ray_naming_oracle_gate
+    # The rematch pairs on the NIST parts: past their 20-minute timeout in MSVC Debug (both) and GCC Debug (nist_b) on
+    # the runner (run 45962645949; 862 and 916 s on Windows, 779 and 836 s on Linux at 850aecc); 41 s in Release.
+    ray_naming_rematch_pairs_nist_a
+    ray_naming_rematch_pairs_nist_b)
 
 # Slow tests that the AddressSanitizer CI job (sanitizers.yml) leaves out: under ASan they cannot finish within their
 # timeout on the 4-processor runner. They get the label sanitizer-heavy; every Release job runs them. The property

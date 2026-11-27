@@ -115,6 +115,19 @@ public:
     RawDirectEditHistory& operator=(const RawDirectEditHistory&) = delete;
 };
 
+// While one lives, every direct edit that starts waits on its kernel thread, before its OCCT work, until the hold ends
+// or the edit is cancelled or abandoned (it then reports Cancelled). A test of cancelling a rebuild during an edit can
+// so cancel one that is running for certain, without timing (ray_doc_directedit_cancel).
+class HoldDirectEdits {
+public:
+    HoldDirectEdits();
+    ~HoldDirectEdits();
+    // True once an edit waits at the hold.
+    bool held() const;
+    HoldDirectEdits(const HoldDirectEdits&) = delete;
+    HoldDirectEdits& operator=(const HoldDirectEdits&) = delete;
+};
+
 // Joins the kernel threads that abandoned (cancelled) direct edits are still finishing on, and how many are running
 // (io_internal.h: direct edits share the import threads).
 void waitForAbandonedEdits();

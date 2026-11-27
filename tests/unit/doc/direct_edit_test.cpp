@@ -890,16 +890,22 @@ TEST_CASE("a rebuild cancelled in a slow face deletion is released at once and l
 
         // The document: the command is executed, its rebuild cancelled during the deletion. build() stays the build
         // of the imported part (no partial result enters), the command stays undoable, and undo brings back the
-        // imported state.
-        env.run(command);
-        (void)env.ui.runUntil([] { return false; }, std::chrono::seconds(2));
-        REQUIRE(env.doc->rebuildPending());
-        const Clock::time_point docCancel = Clock::now();
-        env.doc->cancelRebuild();
-        REQUIRE(env.settle(std::chrono::seconds(5)));
-        const double docMs = std::chrono::duration<double, std::milli>(Clock::now() - docCancel).count();
-        std::printf("document rebuild cancelled: settled after %.1f ms\n", docMs);
-        CHECK(docMs < 250.0);
+        // imported state. The deletion is held at its start on the kernel thread (testing::HoldDirectEdits), so the
+        // rebuild is running for certain when it is cancelled: a case found slow above can end within the next
+        // seconds on a slower machine (CI run 45962645949, Windows: del_fillet k0, about 1.6 s here, took just over
+        // the 2 s above there and had ended when the document's rebuild was to be cancelled).
+        {
+            const kernel::testing::HoldDirectEdits hold;
+            env.run(command);
+            REQUIRE(env.ui.runUntil([&] { return hold.held(); }, std::chrono::seconds(30)));
+            REQUIRE(env.doc->rebuildPending());
+            const Clock::time_point docCancel = Clock::now();
+            env.doc->cancelRebuild();
+            REQUIRE(env.settle(std::chrono::seconds(5)));
+            const double docMs = std::chrono::duration<double, std::milli>(Clock::now() - docCancel).count();
+            std::printf("document rebuild cancelled: settled after %.1f ms\n", docMs);
+            CHECK(docMs < 250.0);
+        }
         REQUIRE(env.doc->buildError());
         CHECK(env.doc->buildError()->code == ErrorCode::Cancelled);
         CHECK(env.doc->build() == b0);
