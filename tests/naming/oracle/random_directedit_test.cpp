@@ -1282,7 +1282,7 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
     CHECK(t.selfCheckFailures == 0);
     CHECK(t.injectivity == 0);
     if (holdoutPrefix.empty()) {
-        CHECK(t.unjudged() == t.unjudgedReviewed);
+        CHECK(unjudgedGateOk(t));
     } else {
         long listed = 0;
         for (const auto& [key, why] : reviewedUnjudged())
@@ -1290,7 +1290,7 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
         std::printf(
             "%sblock: %ld answers not judged, %ld of them on the reviewed list, which lists %ld for this block\n",
             holdoutPrefix.c_str(), t.unjudged(), t.unjudgedReviewed, listed);
-        CHECK(t.unjudged() == t.unjudgedReviewed);
+        CHECK(unjudgedGateOk(t));
     }
     CHECK(t.accepted == t.acceptedReviewed);
     CHECK(t.acceptedNewGround == t.acceptedNewGroundReviewed);
@@ -2919,13 +2919,15 @@ TEST_CASE("Every entry of the reviewed lists records the answer it reviewed", "[
             CHECK_FALSE(entry.why.empty());
         }
     // The signature tolerates what differs between platforms and nothing more.
-    const std::string a = "Exact edge(1.3573 1.1583 0.4967 3.3246)";
-    CHECK(sameAnswer(a, "Exact edge(1.3600 1.1583 0.4967 3.3300)"));
-    CHECK_FALSE(sameAnswer(a, "Split edge(1.3573 1.1583 0.4967 3.3246)"));
-    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.5967 3.3246)"));
-    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.5246)"));
+    const std::string a = "Exact edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)";
+    CHECK(sameAnswer(a, "Exact edge(1.3600 1.1583 0.4967 3.3300 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)"));
+    CHECK_FALSE(sameAnswer(a, "Split edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)"));
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.5967 3.3246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)"));
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.5246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)"));
+    // (The same centroid and length, other end points: another stretch of the line.)
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.0656 1.3573 1.1583 2.0590)"));
+    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.3246)")); // an edge always has its end points
     CHECK_FALSE(sameAnswer(a, "Exact face(1.3573 1.1583 0.4967 3.3246)"));
-    CHECK_FALSE(sameAnswer(a, "Exact edge(1.3573 1.1583 0.4967 3.3246) edge(0 0 0 1.0000)"));
     CHECK_FALSE(sameAnswer(a, ""));
     CHECK(sameAnswer("Split vertex(1.0000 2.0000 3.0000) vertex(4.0000 5.0000 6.0000)",
                      "Split vertex(4.0000 5.0000 6.0000) vertex(1.0000 2.0000 3.0000)"));
@@ -3093,4 +3095,30 @@ TEST_CASE("Oracle (round 5): a new piece is never required; an element held in p
         }
     }
     reportPinnedSkips({}, offPlatform);
+}
+
+TEST_CASE("New piece (round 6): the rule fires on the scripted sorted 17:32, and its negatives stay wrong",
+          "[naming][directedit-replays]")
+{
+    // T-081b round 6, item 6: the reviewer's own new-piece negatives held, but the rule never fired in them (the core
+    // had already left the piece out). Here it fires: sorted 17:32 edge 32 as a fixed script (every platform). Cut R1
+    // moved by its width; edge 30 is the moved stretch, edge 31 (z 0.425 -> 0) runs on past the plane z 0.425 that
+    // ended the pick, over a deleted hole's place: E {30} only because NEW PIECES ARE NEVER REQUIRED left 31 out (with
+    // new-piece off, E is {30, 31} and Exact {30} is incomplete). With 31, or 31 alone, WRONG.
+    const auto [baseline, edited] = pinnedScripts("sorted 17:32");
+    const Vec3 on30{16.035, -6.9805, 0.9625}, on31{14.952, -5.7815, 0.2125};
+    const std::vector<Probe> probes{{Answer::Exact, {}, -1, {on30}},
+                                    {Answer::Split, {}, -1, {on30, on31}},
+                                    {Answer::Exact, {}, -1, {on31}}};
+    const std::vector<Looked> looked =
+        replayScriptedAndLook(17, baseline, edited, SubKind::Edge, Vec3{15.415, 8.9686, 0.9569}, 7.7465, probes);
+    REQUIRE(looked.size() == 1);
+    REQUIRE(looked[0].probes.size() == 3);
+    for (std::size_t i = 0; i < 3; ++i) {
+        INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+        CHECK(looked[0].probed[i].rfind("asked;", 0) != 0);
+    }
+    CHECK(looked[0].probes[0].verdict == Verdict::Correct);
+    CHECK(isWrong(looked[0].probes[1].verdict));
+    CHECK(isWrong(looked[0].probes[2].verdict));
 }

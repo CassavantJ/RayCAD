@@ -338,6 +338,14 @@ struct ElemSamples {
     int sigma = 0;           // cylindrical face: +1 boss, -1 hole
     Vec3 boxMin{}, boxMax{};
     std::shared_ptr<const FaceMesh> mesh; // face: its triangles
+    // The answer signature's data (harness.h answerSignature, T-081b round 6): the centroid by the samples' weights
+    // (an edge without samples: its curve's midpoint by the kernel), the area or length (an edge: the kernel's
+    // length), an edge's end points (the kernel's, sorted), and whether another element of its kind in the shape has a
+    // signature that cannot be told from this one's (a near twin: within 0.02 mm and 1 %).
+    Vec3 centroid{};
+    double measure = 0;
+    Vec3 end0{}, end1{};
+    bool twin = false;
 };
 struct Samples {
     std::array<std::vector<ElemSamples>, 3> e;                      // by SubKind (Vertex, Edge, Face)

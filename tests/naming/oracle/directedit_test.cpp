@@ -724,3 +724,92 @@ TEST_CASE(
     }
     CHECK(probed == 1);
 }
+
+TEST_CASE("Signatures (round 6): near-twin vertices cannot be reviewed, every edge has a real signature",
+          "[naming][directedit]")
+{
+    // The reviewer's collision scan (round 5): vertex pairs 5..19 um apart had signatures sameAnswer cannot tell apart,
+    // and every edge without samples read edge(0 0 0 0). Scripted: a pocket whose wall stands 0.01 mm inside the
+    // block's left face puts two top vertices 10 um apart, (0, 0, 20) and (0.01, 0, 20). Both are near twins: an answer
+    // on either is never counted as reviewed (signatureAmbiguous), whatever the list says. A vertex far from any other
+    // is not. Every edge's signature carries its end points and a length.
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("P1", BOp::Cut, top(20), rect(0.01, -1, 30, 61), 5));
+    const Run r = run(base, base);
+    REQUIRE(r.failed.empty());
+    const auto& V = r.samples->of(SubKind::Vertex);
+    long a = -1, b = -1, far = -1;
+    for (std::uint32_t i = 0; i < V.size(); ++i) {
+        if (V[i].nodes.empty())
+            continue;
+        const Vec3 p = V[i].nodes.front();
+        if (norm(sub(p, Vec3{0, 0, 20})) < 1e-6)
+            a = i;
+        if (norm(sub(p, Vec3{0.01, 0, 20})) < 1e-6)
+            b = i;
+        if (norm(sub(p, Vec3{100, 60, 0})) < 1e-6)
+            far = i;
+    }
+    REQUIRE(a >= 0);
+    REQUIRE(b >= 0);
+    REQUIRE(far >= 0);
+    const auto ua = static_cast<std::uint32_t>(a), ub = static_cast<std::uint32_t>(b), uf = static_cast<std::uint32_t>(far);
+    const std::string sa = answerSignature(Answer::Exact, {SubId{SubKind::Vertex, ua}}, *r.samples);
+    const std::string sb = answerSignature(Answer::Exact, {SubId{SubKind::Vertex, ub}}, *r.samples);
+    INFO(sa << " / " << sb);
+    CHECK(sameAnswer(sa, sb)); // the signature cannot tell them apart ...
+    CHECK(signatureAmbiguous({SubId{SubKind::Vertex, ua}}, *r.samples)); // ... so neither is ever reviewed
+    CHECK(signatureAmbiguous({SubId{SubKind::Vertex, ub}}, *r.samples));
+    CHECK_FALSE(signatureAmbiguous({SubId{SubKind::Vertex, uf}}, *r.samples));
+    const auto& E = r.samples->of(SubKind::Edge);
+    for (std::uint32_t i = 0; i < E.size(); ++i) {
+        INFO("edge " << i);
+        CHECK(E[i].measure > 0);
+        CHECK(norm(sub(E[i].end0, E[i].end1)) + E[i].measure > 0);
+    }
+}
+
+TEST_CASE("Held in place (round 6, the reviewer's negative): a hole's top rim covered by a boss is not held",
+          "[naming][directedit]")
+{
+    // A through hole H1 (r 5) in a 20 mm block, then a boss B3 joined over it: the top rim, where the block's top
+    // F01/c1/1 met the hole's wall, is now the concave corner of a blind hole's ceiling (B3's base) on the same circle.
+    // Both owners are on their carriers (the top plane is still there around the boss), so HELD IN PLACE took the
+    // corner for the rim; but the face beside it now faces down, not up: it is not bounded as the rim was, and Exact
+    // on it must not be judged correct (with the bounding test off, held-bounds, it is).
+    Script base = block(100, 60, 20);
+    base.push_back(sweep("H1", BOp::Cut, top(20), circle(30, 30, 5), 25, "hole"));
+    Script edited = base;
+    edited.push_back(sweep("B3", BOp::Join, top(20), rect(20, 20, 40, 40), 5));
+    const Run r = run(base, edited);
+    REQUIRE(r.failed.empty());
+    // Every edge on the rim's circle now (the corner may be in pieces).
+    std::vector<std::uint32_t> corners;
+    const auto& E = r.samples->of(SubKind::Edge);
+    for (std::uint32_t i = 0; i < E.size(); ++i) {
+        bool on = !E[i].nodes.empty();
+        for (const Vec3& p : E[i].nodes)
+            on = on && std::abs(p.z - 20) < 1e-3 && std::abs(norm(sub(Vec3{p.x, p.y, 0}, Vec3{30, 30, 0})) - 5) < 1e-3;
+        if (on)
+            corners.push_back(i);
+    }
+    REQUIRE(!corners.empty());
+    std::size_t probed = 0;
+    for (const Outcome& o : r.out) {
+        if (o.ref.ref.kind != SubKind::Edge || !about(o, "H1/s1") || !about(o, "F01/c1/1") ||
+            o.ref.record.truth.cons.size() != 2)
+            continue;
+        ++probed;
+        INFO("reference " << o.ref.names << ": " << stateText(o.resolved.state) << " " << o.resolved.reason << "; "
+                          << verdictName(o.verdict));
+        CHECK_FALSE(isWrong(o.verdict));
+        for (const std::uint32_t c : corners) {
+            INFO("corner edge " << c);
+            CHECK(judgeAs(r, o, Answer::Exact, {c}) != Verdict::Correct);
+            CHECK(judgeAs(r, o, Answer::Merged, {c}) != Verdict::Correct);
+        }
+        if (corners.size() >= 2)
+            CHECK(judgeAs(r, o, Answer::Split, corners) != Verdict::Correct);
+    }
+    CHECK(probed >= 1);
+}

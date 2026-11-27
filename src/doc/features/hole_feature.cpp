@@ -774,7 +774,11 @@ private:
                 return failed(tool.error().code, kernelMessage(where, which, tool.error()));
             }
             out.warnings.insert(out.warnings.end(), tool->op.warnings.begin(), tool->op.warnings.end());
-            const naming::NamingInput toolInput{f.id, "hole", {}, nullptr, &tool->op.shape, tool->origins};
+            // The hole's placement (naming.h NamingInput::placement): the plane of the sketch its positions are on, as
+            // an extrude's (T-081b round 6: the naming oracle's holes are sweeps with that placement; the document's
+            // must get what the oracle's get).
+            naming::NamingInput toolInput{f.id, "hole", {}, nullptr, &tool->op.shape, tool->origins};
+            toolInput.placement = sweepPlacement(plane);
             auto named = naming::propagate(toolInput);
             if (!named) {
                 return failed(ErrorCode::Internal, where + ": naming the hole faces failed: " + named.error().message);
@@ -789,7 +793,8 @@ private:
             out.warnings.insert(out.warnings.end(), cut->warnings.begin(), cut->warnings.end());
             const std::array<const naming::ElementMap*, 2> maps{&map, &named->map};
             const std::array<const kernel::Shape*, 2> shapes{&shape, &tool->op.shape};
-            const naming::NamingInput input{f.id, "hole", maps, &cut->history, &cut->shape, {}, std::span(shapes)};
+            naming::NamingInput input{f.id, "hole", maps, &cut->history, &cut->shape, {}, std::span(shapes)};
+            input.placement = toolInput.placement;
             auto result = naming::propagate(input);
             if (!result) {
                 return failed(ErrorCode::Internal, where + ": naming the result failed: " + result.error().message);

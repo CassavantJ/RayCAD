@@ -539,7 +539,7 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
     };
     if (!rr.judgement.accepted.empty()) {
         ++tally.accepted;
-        if (o::reviewedAnswer(o::reviewedTerritory(), id, rr.signature) != nullptr) {
+        if (!rr.ambiguous && o::reviewedAnswer(o::reviewedTerritory(), id, rr.signature) != nullptr) {
             ++tally.acceptedReviewed;
         }
         log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
@@ -547,7 +547,7 @@ void account(const std::string& id, const o::RefResult& rr, const ray::naming::R
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
-        if (o::reviewedAnswer(o::reviewedConflicts(), id, rr.signature) != nullptr) {
+        if (!rr.ambiguous && o::reviewedAnswer(o::reviewedConflicts(), id, rr.signature) != nullptr) {
             ++tally.conflictsReviewed;
         }
         log.notes.push_back("CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) +
@@ -1002,4 +1002,40 @@ TEST_CASE("the S4 part with its round boss revolved: no reference resolves to a 
 TEST_CASE("the S4 part with hole features: no reference resolves to a wrong element", "[s4doc-hole]")
 {
     runAll(Variant::Holes);
+}
+
+TEST_CASE("harness and document give the resolver the same placements, feature kind by feature kind",
+          "[s4doc-parity][doc]")
+{
+    // T-081b round 6, item 10 (the lead's decision): the naming oracle's harness must give the resolver exactly what the
+    // document gives. The S4 part with hole features is built both ways from one script: as document features (an
+    // extrude per sweep, a hole feature per drilled sweep, fillets and chamfers) and as the harness's script. For every
+    // script feature, the document's element map holds a placement exactly when the harness's does.
+    Env env(2);
+    const Baseline b = author(env, Variant::Holes);
+    for (const std::string& p : b.problems) {
+        INFO(p);
+    }
+    REQUIRE(b.problems.empty());
+    REQUIRE(b.build != nullptr);
+    const ray::doc::BuiltBody* body = bodyIn(*b.build);
+    REQUIRE(body != nullptr);
+    o::FeatRefs refs;
+    const o::Builder harness = o::buildScript(b.script, o::Mode::Author, refs);
+    REQUIRE(harness.failed().empty());
+    std::size_t placed = 0, compared = 0;
+    for (const o::Feature& f : b.script) {
+        const auto op = b.generated.opOf.find(f.id);
+        if (op == b.generated.opOf.end()) {
+            continue;
+        }
+        ++compared;
+        const bool inDocument = body->map.placement(op->second) != nullptr;
+        const bool inHarness = harness.map().placement(o::featureIdOf(f.id)) != nullptr;
+        INFO(f.id << " (" << f.role << "): document " << inDocument << ", harness " << inHarness);
+        CHECK(inDocument == inHarness);
+        placed += inDocument ? 1 : 0;
+    }
+    CHECK(compared >= 6);
+    CHECK(placed >= 3); // the base, the sweeps and the holes are placed; blends are not
 }

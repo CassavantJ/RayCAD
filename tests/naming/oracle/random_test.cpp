@@ -845,10 +845,9 @@ long listedFor(const std::string& prefix)
     return n;
 }
 
-// `holdoutPrefix`: empty for the block the naming code was tuned on, where every answer not judged must be on the
-// reviewed list. A holdout block (its key prefix) is first run unseen, when it cannot have reviewed entries: there
-// WRONG must be 0 and the answers not judged are printed and counted, and fail the block when there are more than
-// kUnjudgedBudget, or, once entries for the block are on the reviewed list, when one is not listed.
+// `holdoutPrefix`: empty for the block the naming code was tuned on. In every block WRONG must be 0 and every answer
+// not judged must be on the reviewed list by its answer (unjudgedGateOk); a holdout block also fails on more than
+// kUnjudgedBudget of them.
 void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPrefix = {})
 {
     if (std::getenv("RAYCAD_NAMING_ONLY") == nullptr) {
@@ -860,18 +859,18 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
     CHECK(t.repairedUsable == 0);
     CHECK(t.selfCheckFailures == 0);
     CHECK(t.injectivity == 0);
-    if (holdoutPrefix.empty()) {
-        CHECK(t.unjudged() == t.unjudgedReviewed);
-    } else {
+    if (!holdoutPrefix.empty()) {
         const long listed = listedFor(holdoutPrefix);
         std::printf("%sblock: %ld answers not judged (budget %ld), %ld of them on the reviewed list, which lists %ld "
                     "for this block\n",
                     holdoutPrefix.c_str(), t.unjudged(), kUnjudgedBudget, t.unjudgedReviewed, listed);
         CHECK(t.unjudged() <= kUnjudgedBudget);
-        if (listed > 0)
-            CHECK(t.unjudged() == t.unjudgedReviewed);
     }
+    // Every answer not judged must be reviewed, in every block, whether or not the list has entries for it (T-081b
+    // round 6: the T-081a holdout2 block, with no entry, passed 4:6 face 31 unreviewed).
+    CHECK(unjudgedGateOk(t));
     CHECK(t.accepted == t.acceptedReviewed);
+    CHECK(t.acceptedNewGround == t.acceptedNewGroundReviewed);
     CHECK(t.conflicts == t.conflictsReviewed);
     REQUIRE(t.wrong() == 0);
 }
@@ -1503,4 +1502,18 @@ TEST_CASE(
     CHECK(looked[0].elements.size() == 1);
     CHECK(looked[0].judgement.verdict == Verdict::Correct);
     CHECK(isWrong(looked[0].other.verdict));
+}
+
+TEST_CASE("Gate (round 6): an answer not judged fails a block unless reviewed, whether or not the list names the block",
+          "[naming][oracle-gate]")
+{
+    // T-081b round 6, the reviewer's gap: the T-081a holdout2 block's 4:6 face 31 (Merged {29}, not judged) passed
+    // unreviewed because the gate asked for reviewed answers only once the list had an entry with the block's prefix,
+    // and it had none for "holdout2 ".
+    CHECK(listedFor("holdout2 ") == 0);
+    Tally t;
+    t.add(Answer::Merged, Verdict::Unjudged);
+    CHECK_FALSE(unjudgedGateOk(t));
+    t.unjudgedReviewed = 1;
+    CHECK(unjudgedGateOk(t));
 }

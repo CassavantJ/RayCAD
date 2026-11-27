@@ -70,6 +70,10 @@ add_test(NAME ray_doc_s4_hole COMMAND ray_doc_s4_tests "[s4doc-hole]")
 ray_test_runtime_path(ray_doc_s4_hole)
 set_tests_properties(ray_doc_s4_hole PROPERTIES TIMEOUT 3600)
 # Incremental rebuild of a 100-feature part (PLAN.md section 9) and the geometry goldens (tests/golden/geometry).
+# T-081b round 6: the harness gives the resolver what the document gives (placements, feature kind by feature kind).
+add_test(NAME ray_doc_s4_parity COMMAND ray_doc_s4_tests "[s4doc-parity]")
+ray_test_runtime_path(ray_doc_s4_parity)
+set_tests_properties(ray_doc_s4_parity PROPERTIES TIMEOUT 600)
 add_test(NAME ray_doc_rebuild_bench COMMAND ray_doc_s4_tests "[rebuild-bench]")
 ray_test_runtime_path(ray_doc_rebuild_bench)
 set_tests_properties(ray_doc_rebuild_bench PROPERTIES TIMEOUT 1800)

@@ -60,6 +60,7 @@ struct RefResult {
                            // correct, 2 it was not (Broken, or judged wrong); 3: the same after a move
     std::string selfCheck; // non-empty: the oracle's own expected answer was not judged correct (why)
     std::string signature; // the resolver's answer, answerSignature (matched against the reviewed lists)
+    bool ambiguous = false; // an element of the answer has a near twin in the shape (signatureAmbiguous): never reviewed
     struct Mutant {
         std::string cls;
         bool caught = false;
@@ -218,6 +219,9 @@ const ReviewedList& reviewedTerritory();
 const ReviewedList& reviewedConflicts();
 // tests/naming/oracle/reviewed_unjudged.txt: answers the oracle could not judge (no anchor), each looked at.
 const ReviewedList& reviewedUnjudged();
+// The gate on answers the oracle could not judge, for every block: each must be on the reviewed list by its answer
+// (T-081b round 6: it used to apply to a holdout block only once the list had an entry with the block's prefix).
+inline bool unjudgedGateOk(const Tally& t) { return t.unjudged() == t.unjudgedReviewed; }
 // The entry of `list` for reference `id` whose reviewed answer matches `signature`, or null.
 const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature);
 // " [reviewed: <why>]", or " [NOT REVIEWED; answer <signature>]" with the listed answers when the key is listed for
@@ -225,13 +229,20 @@ const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string&
 std::string reviewNote(const ReviewedList& list, const std::string& id, const std::string& signature);
 
 // An answer's geometric signature, platform-tolerant (element numbers differ between platforms; the geometry of one
-// answer does not): its state, then per element its kind, centroid (by the samples' weights) and area or length,
-// e.g. "Exact edge(1.3573 1.1583 0.4967 3.3246)"; elements in order of kind and centroid.
+// answer does not): its state, then per element its kind, centroid (by the samples' weights; an edge without samples:
+// its curve's midpoint) and area or length, and for an edge its end points (sorted), e.g.
+// "Exact edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)"; elements in order of kind and
+// centroid (T-081b round 6: edges got their end points and the kernel's length; an edge without samples used to read
+// edge(0 0 0 0) and match every other).
 std::string answerSignature(Answer answer, const std::vector<SubId>& elements, const Samples& samples);
 std::string answerSignature(const naming::Resolved& resolved, const Samples& samples);
 // Do two signatures describe the same answer: the same state, and element for element the same kind, centroids
 // within 0.02 mm, areas or lengths within 1 % (+0.001)? An empty or unreadable signature matches nothing.
 bool sameAnswer(const std::string& a, const std::string& b);
+// Has an element of the answer a near twin in its shape: another element of its kind whose signature sameAnswer cannot
+// tell from its own (ElemSamples::twin)? Such an answer is never counted as reviewed: an entry could not tell it from
+// its twin (T-081b round 6, the reviewer's collision scan: vertex pairs 5..19 um apart).
+bool signatureAmbiguous(const std::vector<SubId>& elements, const Samples& samples);
 
 // Resolves every reference against the replayed build, judges it with the full judge (oracle.h), adds it and the
 // replay's blend picks to `tally`, and runs the cross-checks (congruence, injectivity, mutants). `key` names the run

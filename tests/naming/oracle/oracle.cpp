@@ -14,6 +14,7 @@
 #include <numeric>
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace ray::naming_oracle {
 
@@ -1087,6 +1088,52 @@ Result<std::shared_ptr<const Samples>> sampleShape(const kernel::Shape& shape)
             es.nodes.push_back(out->e[kVertex][v.index].nodes.front());
         for (std::size_t k = 0; k < es.nodes.size(); ++k)
             growBox(es.boxMin, es.boxMax, es.nodes[k], k == 0);
+    }
+
+    // The answer signatures' data, and near twins (T-081b round 6, the reviewer's collision scan: vertices 5..19 um
+    // apart, and every edge without samples, had the same signature).
+    for (std::size_t k = 0; k < 3; ++k)
+        for (std::uint32_t i = 0; i < out->e[k].size(); ++i) {
+            ElemSamples& es = out->e[k][i];
+            double m = 0;
+            Vec3 c{0, 0, 0};
+            if (!es.pts.empty() && es.w.size() == es.pts.size()) {
+                for (std::size_t j = 0; j < es.pts.size(); ++j) {
+                    c = add(c, mul(es.pts[j], es.w[j]));
+                    m += es.w[j];
+                }
+                c = m > 0 ? mul(c, 1.0 / m) : es.pts.front();
+            } else if (!es.nodes.empty()) {
+                for (const Vec3& p : es.nodes)
+                    c = add(c, mul(p, 1.0 / static_cast<double>(es.nodes.size())));
+            }
+            if (k == kEdge) {
+                if (auto info = kernel::curveInfo(shape, SubId{SubKind::Edge, i})) {
+                    es.end0 = info->start;
+                    es.end1 = info->end;
+                    if (std::tie(es.end1.x, es.end1.y, es.end1.z) < std::tie(es.end0.x, es.end0.y, es.end0.z))
+                        std::swap(es.end0, es.end1);
+                    if (es.pts.empty() && es.nodes.empty())
+                        c = info->closed ? info->center : mul(add(info->start, info->end), 0.5);
+                    m = info->length;
+                }
+            }
+            es.centroid = c;
+            es.measure = k == kVertex ? 0.0 : m;
+        }
+    for (std::size_t k = 0; k < 3; ++k) {
+        auto& E = out->e[k];
+        for (std::uint32_t i = 0; i < E.size(); ++i)
+            for (std::uint32_t j = i + 1; j < E.size(); ++j) {
+                const ElemSamples &a = E[i], &b = E[j];
+                if (norm(sub(a.centroid, b.centroid)) > 0.02 ||
+                    std::abs(a.measure - b.measure) > 0.01 * std::max(a.measure, b.measure) + 1e-3)
+                    continue;
+                if (k == kEdge && (norm(sub(a.end0, b.end0)) > 0.02 || norm(sub(a.end1, b.end1)) > 0.02))
+                    continue;
+                E[i].twin = true;
+                E[j].twin = true;
+            }
     }
     return std::shared_ptr<const Samples>(out);
 }
@@ -2625,6 +2672,47 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
             }
         }
     }
+    // A crossing of a moved sweep's side wall with a plane that stayed (an edge, or a point on it): the wall is ruled
+    // along the sweep's direction, so the crossing moves with the sweep and then slides along that direction onto the
+    // plane, not by the move's projection onto the new line (T-081b round 6, the reviewer's 0:45 edge 45 of block 3:
+    // R4 moved by (2.383, 10.317, -2.383), its wall s1 meeting the plane x 80; the crossing slides 11.365 mm along its
+    // line, the projection 10.365).
+    const Feature* slideSweep = nullptr;
+    Vec3 slideMove{0, 0, 0};
+    std::vector<const Carrier*> stayedPlanes;
+    if (kind != SubKind::Face && !mutated("crossing-slide")) {
+        int movedWalls = 0;
+        bool otherChanged = false;
+        for (const Constraint& c : d.cons) {
+            if (c.alts.size() != 1)
+                continue;
+            const std::string& alt = c.alts.front();
+            const Owner* o0 = before.get(alt);
+            const Owner* o1 = after.get(alt);
+            if (o0 == nullptr || o1 == nullptr)
+                continue;
+            // (The wall may have kept its plane: a sweep moved along its own wall, as R4 in 0:45.)
+            const std::string f = featureOfOwner(alt);
+            const bool side = alt.size() > f.size() + 2 && alt.compare(f.size(), 2, "/s") == 0;
+            const auto a = before.sweeps.find(f);
+            const auto b = after.sweeps.find(f);
+            const auto move = side && a != before.sweeps.end() && b != after.sweeps.end()
+                                  ? pureMove(a->second, b->second)
+                                  : std::nullopt;
+            if (move) {
+                ++movedWalls;
+                slideSweep = &a->second;
+                slideMove = *move;
+            } else if (!carrierChanged(o0->c, o1->c)) {
+                if (o1->c.k == Carrier::K::Plane)
+                    stayedPlanes.push_back(&o1->c);
+            } else {
+                otherChanged = true;
+            }
+        }
+        if (movedWalls != 1 || otherChanged || stayedPlanes.empty())
+            slideSweep = nullptr;
+    }
     std::size_t keptPoints = 0, shiftedPoints = 0; // points kept where they were by inKeptMaterial; points moved
     auto mapPoint = [&](const Vec3& p, Vec3& q) {
         Vec3 shift{0, 0, 0};
@@ -2678,6 +2766,15 @@ ElemSamples mapElement(const Samples& baseline, SubId element, const TruthDesc& 
             q = similarMap(*simA, *simB, simK, p);
         else
             q = add(p, withSweep != nullptr ? *withSweep : ownChanged ? shift : bound);
+        if (slideSweep != nullptr && (withSweep != nullptr || ownChanged || norm(bound) > 1e-9)) {
+            q = add(p, slideMove);
+            const Vec3 n = unit(slideSweep->frame.n);
+            for (const Carrier* plane : stayedPlanes) {
+                const double along = dot(n, unit(plane->a));
+                if (std::abs(along) > 0.1)
+                    q = sub(q, mul(n, plane->dist(q) / along));
+            }
+        }
         double worst = 0;
         // Alternating projections; carriers that meet at a small angle (a blend and its tangent face) converge
         // slowly. A point that settles within a fifth of the anchor tolerance of every carrier is used.
@@ -3040,6 +3137,41 @@ bool structuralScope(const PickRecord& pick, const Owners& now, const Expectatio
 }
 
 Expectation expectCore(const PickRecord& pick, const Owners& now, const Samples& smp);
+// Is element `now` of `smp` bounded as element `was` of `baseline` was: for a face, its own plane facing the same way
+// (or its cylinder on the same side); for an edge or vertex, every planar face beside `was` (with a known side) matched
+// by a planar face beside `now` facing the same way, and every cylinder beside it by one on the same side?
+bool sameBounding(const Samples& baseline, SubId was, const Samples& smp, SubId now)
+{
+    auto alike = [](const ElemSamples& a, const ElemSamples& b) {
+        if (a.type != b.type)
+            return false;
+        if (a.type == static_cast<int>(kernel::SurfaceType::Plane))
+            return !a.sided || !b.sided || dot(unit(a.nrm), unit(b.nrm)) > 0.99;
+        if (a.type == static_cast<int>(kernel::SurfaceType::Cylinder))
+            return a.sigma == 0 || b.sigma == 0 || a.sigma == b.sigma;
+        return true;
+    };
+    if (was.kind == SubKind::Face)
+        return alike(baseline.of(SubKind::Face)[was.index], smp.of(SubKind::Face)[now.index]);
+    const std::size_t which = was.kind == SubKind::Vertex ? 0 : 1;
+    if (was.index >= baseline.facesOf[which].size() || now.index >= smp.facesOf[which].size())
+        return true;
+    for (const std::uint32_t f : baseline.facesOf[which][was.index]) {
+        const ElemSamples& a = baseline.of(SubKind::Face)[f];
+        if (a.type != static_cast<int>(kernel::SurfaceType::Plane) &&
+            a.type != static_cast<int>(kernel::SurfaceType::Cylinder))
+            continue;
+        if (a.type == static_cast<int>(kernel::SurfaceType::Plane) && !a.sided)
+            continue;
+        bool matched = false;
+        for (const std::uint32_t g : smp.facesOf[which][now.index])
+            matched = matched || alike(a, smp.of(SubKind::Face)[g]);
+        if (!matched)
+            return false;
+    }
+    return true;
+}
+
 // Boxes of two elements more than 0.05 mm apart (they cannot share samples).
 bool boxesApart(const ElemSamples& a, const ElemSamples& b)
 {
@@ -3068,10 +3200,17 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
         for (std::uint32_t e = 0; e < N.size(); ++e) {
             if (N[e].pts.empty() || N[e].type != P.type || boxesApart(P, N[e]))
                 continue;
-            const bool there = x.kind == SubKind::Vertex
+            bool there = x.kind == SubKind::Vertex
                                    ? !N[e].nodes.empty() && !P.nodes.empty() &&
                                          norm(sub(N[e].nodes.front(), P.nodes.front())) <= kExactVertexTolerance
                                    : shareOn(P, N[e], x.kind) >= 0.9 && shareOn(N[e], P, x.kind) >= 0.9;
+            // And bounded as the pick was (T-081b round 6, the reviewer's negative: a through hole covered by a boss
+            // turns its top rim, the top face's edge with the hole's wall, into the concave corner of a blind hole's
+            // ceiling on the same curve; the owners are on their carriers, but the face beside it now faces the other
+            // way): every planar face beside the pick at pick time has a planar face beside the element now facing
+            // the same way, and a cylinder is on the same side (boss or hole).
+            if (there && !mutated("held-bounds"))
+                there = sameBounding(*pick.baseline, pick.base, smp, SubId{x.kind, e});
             if (there) {
                 held = static_cast<long>(e);
                 ++found;

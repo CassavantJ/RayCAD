@@ -685,6 +685,8 @@ struct SigElement {
     std::string kind;
     Vec3 c{};
     double measure = 0;
+    bool ends = false; // an edge's end points given
+    Vec3 e0{}, e1{};
 };
 
 bool parseSignature(const std::string& sig, std::string& state, std::vector<SigElement>& els)
@@ -703,12 +705,17 @@ bool parseSignature(const std::string& sig, std::string& state, std::vector<SigE
         SigElement e;
         e.kind = sig.substr(at, open - at);
         const std::string inside = sig.substr(open + 1, close - open - 1);
-        double v[4] = {0, 0, 0, 0};
-        const int n = std::sscanf(inside.c_str(), "%lf %lf %lf %lf", &v[0], &v[1], &v[2], &v[3]);
-        if (n < 3 || (e.kind != "vertex" && n != 4) || (e.kind != "face" && e.kind != "edge" && e.kind != "vertex"))
+        double v[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        const int n = std::sscanf(inside.c_str(), "%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf", &v[0], &v[1], &v[2], &v[3],
+                                  &v[4], &v[5], &v[6], &v[7], &v[8], &v[9]);
+        const bool ok = (e.kind == "vertex" && n == 3) || (e.kind == "face" && n == 4) || (e.kind == "edge" && n == 10);
+        if (!ok)
             return false;
         e.c = Vec3{v[0], v[1], v[2]};
         e.measure = v[3];
+        e.ends = n == 10;
+        e.e0 = Vec3{v[4], v[5], v[6]};
+        e.e1 = Vec3{v[7], v[8], v[9]};
         els.push_back(e);
         at = close + 1;
         while (at < sig.size() && sig[at] == ' ')
@@ -725,29 +732,17 @@ std::string answerSignature(Answer answer, const std::vector<SubId>& elements, c
         int kind;
         Vec3 c;
         double measure;
+        Vec3 e0, e1;
     };
     std::vector<El> els;
     for (const SubId& s : elements) {
         const auto& N = samples.of(s.kind);
         if (s.index >= N.size()) {
-            els.push_back({static_cast<int>(s.kind), Vec3{1e9, 1e9, 1e9}, -1});
+            els.push_back({static_cast<int>(s.kind), Vec3{1e9, 1e9, 1e9}, -1, Vec3{}, Vec3{}});
             continue;
         }
         const ElemSamples& es = N[s.index];
-        Vec3 c{0, 0, 0};
-        double m = 0;
-        if (!es.pts.empty() && es.w.size() == es.pts.size()) {
-            for (const double w : es.w)
-                m += w;
-            c = m > 0 ? centroidOf(es) : es.pts.front();
-        } else if (!es.pts.empty()) {
-            for (const Vec3& p : es.pts)
-                c = add(c, mul(p, 1.0 / static_cast<double>(es.pts.size())));
-        } else if (!es.nodes.empty()) {
-            for (const Vec3& p : es.nodes)
-                c = add(c, mul(p, 1.0 / static_cast<double>(es.nodes.size())));
-        }
-        els.push_back({static_cast<int>(s.kind), c, s.kind == SubKind::Vertex ? 0.0 : m});
+        els.push_back({static_cast<int>(s.kind), es.centroid, es.measure, es.end0, es.end1});
     }
     std::sort(els.begin(), els.end(), [](const El& a, const El& b) {
         return std::tie(a.kind, a.c.x, a.c.y, a.c.z) < std::tie(b.kind, b.c.x, b.c.y, b.c.z);
@@ -759,11 +754,16 @@ std::string answerSignature(Answer answer, const std::vector<SubId>& elements, c
         std::snprintf(b, sizeof b, "%.4f", v);
         return std::string(b);
     };
+    auto point = [&](const Vec3& p) { return num(p.x) + " " + num(p.y) + " " + num(p.z); };
     std::string out = answerText(answer);
     for (const El& e : els) {
         const SubKind k = static_cast<SubKind>(e.kind);
-        out += std::string(" ") + kindName(k) + "(" + num(e.c.x) + " " + num(e.c.y) + " " + num(e.c.z) +
-               (k == SubKind::Vertex ? std::string() : " " + num(e.measure)) + ")";
+        out += std::string(" ") + kindName(k) + "(" + point(e.c);
+        if (k != SubKind::Vertex)
+            out += " " + num(e.measure);
+        if (k == SubKind::Edge)
+            out += " " + point(e.e0) + " " + point(e.e1);
+        out += ")";
     }
     return out;
 }
@@ -771,6 +771,14 @@ std::string answerSignature(Answer answer, const std::vector<SubId>& elements, c
 std::string answerSignature(const naming::Resolved& resolved, const Samples& samples)
 {
     return answerSignature(answerOf(resolved.state), resolved.elements, samples);
+}
+
+bool signatureAmbiguous(const std::vector<SubId>& elements, const Samples& samples)
+{
+    for (const SubId& s : elements)
+        if (s.index < samples.of(s.kind).size() && samples.of(s.kind)[s.index].twin)
+            return true;
+    return false;
 }
 
 bool sameAnswer(const std::string& a, const std::string& b)
@@ -787,7 +795,8 @@ bool sameAnswer(const std::string& a, const std::string& b)
         for (std::size_t j = 0; j < eb.size() && !found; ++j) {
             const SigElement& y = eb[j];
             if (used[j] || x.kind != y.kind || norm(sub(x.c, y.c)) > 0.02 ||
-                std::abs(x.measure - y.measure) > 0.01 * std::max(x.measure, y.measure) + 1e-3)
+                std::abs(x.measure - y.measure) > 0.01 * std::max(x.measure, y.measure) + 1e-3 ||
+                (x.ends && (norm(sub(x.e0, y.e0)) > 0.02 || norm(sub(x.e1, y.e1)) > 0.02)))
                 continue;
             used[j] = true;
             found = true;
@@ -845,6 +854,7 @@ RefResult judgeReference(const PickRecord& pick, const Owners& now, const Sample
     const SubKind kind = pick.base.kind;
     out.answer = answerOf(res.state);
     out.signature = answerSignature(res, smp);
+    out.ambiguous = signatureAmbiguous(res.elements, smp);
     std::vector<std::uint32_t> X;
     bool kindOk = true;
     for (const SubId& s : res.elements) {
@@ -1104,38 +1114,38 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     const std::string answer = std::string(answerText(rr.answer)) + " " + list(indices(res.elements));
     if (!rr.judgement.accepted.empty()) {
         ++tally.accepted;
-        if (reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
+        if (!rr.ambiguous && reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
             ++tally.acceptedReviewed;
         log.notes.push_back("ACCEPTED " + id + ": " + rr.judgement.accepted +
-                            reviewNote(reviewedTerritory(), id, rr.signature));
+                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedTerritory(), id, rr.signature)));
     }
     if (!rr.judgement.newGround.empty()) {
         ++tally.acceptedNewGround;
         // Every acceptance by the new-ground rule must be reviewed (round 3), on the same list as the new-territory
         // rule's (reviewed_territory.txt).
-        if (reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
+        if (!rr.ambiguous && reviewedAnswer(reviewedTerritory(), id, rr.signature) != nullptr)
             ++tally.acceptedNewGroundReviewed;
         log.notes.push_back("NEW GROUND " + id + ": " + rr.judgement.newGround +
-                            reviewNote(reviewedTerritory(), id, rr.signature));
+                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedTerritory(), id, rr.signature)));
     }
     if (rr.conflict == 1) {
         ++tally.conflicts;
-        if (reviewedAnswer(reviewedConflicts(), id, rr.signature) != nullptr)
+        if (!rr.ambiguous && reviewedAnswer(reviewedConflicts(), id, rr.signature) != nullptr)
             ++tally.conflictsReviewed;
         log.notes.push_back("CONFLICT " + id + ": congruent in place " + std::to_string(rr.congruent) +
                             ", oracle expects " + list(rr.expected) + ", resolver " + answer +
-                            reviewNote(reviewedConflicts(), id, rr.signature));
+                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedConflicts(), id, rr.signature)));
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr)
             log.notes.push_back(verbose());
     }
     if (v == Verdict::Unjudged) {
-        if (reviewedAnswer(reviewedUnjudged(), id, rr.signature) != nullptr)
+        if (!rr.ambiguous && reviewedAnswer(reviewedUnjudged(), id, rr.signature) != nullptr)
             ++tally.unjudgedReviewed;
         log.notes.push_back("UNJUDGED " + id + ": resolver " + answer + ", " +
                             (rr.noAnchor.empty() ? std::string("whether the element also continues another piece of "
                                                                "the logical element cannot be told")
                                                  : rr.noAnchor) +
-                            reviewNote(reviewedUnjudged(), id, rr.signature));
+                            (rr.ambiguous ? std::string(" [NOT REVIEWED: an element of the answer has a near twin; answer ") + rr.signature + "]" : reviewNote(reviewedUnjudged(), id, rr.signature)));
     }
     if (rr.conflict == 2)
         ++tally.conflictsOther;
