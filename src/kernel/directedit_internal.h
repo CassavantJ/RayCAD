@@ -30,9 +30,11 @@
 #include <gp_Pnt.hxx>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -146,6 +148,16 @@ std::atomic<int>& rawDirectEditHistory() noexcept;
 // (std::chrono::steady_clock ticks; kEditRunning until then); null: none is kept.
 inline constexpr std::int64_t kEditRunning = INT64_MIN;
 std::shared_ptr<std::atomic<std::int64_t>>& editEndRecord() noexcept;
+// Tests only (testing::HoldDirectEdits): while `holds` is above 0, a direct edit's kernel thread waits before its OCCT
+// work (passDirectEditGate) until the hold ends or the edit is cancelled or abandoned; `waiting` counts the edits
+// there.
+struct DirectEditGate {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int holds = 0;
+    int waiting = 0;
+};
+DirectEditGate& directEditGate() noexcept;
 
 // Distance along `axis` and from `axis`.
 double axialParameter(const gp_Ax1& axis, const gp_Pnt& point);

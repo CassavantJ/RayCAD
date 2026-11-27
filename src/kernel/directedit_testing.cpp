@@ -551,6 +551,30 @@ DirectEditFault::~DirectEditFault()
     detail::directEditFaultRequests().store(0, std::memory_order_relaxed);
 }
 
+HoldDirectEdits::HoldDirectEdits()
+{
+    detail::DirectEditGate& gate = detail::directEditGate();
+    const std::lock_guard<std::mutex> lock(gate.mutex);
+    ++gate.holds;
+}
+
+HoldDirectEdits::~HoldDirectEdits()
+{
+    detail::DirectEditGate& gate = detail::directEditGate();
+    {
+        const std::lock_guard<std::mutex> lock(gate.mutex);
+        --gate.holds;
+    }
+    gate.changed.notify_all();
+}
+
+bool HoldDirectEdits::held() const
+{
+    detail::DirectEditGate& gate = detail::directEditGate();
+    const std::lock_guard<std::mutex> lock(gate.mutex);
+    return gate.waiting > 0;
+}
+
 // ---------- infeasibleRequest: OCCT and the case's own data only, nothing of the kernel's direct-edit code ----------
 
 namespace {
