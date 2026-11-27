@@ -140,6 +140,10 @@ TEST_CASE("S4 part: no reference resolves to a wrong element in the 47 edit scen
     printTally("S4 total", total);
     std::printf("PLAN 3.3 set: %ld resolutions, Exact %s%%, WRONG %ld\n", plan.n,
                 percent(plan.state[0], plan.n).c_str(), plan.wrong());
+    if (noPlacementMode()) {
+        CHECK(noPlacementGateOk(total, "S4"));
+        return;
+    }
     CHECK(total.mutantsCaught() == total.mutantsMade());
     CHECK(total.repairedUsable == 0);
     CHECK(total.selfCheckFailures == 0);

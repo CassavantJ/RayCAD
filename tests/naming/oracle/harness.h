@@ -192,6 +192,7 @@ struct Tally {
     long injectivity = 0;       // elements answered Exact for two or more distinct references
     long twins = 0;             // Exact on one of coincident vertices (oracle.h Expectation::twins)
     long selfCheckFailures = 0; // the oracle's own expected answer not judged correct
+    long exactNotIdentity = 0;  // Exact answers not decided by generator identity (naming::Resolved::identity)
     std::map<std::string, std::array<long, 3>> mutants; // class: made, caught, caught only by the review gate
     void add(Answer a, Verdict v);
     void merge(const Tally& o);
@@ -230,6 +231,14 @@ inline bool unjudgedGateOk(const Tally& t)
 {
     return t.unjudged() == t.unjudgedReviewed;
 }
+// RAYCAD_NAMING_NO_PLACEMENT (references without placements or samples, as no released build wrote them): the blocks
+// are not oracle-judged in this mode (T-081b round 7b, the architect's ruling 4). A reference without evidence may come
+// back Exact only by generator identity, so the gate is structural: no Exact answer whose resolution is not identity
+// (Tally::exactNotIdentity), no usable Repaired, no element Exact for two references. The oracle's verdicts are still
+// counted, for the miss counts only.
+bool noPlacementMode();
+// The structural gate of the no-placement mode: prints the counts; true when it holds.
+bool noPlacementGateOk(const Tally& t, const char* what);
 // The entry of `list` for reference `id` whose reviewed answer matches `signature`, or null.
 const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature);
 // " [reviewed: <why>]", or " [NOT REVIEWED; answer <signature>]" with the listed answers when the key is listed for

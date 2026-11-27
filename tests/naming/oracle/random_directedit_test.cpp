@@ -1232,6 +1232,10 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
         CHECK(r.shortParts.empty());
     }
     const Tally& t = r.total;
+    if (noPlacementMode()) {
+        CHECK(noPlacementGateOk(t, holdoutPrefix.empty() ? "block" : holdoutPrefix.c_str()));
+        return;
+    }
     CHECK(t.mutantsCaught() == t.mutantsMade());
     CHECK(t.repairedUsable == 0);
     CHECK(t.selfCheckFailures == 0);

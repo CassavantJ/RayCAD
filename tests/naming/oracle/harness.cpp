@@ -30,8 +30,7 @@ naming::TopoRef withoutOutlineIfAsked(naming::TopoRef ref)
     // RAYCAD_NAMING_NO_PLACEMENT: references without TopoRef::placements, as a build before round 4 made them (the
     // moved-face rule then guesses every move, as round 3 did: the before/after of the round-4 change).
     // Such a reference has no TopoRef::samples either (round 8).
-    static const bool unplaced = std::getenv("RAYCAD_NAMING_NO_PLACEMENT") != nullptr;
-    if (unplaced) {
+    if (noPlacementMode()) {
         ref.placements.clear();
         ref.samples = naming::PickSamples{};
     }
@@ -1037,6 +1036,7 @@ void Tally::merge(const Tally& o)
     injectivity += o.injectivity;
     twins += o.twins;
     selfCheckFailures += o.selfCheckFailures;
+    exactNotIdentity += o.exactNotIdentity;
     for (const auto& [k, v] : o.mutants) {
         auto& m = mutants[k];
         for (std::size_t i = 0; i < 3; ++i)
@@ -1099,6 +1099,11 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     tally.add(rr.answer, v);
     if (weak)
         ++tally.weak;
+    if (res.state == naming::ResolveState::Exact && !res.identity) {
+        ++tally.exactNotIdentity;
+        if (noPlacementMode() && log.wrongs.size() < log.maxWrongs)
+            log.wrongs.push_back("NO-PLACEMENT EXACT NOT BY IDENTITY " + id + ": " + rr.signature);
+    }
     if (rr.answer == Answer::Repaired && res.usable())
         ++tally.repairedUsable;
     if (!rr.expected.empty()) {
@@ -1311,6 +1316,25 @@ void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners&
         account(id, p.result, p.resolved, false, tally, log, [] { return std::string(); });
     }
     tally.picksUnjudged += replay.unjudgedPicks();
+}
+
+bool noPlacementMode()
+{
+    static const bool unplaced = std::getenv("RAYCAD_NAMING_NO_PLACEMENT") != nullptr;
+    return unplaced;
+}
+
+bool noPlacementGateOk(const Tally& t, const char* what)
+{
+    const long broken = t.state[static_cast<std::size_t>(Answer::Broken)];
+    std::printf(
+        "%s, no placements (structural gate, not oracle-judged): %ld resolved, Exact %ld (%ld not by identity), "
+        "Repaired %ld, Broken %ld (%s %%); the oracle's count of misses, for information: %ld (%s %%)\n",
+        what, t.n, t.state[static_cast<std::size_t>(Answer::Exact)], t.exactNotIdentity,
+        t.state[static_cast<std::size_t>(Answer::Repaired)], broken, percent(broken, t.n).c_str(),
+        t.verdict[static_cast<std::size_t>(Verdict::Missed)],
+        percent(t.verdict[static_cast<std::size_t>(Verdict::Missed)], t.n).c_str());
+    return t.exactNotIdentity == 0 && t.repairedUsable == 0 && t.injectivity == 0;
 }
 
 void printTally(const char* title, const Tally& t)
