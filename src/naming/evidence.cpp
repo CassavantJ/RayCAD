@@ -1193,28 +1193,6 @@ std::vector<SubId> piecesInsideMovedPick(const ElementMap& map, const kernel::Sh
     }
 }
 
-std::vector<SubId> withoutStrayPieces(const ElementMap& map, const kernel::Shape& shape,
-                                      const std::vector<SubId>& pieces, const TopoRef& ref)
-{
-    try {
-        if (pieces.size() < 2 || pieces.front().kind != SubKind::Face || !ref.territory.known())
-            return pieces;
-        double largest = 0;
-        for (const SubId& p : pieces)
-            largest = std::max(largest, static_cast<double>(map.fingerprintOf(p).qArea));
-        std::vector<SubId> kept;
-        for (const SubId& p : pieces) {
-            const bool small = static_cast<double>(map.fingerprintOf(p).qArea) < 0.01 * largest;
-            if (small && Probe(shape, p).count(ref.territory) == 0)
-                continue;
-            kept.push_back(p);
-        }
-        return kept.empty() ? pieces : kept;
-    } catch (...) {
-        return pieces;
-    }
-}
-
 std::optional<Resolved> mergedAgainstMove(const ElementMap& map, const kernel::Shape& shape, SubId element,
                                           const TopoRef& ref)
 {
