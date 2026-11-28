@@ -985,9 +985,10 @@ TEST_CASE("Generator identity (round 9): a whole generator element its generator
     CHECK(edgeRef.samples.whole);
     CHECK(topRef.samples.whole);
     CHECK(keptRef.samples.whole);
-    // The flag is evidence: the JSON form keeps it (version 2), and a version-1 form still loads (as version 1).
+    // The flag is evidence: the JSON form keeps it (version 2; since round 10 the form is version 3), and a version-1
+    // form still loads (as version 1).
     const std::string text = toJson(edgeRef);
-    CHECK(text.find("\"version\":2,\"whole\":true}") != std::string::npos);
+    CHECK(text.find("\"version\":3,\"whole\":true}") != std::string::npos);
     CHECK(take(topoRefFromJson(text)).samples.whole);
     CHECK(toJson(take(topoRefFromJson(text))) == text);
 
@@ -1117,4 +1118,151 @@ TEST_CASE("Body moves (round 9): a body moved rigidly carries what was picked on
     const Resolved off = resolverFor(moved)->resolve(ref);
     naming::testing::setBodyMovesEnabled(true);
     CHECK(off.state != ResolveState::Exact);
+}
+
+// ---------------------------------------------------------------- T-081b round 10
+namespace {
+
+const FeatureId kPush = test::featureId(66);
+const FeatureId kBoss = test::featureId(67);
+
+// An imported box 0..10 x 0..20 x 0..5 (kImport), its top face pushed out by `distance` (kernel::offsetFaces, feature
+// kPush), the push's own move given to naming as the document gives it (naming::offsetFaceMove) or not.
+Body pushedImport(double distance, bool moves)
+{
+    const kernel::Shape box = take(kernel::makeBox(Vec3{0, 0, 0}, Vec3{10, 20, 5}));
+    const ElementMap map = nameImported(kImport, box);
+    const auto top = faceAt(box, Vec3{5, 10, 5}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    JobContext ctx;
+    const std::array<SubId, 1> faces{*top};
+    auto pushed = take(kernel::offsetFaces(box, faces, distance, ctx));
+    const std::array<const ElementMap*, 1> maps{&map};
+    const std::array<const kernel::Shape*, 1> shapes{&box};
+    NamingInput in{kPush, "offset_face", maps, &pushed.history, &pushed.shape, {}, shapes};
+    std::vector<FaceMove> list;
+    if (moves)
+        if (const auto m = offsetFaceMove(box, *top, distance))
+            list.push_back(*m);
+    in.faceMoves = list;
+    return Body{pushed.shape, take(propagate(in)).map};
+}
+
+} // namespace
+
+TEST_CASE("Face moves (round 10): a face a direct edit pushed is followed by the edit's own move",
+          "[naming][evidence][facemoves]")
+{
+    // The top face of an imported box (no feature places it) pushed out by 3 (offset_face): picked before the push, it
+    // is followed by the push's own move (NamingInput::faceMoves), Exact. Without the move given, or with face moves
+    // switched off (the mutation check), only the guess is left (the face moved along its normal): a suggestion.
+    const kernel::Shape box = take(kernel::makeBox(Vec3{0, 0, 0}, Vec3{10, 20, 5}));
+    const Body before{box, nameImported(kImport, box)};
+    const auto top = faceAt(box, Vec3{5, 10, 5}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    const TopoRef ref = resolverFor(before)->makeRef(kBody, *top);
+    REQUIRE(ref.samples.version == kPickSamplesVersion);
+    REQUIRE(ref.samples.carrierNames.size() == ref.samples.carriers.size());
+    CHECK(ref.samples.carriers[0].moved == -1); // nothing had moved it at pick time
+
+    const auto move = offsetFaceMove(box, *top, 3.0);
+    REQUIRE(move);
+    CHECK(move->move.m[11] == 3.0); // along the outward normal, +z
+    const Body pushed = pushedImport(3.0, true);
+    const auto pushedTop = faceAt(pushed.shape, Vec3{5, 10, 8}, Vec3{0, 0, 1});
+    REQUIRE(pushedTop);
+    Resolved r = resolverFor(pushed)->resolve(ref);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.elements == std::vector<SubId>{*pushedTop});
+    // Picked after the push, the push then edited (3 -> 5): followed from the one to the other (the pick records the
+    // move that had carried it, PickSamples::faceMoves).
+    const TopoRef afterPush = resolverFor(pushed)->makeRef(kBody, *pushedTop);
+    REQUIRE(afterPush.samples.carriers[0].moved >= 0);
+    const std::string text = toJson(afterPush);
+    CHECK(toJson(take(topoRefFromJson(text))) == text);
+    const Body further = pushedImport(5.0, true);
+    const auto furtherTop = faceAt(further.shape, Vec3{5, 10, 10}, Vec3{0, 0, 1});
+    REQUIRE(furtherTop);
+    r = resolverFor(further)->resolve(afterPush);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.elements == std::vector<SubId>{*furtherTop});
+    // Without the move given, and the mutation check (face moves off): a suggestion, never Exact.
+    CHECK(resolverFor(pushedImport(3.0, false))->resolve(ref).state != ResolveState::Exact);
+    naming::testing::setFaceMovesEnabled(false);
+    const Resolved off = resolverFor(pushed)->resolve(ref);
+    naming::testing::setFaceMovesEnabled(true);
+    CHECK(off.state != ResolveState::Exact);
+    // A version-2 reference (written before round 10) still loads, as version 2, and resolves as before: its face
+    // moves are not known.
+    TopoRef v2 = ref;
+    v2.samples.version = 2;
+    const std::string v2text = toJson(v2);
+    CHECK(v2text.find("carrierNames") == std::string::npos);
+    const TopoRef back = take(topoRefFromJson(v2text));
+    CHECK(back.samples.version == 2);
+    CHECK(back.samples.carrierNames.empty());
+    CHECK(resolverFor(pushed)->resolve(back).state != ResolveState::Exact);
+}
+
+TEST_CASE("Derived identity (round 10): the one edge between the faces it is named from, each still its own",
+          "[naming][evidence][identity]")
+{
+    // An imported box 0..40 x 0..20 x 0..10 with a boss joined on its top (sketch on z 10: (5, 5), (35, 5), (35, 15),
+    // (5, 15); line 1 the front). The edge where the boss's front side meets the box's top is named from those two
+    // faces (nb.edge), and was the only edge between them: PickSamples::between. Not a whole generator element (the top
+    // is an imported face). The boss's front line turned (its second point to (35, 7)): the placement (the centre of
+    // the profile's box) did not change, so the samples stay where they were; the turned edge holds none of them (it
+    // shares its first point only): Broken by its samples. By derived identity: the boss side is a whole generator
+    // element, the top holds the pick (the old edge's samples lie on it), and one edge lies between them: Exact. The
+    // mutation check: derived identity off, not Exact.
+    const auto build = [](double y2) {
+        const kernel::Shape box = take(kernel::makeBox(Vec3{0, 0, 0}, Vec3{40, 20, 10}));
+        const Body base{box, nameImported(kImport, box)};
+        JobContext ctx;
+        const kernel::Plane plane{Vec3{0, 0, 10}, Vec3{0, 0, 1}, Vec3{1, 0, 0}};
+        const std::vector<kernel::ProfileLoop> loops{
+            kernel::ProfileLoop{{line({5, 5}, {35, y2}, 1), line({35, y2}, {35, 15}, 2), line({35, 15}, {5, 15}, 3),
+                                 line({5, 15}, {5, 5}, 4)},
+                                1}};
+        auto sweep = take(kernel::extrude(kernel::Profile{plane, loops}, 5, 0.0, ctx));
+        NamingInput toolIn{kBoss, "extrude", {}, nullptr, &sweep.op.shape, sweep.origins};
+        toolIn.placement = sweepPlacement(plane, std::span<const kernel::ProfileLoop>(loops));
+        const Body tool{sweep.op.shape, take(propagate(toolIn)).map};
+        auto joined = take(kernel::boolean(kernel::BoolOp::Union, base.shape, tool.shape, ctx));
+        const std::array<const ElementMap*, 2> maps{&base.map, &tool.map};
+        const std::array<const kernel::Shape*, 2> shapes{&base.shape, &tool.shape};
+        NamingInput in{kBoss, "extrude", maps, &joined.history, &joined.shape, {}, shapes};
+        in.placement = toolIn.placement;
+        return Body{joined.shape, take(propagate(in)).map};
+    };
+    const Body before = build(5);
+    const auto edge = lineEdge(before.shape, Vec3{5, 5, 10}, Vec3{35, 5, 10});
+    REQUIRE(edge);
+    const TopoRef ref = resolverFor(before)->makeRef(kBody, *edge);
+    REQUIRE(ref.names.size() == 1);
+    const TopoName* name = before.map.record(ref.names[0]);
+    REQUIRE(name != nullptr);
+    CHECK(name->role == "nb.edge");
+    CHECK_FALSE(ref.samples.whole);
+    CHECK(ref.samples.between);
+    CHECK(toJson(ref).find("\"between\":true") != std::string::npos);
+    CHECK(take(topoRefFromJson(toJson(ref))).samples.between);
+
+    const Body after = build(7);
+    const auto turned = lineEdge(after.shape, Vec3{5, 5, 10}, Vec3{35, 7, 10});
+    REQUIRE(turned);
+    const Resolved r = resolverFor(after)->resolve(ref);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+    CHECK(r.derived);
+    CHECK(r.elements == std::vector<SubId>{*turned});
+    naming::testing::setDerivedIdentityEnabled(false);
+    const Resolved off = resolverFor(after)->resolve(ref);
+    naming::testing::setDerivedIdentityEnabled(true);
+    CHECK(off.state != ResolveState::Exact);
+    // Its name's faces must still be theirs: the same reference, the edge's name forged to say it was not alone
+    // between them, is not Exact.
+    TopoRef notAlone = ref;
+    notAlone.samples.between = false;
+    CHECK(resolverFor(after)->resolve(notAlone).state != ResolveState::Exact);
 }

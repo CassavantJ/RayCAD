@@ -61,6 +61,42 @@ bool bodyMovesEnabled() noexcept
 {
     return g_bodyMoves.load();
 }
+namespace {
+std::atomic<int> g_refusals[3] = {-1, -1, -1}; // -1: not switched (the environment decides), 0 off, 1 on
+std::atomic<bool> g_derived{true}, g_faceMoves{true};
+} // namespace
+void setIdentityRefusalEnabled(IdentityRefusal which, bool on) noexcept
+{
+    g_refusals[static_cast<int>(which)].store(on ? 1 : 0);
+}
+bool identityRefusalEnabled(IdentityRefusal which) noexcept
+{
+    const int v = g_refusals[static_cast<int>(which)].load();
+    if (v >= 0)
+        return v == 1;
+    // RAYCAD_NAMING_NO_REFUSAL=<1|2|3>[,...] (read once, for diagnosis): those refusals off from the start.
+    static const std::string off = [] {
+        const char* e = std::getenv("RAYCAD_NAMING_NO_REFUSAL");
+        return e == nullptr ? std::string() : "," + std::string(e) + ",";
+    }();
+    return off.find("," + std::to_string(static_cast<int>(which) + 1) + ",") == std::string::npos;
+}
+void setDerivedIdentityEnabled(bool on) noexcept
+{
+    g_derived.store(on);
+}
+bool derivedIdentityEnabled() noexcept
+{
+    return g_derived.load();
+}
+void setFaceMovesEnabled(bool on) noexcept
+{
+    g_faceMoves.store(on);
+}
+bool faceMovesEnabled() noexcept
+{
+    return g_faceMoves.load();
+}
 } // namespace testing
 
 namespace detail {
@@ -188,6 +224,43 @@ Rigid bodyMoveOf(const ElementMap& map, const FeatureId& feature)
     Rigid out;
     for (const FeaturePlacement* m : bodyMovesOf(map, feature))
         out = compose(rigidOf(*m), out);
+    return out;
+}
+
+// These names and those of the faces they were split from, up their split parents as far as the map knows them (held or
+// kept as an ancestor): a piece of a face lies where the face it was split from was moved.
+std::vector<Hash256> withSplitParents(const ElementMap& map, std::span<const Hash256> names)
+{
+    std::vector<Hash256> out(names.begin(), names.end());
+    std::vector<Hash256> level = out;
+    for (int depth = 0; depth < 64 && !level.empty(); ++depth) {
+        std::vector<Hash256> next;
+        for (const Hash256& n : level)
+            if (const TopoName* r = recordOrAncestor(map, n); r != nullptr && r->role == kSplitRole)
+                for (const Hash256& p : r->parents)
+                    if (std::find(out.begin(), out.end(), p) == out.end()) {
+                        out.push_back(p);
+                        next.push_back(p);
+                    }
+        level = std::move(next);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// The face moves (NamingInput::faceMoves) that carry a face with these names in `map`, composed, the latest last;
+// `any`: whether there is one. None when they are switched off (naming::testing::setFaceMovesEnabled).
+Rigid faceMoveOf(const ElementMap& map, std::span<const Hash256> names, bool& any)
+{
+    Rigid out;
+    any = false;
+    if (!testing::faceMovesEnabled() || names.empty())
+        return out;
+    const std::vector<Hash256> all = withSplitParents(map, names);
+    for (const FeaturePlacement* m : faceMovesOf(map, all)) {
+        out = compose(rigidOf(*m), out);
+        any = true;
+    }
     return out;
 }
 
@@ -541,17 +614,92 @@ bool identityHolds(const ElementMap& map, const TopoRef& ref, SubId element)
     return map.find(ref.names.front()) == element && wholeGenerator(map, element);
 }
 
+// ---------------------------------------------------------------- derived identity (T-081b round 10)
+// The faces an edge or vertex named from its faces (role nb.edge, nb.vertex: its name's parents are those faces' names)
+// is named from, as `map` holds them now: each parent name on exactly one face. Empty when a parent name is held by no
+// face or by several (that face's name is gone: the element's lineage is not known), or the name is not so made.
+std::vector<SubId> namedFacesOf(const ElementMap& map, const Hash256& name)
+{
+    const TopoName* r = map.record(name);
+    if (r == nullptr || (r->role != "nb.edge" && r->role != "nb.vertex") || r->parents.empty())
+        return {};
+    std::vector<SubId> faces;
+    for (const Hash256& parent : r->parents) {
+        const auto f = map.find(parent);
+        if (!f || f->kind != SubKind::Face)
+            return {};
+        faces.push_back(*f);
+    }
+    std::sort(faces.begin(), faces.end());
+    faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+    return faces;
+}
+
+// The elements of `kind` that lie on every one of `faces` (an edge both faces share, a vertex all of them meet at).
+std::vector<SubId> elementsBetween(const kernel::Shape& shape, const std::vector<SubId>& faces, SubKind kind)
+{
+    std::vector<SubId> out;
+    if (faces.empty())
+        return out;
+    for (const SubId& e : kernel::adjacent(shape, faces.front(), kind)) {
+        const std::vector<SubId> around = kernel::adjacent(shape, e, SubKind::Face);
+        if (std::all_of(faces.begin(), faces.end(),
+                        [&](const SubId& f) { return std::binary_search(around.begin(), around.end(), f); }))
+            out.push_back(e);
+    }
+    return out;
+}
+
+// PickSamples::between: `sub`, an edge or vertex, has one name, an nb.edge or nb.vertex name held by it alone, and it
+// is the only element of its kind on all the faces that name is made from.
+bool aloneBetweenItsFaces(const ElementMap& map, const kernel::Shape& shape, SubId sub)
+{
+    if (sub.kind != SubKind::Edge && sub.kind != SubKind::Vertex)
+        return false;
+    const std::span<const Hash256> names = map.namesOf(sub);
+    if (names.size() != 1 || map.find(names.front()) != sub)
+        return false;
+    const std::vector<SubId> faces = namedFacesOf(map, names.front());
+    const std::vector<SubId> between = elementsBetween(shape, faces, sub.kind);
+    if (traceLevel() >= 4) {
+        const TopoName* r = map.record(names.front());
+        std::fprintf(stderr, "POST pick %u between: role %s parents %zu named faces %zu elements between %zu\n",
+                     sub.index, r != nullptr ? r->role.c_str() : "?", r != nullptr ? r->parents.size() : 0,
+                     faces.size(), between.size());
+    }
+    return !faces.empty() && between.size() == 1 && between.front() == sub;
+}
+
+// The index into `list` (PickSamples::faceMoves) of the face moves that carry a face with these names in `map`,
+// composed; -1 when none does.
+std::int32_t faceMovedIndex(const ElementMap& map, std::vector<std::array<std::int64_t, 12>>& list,
+                            std::span<const Hash256> names)
+{
+    bool any = false;
+    const Rigid m = faceMoveOf(map, names, any);
+    if (!any)
+        return -1;
+    const std::array<std::int64_t, 12> q = quantaOf(m);
+    for (std::size_t i = 0; i < list.size(); ++i)
+        if (list[i] == q)
+            return static_cast<std::int32_t>(i);
+    list.push_back(q);
+    return static_cast<std::int32_t>(list.size() - 1);
+}
+
 // How what lies on a pick-time surface (or a neighbour's ground) was carried from pick time to now (postcondition.h):
-// by its owner's placement (`owner`, SampleCarrier::owner; a split-off piece's only when `carrySplit`) and by the body
-// moves that carry its ground (`ground`, SampleCarrier::ground, version 2), composed: the frame (to the model) then and
-// now.
+// by its owner's placement (`owner`, SampleCarrier::owner; a split-off piece's only when `carrySplit`), by the body
+// moves that carry its ground (`ground`, SampleCarrier::ground, version 2) and by the face moves of direct edits that
+// carry its face (version 3: the face's pick-time `names`, the face moves that had carried it then, `moved`, an index
+// into PickSamples::faceMoves), composed in that order: the frame (to the model) then and now.
 struct Frames {
-    bool placed = false; // an owner or a body move carries it: its move is known
+    bool placed = false; // an owner, a body move or a face move carries it: its move is known
     bool gone = false;   // its owner has no placement now: its move is not known
     bool moved = false;
     Rigid then, now;
 };
-Frames framesOf(const ElementMap& map, const PickSamples& s, std::int32_t owner, std::int32_t ground, bool carrySplit)
+Frames framesOf(const ElementMap& map, const PickSamples& s, std::int32_t owner, std::int32_t ground, bool carrySplit,
+                std::span<const Hash256> names = {}, std::int32_t moved = -1)
 {
     Frames f;
     const bool split = owner <= -2;
@@ -580,10 +728,33 @@ Frames framesOf(const ElementMap& map, const PickSamples& s, std::int32_t owner,
         bodies = !bodyMovesOf(map, g.feature).empty() || !sameRigid(bodyThen, Rigid{});
         f.placed = f.placed || bodies;
     }
-    f.then = compose(bodyThen, placedThen);
-    f.now = compose(bodyNow, placedNow);
-    f.moved = bodies ? !sameRigid(f.then, f.now) : placementMoved;
+    // (A face move recorded before a later body move is turned with it in the map: face moves come last.)
+    Rigid editThen, editNow;
+    bool edits = false;
+    if (testing::faceMovesEnabled() && s.version >= 3 && !names.empty()) {
+        if (moved >= 0 && static_cast<std::size_t>(moved) < s.faceMoves.size())
+            editThen = rigidOf(FeaturePlacement{FeatureId{}, s.faceMoves[static_cast<std::size_t>(moved)]});
+        bool any = false;
+        editNow = faceMoveOf(map, names, any);
+        edits = any || moved >= 0;
+        f.placed = f.placed || edits;
+    }
+    f.then = compose(editThen, compose(bodyThen, placedThen));
+    f.now = compose(editNow, compose(bodyNow, placedNow));
+    f.moved = (bodies || edits) ? !sameRigid(f.then, f.now) : placementMoved;
     return f;
+}
+
+// The pick-time names of carrier i (PickSamples::carrierNames, version 3), empty when not recorded.
+std::span<const Hash256> carrierNamesOf(const PickSamples& s, std::size_t i)
+{
+    return i < s.carrierNames.size() ? std::span<const Hash256>(s.carrierNames[i]) : std::span<const Hash256>();
+}
+// The frames of carrier i (framesOf with its owner, ground, names and face moves).
+Frames carrierFrames(const ElementMap& map, const PickSamples& s, std::size_t i, bool carrySplit)
+{
+    const SampleCarrier& c = s.carriers[i];
+    return framesOf(map, s, c.owner, c.ground, carrySplit, carrierNamesOf(s, i), c.moved);
 }
 
 std::array<std::int64_t, 3> axisQuanta(const Vec3& d)
@@ -698,7 +869,7 @@ public:
         const PickSamples& s = ref_.samples;
         for (std::size_t i = 0; i < then_.size(); ++i)
             if (const SampleCarrier& c = s.carriers[i];
-                c.owner == -1 && analytic(then_[i]) && !framesOf(map_, s, c.owner, c.ground, false).placed)
+                c.owner == -1 && analytic(then_[i]) && !carrierFrames(map_, s, i, false).placed)
                 return true;
         return false;
     }
@@ -714,7 +885,7 @@ public:
             const SampleCarrier& c = s.carriers[i];
             if (c.owner <= -2)
                 continue;
-            const Frames f = framesOf(map_, s, c.owner, c.ground, false);
+            const Frames f = carrierFrames(map_, s, i, false);
             if (f.gone || !f.placed || !f.moved)
                 continue;
             const Surface& was = ends_[i - own];
@@ -860,6 +1031,28 @@ public:
         }
         return n > 0 && 2 * on >= n && 2 * alongOn >= along && holdCount(e) > 0;
     }
+    // P1 for face f, one of the faces an edge or vertex pick is named from, as far as the pick's samples tell it (they
+    // lie on every one of its faces): some mapped sample lies on f, and none on another face on f's surface instead.
+    bool faceHoldsPick(SubId f) const
+    {
+        if (f.kind != SubKind::Face || mapped_.empty() || !t_.surface(f))
+            return false;
+        const Surface own = faceSurfaceOf(t_, f);
+        const std::uint32_t faces = t_.shape().count(SubKind::Face);
+        std::size_t on = 0;
+        for (const Sample& s : mapped_) {
+            if (t_.probe(f).on(s.p, tol_)) {
+                ++on;
+                continue;
+            }
+            for (std::uint32_t i = 0; i < faces; ++i)
+                if (const SubId g{SubKind::Face, i}; g != f && t_.surface(g) && analytic(own) &&
+                                                     sameSurface(faceSurfaceOf(t_, g), own, tol_) &&
+                                                     t_.probe(g).on(s.p, tol_))
+                    return false;
+        }
+        return on > 0;
+    }
 
     Resolved decide(Resolved r) const;
 
@@ -919,7 +1112,7 @@ private:
             }
             // (A piece split off by a feature, whose own surface it may not be, is taken to stay where it was, its move
             // not known, unless carrySplit_.)
-            const Frames f = framesOf(map_, s, c.owner, c.ground, carrySplit_);
+            const Frames f = carrierFrames(map_, s, i, carrySplit_);
             if (f.gone) {
                 carried_.assign(then_.size(), false);
                 return; // the owner is gone: its move is not known
@@ -1000,6 +1193,13 @@ private:
     // surfaces. Alternating projections converge too slowly where the surfaces meet at a shallow angle.
     Vec3 settle(Vec3 p) const
     {
+        // (A point already on every surface within the precision the carriers were recorded to, 1e-4 mm, is where they
+        // meet: settling it further only chases the rounding, and where two of them are tangent there, such as a
+        // side's plane running on into its arc's cylinder, the steps along their common normal are ill-conditioned and
+        // carry the point along the crossing instead: T-081b round 10, a pushed boss's end cap, random-directedit 0:0
+        // vertex 21.)
+        if (offAll(p) <= 1e-4)
+            return p;
         for (int iter = 0; iter < 20; ++iter) {
             std::array<Vec3, 3> n{};
             std::array<double, 3> f{};
@@ -1063,6 +1263,16 @@ private:
             p = sub(p, step);
         }
         return p;
+    }
+
+    // How far p lies off the farthest of the mapped analytic surfaces.
+    double offAll(const Vec3& p) const
+    {
+        double worst = 0;
+        for (const Surface& s : now_)
+            if (analytic(s))
+                worst = std::max(worst, offSurface(s, p));
+        return worst;
     }
 
     // The direction of an edge's mapped crossing at p (two analytic surfaces), if known.
@@ -1183,9 +1393,11 @@ private:
                 continue;
             const std::int32_t owner = i < s.neighbourOwners.size() ? s.neighbourOwners[i] : -1;
             const std::int32_t ground = i < s.neighbourGrounds.size() ? s.neighbourGrounds[i] : -1;
+            const std::int32_t moved = i < s.neighbourMoves.size() ? s.neighbourMoves[i] : -1;
             std::optional<std::pair<Rigid, Rigid>> move;
             // (Its feature gone, its ground is taken where it was: a face that took it in holds that.)
-            if (const Frames f = framesOf(map_, s, owner, ground, false); f.placed && !f.gone && f.moved)
+            if (const Frames f = framesOf(map_, s, owner, ground, false, ref_.pickNeighbours[i].names, moved);
+                f.placed && !f.gone && f.moved)
                 move = std::pair{f.then, f.now};
             // Its ground as its feature moved it, and where it was at pick time: an element now on either holds what
             // was another element's then (a face grown over the place a moved boss's cap left is that and more).
@@ -1695,17 +1907,18 @@ Resolved Checker::decide(Resolved r) const
     if (onAnswer == 0 && moved_ && !inPlace_ && !noSlide_ && kind != SubKind::Face && slides()) {
         // A crossing slid along the moved feature's direction onto a surface that stayed can land far outside the face
         // it crosses there (a narrow chamfer strip the moved wall now cuts elsewhere along its line: T-081a random
-        // 10:5, chamfer R3's edge): the crossing nearest where the pick was is tried too, and stands when the answer
-        // holds it. (T-081b round 9: kept, not made a suggestion. It is the pick's own samples on the pick's surfaces
-        // as its features moved them, settled onto their crossing from where they were picked: the move is known and
-        // applied to the surfaces, only the slide along the crossing is not assumed. Made a suggestion, R3's chamfer
-        // in random 10:5 loses its edge and fails, and the replay's other answers go wrong on the part without it.)
+        // 10:5, chamfer R3's edge): the crossing nearest where the pick was is tried too. That the pick slid along its
+        // crossing no farther than to the nearest point of it is a guess (the samples as moved say otherwise), so an
+        // answer that holds it is a suggestion at most (T-081b round 10: like every other guess; Split and Merged as
+        // they are, checked by it).
         const Checker nearest(map_, t_, ref_, false, carrySplit_, true);
         Resolved there = nearest.decide(r);
         if (nearest.held() > 0) {
             held_ = nearest.held();
             trace("nearest", answer, nearest.held(), 0, "the crossing nearest where the pick was");
-            return there;
+            return suggestion(std::move(there), "The picked element's features moved it along the crossing it lies "
+                                                "on; the element its name leads to holds the crossing nearest where it "
+                                                "was picked, and is suggested as it: confirm it.");
         }
     }
     if (onAnswer == 0) {
@@ -1771,6 +1984,11 @@ Resolved Checker::decide(Resolved r) const
               : g == Guess::All  ? "all"
               : g == Guess::Most ? "most"
                                  : "none");
+        // (T-081b round 10, ruling E: the two flagged answers a guess keeps, Guess::Most -> Merged below and the
+        // pieces' guess -> Split or Merged as answered, are kept only here, after P1 and P3 ran on them above in this
+        // decide(): nothing of the mapped pick lands on another element, nor within 0.05 mm of one; every piece holds
+        // some of the pick moved onto its surface (countGuess, parallelTo); and P2 (holdsANeighbour) for each. No other
+        // path gives them.)
         if ((!onCarriers && g == Guess::None) || holdsANeighbour(answer.front()))
             return brokenBecause("Nothing of the picked element, as its features moved it, lies on the element its "
                                  "name leads to; whether that element is the one picked cannot be told.");
@@ -1859,6 +2077,7 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
             PickSamples none;
             none.version = kPickSamplesVersion;
             none.whole = wholeGenerator(map, sub);
+            none.between = aloneBetweenItsFaces(map, shape, sub);
             return none;
         }
         auto carrierFor = [&](const SubId& f) {
@@ -1869,6 +2088,7 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
             if (c.owner < 0 && unknownSplit)
                 c.owner = splitOwnerIndex(map, out.placements, map.namesOf(f));
             c.ground = groundIndex(map, out.grounds, map.namesOf(f));
+            c.moved = faceMovedIndex(map, out.faceMoves, map.namesOf(f));
             if (traceLevel() >= 4)
                 for (const Hash256& n : map.namesOf(f))
                     if (const TopoName* r = map.record(n))
@@ -1878,10 +2098,18 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
                                      map.placement(r->origin) != nullptr ? 1 : 0, c.owner);
             return c;
         };
+        // (Each carrier's face's names with it, PickSamples::carrierNames.)
+        const auto addCarrier = [&](const SubId& f) {
+            out.carriers.push_back(carrierFor(f));
+            const std::span<const Hash256> names = map.namesOf(f);
+            std::vector<Hash256> sorted(names.begin(), names.end());
+            std::sort(sorted.begin(), sorted.end());
+            out.carrierNames.push_back(std::move(sorted));
+        };
         for (const SubId& f : faces) {
             if (out.carriers.size() >= kMaxSampleCarriers)
                 break;
-            out.carriers.push_back(carrierFor(f));
+            addCarrier(f);
         }
         out.ownCarriers = static_cast<std::uint32_t>(out.carriers.size());
         // An edge's ends: the other faces at its vertices, what bounds it (PickSamples::ownCarriers); not one tangent
@@ -1905,7 +2133,7 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
                         for (const Vec3& n : ownNormals)
                             tangent = tangent || std::abs(dot(normalAt(s, *at), n)) >= 1.0 - 1e-6;
                     if (!tangent)
-                        out.carriers.push_back(carrierFor(f));
+                        addCarrier(f);
                 }
                 if (k == 0)
                     out.firstEndCarriers = static_cast<std::uint32_t>(out.carriers.size()) - out.ownCarriers;
@@ -1914,7 +2142,10 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
         for (const PickNeighbour& n : neighbours) {
             out.neighbourOwners.push_back(ownerIndex(map, out.placements, n.names));
             out.neighbourGrounds.push_back(groundIndex(map, out.grounds, n.names));
+            out.neighbourMoves.push_back(faceMovedIndex(map, out.faceMoves, n.names));
         }
+        if (std::all_of(out.neighbourMoves.begin(), out.neighbourMoves.end(), [](std::int32_t o) { return o < 0; }))
+            out.neighbourMoves.clear();
         if (std::all_of(out.neighbourOwners.begin(), out.neighbourOwners.end(), [](std::int32_t o) { return o < 0; }))
             out.neighbourOwners.clear();
         if (std::all_of(out.neighbourGrounds.begin(), out.neighbourGrounds.end(), [](std::int32_t o) { return o < 0; }))
@@ -1941,6 +2172,7 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
                     g = rank[static_cast<std::size_t>(g)];
         }
         out.whole = wholeGenerator(map, sub);
+        out.between = aloneBetweenItsFaces(map, shape, sub);
         // Sorted by feature, the owners' indexes with them.
         std::vector<std::size_t> order(out.placements.size());
         for (std::size_t i = 0; i < order.size(); ++i)
@@ -2039,6 +2271,38 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
         // tells: an answer that holds none of the pick as its features moved it but most of it where it was picked is
         // the pick, its feature's placement changed by a dimension edit, not moved (a placement is the centre of the
         // box of its profile: an edit of one curve places all of the feature elsewhere).
+        // THE THREE REFUSALS of identity (generator or derived), each a product rule about what a reference stands for,
+        // each pinned with its case and switchable for the pins' mutation checks (naming::testing::IdentityRefusal):
+        //  1. LandsElsewhere: a reference stands for the material that was picked. Where that material is, as the
+        //     features that made it moved it, another element of its kind now holds it: that element is the pick,
+        //     whatever name it has, and no name on another element outranks it (directedit "a name on the same line
+        //     running the other way", with placements: the moved pick lies on the moved wall's edge).
+        //  2. EndAgainstSense: an edge is a run of material from one end to the other. An edge that meets a picked end
+        //     (as moved) and runs from it the other way shares one point with the pick, the end, and none of its run:
+        //     it is a neighbour along the same curve, not the pick (the same directedit case without placements).
+        //  3. OnPickSurfaces: where the answer still lies on the surfaces the pick lay on (every point of the pick,
+        //     where it was picked or as its features moved it, on every surface the answer lies on), whether it holds
+        //     the pick there is a geometric fact the samples can check, and the samples decide, not the name: a patch
+        //     of the same cylinder or line that holds none of the picked ground is another patch (holdout1 7:33 face
+        //     18; directedit "an edge on a line that stayed"). Identity keeps only what the samples could only guess:
+        //     an answer holding none of the pick as moved but most of it where it was picked (a feature's placement
+        //     changed by a dimension edit of its profile is no move of what it made), and only while the pick as moved
+        //     did not leave the part (a feature moved out of the part takes what it made with it, and what covers the
+        //     old place is not the pick, whatever its name: random 11:43 face 8, review4 13:25 face 5).
+        const auto refusedIdentity = [&](SubId e) -> const char* {
+            using testing::IdentityRefusal;
+            const Checker moved(map, territories, ref);
+            if (testing::identityRefusalEnabled(IdentityRefusal::LandsElsewhere) && moved.heldElsewhere(e))
+                return "the pick as moved lands on another element";
+            if (testing::identityRefusalEnabled(IdentityRefusal::EndAgainstSense) && moved.endAgainstSense(e))
+                return "the answer runs back from a picked end";
+            if (!testing::identityRefusalEnabled(IdentityRefusal::OnPickSurfaces) || !moved.pickOnSurfacesOf(e))
+                return nullptr;
+            if (moved.holdCount(e) == 0 && !moved.imageLeftThePart() &&
+                Checker(map, territories, ref, true).holdsMost(e))
+                return nullptr;
+            return "the answer lies on the pick's surfaces: the samples decide";
+        };
         const auto byIdentity = [&](SubId e) {
             if (traceLevel() >= 4 && r.state == ResolveState::Exact && ref.names.size() == 1)
                 if (const TopoName* n = map.record(ref.names.front()))
@@ -2050,20 +2314,59 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
                                  identityHolds(map, ref, e) ? 1 : 0);
             if (r.state != ResolveState::Exact || r.elements.size() != 1 || !identityHolds(map, ref, e))
                 return false;
-            // (Never where the pick, as its features moved it, lands on another element: that one holds it, whatever
-            // name it has; nor on an edge that meets a picked end so moved and runs from it the other way: it shares
-            // that point with the pick, nothing more; directedit "a name on the same line running the other way".)
-            const Checker moved(map, territories, ref);
-            if (moved.heldElsewhere(e) || moved.endAgainstSense(e))
-                return false;
-            if (!moved.pickOnSurfacesOf(e))
-                return true;
-            // (Not when the pick so moved left the part: a feature moved out of the part takes what it made with it,
-            // and what covers the old place is not the pick, whatever its name; random 11:43 face 8.)
-            return moved.holdCount(e) == 0 && !moved.imageLeftThePart() &&
-                   Checker(map, territories, ref, true).holdsMost(e);
+            const char* refusal = refusedIdentity(e);
+            if (refusal != nullptr && traceLevel() > 0)
+                std::fprintf(stderr, "POST identity refused: %s\n", refusal);
+            return refusal == nullptr;
         };
-        if (byIdentity(r.elements.front())) {
+        // DERIVED IDENTITY (naming.h Resolved::derived, T-081b round 10): an edge or vertex is the meeting of the faces
+        // it lies on. One that was the only element between the faces it is named from (PickSamples::between, recorded
+        // at pick time) is still that meeting while each of those faces is still the face it was, by its own name (the
+        // face's generator identity, or the face holding the pick as its features moved it: P1 for it) and exactly one
+        // element lies between them: that element is the pick. Not when a face's name is gone (held by no face, or by
+        // several: which face it is now is not known), nor where a refusal above applies.
+        const auto byDerived = [&](SubId e) {
+            if (traceLevel() >= 3 && r.state == ResolveState::Exact && ref.kind != SubKind::Face)
+                std::fprintf(stderr,
+                             "POST derived identity? v%u between %d names %zu (now %zu) found %d named faces %zu\n",
+                             ref.samples.version, ref.samples.between ? 1 : 0, ref.names.size(), map.namesOf(e).size(),
+                             !ref.names.empty() && map.find(ref.names.front()) == e ? 1 : 0,
+                             ref.names.empty() ? std::size_t{0} : namedFacesOf(map, ref.names.front()).size());
+            if (!testing::derivedIdentityEnabled() || r.state != ResolveState::Exact || r.elements.size() != 1 ||
+                ref.kind == SubKind::Face || e.kind != ref.kind || ref.samples.version < 3 || !ref.samples.between ||
+                ref.names.size() != 1 || map.find(ref.names.front()) != e || map.namesOf(e).size() != 1)
+                return false;
+            const std::vector<SubId> faces = namedFacesOf(map, ref.names.front());
+            if (faces.empty()) {
+                if (traceLevel() > 0)
+                    std::fprintf(stderr, "POST derived identity: a face it is named from has lost its name\n");
+                return false;
+            }
+            const Checker moved(map, territories, ref);
+            // (A face is Exact by generator identity only while that is switched on: naming::testing.)
+            for (const SubId& f : faces)
+                if (!(testing::generatorIdentityEnabled() && wholeGenerator(map, f)) && !moved.faceHoldsPick(f)) {
+                    if (traceLevel() > 0)
+                        std::fprintf(stderr,
+                                     "POST derived identity: face %u is neither a whole generator element nor holds "
+                                     "the pick\n",
+                                     f.index);
+                    return false;
+                }
+            const std::vector<SubId> between = elementsBetween(territories.shape(), faces, ref.kind);
+            if (between.size() != 1 || between.front() != e) {
+                if (traceLevel() > 0)
+                    std::fprintf(stderr, "POST derived identity: %zu elements between its faces\n", between.size());
+                return false;
+            }
+            const char* refusal = refusedIdentity(e);
+            if (refusal != nullptr && traceLevel() > 0)
+                std::fprintf(stderr, "POST derived identity refused: %s\n", refusal);
+            return refusal == nullptr;
+        };
+        const bool generator = byIdentity(r.elements.front());
+        const bool derived = !generator && byDerived(r.elements.front());
+        if (generator || derived) {
             const Checker check(map, territories, ref);
             if (check.holdsNeighbourGround(r.elements.front())) {
                 if (traceLevel() > 0)
@@ -2073,8 +2376,9 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
                 return Resolved{ResolveState::Merged, std::move(r.elements), {}};
             }
             if (traceLevel() > 1)
-                std::fprintf(stderr, "POST identity: exact\n");
+                std::fprintf(stderr, derived ? "POST identity: exact (derived)\n" : "POST identity: exact\n");
             r.identity = true;
+            r.derived = derived;
             return r;
         }
         // A reference without samples (made before them): its features' moves are not known, so nothing but generator

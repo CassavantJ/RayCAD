@@ -125,8 +125,16 @@ private:
         }
         JobContext job{ctx.job.cancel, ctx.job.progress.sub(0.9)};
         auto op = kernel::offsetFaces(*shape, picked->faces, *distance, job);
-        return directedit::finishEdit(f, kOffsetFaceType, ctx, body, *shape, std::move(op),
-                                      std::move(picked->warnings));
+        // The edit's own motion (naming.h NamingInput::faceMoves): each face it pushed or pulled moved along its
+        // outward normal by the distance, so what was picked on it follows it.
+        std::vector<naming::FaceMove> moves;
+        for (const kernel::SubId& face : picked->faces) {
+            if (auto move = naming::offsetFaceMove(*shape, face, *distance)) {
+                moves.push_back(*move);
+            }
+        }
+        return directedit::finishEdit(f, kOffsetFaceType, ctx, body, *shape, std::move(op), std::move(picked->warnings),
+                                      moves);
     }
 };
 

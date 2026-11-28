@@ -21,6 +21,7 @@
 #include "naming_internal.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <new>
 
@@ -463,6 +464,18 @@ std::vector<const FeaturePlacement*> bodyMovesOf(const ElementMap& map, const Fe
     return out;
 }
 
+std::vector<const FeaturePlacement*> faceMovesOf(const ElementMap& map, std::span<const Hash256> names)
+{
+    std::vector<const FeaturePlacement*> out;
+    if (!map.impl)
+        return out;
+    for (const ElementMap::Impl::FaceMoveRecord& m : map.impl->faceMoves)
+        if (std::any_of(names.begin(), names.end(),
+                        [&](const Hash256& n) { return std::binary_search(m.names.begin(), m.names.end(), n); }))
+            out.push_back(&m.placement);
+    return out;
+}
+
 } // namespace detail
 
 // ---------- ElementMap ----------
@@ -565,6 +578,29 @@ Xform sweepPlacement(const kernel::Plane& plane, std::span<const kernel::Profile
             points.insert(points.end(), c.pts.begin(), c.pts.end());
         }
     return sweepPlacement(plane, std::span<const Vec2>(points));
+}
+
+std::optional<FaceMove> offsetFaceMove(const kernel::Shape& shape, kernel::SubId face, double distance)
+{
+    try {
+        if (face.kind != kernel::SubKind::Face || !std::isfinite(distance))
+            return std::nullopt;
+        const auto info = kernel::surfaceInfo(shape, face);
+        if (!info || info->type != kernel::SurfaceType::Plane)
+            return std::nullopt;
+        // The outward normal from the kernel's face sample (the plane's own axis may point either way).
+        const auto sample = kernel::faceSample(shape, face);
+        if (!sample)
+            return std::nullopt;
+        const Vec3 n = sample->normal;
+        const double len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (!(len > 1e-12))
+            return std::nullopt;
+        const double k = distance / len;
+        return FaceMove{face, Xform{{1, 0, 0, n.x * k, 0, 1, 0, n.y * k, 0, 0, 1, n.z * k}}};
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 bool samePlacement(const FeaturePlacement& a, const FeaturePlacement& b)

@@ -35,8 +35,9 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 // (held in place only if bounded as the pick was); round 7: profile-move (a profile moved within its sketch is a move
 // of its sweep), slide-still (a crossing slides though no carrier changed), moved-in-place (a face its exact map moved
 // is not judged in place), import-union (a vertex on a face of coplanar imported faces), node-slack (one node in twenty
-// within 0.2 mm) and landed-map (a map that lands exactly on an element is known there). For checking the pins only;
-// never set in a gate run.
+// within 0.2 mm) and landed-map (a map that lands exactly on an element is known there); round 10: dropped-in-place (an
+// element in place with the pick's names and neighbours' names, on a replay that dropped a feature, continues it). For
+// checking the pins only; never set in a gate run.
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
 
@@ -3365,6 +3366,50 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             x.expected = TruthEval{};
             x.expected.elems.push_back(static_cast<std::uint32_t>(held));
             x.heldInPlace = true;
+        }
+    }
+    // IN PLACE BY NAME (T-081b round 10, the architect's ruling D). The oracle describes only the features the replay
+    // built (harness.h builtOnly): when one failed and was dropped, the owners built after it are modelled without it,
+    // and their extents with them (a chamfer's reach along a parent that a dropped chamfer had cut back: [random] 10:5,
+    // R3 dropped, R5/b0's extent no longer reaching the corner where R5 still ends). Expected gone, though an element
+    // of the pick's kind lies exactly where the pick was (as HELD IN PLACE: each on 90 % of the other, a vertex at the
+    // same point; bounded as the pick was), every owner of the description is still there on the carrier it had (a
+    // blend's included: its carrier is its parents'), and the element holds the very names the pick held, with the very
+    // names of the faces around it the pick had (ElementNames, PickRecord::names and around; compared as given, never
+    // read): nothing about it changed but a feature the oracle no longer models, so it is the pick's continuation. Only
+    // on a replay that dropped a feature (Owners::dropped). Mutation "dropped-in-place".
+    if (x.expected.elems.empty() && x.noAnchor.empty() && !mutated("dropped-in-place") && !now.dropped.empty() &&
+        now.names != nullptr && !pick.names.empty() && !pick.picked().pts.empty()) {
+        bool still = !pick.truth.cons.empty();
+        for (const Constraint& c : pick.truth.cons)
+            for (const std::string& alt : c.alts) {
+                const Owner* o0 = pick.owners->get(alt);
+                const Owner* o1 = now.get(alt);
+                still = still && o0 != nullptr && o1 != nullptr && sharedSurface(o0->c, o1->c, 1e-2);
+            }
+        const auto& N = smp.of(x.kind);
+        const auto& names = now.names->names[static_cast<std::size_t>(x.kind)];
+        const auto& around = now.names->around[static_cast<std::size_t>(x.kind)];
+        const ElemSamples& P = pick.picked();
+        long held = -1;
+        int found = 0;
+        for (std::uint32_t e = 0; still && e < N.size(); ++e) {
+            if (N[e].pts.empty() || N[e].type != P.type || boxesApart(P, N[e]) || e >= names.size() ||
+                e >= around.size() || names[e] != pick.names || around[e] != pick.around)
+                continue;
+            const bool there = x.kind == SubKind::Vertex
+                                   ? !N[e].nodes.empty() && !P.nodes.empty() &&
+                                         norm(sub(N[e].nodes.front(), P.nodes.front())) <= kExactVertexTolerance
+                                   : shareOn(P, N[e], x.kind) >= 0.9 && shareOn(N[e], P, x.kind) >= 0.9;
+            if (there && sameBounding(*pick.baseline, pick.base, smp, SubId{x.kind, e})) {
+                held = static_cast<long>(e);
+                ++found;
+            }
+        }
+        if (found == 1) {
+            x.expected = TruthEval{};
+            x.expected.elems.push_back(static_cast<std::uint32_t>(held));
+            x.inPlaceByName = true;
         }
     }
     // The structural check applies to the expectation too (round 3): a single expected face that holds none of the

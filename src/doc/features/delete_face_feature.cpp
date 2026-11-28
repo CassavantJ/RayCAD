@@ -149,7 +149,7 @@ Result<kernel::Shape> bodyShape(const RebuildContext& ctx, const BodyId& body, c
 
 Result<FeatureOutput> finishEdit(const Feature& f, std::string_view type, const RebuildContext& ctx, const BodyId& body,
                                  const kernel::Shape& input, Result<kernel::OpResult> op,
-                                 std::vector<std::string> warnings)
+                                 std::vector<std::string> warnings, std::span<const naming::FaceMove> moves)
 {
     const std::string where = featureLabel(f);
     if (!op) {
@@ -166,7 +166,8 @@ Result<FeatureOutput> finishEdit(const Feature& f, std::string_view type, const 
     const naming::ElementMap& map = ctx.mapOf(body);
     const std::array<const naming::ElementMap*, 1> maps{&map};
     const std::array<const kernel::Shape*, 1> shapes{&input};
-    const naming::NamingInput naming{f.id, std::string(type), maps, &op->history, &op->shape, {}, std::span(shapes)};
+    naming::NamingInput naming{f.id, std::string(type), maps, &op->history, &op->shape, {}, std::span(shapes)};
+    naming.faceMoves = moves;
     auto named = naming::propagate(naming);
     if (!named) {
         return failed(ErrorCode::Internal, where + ": naming the result failed: " + named.error().message);

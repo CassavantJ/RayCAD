@@ -17,8 +17,14 @@
 // (T-081b round 9) is Exact only so: a Split or Merged answer to it is Broken, any other answer is checked against the
 // territory it has and is at most Repaired. A GUESS NEVER KEEPS EXACT (T-081b round 9): every rule below that keeps an
 // answer whose element holds nothing of the pick as its features moved it (checked in place after a placement change,
-// the pick moved along its normal, a rigid copy of it; not the crossing nearest the pick, which is the pick settled
-// onto its moved surfaces) gives Repaired, a suggestion the user confirms, instead of Exact.
+// the pick moved along its normal, a rigid copy of it, and since T-081b round 10 the crossing nearest where the pick
+// was) gives Repaired, a suggestion the user confirms, instead of Exact.
+//
+// Identity's three refusals (postcondition.cpp refusedIdentity, each a product rule, each pinned) and DERIVED IDENTITY
+// (T-081b round 10, naming.h Resolved::derived: an edge or vertex that was the only element between the faces it is
+// named from, those faces still theirs by name and one element between them now) are written down at postcondition().
+// FACE MOVES (T-081b round 10, NamingInput::faceMoves): a direct edit's move of a face it was given carries what lies
+// on that face like a feature's placement, composed after the placement and the body moves (below, "the move").
 //
 // THE POST-CONDITION. Every answer the resolver would give that is not Broken (Exact, Split, Merged; Repaired is a
 // suggestion and is left alone) is checked last, for faces, edges and vertices alike, whatever found it (a name, a
@@ -27,7 +33,8 @@
 //    or cap, a hole's wall or floor; a piece of a split face, the owner of the face it was split from, known at pick
 //    time from the split records' parents the map keeps as ancestors): by that feature's placement then and now when
 //    it changed, and by the body moves (NamingInput::bodyPlacement) that carry its ground (PickSamples::grounds) then
-//    and now, composed; else not at all. The samples are mapped so: on surfaces that all
+//    and now, and by the face moves (NamingInput::faceMoves) that carry its face (PickSamples::carrierNames, version
+//    3) then and now, composed; else not at all. The samples are mapped so: on surfaces that all
 //    moved, rigidly; where a moved surface meets one that stayed (an edge or vertex where a moved wall crosses a face
 //    that did not move), carried with the moved one, slid along the moved feature's direction (its frame's z, or within
 //    the moved surface when z runs along the other one) onto the one that stayed, and settled onto all of them (a few

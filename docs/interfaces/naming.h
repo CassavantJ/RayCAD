@@ -18,6 +18,10 @@
 // body moves that had carried it), NamingInput::bodyPlacement (a rigid move of a whole body, such as transform_body's)
 // and Resolved::identity (an Exact answer by generator identity). Version-1 samples and references without samples
 // still load.
+// Amended by T-081b round 10: FaceMove, offsetFaceMove and NamingInput::faceMoves (a direct edit that moves faces it was
+// given says how, per face, as transform_body says how it moved its body), PickSamples version 3 (the names of each
+// surface the pick lay on and the face moves that had carried it; the "between" flag of an edge or vertex named from
+// its faces) and Resolved::derived (an Exact answer by derived identity). Versions 1 and 2 still load.
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -81,6 +85,18 @@ bool samePlacement(const FeaturePlacement& a, const FeaturePlacement& b);
 Xform sweepPlacement(const kernel::Plane& plane, std::span<const kernel::ProfileLoop> loops);
 Xform sweepPlacement(const kernel::Plane& plane, std::span<const Vec2> points);
 
+// How a direct edit moved one face it was given (NamingInput::faceMoves; T-081b round 10): the rigid move, row-major
+// 3x4 like Xform, of the face's points from before the edit to after it. `face` is a face of the edit's input shape
+// (NamingInput::inputShapes[0], whose map is inputMaps[0]).
+struct FaceMove {
+    kernel::SubId face;
+    Xform move;
+};
+// The move of a planar face pushed or pulled by `distance` along its outward normal (offset_face: positive out of the
+// material): a translation by distance times the normal. nullopt when the face is not planar or its normal cannot be
+// read. The document's offset_face and the naming oracle's harness both call it.
+std::optional<FaceMove> offsetFaceMove(const kernel::Shape& shape, kernel::SubId face, double distance);
+
 // Per-body table: every current sub-shape of the body's Shape has ONE OR MORE names
 // (several after same-domain unification merged elements; the merged element carries every input name).
 class ElementMap {
@@ -139,6 +155,13 @@ struct NamingInput {
     // with the features whose elements it carried, so that a reference picked before the move (or with the move placed
     // otherwise) follows the pick by it, as a moved sketch's faces follow their feature's placement.
     std::optional<Xform> bodyPlacement;
+    // Optional (T-081b round 10): faces of the input (inputMaps[0]) this feature moved rigidly, each by its own move (a
+    // direct edit's targets: offset_face's faces along their normals, offsetFaceMove). The result map records each move
+    // with the names the face had, so that a reference to such a face (or to an edge or vertex on it) picked before the
+    // edit, or with the edit's distance otherwise, follows the pick by it, as a moved sketch's faces follow their
+    // feature's placement. A face listed twice, or faces given without an input map, fail propagate(); a face the
+    // input map has no name for is not recorded (nothing can refer to it).
+    std::span<const FaceMove> faceMoves;
 };
 struct NamingOutput { ElementMap map; std::vector<LineageEvent> lineage; };
 Result<NamingOutput> propagate(const NamingInput&);
@@ -224,8 +247,11 @@ struct PickOutline {
 // (Resolved::identity). Version 2 (T-081b round 9) adds `whole`, the grounds (SampleCarrier::ground, neighbourGrounds,
 // grounds); a version-1 reference still loads and resolves as version 1 did, its grounds unknown. A version-2 reference
 // may have no points: its element had none to give (a surface or curve whose points cannot be read); it is not a
-// reference made before samples, and is checked with what evidence it has.
-inline constexpr std::uint32_t kPickSamplesVersion = 2;
+// reference made before samples, and is checked with what evidence it has. Version 3 (T-081b round 10) adds the names
+// of each carrier and of the face moves (NamingInput::faceMoves) that had carried it and each neighbour
+// (SampleCarrier::moved, carrierNames, faceMoves, neighbourMoves), and `between`; a version-2 reference resolves as
+// before, its face moves not known.
+inline constexpr std::uint32_t kPickSamplesVersion = 3;
 inline constexpr std::size_t kMaxPickSamples = 24;  // points of a face; an edge has its two ends and up to 11 more
 inline constexpr std::size_t kMaxSampleCarriers = 8; // the surfaces the element lies on
 // A surface the picked element lay on: a face's own, an edge's or a vertex's faces'.
@@ -243,6 +269,9 @@ struct SampleCarrier {
     // Version 2: index into PickSamples::grounds of the feature whose element the surface is (a split piece's: the
     // feature that made the face it was split from, followed up its split parents at pick time), -1 when not known.
     std::int32_t ground = -1;
+    // Version 3: index into PickSamples::faceMoves of the face moves (NamingInput::faceMoves) that had carried the face
+    // of this surface at pick time, composed; -1 when none had.
+    std::int32_t moved = -1;
 };
 // Version 2: a feature that made ground the pick lay on, and the body moves (NamingInput::bodyPlacement) that had carried
 // that feature's elements at pick time, composed in order (the q of a FeaturePlacement: rotation to 1e-9, translation to
@@ -281,6 +310,19 @@ struct PickSamples {
     // -1).
     std::vector<std::int32_t> neighbourGrounds;
     std::vector<SampleGround> grounds; // sorted by feature, each once
+    // Version 3: parallel to `carriers`, every name the face of each surface had at pick time (sorted): which face moves
+    // carry it now is read from the current map by them.
+    std::vector<std::vector<Hash256>> carrierNames;
+    // Version 3: the face moves that had carried a carrier's face or a neighbour at pick time, each composed in order
+    // (the q of a FeaturePlacement), each once; SampleCarrier::moved and neighbourMoves index it.
+    std::vector<std::array<std::int64_t, 12>> faceMoves;
+    // Version 3: parallel to TopoRef::pickNeighbours, the index into faceMoves of each one's, or -1 (empty: all -1).
+    std::vector<std::int32_t> neighbourMoves;
+    // Version 3: the pick is an edge or vertex named from the faces it lies on (role nb.edge, nb.vertex), held by it
+    // alone under that one name, and it was the ONLY element of its kind that lay on all of those faces at pick time.
+    // Recorded at pick time, never inferred later. Such a pick is the one element between those faces as long as each of
+    // them is still the face it was (Resolved::derived).
+    bool between = false;
     bool known() const { return version != 0 && !points.empty(); }
 };
 
@@ -341,9 +383,13 @@ struct TopoRef {
 // S = {"carriers": [[type, ox, oy, oz, ax, ay, az, radius, owner, ground], ...], "ends": [6 integers], "firstEnd": n,
 //      "grounds": [{"feature": "<uuid>", "moved": [12 integers]}, ...], "neighbourGrounds": [n, ...],
 //      "neighbourOwners": [n, ...], "own": n, "placements": [as above], "points": [[x, y, z], ...], "spacing": n,
-//      "version": 2, "whole": bool}
-// (type 0 plane, 1 cylinder, 2 other; version 1, as written before T-081b round 9, has nine integers per carrier and no
-// "grounds", "neighbourGrounds" or "whole", and still loads; a version this build does not know is refused).
+//      "version": 3, "whole": bool,
+//      "between": bool, "carrierNames": [["<64 hex>", ...], ...], "faceMoves": [[12 integers], ...],
+//      "neighbourMoves": [n, ...]}
+// (type 0 plane, 1 cylinder, 2 other; version 3 has eleven integers per carrier, the last its "moved"; version 2, as
+// written in T-081b round 9, has ten and no "between", "carrierNames", "faceMoves" or "neighbourMoves"; version 1, as
+// written before round 9, has nine integers per carrier and no "grounds", "neighbourGrounds" or "whole"; both still
+// load; a version this build does not know is refused).
 // Every integer is a JSON number, or a decimal string when beyond +-2^53. toJson writes every member (empty arrays
 // included) except territory, pickNeighbours, outline, placements and samples, which it writes only when the territory,
 // the outline or the samples are known (samples also when of version 2, points or none) / the list is not empty, so a
@@ -380,7 +426,12 @@ struct Resolved {
     // pick where it was picked (its feature's placement changed by a dimension edit, not moved) is identity's to
     // tell. False on every other answer, an Exact one included.
     // A reference without samples comes back Exact only so: any other answer to it is Repaired or Broken.
+    // Also set (with `derived`) on an Exact answer by DERIVED identity (T-081b round 10): the pick was the one element
+    // between the faces it is named from (PickSamples::between), each of those faces is now Exact by its name by
+    // generator identity or holds the pick as its features moved it, and exactly one element lies between them, the
+    // answer. The refusals above apply to it as to generator identity.
     bool identity = false;
+    bool derived = false;
     // Usable for a rebuild: Exact, Split and Merged, and Repaired when repairConfirmed; never Broken, never an answer
     // without elements. A feature rebuild may consume `elements` only when this is true. (S4: an unconfirmed repair
     // built a chamfer on the wrong edge.) Split and Merged may still change what the feature makes (all pieces, the

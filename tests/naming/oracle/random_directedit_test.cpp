@@ -2566,6 +2566,145 @@ TEST_CASE("Pick-time ground pin (round 9): a split piece's owner is known at pic
     CHECK(off[0].answer == Answer::Exact);
 }
 
+TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surfaces the samples decide, not the name",
+          "[naming][directedit-replays]")
+{
+    // The third refusal of identity (postcondition.cpp refusedIdentity, OnPickSurfaces), as fixed scripts: the name
+    // leads to a whole generator element that still lies on the pick's own surfaces, where whether it holds the pick is
+    // a fact its samples tell. holdout1 7:33 face 18: another patch of the boss's cylinder, holding none of the picked
+    // ground (Broken, the oracle: gone). review4 13:25 face 5: cut R2's end cap moved out of the part with R2, a strip
+    // of the cap's plane over the old place left (Broken, gone): it holds none of the pick as moved, and the exception
+    // (most of the pick where it was picked) does not apply because the pick as moved left the part. Each pin fails
+    // with the refusal off: generator identity answers Exact on that element.
+    struct Pin {
+        const char* script;
+        int part;
+        Vec3 at;
+        double measure;
+        const char* about;
+    };
+    const std::vector<Pin> pins{
+        {"holdout1 7:33", 7, {39.2339, -2.5489, 10.5459}, 27.0338, "another patch of a boss's side"},
+        {"review4 13:25", 13, {110.9422, 39.0751, 5.0154}, 181.1502, "a moved cut's end cap whose image left the part"},
+    };
+    using naming::testing::IdentityRefusal;
+    for (const Pin& p : pins) {
+        const auto [baseline, edited] = pinnedScripts(p.script);
+        INFO(p.script << ": " << p.about);
+        const std::vector<Looked> looked =
+            replayScriptedAndLook(p.part, baseline, edited, SubKind::Face, p.at, p.measure);
+        REQUIRE(looked.size() == 1);
+        INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == Answer::Broken);
+        CHECK(looked[0].judgement.verdict == Verdict::BrokenGone);
+        naming::testing::setIdentityRefusalEnabled(IdentityRefusal::OnPickSurfaces, false);
+        const std::vector<Looked> off =
+            replayScriptedAndLook(p.part, baseline, edited, SubKind::Face, p.at, p.measure, {}, false);
+        naming::testing::setIdentityRefusalEnabled(IdentityRefusal::OnPickSurfaces, true);
+        REQUIRE(off.size() == 1);
+        INFO("OnPickSurfaces off: " << off[0].signature << ", " << verdictName(off[0].judgement.verdict));
+        CHECK(off[0].answer == Answer::Exact);
+        CHECK(isWrong(off[0].judgement.verdict));
+    }
+}
+
+TEST_CASE("Oracle pin (round 10, ruling D): on a replay that dropped a feature, an element in place with the pick's "
+          "names and its neighbours' names continues the pick",
+          "[naming][directedit-replays]")
+{
+    // T-081a random 10:5 (pinned_scripts.txt "random 10:5"): R2 moved; R3's chamfer edge reference is not Exact (the
+    // nearest-crossing re-check is a suggestion since round 10), so R3 fails in the replay and the oracle, which models
+    // only the features built (harness.h builtOnly), models R5's chamfer without R3's reach along R1/b0: R5/b0's extent
+    // no longer reaches the corners where R5 still ends. Vertices 2 (0, 19.3538, 30) and 12 (0, 18, 28.6462) are where
+    // they were, with the same names and the same faces' names around them: the oracle's IN PLACE BY NAME (expect)
+    // judges Exact on them correct (with RAYCAD_ORACLE_MUTATE=dropped-in-place this pin fails: WRONG ghost).
+    // Negatives, each a forgery of one condition of the rule: the faces around it named otherwise (one neighbour name
+    // replaced), no feature dropped (Owners::dropped emptied), and the pick's names on an element not in place (vertex
+    // 12's element named as vertex 2): each Exact answer stays WRONG.
+    const auto [baseline, edited] = pinnedScripts("random 10:5");
+    const Part part = loadPart(kParts[10]);
+    REQUIRE(part.base != nullptr);
+    const Script s0 = scriptFromText(baseline, part.base);
+    const Script s1 = scriptFromText(edited, part.base);
+    SequenceOptions opt;
+    opt.keyPrefix = "scripted ";
+    opt.script = &s0;
+    opt.edited = &s1;
+    struct Seen {
+        Verdict verdict = Verdict::Correct;
+        naming::ResolveState state = naming::ResolveState::Broken;
+        std::vector<std::uint32_t> elements;
+        bool byName = false, dropped = false;
+        Verdict otherNeighbours = Verdict::Correct, nothingDropped = Verdict::Correct, notInPlace = Verdict::Correct;
+    };
+    std::map<int, Seen> seen; // 0: vertex 2, 1: vertex 12
+    const std::array<Vec3, 2> at{Vec3{0, 19.3538, 30}, Vec3{0, 18, 28.6462}};
+    setInspector([&](const std::string&, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners& now, const Samples& samples) {
+        if (ref.ref.kind != SubKind::Vertex)
+            return;
+        const naming::Fingerprint& h = ref.ref.hint;
+        const Vec3 c{h.qCx * 1e-4, h.qCy * 1e-4, h.qCz * 1e-4};
+        for (int k = 0; k < 2; ++k) {
+            if (norm(sub(c, at[static_cast<std::size_t>(k)])) > 1e-3)
+                continue;
+            Seen& s = seen[k];
+            s.verdict = rr.judgement.verdict;
+            s.state = res.state;
+            for (const SubId& e : res.elements)
+                s.elements.push_back(e.index);
+            s.byName = expect(ref.record, now, samples).inPlaceByName;
+            s.dropped = now.dropped.count("R3") != 0;
+            if (s.elements.size() != 1 || ref.record.around.empty() || now.names == nullptr)
+                continue;
+            const std::uint32_t got = s.elements.front();
+            // (a) The faces around it named otherwise at pick time.
+            PickRecord other = ref.record;
+            other.around.back() = std::string(64, '0');
+            s.otherNeighbours =
+                judgeAnswer(expect(other, now, samples), other, now, samples, Answer::Exact, {got}).verdict;
+            // (b) Nothing dropped.
+            Owners kept = now;
+            kept.dropped.clear();
+            s.nothingDropped =
+                judgeAnswer(expect(ref.record, kept, samples), ref.record, kept, samples, Answer::Exact, {got}).verdict;
+            // (c) The pick's names, and its neighbours', on the other corner's element (not where the pick was).
+            const auto elsewhere = elementAt(samples, SubKind::Vertex, at[static_cast<std::size_t>(1 - k)]);
+            if (!elsewhere)
+                continue;
+            auto names = std::make_shared<ElementNames>(*now.names);
+            const auto v = static_cast<std::size_t>(SubKind::Vertex);
+            names->names[v][*elsewhere] = ref.record.names;
+            names->around[v][*elsewhere] = ref.record.around;
+            Owners forged = now;
+            forged.names = names;
+            s.notInPlace = judgeAnswer(expect(ref.record, forged, samples), ref.record, forged, samples, Answer::Exact,
+                                       {*elsewhere})
+                               .verdict;
+        }
+    });
+    const SequenceResult r = runSequence(part, 10, 0, opt);
+    setInspector({});
+    INFO("random 10:5 scripted: " << r.edit);
+    CHECK_FALSE(r.skipped);
+    CHECK(r.tally.wrong() == 0);
+    REQUIRE(seen.size() == 2);
+    for (int k = 0; k < 2; ++k) {
+        const Seen& s = seen[k];
+        INFO("vertex " << (k == 0 ? 2 : 12) << ": " << verdictName(s.verdict) << "; forged: other neighbours "
+                       << verdictName(s.otherNeighbours) << ", nothing dropped " << verdictName(s.nothingDropped)
+                       << ", not in place " << verdictName(s.notInPlace));
+        CHECK(s.dropped); // R3 failed in the replay
+        CHECK(s.state == naming::ResolveState::Exact);
+        CHECK(s.elements.size() == 1);
+        CHECK(s.verdict == Verdict::Correct);
+        CHECK(s.byName);
+        CHECK(isWrong(s.otherNeighbours));
+        CHECK(isWrong(s.nothingDropped));
+        CHECK(isWrong(s.notInPlace));
+    }
+}
+
 TEST_CASE("Oracle pins (round 7): a corner moved along a floor of several coplanar import faces",
           "[naming][directedit-replays]")
 {
@@ -3225,6 +3364,35 @@ TEST_CASE("Every entry of the reviewed lists records the answer it reviewed", "[
     CHECK_FALSE(sameAnswer(a, ""));
     CHECK(sameAnswer("Split vertex(1.0000 2.0000 3.0000) vertex(4.0000 5.0000 6.0000)",
                      "Split vertex(4.0000 5.0000 6.0000) vertex(1.0000 2.0000 3.0000)"));
+}
+
+TEST_CASE("Review matching (round 10, ruling F): a reviewed Exact covers a Repaired answer on the same elements, only "
+          "that way",
+          "[naming][oracle-gate]")
+{
+    // A suggestion (Repaired) of the elements a reviewer accepted as Exact claims less about them: covered. A reviewed
+    // Repaired does not cover Exact (a stronger claim), and Split and Merged are covered only by themselves.
+    const std::string pts = " edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)";
+    const std::string other = " edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.0656 1.3573 1.1583 2.0590)";
+    CHECK(reviewCovers("Exact" + pts, "Repaired" + pts));         // Exact entry covers Repaired
+    CHECK(reviewCovers("Exact" + pts, "Exact" + pts));            // and itself
+    CHECK_FALSE(reviewCovers("Exact" + pts, "Repaired" + other)); // not on other elements
+    CHECK_FALSE(reviewCovers("Repaired" + pts, "Exact" + pts));   // Repaired entry does not cover Exact
+    CHECK_FALSE(reviewCovers("Exact" + pts, "Split" + pts));      // Exact entry does not cover Split ...
+    CHECK_FALSE(reviewCovers("Exact" + pts, "Merged" + pts));     // ... or Merged
+    CHECK_FALSE(reviewCovers("Split" + pts, "Repaired" + pts));   // Split entry does not cover Repaired
+    CHECK_FALSE(reviewCovers("Merged" + pts, "Repaired" + pts));
+    CHECK_FALSE(reviewCovers("Split" + pts, "Exact" + pts));
+    // Through the list's matching (reviewedAnswer): holdout2 17:24 edge 3 is listed with Exact on edge 3.
+    const std::string listed = "directedit-holdout2 nist-pmi/nist_ftc_11_asme1_rb_geometry.stp #24|edge 3";
+    const auto [lo, hi] = reviewedUnjudged().equal_range(listed);
+    REQUIRE(lo != hi);
+    const std::string entry = lo->second.answer;
+    REQUIRE(entry.rfind("Exact ", 0) == 0);
+    const std::string rest = entry.substr(6);
+    CHECK(reviewedAnswer(reviewedUnjudged(), listed, "Repaired " + rest) != nullptr);
+    CHECK(reviewedAnswer(reviewedUnjudged(), listed, "Split " + rest) == nullptr);
+    CHECK(reviewedAnswer(reviewedUnjudged(), listed, "Merged " + rest) == nullptr);
 }
 
 TEST_CASE("A regression to a wrong element on a reviewed reference is not reviewed (holdout2 17:24 edge 3)",

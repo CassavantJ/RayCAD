@@ -102,6 +102,8 @@ public:
     int built() const { return built_; }
     // Ids of the features that built (a failed feature leaves the body as it was).
     const std::set<std::string>& builtIds() const { return builtIds_; }
+    // Ids of the features (not suppressed) that failed and were left out (T-081b round 10: Owners::dropped).
+    const std::set<std::string>& dropped() const { return dropped_; }
     int unverifiablePicks() const { return unverifiablePicks_; }
     // Replay: picks the oracle could not vouch for when they were made (resolved and used, not judged).
     int unjudgedPicks() const { return unjudgedPicks_; }
@@ -138,6 +140,7 @@ private:
     std::vector<PickOutcome> picks_;
     int built_ = 0;
     std::set<std::string> builtIds_;
+    std::set<std::string> dropped_;
     int unverifiablePicks_ = 0;
     int unjudgedPicks_ = 0;
     std::size_t lineage_ = 0;
@@ -167,6 +170,13 @@ struct Ref {
 // counts the others by reason.
 std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners> owners,
                                   std::shared_ptr<const Samples> samples, std::map<std::string, int>* skipped);
+
+// The names of every element of `shape` in `map`, and of the faces around each, as the oracle takes them
+// (oracle.h ElementNames; each name as its hex, sorted). recordReferences gives each PickRecord its own.
+std::shared_ptr<const ElementNames> elementNames(const naming::ElementMap& map, const kernel::Shape& shape);
+// `owners` (of the replay's built script) with what the oracle is told of the replay (T-081b round 10): the features
+// it dropped (Owners::dropped) and its elements' names (Owners::names). judgeAll judges with these.
+Owners withReplayNames(const Owners& owners, const Builder& replay);
 
 // Totals of judged resolutions.
 struct Tally {
@@ -239,7 +249,7 @@ inline bool unjudgedGateOk(const Tally& t)
 bool noPlacementMode();
 // The structural gate of the no-placement mode: prints the counts; true when it holds.
 bool noPlacementGateOk(const Tally& t, const char* what);
-// The entry of `list` for reference `id` whose reviewed answer matches `signature`, or null.
+// The entry of `list` for reference `id` whose reviewed answer covers `signature` (reviewCovers), or null.
 const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature);
 // " [reviewed: <why>]", or " [NOT REVIEWED; answer <signature>]" with the listed answers when the key is listed for
 // other answers only.
@@ -256,6 +266,11 @@ std::string answerSignature(const naming::Resolved& resolved, const Samples& sam
 // Do two signatures describe the same answer: the same state, and element for element the same kind, centroids
 // within 0.02 mm, areas or lengths within 1 % (+0.001)? An empty or unreadable signature matches nothing.
 bool sameAnswer(const std::string& a, const std::string& b);
+// Does a reviewed entry's answer `entry` cover the answer `answer` (reviewedAnswer; T-081b round 10, the architect's
+// ruling F)? When they are the same answer (sameAnswer), and when the entry is Exact and the answer Repaired on the
+// same elements (by sameAnswer's tolerances): a suggestion of the reviewed elements claims less about them than Exact
+// did. Never the other way (a reviewed Repaired does not cover Exact), and not for Split or Merged (either way).
+bool reviewCovers(const std::string& entry, const std::string& answer);
 // Has an element of the answer a near twin in its shape: another element of its kind whose signature sameAnswer cannot
 // tell from its own (ElemSamples::twin)? Such an answer is never counted as reviewed: an entry could not tell it from
 // its twin (T-081b round 6, the reviewer's collision scan: vertex pairs 5..19 um apart).

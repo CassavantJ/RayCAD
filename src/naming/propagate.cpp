@@ -830,6 +830,7 @@ private:
             table.placements.push_back(p);
         keepAncestors(table);
         keepBodyMoves(table);
+        keepFaceMoves(table);
         return detail::finishMap(std::move(table), false);
     }
 
@@ -914,6 +915,64 @@ private:
         table.bodyMoves.push_back(std::move(move));
     }
 
+    // ElementMap::Impl::faceMoves (T-081b round 10): the input maps' face moves (each conjugated by this feature's body
+    // move, when it has one: the face moved, then the body with it, is the body moved, then the face moved by the move
+    // turned with it), then this feature's own (NamingInput::faceMoves), each with the names its face had in the input.
+    void keepFaceMoves(ElementMap::Impl& table) const
+    {
+        for (const ElementMap* map : in_.inputMaps)
+            if (map != nullptr && map->impl)
+                for (const ElementMap::Impl::FaceMoveRecord& m : map->impl->faceMoves)
+                    if (std::none_of(table.faceMoves.begin(), table.faceMoves.end(),
+                                     [&](const ElementMap::Impl::FaceMoveRecord& k) {
+                                         return k.placement.feature == m.placement.feature && k.names == m.names;
+                                     }))
+                        table.faceMoves.push_back(m);
+        if (in_.bodyPlacement)
+            for (ElementMap::Impl::FaceMoveRecord& m : table.faceMoves)
+                m.placement = placementOf(m.placement.feature, conjugated(*in_.bodyPlacement, xformOf(m.placement)));
+        if (in_.faceMoves.empty() || in_.inputMaps.empty() || in_.inputMaps.front() == nullptr)
+            return;
+        for (const FaceMove& f : in_.faceMoves) {
+            const std::span<const Hash256> names = in_.inputMaps.front()->namesOf(f.face);
+            if (names.empty())
+                continue;
+            ElementMap::Impl::FaceMoveRecord record{placementOf(in_.feature, f.move), {names.begin(), names.end()}};
+            sortUnique(record.names);
+            table.faceMoves.push_back(std::move(record));
+        }
+    }
+
+    static Xform xformOf(const FeaturePlacement& p)
+    {
+        Xform x{};
+        for (std::size_t i = 0; i < 12; ++i)
+            x.m[i] = static_cast<double>(p.q[i]) / ((i % 4 == 3) ? detail::kLengthQuantaPerMm : 1e9);
+        return x;
+    }
+
+    // b d b^-1 (b rigid).
+    static Xform conjugated(const Xform& b, const Xform& d)
+    {
+        const auto mul = [](const Xform& p, const Xform& q) {
+            Xform out{};
+            for (std::size_t i = 0; i < 3; ++i) {
+                for (std::size_t j = 0; j < 3; ++j)
+                    out.m[i * 4 + j] = p.m[i * 4] * q.m[j] + p.m[i * 4 + 1] * q.m[4 + j] + p.m[i * 4 + 2] * q.m[8 + j];
+                out.m[i * 4 + 3] =
+                    p.m[i * 4] * q.m[3] + p.m[i * 4 + 1] * q.m[7] + p.m[i * 4 + 2] * q.m[11] + p.m[i * 4 + 3];
+            }
+            return out;
+        };
+        Xform inv{};
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 3; ++j)
+                inv.m[i * 4 + j] = b.m[j * 4 + i];
+        for (std::size_t i = 0; i < 3; ++i)
+            inv.m[i * 4 + 3] = -(inv.m[i * 4] * b.m[3] + inv.m[i * 4 + 1] * b.m[7] + inv.m[i * 4 + 2] * b.m[11]);
+        return mul(mul(b, d), inv);
+    }
+
     const NamingInput& in_;
     Topology t_;
     std::array<std::vector<std::vector<Hash256>>, 3> names_; // by slot, by index; sorted, unique
@@ -937,6 +996,12 @@ Result<NamingOutput> propagateChecked(const NamingInput& in)
     for (const kernel::Shape* shape : in.inputShapes)
         if (shape == nullptr)
             return tl::unexpected(makeError(ErrorCode::InvalidArgument, "An input shape is missing."));
+    if (!in.faceMoves.empty() && in.inputMaps.empty())
+        return tl::unexpected(makeError(ErrorCode::InvalidArgument, "Face moves are given without an input map."));
+    for (std::size_t i = 0; i < in.faceMoves.size(); ++i)
+        for (std::size_t j = 0; j < i; ++j)
+            if (in.faceMoves[i].face == in.faceMoves[j].face)
+                return tl::unexpected(makeError(ErrorCode::InvalidArgument, "A face is moved twice by one feature."));
     Propagator propagator(in, gather(*in.result));
     return propagator.run();
 }

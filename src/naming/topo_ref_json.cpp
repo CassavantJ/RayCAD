@@ -117,13 +117,27 @@ void writePlacements(std::string& out, const std::vector<FeaturePlacement>& plac
 void writeSamples(std::string& out, const PickSamples& s)
 {
     // (Version 1, read from an older reference, is written back as it was: nine integers per carrier, no grounds.)
+    // (Version 2 likewise: ten integers per carrier, no version-3 members.)
     const bool v2 = s.version >= 2;
-    out += "{\"carriers\":[";
+    const bool v3 = s.version >= 3;
+    out += '{';
+    if (v3)
+        out += s.between ? "\"between\":true," : "\"between\":false,";
+    if (v3) {
+        out += "\"carrierNames\":[";
+        for (std::size_t i = 0; i < s.carrierNames.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            writeHashes(out, s.carrierNames[i]);
+        }
+        out += "],";
+    }
+    out += "\"carriers\":[";
     for (std::size_t i = 0; i < s.carriers.size(); ++i) {
         const SampleCarrier& c = s.carriers[i];
         if (i > 0)
             out += ',';
-        const std::array<std::int64_t, 10> v{static_cast<std::int64_t>(c.type),
+        const std::array<std::int64_t, 11> v{static_cast<std::int64_t>(c.type),
                                              c.qOrigin[0],
                                              c.qOrigin[1],
                                              c.qOrigin[2],
@@ -132,11 +146,21 @@ void writeSamples(std::string& out, const PickSamples& s)
                                              c.qAxis[2],
                                              c.qRadius,
                                              c.owner,
-                                             c.ground};
-        writeIntegers(out, std::span<const std::int64_t>(v.data(), v2 ? 10 : 9));
+                                             c.ground,
+                                             c.moved};
+        writeIntegers(out, std::span<const std::int64_t>(v.data(), v3 ? 11 : v2 ? 10 : 9));
     }
     out += "],\"ends\":";
     writeIntegers(out, s.ends);
+    if (v3) {
+        out += ",\"faceMoves\":[";
+        for (std::size_t i = 0; i < s.faceMoves.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            writeIntegers(out, s.faceMoves[i]);
+        }
+        out += ']';
+    }
     out += ",\"firstEnd\":";
     writeInteger(out, s.firstEndCarriers);
     if (v2) {
@@ -155,6 +179,15 @@ void writeSamples(std::string& out, const PickSamples& s)
             if (i > 0)
                 out += ',';
             writeInteger(out, s.neighbourGrounds[i]);
+        }
+        out += ']';
+    }
+    if (v3) {
+        out += ",\"neighbourMoves\":[";
+        for (std::size_t i = 0; i < s.neighbourMoves.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            writeInteger(out, s.neighbourMoves[i]);
         }
         out += ']';
     }
@@ -485,16 +518,23 @@ std::optional<std::int64_t> wholeNumber(const Node& v)
     return negative ? -out : out;
 }
 
+Result<std::vector<Hash256>> readHashArray(const Node* v, const std::string& field);
+
 Result<std::vector<Hash256>> readHashes(const Node& object, std::string_view key, const std::string& field,
                                         bool required)
 {
-    std::vector<Hash256> out;
     const Node* v = object.find(key);
     if (v == nullptr) {
         if (required)
             return fieldError(field, "is required");
-        return out;
+        return std::vector<Hash256>{};
     }
+    return readHashArray(v, field);
+}
+
+Result<std::vector<Hash256>> readHashArray(const Node* v, const std::string& field)
+{
+    std::vector<Hash256> out;
     const char* bad = "must be an array of hashes (64 lower-case hex digits)";
     if (v->type != Node::Type::Array)
         return fieldError(field, bad);
@@ -652,19 +692,42 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
     const Node* version = v.find("version");
     const auto ver = version != nullptr ? wholeNumber(*version) : std::nullopt;
     if (!ver || *ver < 1 || *ver > kPickSamplesVersion)
-        return fieldError(field + ".version", "must be 1 or " + std::to_string(kPickSamplesVersion));
+        return fieldError(field + ".version", "must be 1 to " + std::to_string(kPickSamplesVersion));
     s.version = static_cast<std::uint32_t>(*ver);
     const bool v2 = s.version >= 2;
-    if (auto ok = v2 ? onlyKeys(v,
-                                {"carriers", "ends", "firstEnd", "grounds", "neighbourGrounds", "neighbourOwners",
-                                 "own", "placements", "points", "spacing", "version", "whole"},
+    const bool v3 = s.version >= 3;
+    if (auto ok = v3 ? onlyKeys(v,
+                                {"between", "carrierNames", "carriers", "ends", "faceMoves", "firstEnd", "grounds",
+                                 "neighbourGrounds", "neighbourMoves", "neighbourOwners", "own", "placements", "points",
+                                 "spacing", "version", "whole"},
                                 field + ".")
-                     : onlyKeys(v,
-                                {"carriers", "ends", "firstEnd", "neighbourOwners", "own", "placements", "points",
-                                 "spacing", "version"},
-                                field + ".");
+                  : v2 ? onlyKeys(v,
+                                  {"carriers", "ends", "firstEnd", "grounds", "neighbourGrounds", "neighbourOwners",
+                                   "own", "placements", "points", "spacing", "version", "whole"},
+                                  field + ".")
+                       : onlyKeys(v,
+                                  {"carriers", "ends", "firstEnd", "neighbourOwners", "own", "placements", "points",
+                                   "spacing", "version"},
+                                  field + ".");
         !ok)
         return tl::unexpected(ok.error());
+    if (v3) {
+        if (const Node* between = v.find("between")) {
+            if (between->type != Node::Type::Bool)
+                return fieldError(field + ".between", "must be true or false");
+            s.between = between->b;
+        }
+        if (const Node* moves = v.find("faceMoves")) {
+            if (moves->type != Node::Type::Array)
+                return fieldError(field + ".faceMoves", "must be an array of moves, each twelve whole numbers");
+            for (const Node& m : moves->items) {
+                std::array<std::int64_t, 12> q{};
+                if (!readIntegers(&m, 12, q.data()))
+                    return fieldError(field + ".faceMoves", "must be an array of moves, each twelve whole numbers");
+                s.faceMoves.push_back(q);
+            }
+        }
+    }
     if (v2) {
         if (const Node* whole = v.find("whole")) {
             if (whole->type != Node::Type::Bool)
@@ -733,18 +796,25 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
     const auto ground = [&](std::int64_t g) {
         return g >= -1 && g < static_cast<std::int64_t>(s.grounds.size());
     };
+    // -1 or an index into faceMoves (version 3).
+    const auto moved = [&](std::int64_t m) {
+        return m >= -1 && m < static_cast<std::int64_t>(s.faceMoves.size());
+    };
     if (const Node* carriers = v.find("carriers")) {
         const char* bad =
-            v2 ? "must be an array of carriers, each ten whole numbers (type, origin, axis, radius, "
-                 "owner, ground)"
-               : "must be an array of carriers, each nine whole numbers (type, origin, axis, radius, owner)";
-        const std::size_t n = v2 ? 10 : 9;
+            v3 ? "must be an array of carriers, each eleven whole numbers (type, origin, axis, radius, owner, ground, "
+                 "moved)"
+            : v2 ? "must be an array of carriers, each ten whole numbers (type, origin, axis, radius, owner, ground)"
+                 : "must be an array of carriers, each nine whole numbers (type, origin, axis, radius, owner)";
+        const std::size_t n = v3 ? 11 : v2 ? 10 : 9;
         if (carriers->type != Node::Type::Array || carriers->items.size() > kMaxSampleCarriers)
             return fieldError(field + ".carriers", bad);
         for (const Node& c : carriers->items) {
-            std::array<std::int64_t, 10> q{};
+            std::array<std::int64_t, 11> q{};
             q[9] = -1;
-            if (!readIntegers(&c, n, q.data()) || q[0] < 0 || q[0] > 2 || !owner(q[8]) || !ground(q[9]))
+            q[10] = -1;
+            if (!readIntegers(&c, n, q.data()) || q[0] < 0 || q[0] > 2 || !owner(q[8]) || !ground(q[9]) ||
+                !moved(q[10]))
                 return fieldError(field + ".carriers", bad);
             SampleCarrier carrier;
             carrier.type = static_cast<SampleCarrier::Type>(q[0]);
@@ -753,7 +823,30 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
             carrier.qRadius = q[7];
             carrier.owner = static_cast<std::int32_t>(q[8]);
             carrier.ground = static_cast<std::int32_t>(q[9]);
+            carrier.moved = static_cast<std::int32_t>(q[10]);
             s.carriers.push_back(carrier);
+        }
+    }
+    if (const Node* names = v3 ? v.find("carrierNames") : nullptr) {
+        const char* bad = "must hold one array of names (64 hex digits each) per carrier";
+        if (names->type != Node::Type::Array || (!names->items.empty() && names->items.size() != s.carriers.size()))
+            return fieldError(field + ".carrierNames", bad);
+        for (std::size_t i = 0; i < names->items.size(); ++i) {
+            auto list = readHashArray(&names->items[i], field + ".carrierNames[" + std::to_string(i) + "]");
+            if (!list)
+                return tl::unexpected(list.error());
+            s.carrierNames.push_back(std::move(*list));
+        }
+    }
+    if (const Node* moves = v3 ? v.find("neighbourMoves") : nullptr) {
+        const char* bad = "must hold one face move (-1 or an index into faceMoves) per pick neighbour";
+        if (moves->type != Node::Type::Array || (!moves->items.empty() && moves->items.size() != neighbours))
+            return fieldError(field + ".neighbourMoves", bad);
+        for (const Node& m : moves->items) {
+            const auto n = wholeNumber(m);
+            if (!n || !moved(*n))
+                return fieldError(field + ".neighbourMoves", bad);
+            s.neighbourMoves.push_back(static_cast<std::int32_t>(*n));
         }
     }
     if (const Node* grounds = v2 ? v.find("neighbourGrounds") : nullptr) {

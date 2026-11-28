@@ -80,10 +80,12 @@ Result<kernel::Shape> bodyShape(const RebuildContext& ctx, const BodyId& body, c
 
 // The feature's output from the kernel's answer `op` on `input` (the body `body` before the feature): Cancelled passed
 // through; a failure as "<where>: <kernel message>" with the kernel's code; the kernel's warnings after `warnings`,
-// each as "<where>: <warning>"; the result named by naming::propagate with the role `type`.
+// each as "<where>: <warning>"; the result named by naming::propagate with the role `type`. `moves`: how the edit moved
+// the faces it was given (naming.h NamingInput::faceMoves; offset_face's, by naming::offsetFaceMove), so that what was
+// picked on them follows them.
 Result<FeatureOutput> finishEdit(const Feature& f, std::string_view type, const RebuildContext& ctx, const BodyId& body,
                                  const kernel::Shape& input, Result<kernel::OpResult> op,
-                                 std::vector<std::string> warnings);
+                                 std::vector<std::string> warnings, std::span<const naming::FaceMove> moves = {});
 
 } // namespace directedit
 } // namespace ray::doc::features

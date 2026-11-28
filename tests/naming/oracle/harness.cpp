@@ -224,6 +224,8 @@ void Builder::apply(const Feature& f)
             ++built_;
             builtIds_.insert(f.id);
             builtFeatures_.push_back(std::move(measured));
+        } else {
+            dropped_.insert(f.id);
         }
         return;
     }
@@ -232,6 +234,8 @@ void Builder::apply(const Feature& f)
         ++built_;
         builtIds_.insert(f.id);
         builtFeatures_.push_back(f);
+    } else {
+        dropped_.insert(f.id);
     }
 }
 
@@ -541,7 +545,15 @@ bool Builder::edit(Feature& f)
                     "the oracle cannot describe the result: " + why);
     const std::array<const naming::ElementMap*, 1> maps{&map_};
     const std::array<const kernel::Shape*, 1> shapes{&shape_};
-    const naming::NamingInput in{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
+    naming::NamingInput in{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
+    // The edit's own motion (naming.h NamingInput::faceMoves), exactly what the document gives (T-081b round 10: the
+    // document's offset_face calls naming::offsetFaceMove for each face it pushes or pulls).
+    std::vector<naming::FaceMove> moves;
+    if (spec.kind == EKind::Offset)
+        for (const SubId& face : picked)
+            if (auto move = naming::offsetFaceMove(input, face, spec.amount))
+                moves.push_back(*move);
+    in.faceMoves = moves;
     auto named = naming::propagate(in);
     if (!named)
         return fail("other", "naming failed: " + named.error().message);
@@ -568,6 +580,7 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
     const auto builder = std::make_shared<const TruthBuilder>(*owners, *samples);
     const TruthBuilder& tb = *builder;
     auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), b.map(), b.shape()}});
+    const std::shared_ptr<const ElementNames> pickNames = elementNames(b.map(), b.shape());
     for (const SubKind kind : {SubKind::Face, SubKind::Edge, SubKind::Vertex}) {
         const auto& elems = samples->of(kind);
         for (std::uint32_t i = 0; i < elems.size(); ++i) {
@@ -596,11 +609,64 @@ std::vector<Ref> recordReferences(const Builder& b, std::shared_ptr<const Owners
                     ++(*skipped)[std::string(kindName(kind)) + ": element has no name"];
                 continue;
             }
-            refs.push_back(Ref{withoutOutlineIfAsked(resolver->makeRef(testBody(), s)),
-                               PickRecord{s, d, samples, owners, builder}, namesOf(b.map(), s)});
+            PickRecord record{s, d, samples, owners, builder};
+            record.names = pickNames->names[static_cast<std::size_t>(kind)][i];
+            record.around = pickNames->around[static_cast<std::size_t>(kind)][i];
+            refs.push_back(
+                Ref{withoutOutlineIfAsked(resolver->makeRef(testBody(), s)), std::move(record), namesOf(b.map(), s)});
         }
     }
     return refs;
+}
+
+std::shared_ptr<const ElementNames> elementNames(const naming::ElementMap& map, const kernel::Shape& shape)
+{
+    auto out = std::make_shared<ElementNames>();
+    auto text = [&](const SubId& s) {
+        std::vector<std::string> v;
+        for (const Hash256& n : map.namesOf(s))
+            v.push_back(n.hex());
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
+        return v;
+    };
+    for (const SubKind kind : {SubKind::Vertex, SubKind::Edge, SubKind::Face}) {
+        const std::uint32_t n = shape.count(kind);
+        auto& names = out->names[static_cast<std::size_t>(kind)];
+        auto& around = out->around[static_cast<std::size_t>(kind)];
+        names.resize(n);
+        around.resize(n);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const SubId s{kind, i};
+            names[i] = text(s);
+            // The faces around it: an edge's or vertex's faces; a face's neighbours across its edges.
+            std::set<SubId> faces;
+            if (kind == SubKind::Face) {
+                for (const SubId& e : kernel::adjacent(shape, s, SubKind::Edge))
+                    for (const SubId& f : kernel::adjacent(shape, e, SubKind::Face))
+                        if (f != s)
+                            faces.insert(f);
+            } else {
+                for (const SubId& f : kernel::adjacent(shape, s, SubKind::Face))
+                    faces.insert(f);
+            }
+            for (const SubId& f : faces)
+                for (const std::string& t : text(f))
+                    around[i].push_back(t);
+            std::sort(around[i].begin(), around[i].end());
+            around[i].erase(std::unique(around[i].begin(), around[i].end()), around[i].end());
+        }
+    }
+    return out;
+}
+
+Owners withReplayNames(const Owners& owners, const Builder& replay)
+{
+    Owners out = owners;
+    out.dropped = replay.dropped();
+    if (replay.have())
+        out.names = elementNames(replay.map(), replay.shape());
+    return out;
 }
 
 namespace {
@@ -814,6 +880,17 @@ bool sameAnswer(const std::string& a, const std::string& b)
     return true;
 }
 
+bool reviewCovers(const std::string& entry, const std::string& answer)
+{
+    if (sameAnswer(entry, answer))
+        return true;
+    // A reviewed Exact covers a Repaired answer on the same elements: the same signature with the state replaced.
+    const std::string exact = "Exact ", repaired = "Repaired ";
+    if (entry.rfind(exact, 0) != 0 || answer.rfind(repaired, 0) != 0)
+        return false;
+    return sameAnswer(entry, exact + answer.substr(repaired.size()));
+}
+
 const ReviewedList& reviewedTerritory()
 {
     static const ReviewedList list = loadReviewed("reviewed_territory.txt");
@@ -836,7 +913,7 @@ const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string&
 {
     const auto [lo, hi] = list.equal_range(id);
     for (auto it = lo; it != hi; ++it)
-        if (sameAnswer(it->second.answer, signature))
+        if (reviewCovers(it->second.answer, signature))
             return &it->second;
     return nullptr;
 }
@@ -1221,11 +1298,13 @@ void setInspector(Inspector f)
     inspector = std::move(f);
 }
 
-void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners& owners, const Samples& samples,
+void judgeAll(const std::vector<Ref>& refs, const Builder& replay, const Owners& replayOwners, const Samples& samples,
               Tally& tally, JudgeLog& log, const std::string& key)
 {
     if (!replay.have())
         return;
+    // (The oracle is told what the replay dropped and its elements' names: expect's IN PLACE BY NAME.)
+    const Owners owners = withReplayNames(replayOwners, replay);
     auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), replay.map(), replay.shape()}});
     // Injectivity: two distinct references answered Exact on one element cannot both be right.
     std::map<SubId, std::vector<std::string>> exactOn;

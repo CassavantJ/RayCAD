@@ -42,6 +42,15 @@ struct ElementMap::Impl {
         std::vector<FeatureId> carried;
     };
     std::vector<BodyMove> bodyMoves;
+    // The rigid moves of single faces by direct edits (NamingInput::faceMoves, T-081b round 10), oldest first: each the
+    // move (a FeaturePlacement's quanta, `placement.feature` the edit) and every name the face had in the edit's input,
+    // sorted. A later body move conjugates the earlier face moves by itself (propagate), so that composing face moves
+    // after body moves and placements gives where the face is.
+    struct FaceMoveRecord {
+        FeaturePlacement placement;
+        std::vector<Hash256> names;
+    };
+    std::vector<FaceMoveRecord> faceMoves;
 
     // Derived by detail::finishMap, never serialised:
     // name -> element, for names held by EXACTLY one element. A name held by several elements (they could not
@@ -100,6 +109,9 @@ const TopoName* recordOrAncestor(const ElementMap& map, const Hash256& name);
 
 // The body moves (ElementMap::Impl::bodyMoves) that carried elements of `feature`, oldest first.
 std::vector<const FeaturePlacement*> bodyMovesOf(const ElementMap& map, const FeatureId& feature);
+
+// The face moves (ElementMap::Impl::faceMoves) whose face held one of `names`, oldest first.
+std::vector<const FeaturePlacement*> faceMovesOf(const ElementMap& map, std::span<const Hash256> names);
 
 // ---------- Fingerprints ----------
 // Quantisation steps (naming.h): 1e-4 mm for lengths, areas and positions, 1e-6 for unit-vector components.

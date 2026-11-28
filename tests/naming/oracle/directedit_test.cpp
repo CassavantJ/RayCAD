@@ -129,6 +129,7 @@ struct Run {
     std::vector<std::string> failed;
     std::shared_ptr<const Samples> samples; // the edited shape's, for probing answers (judgeAnswer)
     std::shared_ptr<const Owners> owners;
+    std::shared_ptr<const naming::IResolver> resolver; // over the edited build (a pin's mutation check resolves again)
 };
 
 // Builds `base`, records every reference the oracle vouches for, builds `edited`, resolves and judges them all.
@@ -154,7 +155,9 @@ Run run(const Script& base, const Script& edited)
     const Owners owners = buildOwners(b1.builtScript());
     r.samples = *s1;
     r.owners = std::make_shared<const Owners>(owners);
-    auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), b1.map(), b1.shape()}});
+    std::shared_ptr<const naming::IResolver> resolver =
+        naming::makeResolver({naming::ResolverBody{testBody(), b1.map(), b1.shape()}});
+    r.resolver = resolver;
     const bool verbose = std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr;
     const std::string edges = verbose ? dumpElements(b1, **s1, SubKind::Edge) : std::string();
     for (const Ref& ref : refs) {
@@ -571,6 +574,28 @@ TEST_CASE("Structural check (round 4): an edge on a line that stayed, the pick's
         CHECK(o.verdict == Verdict::BrokenGone);
         CHECK(isWrong(judgeAs(r, o, Answer::Exact, {static_cast<std::uint32_t>(other)})));
         CHECK(isWrong(judgeAs(r, o, Answer::Merged, {static_cast<std::uint32_t>(other)})));
+        // Round 10, a pin of identity's refusals (ruling A): the edge the name leads to lies on the pick's own surfaces
+        // (the wall's plane and the top stayed), where whether it holds the pick is a fact the samples tell
+        // (OnPickSurfaces: it holds none), and it meets the picked end and runs back from it (EndAgainstSense). Each
+        // refusal alone refuses identity here: with one of them off the answer stays Broken, with both off generator
+        // identity answers Exact on it.
+        using naming::testing::IdentityRefusal;
+        const auto resolveWithout = [&](std::initializer_list<IdentityRefusal> off) {
+            for (const IdentityRefusal w : off)
+                naming::testing::setIdentityRefusalEnabled(w, false);
+            naming::Resolved out = r.resolver->resolve(o.ref.ref);
+            for (const IdentityRefusal w : off)
+                naming::testing::setIdentityRefusalEnabled(w, true);
+            return out;
+        };
+        CHECK(resolveWithout({IdentityRefusal::OnPickSurfaces}).state == naming::ResolveState::Broken);
+        CHECK(resolveWithout({IdentityRefusal::EndAgainstSense}).state == naming::ResolveState::Broken);
+        const naming::Resolved off =
+            resolveWithout({IdentityRefusal::OnPickSurfaces, IdentityRefusal::EndAgainstSense});
+        INFO("OnPickSurfaces and EndAgainstSense off: " << stateText(off.state) << " " << off.reason);
+        CHECK(off.state == naming::ResolveState::Exact);
+        CHECK(off.identity);
+        CHECK(off.elements == std::vector<SubId>{SubId{SubKind::Edge, static_cast<std::uint32_t>(other)}});
     }
     CHECK(probed == 1);
 }
@@ -925,5 +950,20 @@ TEST_CASE("Post-condition pin (round 8, the macOS holdout3 4:7 family): a name o
         naming::testing::setPostconditionEnabled(true);
         CHECK(off.state == naming::ResolveState::Exact);
         CHECK(off.elements == std::vector<SubId>{*other});
+        // Round 10, the pins of identity's first two refusals (ruling A): the forged name is a whole generator
+        // element's, so generator identity would answer Exact on the other edge but for its refusals. With the
+        // placements the pick as moved lands on the moved wall's edge (LandsElsewhere); without them the other edge
+        // meets the picked end and runs back from it (EndAgainstSense). Each, switched off, gives Exact on it.
+        using naming::testing::IdentityRefusal;
+        const IdentityRefusal decides =
+            ref == &forged ? IdentityRefusal::LandsElsewhere : IdentityRefusal::EndAgainstSense;
+        naming::testing::setIdentityRefusalEnabled(decides, false);
+        const naming::Resolved refused = resolver->resolve(*ref);
+        naming::testing::setIdentityRefusalEnabled(decides, true);
+        INFO("refusal " << static_cast<int>(decides) + 1 << " off: " << static_cast<int>(refused.state) << " "
+                        << refused.reason);
+        CHECK(refused.state == naming::ResolveState::Exact);
+        CHECK(refused.identity);
+        CHECK(refused.elements == std::vector<SubId>{*other});
     }
 }

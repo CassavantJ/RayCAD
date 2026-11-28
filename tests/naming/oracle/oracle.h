@@ -281,6 +281,12 @@ struct Feature {
 using Script = std::vector<Feature>;
 
 // ---------------------------------------------------------------- owners
+// What the harness tells the oracle of a built shape beyond its geometry (T-081b round 10): per element (by kind, in
+// the shape's order) the names it holds and the names of the faces around it, as opaque strings the oracle compares
+// and never reads (no rule of the resolver's is known here).
+struct ElementNames {
+    std::array<std::vector<std::vector<std::string>>, 3> names, around; // by SubKind (Vertex, Edge, Face)
+};
 struct Owner {
     std::string key; // "<feature>/s<tag>" side, "<feature>/c<0|1>/<loop>" cap, "<feature>/b<k>" blend,
                      // "<feature>/i<face>" imported face
@@ -316,6 +322,11 @@ struct Owners {
     std::set<std::string> touchedByEdit;
     // Every owner whose extent a direct edit's fill grew (EditSpec::grown; expect: ground only an edit gave an owner).
     std::set<std::string> grownByEdit;
+    // Set by the harness for a replay (T-081b round 10): the features of the edited script the replay did not build
+    // (harness.h builtOnly leaves their owners out, and with them what they did to the other owners' extents), and the
+    // names of the built shape's elements (expect: IN PLACE BY NAME). Empty / null otherwise.
+    std::set<std::string> dropped;
+    std::shared_ptr<const ElementNames> names;
     const Owner* get(const std::string& key) const
     {
         const auto it = ix.find(key);
@@ -460,6 +471,9 @@ struct PickRecord {
     // so the merged rule can map them through the edit (expect). Without it a moved element that runs past its
     // description is merged, as before.
     std::shared_ptr<const TruthBuilder> builder;
+    // Optional (T-081b round 10): the names the picked element held and those of the faces around it at pick time, as
+    // ElementNames has them (empty: not known; expect's IN PLACE BY NAME then does not apply).
+    std::vector<std::string> names, around;
     const ElemSamples& picked() const { return baseline->of(base.kind)[base.index]; }
 };
 
@@ -524,6 +538,9 @@ struct Expectation {
     // Expected "gone", but an element lies where the pick was, every owner of the description on its carrier still:
     // E is that element (expect: HELD IN PLACE, T-081b round 5).
     bool heldInPlace = false;
+    // Expected "gone" on a replay that dropped a feature, though an element lies where the pick was with the pick's
+    // names and the names of the faces it had around it: E is that element (expect: IN PLACE BY NAME, T-081b round 10).
+    bool inPlaceByName = false;
     // Pieces holding none of the pick on ground nobody held were left out of E (expect: NEW PIECES ARE NEVER REQUIRED).
     bool newPiecesDropped = false;
     // The map takes every sample of the pick out of the edited part (outside the box of its faces): the pick's image

@@ -24,4 +24,20 @@ bool ancestorsEnabled() noexcept;
 void setBodyMovesEnabled(bool on) noexcept;
 bool bodyMovesEnabled() noexcept;
 
+// T-081b round 10, the same kind of switches:
+//  - Each of generator identity's three refusals (postcondition.cpp, refusedIdentity): off, that refusal does not
+//    refuse, and identity (generator or derived) decides where it would have. Default on, or off from the start for
+//    those the environment variable RAYCAD_NAMING_NO_REFUSAL lists (1 LandsElsewhere, 2 EndAgainstSense, 3
+//    OnPickSurfaces, comma-separated; read once, for diagnosis).
+//  - Derived identity (naming.h Resolved::derived): off, no answer is Exact by derived identity.
+//  - Face moves (NamingInput::faceMoves): off, the post-condition ignores them, as if no direct edit said how it moved
+//    its faces (and references made while it is off record none).
+enum class IdentityRefusal { LandsElsewhere, EndAgainstSense, OnPickSurfaces };
+void setIdentityRefusalEnabled(IdentityRefusal which, bool on) noexcept;
+bool identityRefusalEnabled(IdentityRefusal which) noexcept;
+void setDerivedIdentityEnabled(bool on) noexcept;
+bool derivedIdentityEnabled() noexcept;
+void setFaceMovesEnabled(bool on) noexcept;
+bool faceMovesEnabled() noexcept;
+
 } // namespace ray::naming::testing
