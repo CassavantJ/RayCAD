@@ -108,6 +108,9 @@
 //  - A weak reference that moved, the pick and another baseline piece mapped onto the same element: no other answer
 //    inside the logical element is judged either (Expectation::sharedAnchor).
 //  - The logical element gone with its owner while an element still holds all the ground the pick held: no anchor.
+// Refinements of T-081b round 12 (identity, docs/naming/POLICY.md; each pinned in random_directedit_test.cpp and
+// acceptance_test.cpp): WHOLE GENERATOR and SLID END (expect, oracle.cpp). Elements without identity are judged as
+// before.
 // RAYCAD_ORACLE_DEBUG_MERGED=1 prints, for every sample that makes an expected element merged, the baseline elements
 // it lies on.
 //
@@ -550,6 +553,12 @@ struct Expectation {
     // Every carrier of the description is as it was at pick time (only separators or bounding features moved): the
     // picked element's ground is where it was (T-081b round 2: remnants, and the new-ground rule's coverage).
     bool inPlace = false;
+    // E was told by identity (T-081b round 12, docs/naming/POLICY.md; expect, oracle.cpp): WHOLE GENERATOR (the pick
+    // was the one face of its generator, and the edited generator has one face: that face, wherever it lies; the
+    // structural check does not apply) or SLID END (an edge between the same end elements, its other end a two-face
+    // vertex that slid along the curve).
+    bool wholeGenerator = false;
+    bool slidEnd = false;
     bool inLogical(std::uint32_t e) const;
     bool isAnchored(std::uint32_t e) const;
     bool isClaimed(std::uint32_t e) const;

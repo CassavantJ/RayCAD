@@ -36,8 +36,12 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 // of its sweep), slide-still (a crossing slides though no carrier changed), moved-in-place (a face its exact map moved
 // is not judged in place), import-union (a vertex on a face of coplanar imported faces), node-slack (one node in twenty
 // within 0.2 mm) and landed-map (a map that lands exactly on an element is known there); round 10: dropped-in-place (an
-// element in place with the pick's names and neighbours' names, on a replay that dropped a feature, continues it). For
-// checking the pins only; never set in a gate run.
+// element in place with the pick's names and neighbours' names, on a replay that dropped a feature, continues it);
+// round 12 (identity, docs/naming/POLICY.md): whole-generator (the one face of a pick's edited generator is E, wherever
+// it lies), whole-generator-once (its "whole before and after" test: the negatives' check), slid-end (an edge between
+// the same end elements, its slider moved along the curve, is E), slid-end-ends and slid-end-ground (its end-element
+// and third-edge tests: the negatives' checks). For checking the pins only; never set in a gate run.
+
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
 
@@ -3313,6 +3317,228 @@ bool boxesApart(const ElemSamples& a, const ElemSamples& b)
            b.boxMax.y + m < a.boxMin.y || a.boxMax.z + m < b.boxMin.z || b.boxMax.z + m < a.boxMin.z;
 }
 
+// WHOLE GENERATOR (T-081b round 12, rule 1; the architect's policy, docs/naming/POLICY.md: a reference to an element
+// with identity follows the thing that made it). The element of a generator, by the script alone: a sweep's side wall
+// from one profile entity or a cap of one loop (owner keys "<feature>/s<tag>", "<feature>/c<cap>/<loop>"). When the
+// pick was the whole of it (its description one constraint naming that one owner, no separators, and it the only face
+// of the shape on that owner at pick time) and the edited script still has the generator, edited (moved, mirrored,
+// resized: not the same sweep), with exactly one face of the edited shape on it (fitting the description wholly, not
+// merged), that face is E, wherever it lies: the in-place, structural and moved-image reasoning (which judge where the
+// pick's ground went) is for elements without identity. Not for an owner a direct edit touched, removed or grew, nor
+// where the continuation cannot be told (noAnchor). Mutation "whole-generator" (the rule off); "whole-generator-once"
+// (the negatives' check: the pick's separators and the one-face counts not required, E the first face on the owner).
+std::optional<std::uint32_t> wholeGeneratorFace(const PickRecord& pick, const Owners& now, const Samples& smp,
+                                                const Expectation& x)
+{
+    const TruthDesc& d = pick.truth;
+    if (x.kind != SubKind::Face || x.weak || !x.noAnchor.empty() || d.cons.size() != 1 || d.cons[0].alts.size() != 1)
+        return std::nullopt;
+    const bool whole = !mutated("whole-generator-once");
+    if (whole && (!d.seps.empty() || !d.cons[0].seps.empty()))
+        return std::nullopt;
+    const std::string& key = d.cons[0].alts[0];
+    const std::size_t slash = key.find('/');
+    if (slash == std::string::npos || slash + 1 >= key.size() || (key[slash + 1] != 's' && key[slash + 1] != 'c'))
+        return std::nullopt;
+    const std::string f = featureOfOwner(key);
+    const auto a = pick.owners->sweeps.find(f);
+    const auto b = now.sweeps.find(f);
+    if (a == pick.owners->sweeps.end() || b == now.sweeps.end() || sameSweep(a->second, b->second) ||
+        pick.owners->get(key) == nullptr || now.get(key) == nullptr)
+        return std::nullopt;
+    for (const Owners* o : {pick.owners.get(), &now})
+        if (o->touchedByEdit.count(key) != 0 || o->removedByEdit.count(key) != 0 || o->grownByEdit.count(key) != 0)
+            return std::nullopt;
+    if (whole && facesOn(key, *pick.owners, *pick.baseline) != std::vector<std::uint32_t>{pick.base.index})
+        return std::nullopt;
+    TruthDesc generator;
+    generator.kind = SubKind::Face;
+    generator.cons.push_back(Constraint{{key}, {}});
+    generator.ok = true;
+    const TruthEval te = evalTruth(generator, now, smp);
+    if (te.elems.empty() || (whole && (te.elems.size() != 1 || te.merged)))
+        return std::nullopt;
+    if (std::getenv("RAYCAD_ORACLE_DEBUG_IDENTITY") != nullptr) {
+        const ElemSamples& E = smp.of(SubKind::Face)[te.elems.front()];
+        double nearest = 1e300;
+        for (const Vec3& p : x.mapped.pts)
+            if (E.mesh)
+                nearest = std::min(nearest, E.mesh->distanceWithin(p, 1e3, true));
+        std::printf("whole-generator: pick face %u (%s) -> %u; image outside %d, mapped %zu samples, nearest %.4f, "
+                    "share %.3f, pick on it %.3f, E was %s%s\n",
+                    pick.base.index, key.c_str(), te.elems.front(), x.imageOutside ? 1 : 0, x.mapped.pts.size(),
+                    nearest, shareOn(x.mapped, E, SubKind::Face), shareOn(pick.picked(), E, SubKind::Face),
+                    listOf(x.expected.elems).c_str(), x.structuralGone ? " (structural)" : "");
+    }
+    return te.elems.front();
+}
+
+// The owners a face of a shape lies on (carrier, type and material side; 2 % of it inside the extent), as describe
+// finds them.
+std::set<std::string> ownersOfFace(const ElemSamples& es, const Owners& ow)
+{
+    std::set<std::string> out;
+    double all = 0;
+    for (const double w : es.w)
+        all += w;
+    if (es.nodes.empty() || es.pts.empty() || all <= 0)
+        return out;
+    for (const Owner& o : ow.v) {
+        if (!typeMatches(o.c, es) || !nodesOn(o.c, es.nodes, tolFor(SubKind::Face).node))
+            continue;
+        double in = 0;
+        for (std::size_t j = 0; j < es.pts.size(); ++j)
+            if (o.in(es.pts[j], 1e-4))
+                in += es.w[j];
+        if (in / all >= 0.02)
+            out.insert(o.key);
+    }
+    return out;
+}
+
+std::vector<std::uint32_t> sortedUnique(std::vector<std::uint32_t> v)
+{
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    return v;
+}
+
+// An edge's two ends as (slider, fixed): exactly one end a vertex on only two faces (it lies on nothing but the curve,
+// a remnant where a removed feature had ended the edge) and the other on three faces or more. Else nullopt.
+std::optional<std::pair<std::uint32_t, std::uint32_t>> sliderAndFixed(const Samples& s, std::uint32_t e)
+{
+    if (e >= s.verticesOf.size())
+        return std::nullopt;
+    const std::vector<std::uint32_t> vs = sortedUnique(s.verticesOf[e]);
+    if (vs.size() != 2)
+        return std::nullopt;
+    std::optional<std::uint32_t> slider, fixed;
+    for (const std::uint32_t v : vs) {
+        if (v >= s.facesOf[0].size())
+            return std::nullopt;
+        const std::size_t faces = sortedUnique(s.facesOf[0][v]).size();
+        if (faces == 2 && !slider)
+            slider = v;
+        else if (faces >= 3 && !fixed)
+            fixed = v;
+        else
+            return std::nullopt;
+    }
+    return std::make_pair(*slider, *fixed);
+}
+
+std::vector<std::uint32_t> edgesAtVertex(const Samples& s, std::uint32_t v)
+{
+    std::vector<std::uint32_t> out;
+    for (std::uint32_t e = 0; e < s.verticesOf.size(); ++e)
+        if (std::find(s.verticesOf[e].begin(), s.verticesOf[e].end(), v) != s.verticesOf[e].end())
+            out.push_back(e);
+    return out;
+}
+
+// The element an edge ends on at vertex v: the owners of v's faces other than the edge's own (`own`).
+std::set<std::string> endElement(const Samples& s, std::uint32_t v, const Owners& ow, const std::set<std::string>& own)
+{
+    std::set<std::string> out;
+    for (const std::uint32_t f : sortedUnique(s.facesOf[0][v]))
+        for (const std::string& k : ownersOfFace(s.of(SubKind::Face)[f], ow))
+            if (own.count(k) == 0)
+                out.insert(k);
+    return out;
+}
+
+// SLID END (T-081b round 12, rule 2; docs/naming/POLICY.md: an edge is the stretch between the same end elements; a
+// slid end vertex does not make it another edge). The pick an edge whose logical element was two edges P (the pick)
+// and Q at pick time, on the same two faces, meeting at a vertex on only those two faces (the slider: nothing but the
+// curve ends them there), each with its other end on a third element, the two ends' elements told apart by their
+// owners (endElement). After the edit the description's owners are on their carriers (stillOwners: the curve is
+// where it was), the logical element is again two such edges meeting at one slider, and one of them ends on P's end
+// element and the other on Q's: that one is E (not merged, though the slider moved over the sibling's ground), as long
+// as it holds part of the pick where it was and neither edge lies on the ground of a pick-time edge other than P and Q
+// (a stretch that swallowed a third edge is not the pick). Mutation "slid-end" (the rule off); for the negatives'
+// checks "slid-end-ends" (the end elements not compared) and "slid-end-ground" (third edges' ground not checked).
+std::optional<std::uint32_t> slidEndEdge(const PickRecord& pick, const Owners& now, const Samples& smp,
+                                         const Expectation& x)
+{
+    // RAYCAD_ORACLE_DEBUG_IDENTITY=1: which condition stopped the rule (for an edge pick).
+    auto no = [&](const char* why) -> std::optional<std::uint32_t> {
+        if (x.kind == SubKind::Edge && std::getenv("RAYCAD_ORACLE_DEBUG_IDENTITY") != nullptr)
+            std::printf("slid-end: pick edge %u not by condition %s\n", pick.base.index, why);
+        return std::nullopt;
+    };
+    if (x.kind != SubKind::Edge || !x.noAnchor.empty() || pick.picked().pts.empty() ||
+        !stillOwners(pick.truth, *pick.owners, now))
+        return no("1");
+    const Samples& B = *pick.baseline;
+    const std::uint32_t P = pick.base.index;
+    std::set<std::string> own;
+    for (const Constraint& c : pick.truth.cons)
+        own.insert(c.alts.begin(), c.alts.end());
+    auto facesOfEdge = [](const Samples& s, std::uint32_t e) {
+        return e < s.facesOf[1].size() ? sortedUnique(s.facesOf[1][e]) : std::vector<std::uint32_t>{};
+    };
+    const auto p0 = sliderAndFixed(B, P);
+    if (!p0)
+        return no("2");
+    const std::vector<std::uint32_t> at0 = edgesAtVertex(B, p0->first);
+    if (at0.size() != 2 || (at0[0] != P && at0[1] != P))
+        return no("3");
+    const std::uint32_t Q = at0[0] == P ? at0[1] : at0[0];
+    const auto q0 = sliderAndFixed(B, Q);
+    if (!q0 || q0->first != p0->first || facesOfEdge(B, P).size() != 2 || facesOfEdge(B, P) != facesOfEdge(B, Q))
+        return no("4");
+    if (evalTruth(withoutSeparators(pick.truth), *pick.owners, B).elems != sortedUnique({P, Q}))
+        return no("5");
+    const std::set<std::string> endP = endElement(B, p0->second, *pick.owners, own);
+    const std::set<std::string> endQ = endElement(B, q0->second, *pick.owners, own);
+    if (endP.empty() || endQ.empty() || endP == endQ)
+        return no("6");
+    if (x.logical.size() != 2)
+        return no("7");
+    const std::uint32_t a = x.logical[0], b = x.logical[1];
+    const auto ea = sliderAndFixed(smp, a), eb = sliderAndFixed(smp, b);
+    if (!ea || !eb || ea->first != eb->first || facesOfEdge(smp, a).size() != 2 ||
+        facesOfEdge(smp, a) != facesOfEdge(smp, b) || edgesAtVertex(smp, ea->first).size() != 2)
+        return no("8");
+    const auto& N = smp.of(SubKind::Edge);
+    const ElemSamples& pickNow = pick.picked();
+    // On the same curve: within a chord of the sample mesh (a polyline's chord) and the vertex tolerance.
+    const double onCurve = anchorTolerance(SubKind::Edge, true);
+    std::optional<std::uint32_t> cp, cq;
+    if (mutated("slid-end-ends")) {
+        // (The end elements not compared: the edge holding the most of the pick.)
+        const bool first = shareOn(pickNow, N[a], SubKind::Edge) >= shareOn(pickNow, N[b], SubKind::Edge);
+        cp = first ? a : b;
+        cq = first ? b : a;
+    } else {
+        const std::set<std::string> endA = endElement(smp, ea->second, now, own);
+        const std::set<std::string> endB = endElement(smp, eb->second, now, own);
+        if (endA == endP && endB == endQ) {
+            cp = a;
+            cq = b;
+        } else if (endB == endP && endA == endQ) {
+            cp = b;
+            cq = a;
+        } else {
+            return no("9");
+        }
+    }
+    if (!overlap(pickNow, N[*cp], SubKind::Edge, onCurve))
+        return no("10");
+    if (!mutated("slid-end-ground")) {
+        const auto& E0 = B.of(SubKind::Edge);
+        for (const std::uint32_t c : {*cp, *cq})
+            for (std::uint32_t i = 0; i < E0.size(); ++i) {
+                if (i == P || i == Q || E0[i].pts.empty() || boxesApart(N[c], E0[i]))
+                    continue;
+                if (interiorShare(N[c], E0[i], SubKind::Edge, onCurve) >= 0.02 ||
+                    interiorShare(E0[i], N[c], SubKind::Edge, onCurve) >= 0.02)
+                    return no("11");
+            }
+    }
+    return cp;
+}
+
 } // namespace
 
 Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp)
@@ -3578,6 +3804,19 @@ Expectation expect(const PickRecord& pick, const Owners& now, const Samples& smp
             x.structuralGone = kept.elems.empty();
             x.expected = kept;
         }
+    }
+    // Identity, last (T-081b round 12, docs/naming/POLICY.md): WHOLE GENERATOR and SLID END (above) decide E for the
+    // elements they apply to, over the reasoning by ground above; every other element is judged as before.
+    std::optional<std::uint32_t> byIdentity;
+    if (!mutated("whole-generator") && (byIdentity = wholeGeneratorFace(pick, now, smp, x)))
+        x.wholeGenerator = true;
+    else if (!mutated("slid-end") && (byIdentity = slidEndEdge(pick, now, smp, x)))
+        x.slidEnd = true;
+    if (byIdentity) {
+        x.expected = TruthEval{};
+        x.expected.elems.push_back(*byIdentity);
+        x.structuralGone = x.heldInPlace = x.inPlaceByName = false;
+        x.mergeUnknown = x.sharedAnchor = false;
     }
     return x;
 }
@@ -4861,7 +5100,8 @@ Judgement judgeAnswer(const Expectation& x, const PickRecord& pick, const Owners
     // Round 4: edges and vertices too, where every owner of the description is where it was (the reviewer's holdout1
     // 4:33 edge 9: the other end of a wall that slid along its own line); and every piece of a Split or Merged answer
     // (a piece that holds none of the picked ground is not a piece of it).
-    if (answer != Answer::Broken && !X.empty() && structuralScope(pick, now, x)) {
+    // Round 12: not for an element E was told by identity (WHOLE GENERATOR: where its ground went is not the test).
+    if (answer != Answer::Broken && !X.empty() && !x.wholeGenerator && structuralScope(pick, now, x)) {
         const bool single = answer == Answer::Exact || answer == Answer::Repaired;
         for (const std::uint32_t e : X) {
             if (e >= smp.of(x.kind).size() || (!single && mutated("structural-pieces")) || (single && X.size() != 1))

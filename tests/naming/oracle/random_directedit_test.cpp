@@ -1383,6 +1383,16 @@ TEST_CASE("Review block 4: 1,000 randomised sequences with direct edits, the rev
     runHoldout("Direct-edit review block 4", 0x5A93D1E7C46B0000ull, "directedit-review4 ");
 }
 
+TEST_CASE("Review block 5: 1,000 randomised sequences with direct edits, the reviewer's fifth seed",
+          "[random-directedit-review5]")
+{
+    // The reviewer's frozen block 5 (seed 0x7E2B49C1D58A0000, run on oracle-freeze-5 and adjudicated in review round 9:
+    // no silent wrong answer; 13:12, 14:23 and 11:18 the oracle's, decided by identity in round 12, docs/naming/
+    // POLICY.md; 8:25 edge 94 a flagged, incomplete Repaired suggestion, docs/naming/KNOWN_MISSES.md; its 2 answers not
+    // judged reviewed), kept as a regular block: gated as the holdouts.
+    runHoldout("Direct-edit review block 5", 0x7E2B49C1D58A0000ull, "directedit-review5 ");
+}
+
 TEST_CASE("Direct-edit block of any seed: RAYCAD_NAMING_BLOCK_SEED=<hex>, choices by geometry",
           "[.random-directedit-seed]")
 {
@@ -2039,16 +2049,19 @@ void replayCases(bool keyOnly)
         // a
         // moved boss's start cap, its name on a patch of the cap's plane outside the part, holding none of the pick in
         // place or carried by the boss's move: Broken, the old Exact WRONG.
+        // Round 12 (docs/naming/POLICY.md, the oracle's WHOLE GENERATOR; the class of block 5 14:23 face 47): the start
+        // cap was one face before and is one after, R4 moved: by identity that patch is R4's start cap, so Broken is a
+        // miss (Exact {39} right).
         {4,
          29,
          k + "fillet_block_1.stp #29|face 17",
          Answer::Broken,
-         Verdict::BrokenGone,
+         Verdict::Missed,
          "a moved start cap's window, another patch now",
          false,
          0,
          false,
-         {{Answer::Exact, {39}}},
+         {},
          "windows",
          9.5592},
         // The reviewer's own block (round 4 rulings), authored on Windows:
@@ -2470,6 +2483,9 @@ TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its featur
         // of the part: what is left of the cap in the part is a strip over the pick's old place, ground of the cap the
         // part did not hold at pick time (the reviewer's v3 class: the image left the part, so the pick is gone; the
         // oracle no longer credits its old place). Broken; Exact on the strip WRONG. (Off: Exact {5}.)
+        // Round 12 (docs/naming/POLICY.md, the oracle's WHOLE GENERATOR): the cap was one face before and is one face
+        // after, R2 moved: by identity the strip is R2's end cap, so Broken is a miss and Exact on it right (the
+        // post-condition still decides the resolver's answer: the mutation check below stands).
         {"review4 13:25",
          13,
          SubKind::Face,
@@ -2477,9 +2493,9 @@ TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its featur
          181.1502,
          "a moved cut's end cap whose image left the part, a strip of it over the old place",
          Answer::Broken,
-         Verdict::BrokenGone,
-         {},
-         {{Answer::Exact, {}, -1, {Vec3{113.7, 39.0751, 0.85}}}}},
+         Verdict::Missed,
+         {{Answer::Exact, {}, -1, {Vec3{113.7, 39.0751, 0.85}}}},
+         {}},
         {"review3 10:21",
          10,
          SubKind::Edge,
@@ -2580,18 +2596,38 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
     // 8 (pinned_scripts.txt "random 11:43", plate_counterbore_1) and random-directedit 8:3 face 15 ("directedit 8:3",
     // l_bracket_1), each still on the pick's recorded surfaces, holding none of the pick: Broken, gone; with the
     // refusal off, Exact by identity, WRONG.
+    // T-081b round 12 (the architect's policy, docs/naming/POLICY.md; the oracle's WHOLE GENERATOR): review4 13:25,
+    // random 11:43 and directedit 8:3 are each the whole face of a generator that the edit moved, one face before and
+    // after: by identity that face is the pick wherever it lies, so the refusal's Broken is a miss there and the Exact
+    // it refuses is right (docs/naming/KNOWN_MISSES.md). holdout1 7:33 (its boss not edited) is judged as before.
     struct Pin {
         const char* script;
         int part;
         Vec3 at;
         double measure;
         const char* about;
+        bool byIdentity = false; // round 12: the whole face of an edited generator (Broken a miss, Exact right)
     };
     const std::vector<Pin> pins{
         {"holdout1 7:33", 7, {39.2339, -2.5489, 10.5459}, 27.0338, "another patch of a boss's side"},
-        {"review4 13:25", 13, {110.9422, 39.0751, 5.0154}, 181.1502, "a moved cut's end cap whose image left the part"},
-        {"random 11:43", 11, {12.8857, 49.1827, 7.6208}, 289.3283, "T-081a random 11:43 face 8, on its own surface"},
-        {"directedit 8:3", 8, {3.6352, 25.4857, 38.2551}, 107.135, "random-directedit 8:3 face 15, on its own surface"},
+        {"review4 13:25",
+         13,
+         {110.9422, 39.0751, 5.0154},
+         181.1502,
+         "a moved cut's end cap whose image left the part",
+         true},
+        {"random 11:43",
+         11,
+         {12.8857, 49.1827, 7.6208},
+         289.3283,
+         "T-081a random 11:43 face 8, on its own surface",
+         true},
+        {"directedit 8:3",
+         8,
+         {3.6352, 25.4857, 38.2551},
+         107.135,
+         "random-directedit 8:3 face 15, on its own surface",
+         true},
     };
     using naming::testing::IdentityRefusal;
     for (const Pin& p : pins) {
@@ -2602,7 +2638,7 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
         REQUIRE(looked.size() == 1);
         INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
         CHECK(looked[0].answer == Answer::Broken);
-        CHECK(looked[0].judgement.verdict == Verdict::BrokenGone);
+        CHECK(looked[0].judgement.verdict == (p.byIdentity ? Verdict::Missed : Verdict::BrokenGone));
         naming::testing::setIdentityRefusalEnabled(IdentityRefusal::OnPickSurfaces, false);
         const std::vector<Looked> off =
             replayScriptedAndLook(p.part, baseline, edited, SubKind::Face, p.at, p.measure, {}, false);
@@ -2610,7 +2646,10 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
         REQUIRE(off.size() == 1);
         INFO("OnPickSurfaces off: " << off[0].signature << ", " << verdictName(off[0].judgement.verdict));
         CHECK(off[0].answer == Answer::Exact);
-        CHECK(isWrong(off[0].judgement.verdict));
+        if (p.byIdentity)
+            CHECK(off[0].judgement.verdict == Verdict::Correct);
+        else
+            CHECK(isWrong(off[0].judgement.verdict));
     }
 }
 
@@ -2832,6 +2871,177 @@ TEST_CASE("Oracle pins (round 7): the reviewer's macOS rulings, replayed from th
             else
                 CHECK(isWrong(looked[0].probes[i].verdict));
         }
+    }
+}
+
+TEST_CASE(
+    "Identity pins (round 12, docs/naming/POLICY.md): a moved generator's whole face is that face wherever it lies",
+    "[naming][directedit-replays]")
+{
+    // The oracle's WHOLE GENERATOR (oracle.cpp, expect), on the reviewer's block 5 (seed 0x7E2B49C1D58A0000) as fixed
+    // scripts (pinned_scripts.txt "block5 13:12", "block5 14:23"; VERDICTS round 9, ruled the oracle's):
+    //  13:12 face 21: slot R2's end cap, one face before (1.92 mm2) and after (face 9, 2.85 mm2); R2 moved by (5.82, 0,
+    //  -2.42), the cap clipped otherwise by the block's edge, the moved pick mostly outside the part. Exact {9} is
+    //  right. 14:23 face 47: rib R3's start cap, one visible patch before (over a pocket, z 4..7.6) and after (face 46,
+    //  below the plate, z -2.3..0), R3 moved by its width; the moved pick is buried. Exact {46} is right.
+    // With RAYCAD_ORACLE_MUTATE=whole-generator both fail (E {}, WRONG ghost). The negatives (a split piece of a cap
+    // moved alike, a generator face the edit split in two) are acceptance_test.cpp's "Oracle (round 12)" scripts.
+    // Negative here: Exact on another face (Looked::other).
+    struct Pin {
+        const char* script;
+        int part;
+        Vec3 at;
+        double measure;
+        const char* about;
+        std::vector<Probe> wrong;
+    };
+    const std::vector<Pin> pins{
+        {"block5 13:12",
+         13,
+         {114.9291, 74.6553, 9.5935},
+         1.9228,
+         "a moved slot's end cap, clipped otherwise by the block's edge",
+         {}},
+        {"block5 14:23", 14, {58.986, 5.0, 5.7173}, 1.825, "a moved rib's start cap, its visible patch elsewhere", {}},
+    };
+    for (const Pin& p : pins) {
+        const auto [baseline, edited] = pinnedScripts(p.script);
+        const std::vector<Looked> looked =
+            replayScriptedAndLook(p.part, baseline, edited, SubKind::Face, p.at, p.measure, p.wrong);
+        INFO(p.script << ": " << p.about);
+        REQUIRE(looked.size() == 1);
+        INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+        CHECK(looked[0].answer == Answer::Exact);
+        CHECK(looked[0].judgement.verdict == Verdict::Correct);
+        CHECK(isWrong(looked[0].other.verdict));
+        REQUIRE(looked[0].probes.size() == p.wrong.size());
+        for (std::size_t i = 0; i < p.wrong.size(); ++i) {
+            INFO("probe " << i << ": " << verdictName(looked[0].probes[i].verdict) << "; " << looked[0].probed[i]);
+            CHECK(looked[0].probed[i].rfind("asked;", 0) != 0);
+            CHECK(isWrong(looked[0].probes[i].verdict));
+        }
+    }
+}
+
+TEST_CASE("Identity pins (round 12, docs/naming/POLICY.md): an edge between the same end elements, its slid end vertex "
+          "along the curve, is that edge",
+          "[naming][directedit-replays]")
+{
+    // The oracle's SLID END (oracle.cpp, expect), on block 5 11:18 (pinned_scripts.txt "block5 11:18"; VERDICTS round
+    // 9: U, leaning O; the architect's policy): one ellipse (cylinder I/i8 x plane R1/s1) in two edges either side of
+    // vertex V17, on those two faces only, that chamfer R2 left when R4 deleted it; resizing R2 slides V17 along the
+    // curve (1.020 -> 1.581 and 8.249 -> 7.688 mm). Edge 18 still runs from V17 to the top face, edge 19 from V17 to
+    // R3's floor: Exact {18} and Exact {19} are right, each the other's answer WRONG. With
+    // RAYCAD_ORACLE_MUTATE=slid-end both fail (WRONG unflagged merge, WRONG incomplete). Negatives, each a forgery of
+    // one condition of the rule on the same replay (Exact on the same edge stays WRONG):
+    //  (a) an end that jumped to a different element: the owner of the face the answer's fixed end lies on renamed in
+    //      the edited script (RAYCAD_ORACLE_MUTATE=slid-end-ends: judged correct, the pin fails);
+    //  (b) a stretch that swallowed a third edge's ground: a pick-time edge (not the pick, not its sibling) lying where
+    //      the answer now lies added to the baseline (RAYCAD_ORACLE_MUTATE=slid-end-ground: judged correct).
+    const auto [baseline, edited] = pinnedScripts("block5 11:18");
+    const Part part = loadPart(kParts[11]);
+    REQUIRE(part.base != nullptr);
+    const Script s0 = scriptFromText(baseline, part.base);
+    const Script s1 = scriptFromText(edited, part.base);
+    SequenceOptions opt;
+    opt.keyPrefix = "scripted ";
+    opt.script = &s0;
+    opt.edited = &s1;
+    struct Seen {
+        Answer answer = Answer::Broken;
+        std::vector<std::uint32_t> elements;
+        Verdict verdict = Verdict::Correct, sibling = Verdict::Correct, jumped = Verdict::Correct,
+                swallowed = Verdict::Correct;
+        bool slid = false, forgedJump = false;
+    };
+    std::map<int, Seen> seen; // 0: edge 18, 1: edge 19 (by their pick-time centroids and lengths)
+    const std::array<Vec3, 2> at{Vec3{30.6724, 43.6404, 14.6403}, Vec3{27.6165, 43.0968, 11.3903}};
+    const std::array<double, 2> length{1.0198, 8.2493};
+    setInspector([&](const std::string&, const Ref& ref, const naming::Resolved& res, const RefResult& rr,
+                     const Owners& now, const Samples& samples) {
+        if (ref.ref.kind != SubKind::Edge)
+            return;
+        const naming::Fingerprint& h = ref.ref.hint;
+        const Vec3 c{h.qCx * 1e-4, h.qCy * 1e-4, h.qCz * 1e-4};
+        for (std::size_t k = 0; k < 2; ++k) {
+            if (norm(sub(c, at[k])) > 1e-3 || std::abs(h.qArea * 1e-4 - length[k]) > 1e-3 * length[k])
+                continue;
+            Seen& s = seen[static_cast<int>(k)];
+            s.answer = rr.answer;
+            s.verdict = rr.judgement.verdict;
+            for (const SubId& e : res.elements)
+                s.elements.push_back(e.index);
+            const Expectation x = expect(ref.record, now, samples);
+            s.slid = x.slidEnd;
+            if (s.elements.size() != 1 || x.logical.size() != 2)
+                continue;
+            const std::uint32_t got = s.elements.front();
+            const std::uint32_t other = x.logical[0] == got ? x.logical[1] : x.logical[0];
+            s.sibling = judgeAnswer(x, ref.record, now, samples, Answer::Exact, {other}).verdict;
+            // (a) The answer's fixed end (its vertex on three faces or more) on a face of another owner: each owner of
+            // the faces there other than the edge's own renamed.
+            std::set<std::string> own;
+            for (const Constraint& cn : ref.record.truth.cons)
+                own.insert(cn.alts.begin(), cn.alts.end());
+            const auto& edgeFaces = samples.facesOf[1][got];
+            std::set<std::string> rename;
+            for (const std::uint32_t v : samples.verticesOf[got]) {
+                std::set<std::uint32_t> faces(samples.facesOf[0][v].begin(), samples.facesOf[0][v].end());
+                if (faces.size() < 3)
+                    continue;
+                for (const std::uint32_t f : faces) {
+                    if (std::find(edgeFaces.begin(), edgeFaces.end(), f) != edgeFaces.end())
+                        continue;
+                    for (const Owner& o : now.v) {
+                        const std::vector<std::uint32_t> on = facesOn(o.key, now, samples);
+                        if (own.count(o.key) == 0 && std::find(on.begin(), on.end(), f) != on.end())
+                            rename.insert(o.key);
+                    }
+                }
+            }
+            Owners jumped = now;
+            for (Owner& o : jumped.v)
+                if (rename.count(o.key) != 0)
+                    o.key += "'";
+            jumped.ix.clear();
+            for (std::size_t i = 0; i < jumped.v.size(); ++i)
+                jumped.ix[jumped.v[i].key] = static_cast<int>(i);
+            jumped.serial = now.serial ^ (std::uint64_t{1} << 63);
+            s.forgedJump = !rename.empty();
+            s.jumped =
+                judgeAnswer(expect(ref.record, jumped, samples), ref.record, jumped, samples, Answer::Exact, {got})
+                    .verdict;
+            // (b) A pick-time edge, neither the pick nor its sibling, where the answer now lies.
+            auto third = std::make_shared<Samples>(*ref.record.baseline);
+            third->e[static_cast<std::size_t>(SubKind::Edge)].push_back(samples.of(SubKind::Edge)[got]);
+            third->facesOf[1].emplace_back();
+            third->verticesOf.emplace_back();
+            PickRecord swallowed = ref.record;
+            swallowed.baseline = third;
+            swallowed.builder = nullptr; // it describes the baseline it was built on
+            s.swallowed =
+                judgeAnswer(expect(swallowed, now, samples), swallowed, now, samples, Answer::Exact, {got}).verdict;
+        }
+    });
+    const SequenceResult r = runSequence(part, 11, 0, opt);
+    setInspector({});
+    INFO("block5 11:18 scripted: " << r.edit);
+    CHECK_FALSE(r.skipped);
+    CHECK(r.tally.wrong() == 0);
+    REQUIRE(seen.size() == 2);
+    for (int k = 0; k < 2; ++k) {
+        const Seen& s = seen[k];
+        INFO("edge " << (k == 0 ? 18 : 19) << ": " << verdictName(s.verdict) << "; the sibling "
+                     << verdictName(s.sibling) << "; forged: an end jumped " << verdictName(s.jumped)
+                     << ", a third edge's ground " << verdictName(s.swallowed));
+        CHECK(s.answer == Answer::Exact);
+        CHECK(s.elements.size() == 1);
+        CHECK(s.verdict == Verdict::Correct);
+        CHECK(s.slid);
+        CHECK(isWrong(s.sibling));
+        CHECK(s.forgedJump);
+        CHECK(isWrong(s.jumped));
+        CHECK(isWrong(s.swallowed));
     }
 }
 

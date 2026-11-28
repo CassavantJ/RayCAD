@@ -1326,6 +1326,102 @@ TEST_CASE("Oracle: where a slot runs through a moved boss and through the part's
     CHECK(seen == 1);
 }
 
+TEST_CASE(
+    "Oracle (round 12, docs/naming/POLICY.md): the whole face of a moved generator is that face wherever it lies; "
+    "a piece of it, or a face the edit split, is not",
+    "[naming][acceptance][oracle-gate]")
+{
+    // The oracle's WHOLE GENERATOR (oracle.cpp, expect). Pocket P (x 80..130, past the block's end at x 100) 8 deep:
+    // its floor is one face, x 80..100. P moved by -110 (x -30..20): the pick's image (x -30..-10) left the part, and
+    // P's floor is one face again, x 0..20. By identity that face is the pick (the class of block 5 13:12 face 21,
+    // review4 13:25 face 5): Exact on it right. (With RAYCAD_ORACLE_MUTATE=whole-generator: gone, Exact WRONG.)
+    auto script = [](double dx, bool slot) {
+        Script s = block(100, 60, 20);
+        Frame fp = top(20);
+        fp.o.x = dx;
+        s.push_back(sweep("P", BOp::Cut, fp, rect(80, 20, 130, 40), 8));
+        if (slot) // a deeper slot across the pocket's place at pick time: the floor in two pieces there
+            s.push_back(sweep("S", BOp::Cut, top(20), rect(88, 0, 90, 60), 12));
+        return s;
+    };
+    const auto onFloor = [](const Outcome& o) {
+        return o.ref.ref.kind == SubKind::Face && o.ref.record.truth.cons.size() == 1 && about(o, "P/c1/1");
+    };
+    {
+        const Run r = run(script(0, false), script(-110, false));
+        INFO("references about P's floor:" << refsAbout(r, "P/c1/1"));
+        REQUIRE(count(r.out, onFloor) == 1);
+        for (const Outcome& o : r.out)
+            if (onFloor(o)) {
+                const std::vector<std::uint32_t> all = logicalElements(r, o);
+                INFO("resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                                 << text(o.expected.elems) << ", logical" << text(all) << ", verdict "
+                                 << verdictName(o.verdict));
+                REQUIRE(all.size() == 1);
+                CHECK(o.expected.elems == all);
+                CHECK(judgeOther(r, o, Answer::Exact, all).verdict == Verdict::Correct);
+                CHECK_FALSE(isWrong(o.verdict));
+            }
+    }
+    // Negative 1: a split piece of the floor (x 90..100, beyond the slot) moved alike. The edited floor is one face
+    // again, but the pick was not the whole of its generator: judged by its ground as before (its image left the part:
+    // gone), Exact on the floor WRONG. (With RAYCAD_ORACLE_MUTATE=whole-generator-once, the pieces' test off: right.)
+    {
+        const Run r = run(script(0, true), script(-110, true));
+        const auto piece = [&](const Outcome& o) {
+            return onFloor(o) && o.ref.record.picked().boxMin.x > 89.5;
+        };
+        INFO("references about P's floor:" << refsAbout(r, "P/c1/1"));
+        REQUIRE(count(r.out, piece) == 1);
+        for (const Outcome& o : r.out)
+            if (piece(o)) {
+                const std::vector<std::uint32_t> all = logicalElements(r, o);
+                INFO("resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                                 << text(o.expected.elems) << ", logical" << text(all) << ", verdict "
+                                 << verdictName(o.verdict));
+                CHECK_FALSE(o.ref.record.truth.cons[0].seps.empty());
+                REQUIRE(all.size() == 1);
+                CHECK(o.expected.elems.empty());
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, all).verdict));
+                CHECK_FALSE(isWrong(o.verdict));
+            }
+    }
+    // Negative 2: a generator face the edit split in two. Pocket Q (x 20..40) moved by 2 and a slot T added across it
+    // (x 30..32): Q's floor is two faces, each holding part of the pick as moved. The pick was the whole floor, but the
+    // edited generator has two faces: Split on both is right, Exact on either piece WRONG. (With RAYCAD_ORACLE_MUTATE=
+    // whole-generator-once, the one-face test off: Exact on the first piece right.)
+    {
+        auto pocket = [](double dx, bool slot) {
+            Script s = block(100, 60, 20);
+            Frame fq = top(20);
+            fq.o.x = dx;
+            s.push_back(sweep("Q", BOp::Cut, fq, rect(20, 20, 40, 40), 8));
+            if (slot)
+                s.push_back(sweep("T", BOp::Cut, top(20), rect(30, 0, 32, 60), 12));
+            return s;
+        };
+        const Run r = run(pocket(0, false), pocket(2, true));
+        const auto floor = [](const Outcome& o) {
+            return o.ref.ref.kind == SubKind::Face && o.ref.record.truth.cons.size() == 1 && about(o, "Q/c1/1");
+        };
+        INFO("references about Q's floor:" << refsAbout(r, "Q/c1/1"));
+        REQUIRE(count(r.out, floor) == 1);
+        for (const Outcome& o : r.out)
+            if (floor(o)) {
+                const std::vector<std::uint32_t> all = logicalElements(r, o);
+                INFO("resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                                 << text(o.expected.elems) << ", logical" << text(all) << ", verdict "
+                                 << verdictName(o.verdict));
+                REQUIRE(all.size() == 2);
+                CHECK(o.expected.elems == all);
+                CHECK(judgeOther(r, o, Answer::Split, all).verdict == Verdict::Correct);
+                for (const std::uint32_t e : all)
+                    CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e}).verdict));
+                CHECK_FALSE(isWrong(o.verdict));
+            }
+    }
+}
+
 TEST_CASE("The size of a reference's JSON form with and without pick-time evidence, on corpus parts (printed)",
           "[.ref-size]")
 {

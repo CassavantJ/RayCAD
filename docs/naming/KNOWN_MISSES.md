@@ -58,3 +58,31 @@ Split and Merged answers that the oracle judged correct are now misses:
 
 (Its Exact answers not by identity are Repaired, correct but not usable until confirmed: 29 in `[random]`, 27 in
 `[random-directedit]`, with placements.)
+
+## T-081b round 12 (the architect's policy, docs/naming/POLICY.md)
+
+### A pure mirror of a profile answers Broken
+
+A profile mirrored in its sketch without a move (review round 9, `VERDICTS.md`: harness case i2, document cases S4 and
+S8, the holes' points swapped) answers Broken on the walls whose sketch lines changed sides, although identity would
+hold (the wall made by line *k* is that line's wall wherever it goes). This is inconsistent with a mirror and a move
+(i2b, S5), which answers Exact on the far wall, right by the policy. It is safe (Broken, never a wrong element) and not
+fixed now.
+
+### The refusal of identity on the pick's own surfaces, on a whole generator face
+
+The resolver refuses an identity answer whose element lies on the pick's own surfaces and holds none of the pick
+(postcondition.cpp `refusedIdentity`, OnPickSurfaces; round 10 ruling A, round 11 ruling K). Where that element is the
+whole face of a generator the edit moved, one face before and after, the policy says it is the pick wherever it lies,
+so the refusal's Broken is a miss (the oracle's WHOLE GENERATOR):
+
+- review block 4 13:25 face 5 (plate_thru_holes_1; a moved cut's end cap whose image left the part).
+- T-081a random 11:43 face 8 (plate_counterbore_1), random-directedit 8:3 face 15 (l_bracket_1).
+- random-directedit-sorted 4:29 face 17 (fillet_block_1; a moved boss's start-cap window).
+
+### A flagged suggestion left incomplete
+
+Not a miss, recorded here as a known shortfall: block 5 (seed 0x7E2B49C1D58A0000, `[random-directedit-review5]`) 8:25
+edge 94, R1 resized: the crossing the pick was is now two edges (83: 1.667 mm, 84: 2.178 mm), and the Repaired
+suggestion names 84 only. It is flagged and not usable without confirmation; the oracle counts it WRONG (incomplete),
+and that judgement is kept.
