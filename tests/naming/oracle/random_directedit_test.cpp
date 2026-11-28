@@ -1397,6 +1397,14 @@ TEST_CASE("Review block 5: 1,000 randomised sequences with direct edits, the rev
     runHoldout("Direct-edit review block 5", 0x7E2B49C1D58A0000ull, "directedit-review5 ");
 }
 
+TEST_CASE("Review block 6: 1,000 randomised sequences with direct edits, the reviewer's sixth seed",
+          "[random-directedit-review6]")
+{
+    // The reviewer's frozen block 6 (seed 0x3B6E91D47A2C0000, run on oracle-freeze-6: no wrong answer; its 8 answers
+    // not judged, all in 12:40, reviewed), kept as a regular block: gated as the holdouts.
+    runHoldout("Direct-edit review block 6", 0x3B6E91D47A2C0000ull, "directedit-review6 ");
+}
+
 TEST_CASE("Direct-edit block of any seed: RAYCAD_NAMING_BLOCK_SEED=<hex>, choices by geometry",
           "[.random-directedit-seed]")
 {

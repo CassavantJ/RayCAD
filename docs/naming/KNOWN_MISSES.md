@@ -90,3 +90,12 @@ suggestion names 84 only. It is flagged and not usable without confirmation; the
 and that judgement is kept. Since the next round it is listed, by its answer, on the known flagged-wrong suggestions
 (tests/naming/oracle/reviewed_flagged.txt, at most one per block, Repaired only): counted as "WRONG (flagged
 suggestion, reviewed)", apart from the WRONG count the gates hold at 0.
+
+## Review block 6 (oracle-freeze-6)
+
+- 12:40 (move R2 by its width): R2, a 0.93 mm through-cut, no longer cuts after the move and fails on replay. The oracle
+  described R4's start cap by R2's wall s3, coplanar with it; once R2 fails it cannot describe that cap, so the cap and
+  its boundary (face 29; edges 54, 71, 74, 76; vertices 38, 47, 49) are not judged. All eight answers are right
+  (reviewed_unjudged.txt).
+- 12:40 edge 76: Merged {66} is flagged although the edge is identical (same end points, length 5.655066): the Merged flag
+  is unnecessary (a flag, not a wrong answer).

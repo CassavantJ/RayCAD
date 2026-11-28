@@ -34,7 +34,9 @@ The oracle (`tests/naming/oracle/oracle.cpp`, `expect`) keeps its own model of i
 - **SLID END.** The pick was one of two edges on the same two faces meeting at a vertex on only those faces, each with
   its other end on a third element, the two told apart by their owners. After the edit the curve is where it was, the
   element is again two such edges, and the one that ends on the pick's end element is the expected answer, as long as
-  it holds part of the pick and neither edge lies on another pick-time edge's ground.
+  it holds part of the pick and neither edge lies on another pick-time edge's ground. This rule has not been attacked
+  independently: the reviewer could not construct a case that exercises it (review round 10: a chamfer deleted by
+  delete_fillet left the rim edges whole, with no two-face vertex); its only checks are its author's negatives.
 
 Every other element is judged as before. Each rule has a mutation switch (`RAYCAD_ORACLE_MUTATE=whole-generator`,
 `slid-end`, and the negatives' `whole-generator-once`, `slid-end-ends`, `slid-end-ground`) and pins in
