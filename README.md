@@ -201,7 +201,9 @@ another ref): per OS a Release job for the slow tests, one for the naming blocks
 the direct-edit blocks (`directedit-blocks`, `directedit-blocks-2`), and the slow tests, the naming and the
 first direct-edit blocks under AddressSanitizer, there all but the few
 labelled `sanitizer-heavy` (too slow under ASan for the runner). Every test runs in exactly one of the two. A
-milestone closes only after one manual run of `nightly.yml` is green on its closing commit (PLAN.md section 12).
+milestone closes only after one manual run of `nightly.yml` is green on Windows on its closing commit (PLAN.md section 12).
+Platform status: only Windows gates until the app is finished; the macOS and Linux jobs (and the Linux AddressSanitizer
+ones) still run, named "(not gating)", and what fails there waits in `docs/PORTING_DEBT.md`.
 Wrong answers of the direct-edit blocks come with an `[.evidence]` artifact per answer (`tools/ci_naming_evidence.py`).
 `probe.yml` (by hand only) replays single naming sequences on a chosen platform and uploads their output, shapes and
 evidence (`tools/ci_naming_probe.py` says how to write the cases). `stress.yml` (by hand only) runs one test

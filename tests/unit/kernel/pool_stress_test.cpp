@@ -13,13 +13,14 @@
 //    GeomLib_CheckCurveOnSurface when asked to run in parallel (never in the kernel). ThreadSanitizer, with OCCT itself
 //    instrumented, caught BRepCheck_Analyzer::Perform reading the pool while a mesh call resized it, and the naming
 //    blocks crashed once in 19 runs inside minDistance while another thread meshed. Here a monitor samples the pool's
-//    size the whole time and the mesh threads switch between tolerances whose teams differ, which used to resize it on
-//    every call: the size must never change.
+//    size the whole time and the mesh calls switch between their own team and a team of one (testing::MeshTeamCap, so
+//    the teams differ on any machine with 2 or more processors), which used to resize it on every switch: the size must
+//    never change. On one processor the workload still runs, with a warning that nothing could resize the pool.
 //  - Concurrent calls on the SAME Shape give the results they give alone (kernel.h: a Shape is only read): one shape is
 //    meshed, measured (minDistance between its own faces and edges), checked and cut from at the same time.
 //
-// RAY_POOL_STRESS_S sets the duration (default 120 s). Under ThreadSanitizer with an instrumented OCCT it also shows
-// any race in those paths.
+// RAY_POOL_STRESS_S sets the duration (default 120 s); RAY_POOL_STRESS_THREADS=<n> runs it as on n processors. Under
+// ThreadSanitizer with an instrumented OCCT it also shows any race in those paths.
 #include <catch2/catch_test_macros.hpp>
 
 #include "kernel_test_util.h"
@@ -31,6 +32,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <map>
@@ -90,16 +92,35 @@ std::string distanceText(const Distance& d)
 
 TEST_CASE("meshing, distances, checks, booleans and imports at once on shared shapes", "[stress][pool_stress]")
 {
+    // RAY_POOL_STRESS_THREADS=<n>: OCCT's pool as on a machine with n processors (only if nothing used it yet: the
+    // test alone in its process, as ctest runs it).
+    if (const char* threads = std::getenv("RAY_POOL_STRESS_THREADS"))
+        testing::createMeshPool(std::max(1, std::atoi(threads)));
     const Shape shared = take(testing::makeFilletedBody()); // meshed, measured, checked and cut from at once
     const Shape plate = take(testing::makeHolePlate(8, 8));
     const Shape sphere = take(testing::makeSphere({200, 0, 0}, 15));
     const Shape tool = take(makeBox({30, 15, -5}, {50, 35, 30}));
     const std::string stepFile = std::string(RAY_CORPUS_DIR) + "/raycad-synthetic/manifold_block_2.stp";
-    // Teams that differ: the old kernel re-initialised the pool on every switch between them.
-    REQUIRE(testing::meshConcurrency(0.2) != testing::meshConcurrency(0.01));
-
+    // Mesh calls alternate between their own team and a team of one (testing::MeshTeamCap): the old kernel
+    // re-initialised the pool on every switch between two team sizes. Capping, not the tolerances, makes the teams
+    // differ: on 4 processors every tolerance from 0.2 to 0.01 mm gets the whole pool.
     const int pool = testing::meshPoolThreads();
     REQUIRE(pool >= 1);
+    std::printf("OCCT's default pool: %d threads; mesh teams %d (0.2 mm), %d (0.01 mm) and 1 (capped)\n", pool,
+                testing::meshConcurrency(0.2), testing::meshConcurrency(0.01));
+    const bool teamsDiffer = pool >= 2;
+    if (!teamsDiffer)
+        WARN("one processor: every mesh team is the whole pool, so the concurrent workload runs but nothing here could "
+             "have resized the pool");
+    {
+        // The team of one holds back every other pool thread, and the pool keeps its size.
+        const testing::MeshTeamCap one(1);
+        JobContext ctx;
+        REQUIRE(tessellate(plate, MeshOptions{0.2, 0.35}, ctx).has_value());
+        CHECK(testing::lastMeshTeam() == 1);
+        CHECK(testing::lastMeshHeldThreads() == pool - 1);
+        CHECK(testing::meshPoolThreads() == pool);
+    }
     std::atomic<bool> stop{false};
     std::atomic<int> poolMin{pool}, poolMax{pool};
     Answers answers;
@@ -133,10 +154,11 @@ TEST_CASE("meshing, distances, checks, booleans and imports at once on shared sh
             std::this_thread::sleep_for(std::chrono::microseconds(200));
         }
     });
-    // Meshing the shared body and the plate, switching between a coarse and a fine team.
+    // Meshing the shared body and the plate at two tolerances, every other call with a team of one.
     for (int t = 0; t < 2; ++t)
         threads.push_back(worker("tessellate", [&, t](int i) {
             const double tol = (i + t) % 2 == 0 ? 0.2 : 0.01;
+            const testing::MeshTeamCap cap((i / 2 + t) % 2 == 0 ? 0 : 1);
             JobContext ctx;
             const Shape& s = t == 0 ? shared : plate;
             const Result<Mesh> m = tessellate(s, MeshOptions{tol, 0.35}, ctx);
@@ -147,6 +169,7 @@ TEST_CASE("meshing, distances, checks, booleans and imports at once on shared sh
                               std::to_string(m->indices.size()));
         }));
     threads.push_back(worker("triangulateExact", [&](int i) {
+        const testing::MeshTeamCap cap(i % 3 == 0 ? 1 : 0);
         JobContext ctx;
         const double tol = i % 2 == 0 ? 0.05 : 0.01;
         const Result<TriSoup> m = triangulateExact(shared, tol, ctx);

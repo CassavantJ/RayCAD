@@ -121,6 +121,9 @@ int fullPoolThreads()
 std::atomic<int> gLastTeam{0};
 std::atomic<int> gLastHeld{0};
 
+// Tests only (testing::MeshTeamCap): the largest team this thread's mesh calls may use; 0 = no cap.
+thread_local int tTeamCap = 0;
+
 int concurrencyFor(double chordTol, int pool)
 {
     const double perFaceMb = kFaceMbAtCoarse * std::pow(kCoarseTol / chordTol, kFaceMbExponent);
@@ -490,6 +493,8 @@ detail::MeshTeamScope::MeshTeamScope(double chordTol) noexcept
         const occ::handle<OSD_ThreadPool>& pool = OSD_ThreadPool::DefaultPool();
         const int full = fullPoolThreads();
         team_ = concurrencyFor(chordTol, full);
+        if (tTeamCap > 0)
+            team_ = std::min(team_, tTeamCap);
         if (team_ < full) {
             // A launcher of n locks up to n - 1 free pool threads (and one slot for its caller) and keeps them until
             // it is destroyed; it is never given a job.
@@ -588,6 +593,26 @@ int meshPoolThreads() noexcept
 int lastMeshHeldThreads() noexcept
 {
     return gLastHeld.load(std::memory_order_relaxed);
+}
+
+int createMeshPool(int threads) noexcept
+{
+    try {
+        // OSD_ThreadPool::DefaultPool takes its size from the first call only; this never resizes it.
+        return OSD_ThreadPool::DefaultPool(threads)->NbThreads();
+    } catch (...) {
+        return 0;
+    }
+}
+
+MeshTeamCap::MeshTeamCap(int cap) noexcept : previous_(tTeamCap)
+{
+    tTeamCap = cap;
+}
+
+MeshTeamCap::~MeshTeamCap()
+{
+    tTeamCap = previous_;
 }
 
 int threadsUnderMeshTeam(double chordTol, int items)

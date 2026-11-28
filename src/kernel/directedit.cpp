@@ -138,6 +138,11 @@ std::shared_ptr<std::atomic<std::int64_t>>& editEndRecord() noexcept
     thread_local std::shared_ptr<std::atomic<std::int64_t>> record;
     return record;
 }
+DirectEditGate& directEditGate() noexcept
+{
+    static DirectEditGate gate;
+    return gate;
+}
 } // namespace detail
 
 namespace {
@@ -226,6 +231,23 @@ Status checkBodyAndFaces(const Shape& shape, std::span<const SubId> faces, bool 
 
 // ---------- the edit thread ----------
 
+// Tests only (testing::HoldDirectEdits): on the edit's kernel thread, waits while a hold lives. False if the edit was
+// cancelled or abandoned meanwhile (it then reports Cancelled, as a cancel during the OCCT work would).
+bool passDirectEditGate(const detail::IoTask& task)
+{
+    detail::DirectEditGate& gate = detail::directEditGate();
+    std::unique_lock<std::mutex> lock(gate.mutex);
+    if (gate.holds == 0)
+        return true;
+    ++gate.waiting;
+    gate.changed.notify_all();
+    while (gate.holds > 0 && !task.stopRequested())
+        gate.changed.wait_for(lock, std::chrono::milliseconds(5)); // the stop request is polled, not signalled
+    --gate.waiting;
+    gate.changed.notify_all();
+    return !task.stopRequested();
+}
+
 // Runs work(JobContext&) -> Result<OpResult> on a kernel-owned thread under guarded() (see "CANCEL AND ABANDON").
 // `work` must own everything it uses.
 template <class Work>
@@ -243,6 +265,8 @@ Result<OpResult> runEdit(JobContext& ctx, std::string_view where, Work work)
             Progress progress([&task](double fraction, std::string_view) { task.report(fraction, kStage); });
             JobContext inner{token, progress};
             Result<OpResult> out = detail::guarded(where, [&]() -> Result<OpResult> {
+                if (!passDirectEditGate(task))
+                    return tl::unexpected(detail::cancelledError(where));
                 if (detail::directEditFaultRequests().load(std::memory_order_relaxed) > 0 &&
                     detail::directEditFaultRequests().fetch_sub(1, std::memory_order_relaxed) > 0)
                     detail::raiseTestFault();

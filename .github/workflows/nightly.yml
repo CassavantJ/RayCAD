@@ -3,8 +3,9 @@
 # direct-edit blocks in two (directedit, directedit2), with the [.evidence] artifacts of any direct-edit wrong answer;
 # under AddressSanitizer slow, naming and directedit (the second direct-edit family is all sanitizer-heavy). Every test
 # runs in exactly one of push and nightly (tests/tiers.cmake; README,
-# "Which tests to run"). A milestone closes only after a manual run of this workflow is green on its closing commit
-# (PLAN.md section 12).
+# "Which tests to run"). A milestone closes only after a manual run of this workflow is green on Windows on its
+# closing commit (PLAN.md section 12). The macOS, Linux and AddressSanitizer jobs run here too but do not gate: they
+# are the called workflows' own jobs, continue-on-error and named "(not gating)" (docs/PORTING_DEBT.md).
 #
 # The scheduled run is skipped when main has no commit since the last scheduled nightly that was not cancelled; a
 # manual run (Actions, "nightly", Run workflow, optionally with a ref) always runs.

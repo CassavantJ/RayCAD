@@ -25,6 +25,25 @@ int meshPoolThreads() noexcept;
 // How many of the pool's threads the last mesh call held back to keep to its team (pool size - team).
 int lastMeshHeldThreads() noexcept;
 
+// Creates OCCT's default pool with `threads` threads if nothing in the process has used it yet, to run a test as on a
+// machine with that many processors; returns the pool's size (the earlier size if it already existed; 0 on failure).
+// Never resizes it.
+int createMeshPool(int threads) noexcept;
+
+// While one lives, the mesh calls this thread makes use a team of at most `cap` threads (0: no cap), whatever their
+// tolerance: a team smaller than the pool on any machine (on 4 processors every tolerance from 0.2 to 0.01 mm gets
+// the whole pool). Guards may nest.
+class MeshTeamCap {
+public:
+    explicit MeshTeamCap(int cap) noexcept;
+    ~MeshTeamCap();
+    MeshTeamCap(const MeshTeamCap&) = delete;
+    MeshTeamCap& operator=(const MeshTeamCap&) = delete;
+
+private:
+    int previous_;
+};
+
 // Under the mesh lock and the team for `chordTol`, runs `items` tasks the way BRepMesh does (OSD_Parallel::For) and
 // returns how many distinct threads took part: at most the team. -1 on failure.
 int threadsUnderMeshTeam(double chordTol, int items);
