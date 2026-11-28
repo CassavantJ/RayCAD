@@ -22,6 +22,9 @@
 // given says how, per face, as transform_body says how it moved its body), PickSamples version 3 (the names of each
 // surface the pick lay on and the face moves that had carried it; the "between" flag of an edge or vertex named from
 // its faces) and Resolved::derived (an Exact answer by derived identity). Versions 1 and 2 still load.
+// Amended by T-081b round 11: NamingInput::exactInputs and PickSamples::carrierHistory (identity by history: one-to-one
+// history and whole blend faces), an optional member of version 3, added without a version bump like the outline (a
+// reference without it loads and resolves as before).
 //
 // Goal: a face, edge or vertex picked today still resolves after upstream edits, or fails loudly.
 // A reference NEVER silently resolves to a different element.
@@ -162,6 +165,11 @@ struct NamingInput {
     // feature's placement. A face listed twice, or faces given without an input map, fail propagate(); a face the
     // input map has no name for is not recorded (nothing can refer to it).
     std::span<const FaceMove> faceMoves;
+    // Optional (T-081b round 11): elements of the input (inputMaps[0]) this feature was given by references that
+    // resolved Exact in this build, or that were picked in it (a blend's edges: the document's fillet and chamfer and
+    // the naming oracle's harness give them). A face this feature generates from one such edge alone, the only face it
+    // generates from that edge, is a WHOLE BLEND FACE (PickSamples::carrierHistory): the result map records it so.
+    std::span<const kernel::SubId> exactInputs;
 };
 struct NamingOutput { ElementMap map; std::vector<LineageEvent> lineage; };
 Result<NamingOutput> propagate(const NamingInput&);
@@ -318,11 +326,32 @@ struct PickSamples {
     std::vector<std::array<std::int64_t, 12>> faceMoves;
     // Version 3: parallel to TopoRef::pickNeighbours, the index into faceMoves of each one's, or -1 (empty: all -1).
     std::vector<std::int32_t> neighbourMoves;
-    // Version 3: the pick is an edge or vertex named from the faces it lies on (role nb.edge, nb.vertex), held by it
-    // alone under that one name, and it was the ONLY element of its kind that lay on all of those faces at pick time.
+    // Version 3: the pick is an edge or vertex named from the faces it lies on (role nb.edge, nb.vertex; since T-081b
+    // round 11 also an imported one, import.edge, import.vertex), held by it alone under that one name, and it was the
+    // ONLY element of its kind that lay on all of those faces at pick time.
     // Recorded at pick time, never inferred later. Such a pick is the one element between those faces as long as each of
     // them is still the face it was (Resolved::derived).
     bool between = false;
+    // Version 3, optional (T-081b round 11; JSON "carrierHistory", absent when no entry has flags, so a reference
+    // without it is written as before and an older build cannot read one with it): parallel to `carriers`, what the
+    // history of the face of each surface said at pick time, recorded then, never inferred later. The face's RUN of
+    // one-to-one history (`run`): the feature whose operation last made the face otherwise than one to one (issued its
+    // names, merged faces into it, generated something into it), every operation after it having carried the face one
+    // to one by the kernel's history (Modified from that one face into that one face, nothing else into it). Its every
+    // name held by it alone, and (`flags`, 0 or a sum of):
+    //  - kCarriedFace: each of its names an import's own (an imported face, alone in its family: no piece, no sibling
+    //    told apart by its surroundings or an ordinal; a sweep's side or cap is a whole generator element already);
+    //  - kWholeBlendFace: it holds one name, a blend's face, the only face the blend generated from its one input
+    //    edge, that edge given by a reference that resolved Exact (NamingInput::exactInputs).
+    // Such a face whose names lead again to one face whose run is the same (every operation since the pick carried it
+    // one to one), a blend face whole again, is that face (Resolved::identity: identity by history), and an edge or
+    // vertex between such faces is by derived identity.
+    struct CarrierHistory {
+        std::uint8_t flags = 0;
+        FeatureId run; // meaningful when flags are set
+    };
+    std::vector<CarrierHistory> carrierHistory;
+    static constexpr std::uint8_t kCarriedFace = 1, kWholeBlendFace = 2;
     bool known() const { return version != 0 && !points.empty(); }
 };
 
@@ -385,7 +414,9 @@ struct TopoRef {
 //      "neighbourOwners": [n, ...], "own": n, "placements": [as above], "points": [[x, y, z], ...], "spacing": n,
 //      "version": 3, "whole": bool,
 //      "between": bool, "carrierNames": [["<64 hex>", ...], ...], "faceMoves": [[12 integers], ...],
-//      "neighbourMoves": [n, ...]}
+//      "neighbourMoves": [n, ...], "carrierHistory": [{"flags": n, "run": "<uuid>"}, ...]}
+// ("carrierHistory", version 3, optional: written only when an entry has flags; one per carrier, flags 0 to 3, "run"
+// present exactly when flags are not 0.)
 // (type 0 plane, 1 cylinder, 2 other; version 3 has eleven integers per carrier, the last its "moved"; version 2, as
 // written in T-081b round 9, has ten and no "between", "carrierNames", "faceMoves" or "neighbourMoves"; version 1, as
 // written before round 9, has nine integers per carrier and no "grounds", "neighbourGrounds" or "whole"; both still
@@ -430,6 +461,10 @@ struct Resolved {
     // between the faces it is named from (PickSamples::between), each of those faces is now Exact by its name by
     // generator identity or holds the pick as its features moved it, and exactly one element lies between them, the
     // answer. The refusals above apply to it as to generator identity.
+    // Also set on an Exact answer by IDENTITY BY HISTORY (T-081b round 11, PickSamples::carrierHistory): a face (its
+    // names an import's own) that every operation since the pick carried one to one by the kernel's history, or a
+    // whole blend face whose blend again made one face for its edge, that edge's reference Exact; and
+    // derived identity counts such faces as still the faces they were. The refusals apply to it too.
     bool identity = false;
     bool derived = false;
     // Usable for a rebuild: Exact, Split and Merged, and Repaired when repairConfirmed; never Broken, never an answer

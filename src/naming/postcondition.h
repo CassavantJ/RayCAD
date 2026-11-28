@@ -25,6 +25,20 @@
 // named from, those faces still theirs by name and one element between them now) are written down at postcondition().
 // FACE MOVES (T-081b round 10, NamingInput::faceMoves): a direct edit's move of a face it was given carries what lies
 // on that face like a feature's placement, composed after the placement and the body moves (below, "the move").
+// IDENTITY BY HISTORY (T-081b round 11, PickSamples::carrierHistory, postcondition.cpp historyHolds): one-to-one
+// history is identity. A face whose names are an import's own (a sweep's face is a whole generator element already) and
+// that every operation since the pick carried one to one by the kernel's history (Modified, one in, one out; no split,
+// no merge, nothing generated into it: its run of one-to-one history, ElementMap::Impl::runs, the same at pick time and
+// now) is the pick, however an operation reshaped it (a resized bore, a face a direct edit moved, a face a dimension
+// edit of a cut trimmed otherwise); a blend face that was the only face its blend generated from its edge, that edge
+// given by a reference that resolved Exact, is the pick while its blend again makes one face for that edge (its size is
+// irrelevant). Read from the map's record of the history (ElementMap::Impl::runs, wholeBlends), never from geometry.
+// Such a face answers Exact with Resolved::identity, the refusals and P2 applying as to generator identity; and derived
+// identity counts it as still the face it was, for an edge or vertex named from its faces (nb.edge, nb.vertex; an
+// imported one, import.edge or import.vertex, only between faces that are theirs by identity). A REFERENCE WITH SAMPLES
+// BUT NO POINT (neither sample nor territory point: its element had none to give; T-081b round 11, ruling I) is
+// answered as one without samples: Exact only by identity, a Split or Merged answer Broken, any other a suggestion
+// (Repaired) at most.
 //
 // THE POST-CONDITION. Every answer the resolver would give that is not Broken (Exact, Split, Merged; Repaired is a
 // suggestion and is left alone) is checked last, for faces, edges and vertices alike, whatever found it (a name, a

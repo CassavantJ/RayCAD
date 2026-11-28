@@ -40,4 +40,18 @@ bool derivedIdentityEnabled() noexcept;
 void setFaceMovesEnabled(bool on) noexcept;
 bool faceMovesEnabled() noexcept;
 
+// T-081b round 11, the same kind of switches, each on by default:
+//  - Identity by history (naming.h PickSamples::carrierHistory), each of its two kinds: Carried (H2: a face the
+//    kernel's history carried one to one), WholeBlend (H1: a blend's only face for its edge). Off, no face is identity
+//    by that kind, for its own reference or as a face derived identity counts on (references are still made with the
+//    flags). Default on, or off from the start for those the environment variable RAYCAD_NAMING_NO_HISTORY lists (1
+//    Carried, 2 WholeBlend, comma-separated; read once, for diagnosis).
+//  - The settle shortcut (postcondition.cpp Checker::settle): off, a mapped point already on every mapped surface
+//    within 1e-4 mm is settled further anyway, as before round 10.
+enum class HistoryIdentity { Carried, WholeBlend };
+void setHistoryIdentityEnabled(HistoryIdentity which, bool on) noexcept;
+bool historyIdentityEnabled(HistoryIdentity which) noexcept;
+void setSettleShortcutEnabled(bool on) noexcept;
+bool settleShortcutEnabled() noexcept;
+
 } // namespace ray::naming::testing

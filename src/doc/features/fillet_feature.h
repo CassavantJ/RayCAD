@@ -7,7 +7,8 @@
 // Merged add a warning so the change can be reviewed. A reference that is Broken, or Repaired and not confirmed by
 // the user, fails the feature with a message naming the edge: nothing is ever blended on a guess (PLAN.md 3.3).
 // OCCT extends a blend along tangent edges; the kernel's warning saying so is passed on. All edges must be on one
-// body, which the feature writes.
+// body, which the feature writes. The edges whose reference resolved Exact are given to naming as such
+// (naming::NamingInput::exactInputs): a blend face made for one of them alone is a whole blend face (T-081b round 11).
 #pragma once
 
 #include <ray/document.h>

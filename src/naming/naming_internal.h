@@ -10,6 +10,7 @@
 #include <compare>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -51,6 +52,18 @@ struct ElementMap::Impl {
         std::vector<Hash256> names;
     };
     std::vector<FaceMoveRecord> faceMoves;
+    // One-to-one history (T-081b round 11), kept in memory like the above, never serialised (a map read back has none:
+    // nothing is identity by history on it):
+    // Each face's RUN of one-to-one history: the feature whose operation last made the face otherwise than one to one
+    // (issued its names: a sweep's face, an imported face, a blend's, a piece; or merged faces into it, or generated
+    // something into it), every operation after it having carried the face one to one (the kernel's history: Modified
+    // from that one input face to that one result face, from no other input element, nothing Generated into it;
+    // propagate). Sorted by face, faces only; a face not listed has no known run (a map read back, a rematch).
+    std::vector<std::pair<kernel::SubId, FeatureId>> runs;
+    // The names of blend faces each the only face its blend generated from its one input edge, that edge given to the
+    // blend by a reference that resolved Exact in this build (NamingInput::exactInputs); kept by later maps while held;
+    // sorted, unique.
+    std::vector<Hash256> wholeBlends;
 
     // Derived by detail::finishMap, never serialised:
     // name -> element, for names held by EXACTLY one element. A name held by several elements (they could not
@@ -112,6 +125,12 @@ std::vector<const FeaturePlacement*> bodyMovesOf(const ElementMap& map, const Fe
 
 // The face moves (ElementMap::Impl::faceMoves) whose face held one of `names`, oldest first.
 std::vector<const FeaturePlacement*> faceMovesOf(const ElementMap& map, std::span<const Hash256> names);
+
+// ElementMap::Impl::runs (T-081b round 11): the feature that started face `face`'s run of one-to-one history, nullopt
+// when not known.
+std::optional<FeatureId> runOf(const ElementMap& map, kernel::SubId face);
+// ElementMap::Impl::wholeBlends: is `name` among them?
+bool wholeBlend(const ElementMap& map, const Hash256& name);
 
 // ---------- Fingerprints ----------
 // Quantisation steps (naming.h): 1e-4 mm for lengths, areas and positions, 1e-6 for unit-vector components.

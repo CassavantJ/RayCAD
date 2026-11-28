@@ -424,6 +424,12 @@ Result<ElementMap> finishMap(ElementMap::Impl table, bool fromFile)
     for (std::size_t i = 1; i < table.ancestors.size(); ++i)
         if (!(table.ancestors[i - 1].id < table.ancestors[i].id))
             return bad("ancestor records are not in order");
+    for (std::size_t i = 1; i < table.runs.size(); ++i)
+        if (!(table.runs[i - 1].first < table.runs[i].first))
+            return bad("one-to-one runs are not in order");
+    for (std::size_t i = 1; i < table.wholeBlends.size(); ++i)
+        if (!(table.wholeBlends[i - 1] < table.wholeBlends[i]))
+            return bad("whole blend names are not in order");
 
     std::vector<std::pair<Hash256, Hash256>> members;
     members.reserve(table.records.size());
@@ -474,6 +480,24 @@ std::vector<const FeaturePlacement*> faceMovesOf(const ElementMap& map, std::spa
                         [&](const Hash256& n) { return std::binary_search(m.names.begin(), m.names.end(), n); }))
             out.push_back(&m.placement);
     return out;
+}
+
+std::optional<FeatureId> runOf(const ElementMap& map, kernel::SubId face)
+{
+    if (!map.impl)
+        return std::nullopt;
+    const auto& runs = map.impl->runs;
+    const auto it =
+        std::lower_bound(runs.begin(), runs.end(), face,
+                         [](const std::pair<kernel::SubId, FeatureId>& r, kernel::SubId s) { return r.first < s; });
+    if (it == runs.end() || it->first != face)
+        return std::nullopt;
+    return it->second;
+}
+
+bool wholeBlend(const ElementMap& map, const Hash256& name)
+{
+    return map.impl && std::binary_search(map.impl->wholeBlends.begin(), map.impl->wholeBlends.end(), name);
 }
 
 } // namespace detail

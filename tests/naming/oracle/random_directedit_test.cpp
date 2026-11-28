@@ -2576,6 +2576,10 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
     // of the cap's plane over the old place left (Broken, gone): it holds none of the pick as moved, and the exception
     // (most of the pick where it was picked) does not apply because the pick as moved left the part. Each pin fails
     // with the refusal off: generator identity answers Exact on that element.
+    // T-081b round 11 (ruling K), two more, each its sequence's script (RAYCAD_DUMP_SCRIPTS): T-081a random 11:43 face
+    // 8 (pinned_scripts.txt "random 11:43", plate_counterbore_1) and random-directedit 8:3 face 15 ("directedit 8:3",
+    // l_bracket_1), each still on the pick's recorded surfaces, holding none of the pick: Broken, gone; with the
+    // refusal off, Exact by identity, WRONG.
     struct Pin {
         const char* script;
         int part;
@@ -2586,6 +2590,8 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
     const std::vector<Pin> pins{
         {"holdout1 7:33", 7, {39.2339, -2.5489, 10.5459}, 27.0338, "another patch of a boss's side"},
         {"review4 13:25", 13, {110.9422, 39.0751, 5.0154}, 181.1502, "a moved cut's end cap whose image left the part"},
+        {"random 11:43", 11, {12.8857, 49.1827, 7.6208}, 289.3283, "T-081a random 11:43 face 8, on its own surface"},
+        {"directedit 8:3", 8, {3.6352, 25.4857, 38.2551}, 107.135, "random-directedit 8:3 face 15, on its own surface"},
     };
     using naming::testing::IdentityRefusal;
     for (const Pin& p : pins) {
@@ -2606,6 +2612,32 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
         CHECK(off[0].answer == Answer::Exact);
         CHECK(isWrong(off[0].judgement.verdict));
     }
+}
+
+TEST_CASE("Settle pin (round 11, ruling J): a corner on tangent surfaces, carried along its crossing by a known face "
+          "move, is not settled further",
+          "[naming][directedit-replays]")
+{
+    // random-directedit 0:0 vertex 21 (pinned_scripts.txt "directedit 0:0", block_blind_holes_1): a corner of a pushed
+    // boss's end cap where the side's plane runs on into its arc's cylinder, carried by the push's own face move. The
+    // mapped point already lies on every mapped surface within the precision they were recorded to (1e-4 mm); settling
+    // it further only chased the rounding, and the steps along the two tangent surfaces' common normal are
+    // ill-conditioned: they carried it along the crossing, off the corner (postcondition.cpp Checker::settle, the
+    // round-10 change the architect accepted). Exact {the corner}, correct. The mutation check: with the shortcut off
+    // (naming::testing::setSettleShortcutEnabled) the resolver answers otherwise.
+    const auto [baseline, edited] = pinnedScripts("directedit 0:0");
+    const Vec3 at{-14.4929, 23.206, -8.5887};
+    const std::vector<Looked> looked = replayScriptedAndLook(0, baseline, edited, SubKind::Vertex, at, 0.0);
+    REQUIRE(looked.size() == 1);
+    INFO("resolver " << looked[0].signature << ", " << verdictName(looked[0].judgement.verdict));
+    CHECK(looked[0].answer == Answer::Exact);
+    CHECK(looked[0].judgement.verdict == Verdict::Correct);
+    naming::testing::setSettleShortcutEnabled(false);
+    const std::vector<Looked> off = replayScriptedAndLook(0, baseline, edited, SubKind::Vertex, at, 0.0, {}, false);
+    naming::testing::setSettleShortcutEnabled(true);
+    REQUIRE(off.size() == 1);
+    INFO("settle shortcut off: " << off[0].signature << ", " << verdictName(off[0].judgement.verdict));
+    CHECK((off[0].answer != looked[0].answer || off[0].elements != looked[0].elements));
 }
 
 TEST_CASE("Oracle pin (round 10, ruling D): on a replay that dropped a feature, an element in place with the pick's "

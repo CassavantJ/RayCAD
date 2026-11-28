@@ -401,6 +401,10 @@ Result<ElementMap> assignNames(const FeatureId& importFeature, const BodyFacts& 
     table.records.erase(std::unique(table.records.begin(), table.records.end(),
                                     [](const TopoName& a, const TopoName& b) { return a.id == b.id; }),
                         table.records.end());
+    // (T-081b round 11: an imported face's name is issued here; its run of one-to-one history starts with the import,
+    // ElementMap::Impl::runs.)
+    for (std::uint32_t i = 0; i < facts.faceCount; ++i)
+        table.runs.emplace_back(kernel::SubId{kernel::SubKind::Face, i}, importFeature);
     return finishMap(std::move(table), false);
 }
 

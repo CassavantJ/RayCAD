@@ -1186,12 +1186,20 @@ TEST_CASE("Face moves (round 10): a face a direct edit pushed is followed by the
     r = resolverFor(further)->resolve(afterPush);
     CHECK(r.state == ResolveState::Exact);
     CHECK(r.elements == std::vector<SubId>{*furtherTop});
-    // Without the move given, and the mutation check (face moves off): a suggestion, never Exact.
+    // Without the move given, and the mutation check (face moves off): a suggestion, never Exact. (Since round 11 the
+    // push's history, one face in, one out, makes the face the pick by history as well: these two are asked of the face
+    // moves alone, identity by history off.)
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::Carried, false);
     CHECK(resolverFor(pushedImport(3.0, false))->resolve(ref).state != ResolveState::Exact);
     naming::testing::setFaceMovesEnabled(false);
     const Resolved off = resolverFor(pushed)->resolve(ref);
     naming::testing::setFaceMovesEnabled(true);
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::Carried, true);
     CHECK(off.state != ResolveState::Exact);
+    // With it on, the push without its move given is the pick by history: Exact, by identity.
+    const Resolved byHistory = resolverFor(pushedImport(3.0, false))->resolve(ref);
+    CHECK(byHistory.state == ResolveState::Exact);
+    CHECK(byHistory.identity);
     // A version-2 reference (written before round 10) still loads, as version 2, and resolves as before: its face
     // moves are not known.
     TopoRef v2 = ref;
@@ -1265,4 +1273,314 @@ TEST_CASE("Derived identity (round 10): the one edge between the faces it is nam
     TopoRef notAlone = ref;
     notAlone.samples.between = false;
     CHECK(resolverFor(after)->resolve(notAlone).state != ResolveState::Exact);
+}
+
+// ---------------------------------------------------------------- T-081b round 11
+namespace {
+
+const FeatureId kResize = test::featureId(68);
+const FeatureId kFillet = test::featureId(69);
+
+// The cylinder faces of `shape` of radius r (to 1e-6), sorted.
+std::vector<SubId> cylindersOf(const kernel::Shape& shape, double r)
+{
+    std::vector<SubId> out;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Face); ++i) {
+        const auto info = take(kernel::surfaceInfo(shape, SubId{SubKind::Face, i}));
+        if (info.type == kernel::SurfaceType::Cylinder && std::abs(info.radius - r) < 1e-6)
+            out.push_back(SubId{SubKind::Face, i});
+    }
+    return out;
+}
+
+// The circle edges of `shape` of radius r on the plane z (to 1e-6), sorted.
+std::vector<SubId> circlesAt(const kernel::Shape& shape, double r, double z)
+{
+    std::vector<SubId> out;
+    for (std::uint32_t i = 0; i < shape.count(SubKind::Edge); ++i) {
+        const auto c = take(kernel::curveInfo(shape, SubId{SubKind::Edge, i}));
+        if (c.type == kernel::CurveType::Circle && std::abs(c.center.z - z) < 1e-6 && std::abs(c.radius - r) < 1e-6)
+            out.push_back(SubId{SubKind::Edge, i});
+    }
+    return out;
+}
+
+// holed()'s part as an imported body (kImport): its bore (radius 10) and every other face named from its geometry.
+Body importedHoled()
+{
+    const kernel::Shape shape = holed().shape;
+    return Body{shape, nameImported(kImport, shape)};
+}
+
+// `doctor` changes the kernel's history before naming (the negatives: a history that is not one to one).
+using Doctor = void (*)(kernel::ShapeHistory&, const kernel::Shape& before, const kernel::Shape& after);
+
+// `b`'s bore resized to diameter d (kernel::resizeHole, feature kResize), named from the kernel's history.
+Body resizedBore(const Body& b, double d, Doctor doctor = nullptr)
+{
+    const std::vector<SubId> bore = cylindersOf(b.shape, 10);
+    REQUIRE(!bore.empty());
+    JobContext ctx;
+    auto resized = take(kernel::resizeHole(b.shape, bore.front(), d, ctx));
+    if (doctor != nullptr)
+        doctor(resized.history, b.shape, resized.shape);
+    const std::array<const ElementMap*, 1> maps{&b.map};
+    const std::array<const kernel::Shape*, 1> shapes{&b.shape};
+    const NamingInput in{kResize, "resize_hole", maps, &resized.history, &resized.shape, {}, shapes};
+    return Body{resized.shape, take(propagate(in)).map};
+}
+
+// A block 40 x 30 x 20 (kBlock) with its top front edge (y 0, z 20) filleted by radius r (kFillet), the edge given as
+// a reference that resolved Exact (NamingInput::exactInputs) or not.
+Body filleted(double r, bool exact, Doctor doctor = nullptr)
+{
+    const Body block = extrude(kBlock, 0, rectangle(0, 0, 40, 30, 1, 1), 20);
+    const auto edge = lineEdge(block.shape, Vec3{0, 0, 20}, Vec3{40, 0, 20});
+    REQUIRE(edge);
+    JobContext ctx;
+    const std::array<SubId, 1> edges{*edge};
+    auto blended = take(kernel::fillet(block.shape, edges, r, ctx));
+    if (doctor != nullptr)
+        doctor(blended.history, block.shape, blended.shape);
+    const std::array<const ElementMap*, 1> maps{&block.map};
+    const std::array<const kernel::Shape*, 1> shapes{&block.shape};
+    NamingInput in{kFillet, "fillet", maps, &blended.history, &blended.shape, {}, shapes};
+    if (exact)
+        in.exactInputs = edges;
+    return Body{blended.shape, take(propagate(in)).map};
+}
+
+// The history entry of input element `source` with `relation`, if any.
+kernel::HistoryEntry* entryOf(kernel::ShapeHistory& h, SubId source, kernel::HistoryEntry::Relation relation)
+{
+    for (kernel::HistoryEntry& e : h.entries)
+        if (e.source == source && e.relation == relation && e.inputIndex == 0)
+            return &e;
+    return nullptr;
+}
+
+// The bore's Modified entry (the old bore face to the new one).
+kernel::HistoryEntry* boreEntry(kernel::ShapeHistory& h, const kernel::Shape& before)
+{
+    const std::vector<SubId> bore = cylindersOf(before, 10);
+    REQUIRE(!bore.empty());
+    return entryOf(h, bore.front(), kernel::HistoryEntry::Relation::Modified);
+}
+
+// The top face (z 20) of a shape, which every test part has.
+SubId topOf(const kernel::Shape& shape)
+{
+    const auto top = faceAt(shape, Vec3{5, 15, 20}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    return *top;
+}
+
+} // namespace
+
+TEST_CASE("Identity by history (round 11, H2): a face its operation's history carried one to one is that face",
+          "[naming][evidence][identity][history]")
+{
+    // An imported part with a bore of radius 10 (no generator names it: an imported face's name is made from its
+    // geometry, not a whole generator element), the bore picked, then opened up to radius 13 (resize_hole). The
+    // kernel's history says the old bore went into the new one and nothing else did: the same face, resized. Its
+    // samples lie on the old cylinder, on no face now: round 10 only guessed (the cylinder moved along its normal), a
+    // suggestion. Identity by history: Exact. The rim on the top face (an imported edge, named from the bore and the
+    // top face, alone between them) by derived identity, both faces theirs by history.
+    const Body before = importedHoled();
+    const std::vector<SubId> bore = cylindersOf(before.shape, 10);
+    const std::vector<SubId> rim = circlesAt(before.shape, 10, 20);
+    REQUIRE(bore.size() == 1);
+    REQUIRE(rim.size() == 1);
+    const TopoRef boreRef = resolverFor(before)->makeRef(kBody, bore.front());
+    const TopoRef rimRef = resolverFor(before)->makeRef(kBody, rim.front());
+    CHECK_FALSE(boreRef.samples.whole);
+    REQUIRE(boreRef.samples.carrierHistory.size() == boreRef.samples.carriers.size());
+    CHECK(boreRef.samples.carrierHistory[0].flags == PickSamples::kCarriedFace);
+    CHECK(boreRef.samples.carrierHistory[0].run == kImport); // its run of one-to-one history: since the import
+    CHECK(rimRef.samples.between);                           // (round 11: an imported edge is named from its faces too)
+    // The flags are evidence: the JSON form keeps them (version 3, an optional member).
+    const std::string text = toJson(boreRef);
+    CHECK(text.find("\"carrierHistory\":[{\"flags\":1,\"run\":\"" + kImport.value.toString() + "\"}]") !=
+          std::string::npos);
+    CHECK(text.find("\"version\":3") != std::string::npos);
+    CHECK(take(topoRefFromJson(text)).samples.carrierHistory[0].run == kImport);
+    CHECK(toJson(take(topoRefFromJson(text))) == text);
+
+    const Body after = resizedBore(before, 26);
+    const std::vector<SubId> opened = cylindersOf(after.shape, 13);
+    const std::vector<SubId> openedRim = circlesAt(after.shape, 13, 20);
+    REQUIRE(opened.size() == 1);
+    REQUIRE(openedRim.size() == 1);
+    CHECK(naming::detail::runOf(after.map, opened.front()) == std::optional<FeatureId>(kImport)); // one in, one out
+    Resolved r = resolverFor(after)->resolve(boreRef);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+    CHECK_FALSE(r.derived);
+    CHECK(r.elements == opened);
+    r = resolverFor(after)->resolve(rimRef);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+    CHECK(r.derived);
+    CHECK(r.elements == openedRim);
+
+    // The mutation check: identity by history (H2) off, neither is Exact (the bore a suggestion).
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::Carried, false);
+    const Resolved offBore = resolverFor(after)->resolve(boreRef);
+    const Resolved offRim = resolverFor(after)->resolve(rimRef);
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::Carried, true);
+    CHECK(offBore.state != ResolveState::Exact);
+    CHECK_FALSE(offBore.identity);
+    CHECK(offRim.state != ResolveState::Exact);
+    // A reference made before round 11 (no history flags) is decided as before.
+    TopoRef older = boreRef;
+    older.samples.carrierHistory.clear();
+    CHECK(resolverFor(after)->resolve(older).state != ResolveState::Exact);
+}
+
+TEST_CASE("Identity by history (round 11, H2): not through a history that is not one to one",
+          "[naming][evidence][identity][history]")
+{
+    // The same bore and resize, the kernel's history doctored: (a) one to two (the old bore went into the new bore and
+    // into the top face as well), (b) two to one (the top face went into the new bore as well), (c) the new bore also
+    // generated from an edge. None is identity by history, whatever the names say.
+    const Body before = importedHoled();
+    const std::vector<SubId> bore = cylindersOf(before.shape, 10);
+    REQUIRE(bore.size() == 1);
+    const TopoRef boreRef = resolverFor(before)->makeRef(kBody, bore.front());
+    REQUIRE(boreRef.samples.carrierHistory.size() == boreRef.samples.carriers.size());
+    REQUIRE(boreRef.samples.carrierHistory[0].flags == PickSamples::kCarriedFace);
+    const Doctor oneToTwo = [](kernel::ShapeHistory& h, const kernel::Shape& b, const kernel::Shape& a) {
+        kernel::HistoryEntry* e = boreEntry(h, b);
+        REQUIRE(e != nullptr);
+        REQUIRE(e->results.size() == 1);
+        e->results.push_back(topOf(a));
+        std::sort(e->results.begin(), e->results.end());
+    };
+    const Doctor twoToOne = [](kernel::ShapeHistory& h, const kernel::Shape& b, const kernel::Shape& a) {
+        kernel::HistoryEntry* e = boreEntry(h, b);
+        REQUIRE(e != nullptr);
+        REQUIRE(e->results.size() == 1);
+        const SubId bore = e->results.front();
+        kernel::HistoryEntry* top = entryOf(h, topOf(b), kernel::HistoryEntry::Relation::Modified);
+        REQUIRE(top != nullptr);
+        top->results.push_back(bore);
+        std::sort(top->results.begin(), top->results.end());
+        (void)a;
+    };
+    const Doctor generatedInto = [](kernel::ShapeHistory& h, const kernel::Shape& b, const kernel::Shape&) {
+        kernel::HistoryEntry* e = boreEntry(h, b);
+        REQUIRE(e != nullptr);
+        REQUIRE(e->results.size() == 1);
+        h.entries.push_back(kernel::HistoryEntry{
+            kernel::HistoryEntry::Relation::Generated, 0, circlesAt(b, 10, 20).front(), {e->results.front()}});
+    };
+    for (const auto& [what, doctor] : std::array<std::pair<const char*, Doctor>, 3>{
+             {{"one to two", oneToTwo}, {"two to one", twoToOne}, {"generated into it", generatedInto}}}) {
+        INFO(what);
+        const Body after = resizedBore(before, 26, doctor);
+        const std::vector<SubId> opened = cylindersOf(after.shape, 13);
+        REQUIRE(opened.size() == 1);
+        // The new bore's run of one-to-one history starts with the resize: the import's run ended there.
+        CHECK(naming::detail::runOf(after.map, opened.front()) == std::optional<FeatureId>(kResize));
+        const Resolved r = resolverFor(after)->resolve(boreRef);
+        CHECK(r.state != ResolveState::Exact);
+        CHECK_FALSE(r.identity);
+    }
+}
+
+TEST_CASE("Identity by history (round 11, H1): a blend's only face for its edge is that blend's face, at any size",
+          "[naming][evidence][identity][history]")
+{
+    // A block's top front edge filleted by radius 2, given as a reference that resolved Exact; the blend face picked;
+    // the fillet then made radius 3. The blend made exactly one face for the edge at pick time and does again, the
+    // edge's reference Exact: the same face, Exact by identity, though none of its samples lies on it now (round 10: a
+    // guess, the cylinder moved along its normal). Not when the edge was not given by an Exact reference, nor when the
+    // blend made two faces for the edge at pick time (the history doctored); and the mutation check (H1 off).
+    const Body before = filleted(2, true);
+    const std::vector<SubId> blend = cylindersOf(before.shape, 2);
+    REQUIRE(blend.size() == 1);
+    const TopoRef ref = resolverFor(before)->makeRef(kBody, blend.front());
+    REQUIRE(ref.names.size() == 1);
+    const TopoName* name = before.map.record(ref.names.front());
+    REQUIRE(name != nullptr);
+    CHECK(name->role == "fillet.gE_F");
+    CHECK_FALSE(ref.samples.whole);
+    REQUIRE(ref.samples.carrierHistory.size() == ref.samples.carriers.size());
+    CHECK(ref.samples.carrierHistory[0].flags == PickSamples::kWholeBlendFace);
+    CHECK(ref.samples.carrierHistory[0].run == kFillet);
+
+    const Body after = filleted(3, true);
+    const std::vector<SubId> bigger = cylindersOf(after.shape, 3);
+    REQUIRE(bigger.size() == 1);
+    Resolved r = resolverFor(after)->resolve(ref);
+    CHECK(r.state == ResolveState::Exact);
+    CHECK(r.identity);
+    CHECK(r.elements == bigger);
+
+    // The edge given by a reference that did not resolve Exact now: no identity by history.
+    r = resolverFor(filleted(3, false))->resolve(ref);
+    CHECK(r.state != ResolveState::Exact);
+    CHECK_FALSE(r.identity);
+    // The mutation check.
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::WholeBlend, false);
+    const Resolved off = resolverFor(after)->resolve(ref);
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::WholeBlend, true);
+    CHECK(off.state != ResolveState::Exact);
+    CHECK_FALSE(off.identity);
+
+    // A blend that made two faces for the edge (the history doctored: the edge also generated the top face): its blend
+    // face is no whole blend face, at pick time or now.
+    const Doctor twoFaces = [](kernel::ShapeHistory& h, const kernel::Shape& b, const kernel::Shape& a) {
+        const auto edge = lineEdge(b, Vec3{0, 0, 20}, Vec3{40, 0, 20});
+        REQUIRE(edge);
+        kernel::HistoryEntry* e = entryOf(h, *edge, kernel::HistoryEntry::Relation::Generated);
+        REQUIRE(e != nullptr);
+        e->results.push_back(topOf(a));
+        std::sort(e->results.begin(), e->results.end());
+        e->results.erase(std::unique(e->results.begin(), e->results.end()), e->results.end());
+    };
+    const Body two = filleted(2, true, twoFaces);
+    const std::vector<SubId> twoBlend = cylindersOf(two.shape, 2);
+    REQUIRE(twoBlend.size() == 1);
+    for (const Hash256& n : two.map.namesOf(twoBlend.front()))
+        CHECK_FALSE(naming::detail::wholeBlend(two.map, n));
+    const TopoRef twoRef = resolverFor(two)->makeRef(kBody, twoBlend.front());
+    CHECK((twoRef.samples.carrierHistory.empty() ||
+           (twoRef.samples.carrierHistory[0].flags & PickSamples::kWholeBlendFace) == 0));
+    CHECK_FALSE(resolverFor(filleted(3, true, twoFaces))->resolve(twoRef).identity);
+}
+
+TEST_CASE("A reference with samples but no point of the pick (round 11, ruling I): Exact only by identity",
+          "[naming][evidence][identity]")
+{
+    // A reference made with samples whose element had no point to give, and no territory point either: nothing can
+    // check an answer against the pick. As a reference without samples (ruling 4): an Exact answer not by identity is a
+    // suggestion (Repaired, not usable), a Split one is Broken.
+    const kernel::Shape box = take(kernel::makeBox(Vec3{0, 0, 0}, Vec3{10, 20, 5}));
+    const Body imported{box, nameImported(kImport, box)};
+    const auto top = faceAt(box, Vec3{5, 10, 5}, Vec3{0, 0, 1});
+    REQUIRE(top);
+    const auto pointless = [](TopoRef ref) {
+        ref.samples.points.clear();
+        ref.samples.carrierHistory.clear(); // (no identity by history either: made before round 11)
+        ref.territory = Territory{};
+        return ref;
+    };
+    const TopoRef ref = pointless(resolverFor(imported)->makeRef(kBody, *top));
+    REQUIRE(ref.samples.version == kPickSamplesVersion);
+    CHECK_FALSE(ref.samples.whole);
+    const Resolved r = resolverFor(imported)->resolve(ref);
+    CHECK(r.state == ResolveState::Repaired);
+    CHECK_FALSE(r.usable());
+    CHECK(r.elements == std::vector<SubId>{*top});
+
+    // The block's top face, split by a slot: Split by names, Broken without a point to check it against.
+    const Body block = extrude(kBlock, 0, rectangle(0, 0, 100, 60, 1, 1), 20);
+    const auto blockTop = faceAt(block.shape, Vec3{50, 30, 20}, Vec3{0, 0, 1});
+    REQUIRE(blockTop);
+    const TopoRef whole = resolverFor(block)->makeRef(kBody, *blockTop);
+    const Body cut = slotted(40);
+    REQUIRE(resolverFor(cut)->resolve(whole).state == ResolveState::Split); // (with its points)
+    const Resolved split = resolverFor(cut)->resolve(pointless(whole));
+    CHECK(split.state == ResolveState::Broken);
 }

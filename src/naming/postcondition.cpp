@@ -97,6 +97,34 @@ bool faceMovesEnabled() noexcept
 {
     return g_faceMoves.load();
 }
+namespace {
+std::atomic<int> g_history[2] = {-1, -1}; // -1: not switched (the environment decides), 0 off, 1 on
+std::atomic<bool> g_settleShortcut{true};
+} // namespace
+void setHistoryIdentityEnabled(HistoryIdentity which, bool on) noexcept
+{
+    g_history[static_cast<int>(which)].store(on ? 1 : 0);
+}
+bool historyIdentityEnabled(HistoryIdentity which) noexcept
+{
+    const int v = g_history[static_cast<int>(which)].load();
+    if (v >= 0)
+        return v == 1;
+    // RAYCAD_NAMING_NO_HISTORY=<1|2>[,...] (read once, for diagnosis): 1 Carried, 2 WholeBlend off from the start.
+    static const std::string off = [] {
+        const char* e = std::getenv("RAYCAD_NAMING_NO_HISTORY");
+        return e == nullptr ? std::string() : "," + std::string(e) + ",";
+    }();
+    return off.find("," + std::to_string(static_cast<int>(which) + 1) + ",") == std::string::npos;
+}
+void setSettleShortcutEnabled(bool on) noexcept
+{
+    g_settleShortcut.store(on);
+}
+bool settleShortcutEnabled() noexcept
+{
+    return g_settleShortcut.load();
+}
 } // namespace testing
 
 namespace detail {
@@ -618,10 +646,16 @@ bool identityHolds(const ElementMap& map, const TopoRef& ref, SubId element)
 // The faces an edge or vertex named from its faces (role nb.edge, nb.vertex: its name's parents are those faces' names)
 // is named from, as `map` holds them now: each parent name on exactly one face. Empty when a parent name is held by no
 // face or by several (that face's name is gone: the element's lineage is not known), or the name is not so made.
-std::vector<SubId> namedFacesOf(const ElementMap& map, const Hash256& name)
+// (T-081b round 11: an imported edge or vertex, role import.edge or import.vertex, is named from the faces it lies on
+// too, its parents their names; `imported` says so. Such an edge is by derived identity only between faces that are
+// theirs by identity, postcondition()).
+std::vector<SubId> namedFacesOf(const ElementMap& map, const Hash256& name, bool* imported = nullptr)
 {
     const TopoName* r = map.record(name);
-    if (r == nullptr || (r->role != "nb.edge" && r->role != "nb.vertex") || r->parents.empty())
+    const bool import = r != nullptr && (r->role == "import.edge" || r->role == "import.vertex");
+    if (imported != nullptr)
+        *imported = import;
+    if (r == nullptr || (r->role != "nb.edge" && r->role != "nb.vertex" && !import) || r->parents.empty())
         return {};
     std::vector<SubId> faces;
     for (const Hash256& parent : r->parents) {
@@ -668,6 +702,75 @@ bool aloneBetweenItsFaces(const ElementMap& map, const kernel::Shape& shape, Sub
                      faces.size(), between.size());
     }
     return !faces.empty() && between.size() == 1 && between.front() == sub;
+}
+
+// ---------------------------------------------------------------- identity by history (T-081b round 11)
+// ONE-TO-ONE HISTORY IS IDENTITY. A face is the material its import made, and an operation whose kernel history says
+// that face went into exactly one result face, and nothing else went into that face (Modified, one in, one out: no
+// split, no merge, nothing generated into it), did not make another face of it: the result is the same face, however
+// the operation reshaped it (a resized bore, a face a direct edit moved). Read from the history the map recorded (the
+// face's run of one-to-one history, ElementMap::Impl::runs: the feature that last made it otherwise than one to one,
+// the same at pick time and now), never from geometry. A blend face is the blend of its edge: while its blend made
+// exactly one face for that edge, and the edge was given by a reference that resolved Exact, it is that blend's face
+// for that edge, whatever the blend's size (ElementMap::Impl::wholeBlends).
+
+// Is `name` an imported face's own, alone in its family (no piece, no ordinal, no sibling told apart by its
+// surroundings)? The import made that face. (A sweep's side or cap is a whole generator element already, generator
+// identity's; a face named from its edges, a piece of a split face, a face generated from others: no; a blend face is
+// the blend's, below.)
+bool anchorName(const ElementMap& map, const Hash256& name)
+{
+    const TopoName* r = map.record(name);
+    return r != nullptr && r->kind == SubKind::Face && r->role == "import.face" && r->ordinal == 0 &&
+           r->siblingCount == 1 && r->discriminator.empty() && !needsHint(*r);
+}
+
+// PickSamples::carrierHistory of face f in `map` (at pick time, and now to compare): its every name held by it alone,
+// its run known; kCarriedFace when its names are all an import's own, kWholeBlendFace when it holds one name, a whole
+// blend face's. No flags otherwise.
+PickSamples::CarrierHistory historyOf(const ElementMap& map, SubId f)
+{
+    PickSamples::CarrierHistory h;
+    if (f.kind != SubKind::Face)
+        return h;
+    const std::span<const Hash256> names = map.namesOf(f);
+    const std::optional<FeatureId> run = runOf(map, f);
+    if (names.empty() || !run ||
+        !std::all_of(names.begin(), names.end(), [&](const Hash256& n) { return map.find(n) == f; }))
+        return h;
+    if (std::all_of(names.begin(), names.end(), [&](const Hash256& n) { return anchorName(map, n); }))
+        h.flags |= PickSamples::kCarriedFace;
+    if (names.size() == 1 && wholeBlend(map, names.front()))
+        h.flags |= PickSamples::kWholeBlendFace;
+    if (h.flags != 0)
+        h.run = *run;
+    return h;
+}
+
+// Is face f now, by history, the face picked with these names and this pick-time history (PickSamples::carrierHistory):
+// the pick's names lead to f alone, f holds exactly them, its run is the one at pick time (every operation since
+// carried it one to one), and it is again what it was then (its names an import's own; a whole blend face, its blend
+// again making one face for its edge, that edge's reference Exact)?
+bool historyHolds(const ElementMap& map, std::span<const Hash256> names, const PickSamples::CarrierHistory& then,
+                  SubId f)
+{
+    if (f.kind != SubKind::Face || names.empty() || then.flags == 0 || map.namesOf(f).size() != names.size() ||
+        !std::all_of(names.begin(), names.end(), [&](const Hash256& n) { return map.find(n) == f; }))
+        return false;
+    const PickSamples::CarrierHistory now = historyOf(map, f);
+    if (now.flags == 0 || !(now.run == then.run))
+        return false;
+    const std::uint8_t both = then.flags & now.flags;
+    using testing::HistoryIdentity;
+    return ((both & PickSamples::kCarriedFace) != 0 && testing::historyIdentityEnabled(HistoryIdentity::Carried)) ||
+           ((both & PickSamples::kWholeBlendFace) != 0 && testing::historyIdentityEnabled(HistoryIdentity::WholeBlend));
+}
+
+// The pick-time history of the pick's own surface i (PickSamples::carrierHistory), no flags when not recorded.
+PickSamples::CarrierHistory carrierHistoryOf(const PickSamples& s, std::size_t i)
+{
+    return s.version >= 3 && i < s.carrierHistory.size() && i < s.ownCarriers ? s.carrierHistory[i]
+                                                                              : PickSamples::CarrierHistory{};
 }
 
 // The index into `list` (PickSamples::faceMoves) of the face moves that carry a face with these names in `map`,
@@ -936,6 +1039,10 @@ public:
     // compared: P1 is taken as computable.
     bool pickOnSurfacesOf(SubId e) const
     {
+        // (A pick with no point at all, neither sample nor territory point, has nothing P1 could check, on any surface:
+        // T-081b round 11, such a reference is Exact only by identity, ruling I.)
+        if (picked_.empty())
+            return false;
         // With samples: the pick's own surfaces as recorded (PickSamples::carriers), where they were and as moved: a
         // face of e on each (onMappedCarriers), the surfaces themselves compared, not points on them (a bore moved by
         // its diameter passes through its old seam). Without (an older reference): its territory points on e's
@@ -1198,7 +1305,7 @@ private:
         // side's plane running on into its arc's cylinder, the steps along their common normal are ill-conditioned and
         // carry the point along the crossing instead: T-081b round 10, a pushed boss's end cap, random-directedit 0:0
         // vertex 21.)
-        if (offAll(p) <= 1e-4)
+        if (testing::settleShortcutEnabled() && offAll(p) <= 1e-4)
             return p;
         for (int iter = 0; iter < 20; ++iter) {
             std::array<Vec3, 3> n{};
@@ -2070,16 +2177,11 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
             for (const auto& q : territories.of(sub).points)
                 if (out.points.size() < kMaxPickSamples)
                     out.points.push_back(q);
-        // Nothing to sample (a surface or curve whose points cannot be read, no territory either): recorded as version
-        // 2 without points, so that the reference says it was made with samples and its element had none to give (not a
-        // reference made before samples: postcondition()), and whether it was a whole generator element.
-        if (out.points.empty()) {
-            PickSamples none;
-            none.version = kPickSamplesVersion;
-            none.whole = wholeGenerator(map, sub);
-            none.between = aloneBetweenItsFaces(map, shape, sub);
-            return none;
-        }
+        // Nothing to sample (a surface or curve whose points cannot be read, no territory either): recorded without
+        // points, so that the reference says it was made with samples and its element had none to give (not a
+        // reference made before samples: postcondition()), with whether it was a whole generator element, and (T-081b
+        // round 11) its surfaces with their names and history (PickSamples::carrierHistory): such a reference is Exact
+        // only by identity (ruling I), and identity by history is read from them.
         auto carrierFor = [&](const SubId& f) {
             const std::optional<kernel::SurfaceInfo>& info = territories.surface(f);
             SampleCarrier c = info ? carrierOf(faceSurfaceOf(territories, f)) : SampleCarrier{};
@@ -2105,6 +2207,7 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
             std::vector<Hash256> sorted(names.begin(), names.end());
             std::sort(sorted.begin(), sorted.end());
             out.carrierNames.push_back(std::move(sorted));
+            out.carrierHistory.push_back(historyOf(map, f)); // (T-081b round 11)
         };
         for (const SubId& f : faces) {
             if (out.carriers.size() >= kMaxSampleCarriers)
@@ -2146,6 +2249,9 @@ PickSamples pickSamplesOf(const ElementMap& map, const TerritoryCache& territori
         }
         if (std::all_of(out.neighbourMoves.begin(), out.neighbourMoves.end(), [](std::int32_t o) { return o < 0; }))
             out.neighbourMoves.clear();
+        if (std::all_of(out.carrierHistory.begin(), out.carrierHistory.end(),
+                        [](const PickSamples::CarrierHistory& h) { return h.flags == 0; }))
+            out.carrierHistory.clear();
         if (std::all_of(out.neighbourOwners.begin(), out.neighbourOwners.end(), [](std::int32_t o) { return o < 0; }))
             out.neighbourOwners.clear();
         if (std::all_of(out.neighbourGrounds.begin(), out.neighbourGrounds.end(), [](std::int32_t o) { return o < 0; }))
@@ -2288,7 +2394,9 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
         //     an answer holding none of the pick as moved but most of it where it was picked (a feature's placement
         //     changed by a dimension edit of its profile is no move of what it made), and only while the pick as moved
         //     did not leave the part (a feature moved out of the part takes what it made with it, and what covers the
-        //     old place is not the pick, whatever its name: random 11:43 face 8, review4 13:25 face 5).
+        //     old place is not the pick, whatever its name: random 11:43 face 8, review4 13:25 face 5). A pick with no
+        //     point at all (neither sample nor territory point) is never so refused: there is nothing the samples could
+        //     decide (T-081b round 11: such a reference is Exact only by identity, ruling I).
         const auto refusedIdentity = [&](SubId e) -> const char* {
             using testing::IdentityRefusal;
             const Checker moved(map, territories, ref);
@@ -2312,11 +2420,26 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
                                  ref.samples.whole ? 1 : 0, ref.samples.version, n->role.c_str(), n->siblingCount,
                                  n->ordinal, n->discriminator.size(), n->parents.size(),
                                  identityHolds(map, ref, e) ? 1 : 0);
-            if (r.state != ResolveState::Exact || r.elements.size() != 1 || !identityHolds(map, ref, e))
+            if (r.state != ResolveState::Exact || r.elements.size() != 1)
+                return false;
+            // Generator identity, or IDENTITY BY HISTORY (T-081b round 11, PickSamples::carrierHistory): a face, its
+            // names an import's own, that every operation since the pick carried one to one by the kernel's history
+            // (H2), or a whole blend face whose blend again made one face for its edge, that edge's reference Exact
+            // (H1). The refusals below apply to both alike.
+            const bool generator = identityHolds(map, ref, e);
+            const bool history = !generator && ref.kind == SubKind::Face &&
+                                 historyHolds(map, ref.names, carrierHistoryOf(ref.samples, 0), e);
+            if (traceLevel() >= 3 && ref.kind == SubKind::Face)
+                std::fprintf(stderr, "POST identity by history? pick flags %u now %u holds %d\n",
+                             static_cast<unsigned>(carrierHistoryOf(ref.samples, 0).flags),
+                             static_cast<unsigned>(historyOf(map, e).flags), history ? 1 : 0);
+            if (!generator && !history)
                 return false;
             const char* refusal = refusedIdentity(e);
             if (refusal != nullptr && traceLevel() > 0)
-                std::fprintf(stderr, "POST identity refused: %s\n", refusal);
+                std::fprintf(stderr, "POST identity%s refused: %s\n", history ? " (history)" : "", refusal);
+            if (refusal == nullptr && history && traceLevel() > 1)
+                std::fprintf(stderr, "POST identity by history\n");
             return refusal == nullptr;
         };
         // DERIVED IDENTITY (naming.h Resolved::derived, T-081b round 10): an edge or vertex is the meeting of the faces
@@ -2336,23 +2459,43 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
                 ref.kind == SubKind::Face || e.kind != ref.kind || ref.samples.version < 3 || !ref.samples.between ||
                 ref.names.size() != 1 || map.find(ref.names.front()) != e || map.namesOf(e).size() != 1)
                 return false;
-            const std::vector<SubId> faces = namedFacesOf(map, ref.names.front());
+            bool imported = false;
+            const std::vector<SubId> faces = namedFacesOf(map, ref.names.front(), &imported);
             if (faces.empty()) {
                 if (traceLevel() > 0)
                     std::fprintf(stderr, "POST derived identity: a face it is named from has lost its name\n");
                 return false;
             }
             const Checker moved(map, territories, ref);
+            // A face it is named from is still the face it was by its own identity: generator identity, or identity by
+            // history (T-081b round 11: the face that held that name at pick time, one of the pick's own surfaces, its
+            // history then, PickSamples::carrierHistory, said again now). Or, for an edge or vertex a feature named
+            // from its faces (nb.edge, nb.vertex), the face holds the pick as its features moved it (P1 for it). An
+            // imported edge or vertex (import.edge, import.vertex) only between faces that are theirs by identity.
             // (A face is Exact by generator identity only while that is switched on: naming::testing.)
-            for (const SubId& f : faces)
-                if (!(testing::generatorIdentityEnabled() && wholeGenerator(map, f)) && !moved.faceHoldsPick(f)) {
+            const PickSamples& s = ref.samples;
+            const auto byHistoryNow = [&](const SubId& f) {
+                const std::size_t own = std::min<std::size_t>(s.ownCarriers, s.carriers.size());
+                for (std::size_t i = 0; i < own && i < s.carrierNames.size(); ++i)
+                    if (historyHolds(map, s.carrierNames[i], carrierHistoryOf(s, i), f))
+                        return true;
+                return false;
+            };
+            for (const SubId& f : faces) {
+                const bool generatorFace = testing::generatorIdentityEnabled() && wholeGenerator(map, f);
+                const bool historyFace = !generatorFace && byHistoryNow(f);
+                if (traceLevel() >= 3)
+                    std::fprintf(stderr, "POST derived identity: face %u generator %d history %d%s\n", f.index,
+                                 generatorFace ? 1 : 0, historyFace ? 1 : 0, imported ? " (imported)" : "");
+                if (!generatorFace && !historyFace && (imported || !moved.faceHoldsPick(f))) {
                     if (traceLevel() > 0)
                         std::fprintf(stderr,
-                                     "POST derived identity: face %u is neither a whole generator element nor holds "
-                                     "the pick\n",
-                                     f.index);
+                                     "POST derived identity: face %u is neither a whole generator element nor the "
+                                     "face by history%s\n",
+                                     f.index, imported ? "" : " nor holds the pick");
                     return false;
                 }
+            }
             const std::vector<SubId> between = elementsBetween(territories.shape(), faces, ref.kind);
             if (between.size() != 1 || between.front() != e) {
                 if (traceLevel() > 0)
@@ -2406,8 +2549,26 @@ Resolved postcondition(const ElementMap& map, const TerritoryCache& territories,
                                               "its name leads to is suggested as it: confirm it.");
         }
         const Checker check(map, territories, ref);
-        if (!check.any())
-            return r; // no evidence: as before
+        if (!check.any()) {
+            // A reference with samples but neither sample nor territory points (its element had none to give): nothing
+            // can check the answer against the pick, so it is answered as a reference without evidence is (ruling 4,
+            // T-081b round 11 ruling I): Exact only by identity (decided above), a Split or Merged answer Broken (it
+            // claims what nothing can check), any other answer a suggestion at most.
+            if (r.state != ResolveState::Exact)
+                return brokenBecause(std::string(r.state == ResolveState::Split
+                                                     ? "The picked element seems to have come apart"
+                                                     : "The picked element seems to be part of a larger one now") +
+                                     ", and the reference records no point of the pick to check that against.");
+            if (traceLevel() > 0) {
+                const TopoName* n = ref.names.empty() ? nullptr : map.record(ref.names.front());
+                std::fprintf(stderr, "POST no evidence: a suggestion (kind %d, role %s, hint (%.4f %.4f %.4f) %.4f)\n",
+                             static_cast<int>(ref.kind), n != nullptr ? n->role.c_str() : "?", ref.hint.qCx * 1e-4,
+                             ref.hint.qCy * 1e-4, ref.hint.qCz * 1e-4, ref.hint.qArea * 1e-4);
+            }
+            return suggestion(std::move(r), "The reference records no point of the picked element to check the "
+                                            "element its name leads to against, and that element is not the pick by "
+                                            "identity; it is suggested as it: confirm it.");
+        }
         if (!check.splitterMoved()) {
             Resolved out = check.decide(std::move(r));
             if (ref.kind == SubKind::Face && !check.known() && check.held() > 0 && out.state != ResolveState::Broken &&

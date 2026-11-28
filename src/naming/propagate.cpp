@@ -636,6 +636,8 @@ private:
         name.family = p.family;
         name.id = detail::nameId(name);
         names_[slot(p.element.kind)][p.element.index].push_back(name.id);
+        if (p.element.kind == SubKind::Face)
+            issuedFaces_.insert(p.element.index);
         if (p.sourceInput >= 0)
             splitChildren_[{p.sourceInput, p.source}].push_back(name.id);
         records_.push_back(std::move(name));
@@ -831,7 +833,65 @@ private:
         keepAncestors(table);
         keepBodyMoves(table);
         keepFaceMoves(table);
+        keepOneToOne(table);
         return detail::finishMap(std::move(table), false);
+    }
+
+    // ElementMap::Impl::runs and wholeBlends (T-081b round 11), from this operation's own history only, never from
+    // geometry. A face whose names came to it one to one (the history says that one input face was Modified into it and
+    // into nothing else, no other input element, named or not, was Modified into it, and nothing was Generated into it:
+    // one in, one out) continues its input face's run. Any other face with names starts a run with this feature: one
+    // this feature issued its names to (a sweep's face, a generated one, a piece of a split face, one named from its
+    // edges), one several input elements went into (a merge, absorbDeleted's included), one something was generated
+    // into.
+    void keepOneToOne(ElementMap::Impl& table) const
+    {
+        const std::size_t f = slot(SubKind::Face);
+        for (std::uint32_t i = 0; i < t_.count[f]; ++i) {
+            if (names_[f][i].empty())
+                continue;
+            const SubId face{SubKind::Face, i};
+            const std::vector<SourceKey>& modified = modifiedFrom_[f][i];
+            const bool oneToOne = issuedFaces_.count(i) == 0 && modified.size() == 1 &&
+                                  modifiedCount(modified.front()) == 1 && generatedFrom_[f][i].empty();
+            if (!oneToOne) {
+                table.runs.emplace_back(face, in_.feature);
+                continue;
+            }
+            const ElementMap* from = in_.inputMaps[static_cast<std::size_t>(modified.front().first)];
+            if (from == nullptr)
+                continue;
+            if (const auto run = detail::runOf(*from, modified.front().second))
+                table.runs.emplace_back(face, *run);
+        }
+        // Whole blend faces: those the input maps knew, while held; then this feature's own.
+        std::vector<Hash256> held;
+        for (const TopoName& r : table.records)
+            held.push_back(r.id); // (records are sorted by id)
+        for (const ElementMap* map : in_.inputMaps)
+            if (map != nullptr && map->impl)
+                for (const Hash256& name : map->impl->wholeBlends)
+                    if (std::binary_search(held.begin(), held.end(), name))
+                        table.wholeBlends.push_back(name);
+        if (!in_.exactInputs.empty() && !in_.inputMaps.empty()) {
+            const std::string role = in_.featureRole + ".gE_F";
+            for (const std::uint32_t i : issuedFaces_) {
+                const std::vector<SourceKey>& generated = generatedFrom_[f][i];
+                if (names_[f][i].size() != 1 || generated.size() != 1 || !modifiedFrom_[f][i].empty())
+                    continue;
+                const SourceKey& edge = generated.front();
+                if (edge.first != 0 || edge.second.kind != SubKind::Edge ||
+                    std::find(in_.exactInputs.begin(), in_.exactInputs.end(), edge.second) == in_.exactInputs.end())
+                    continue;
+                std::size_t faces = 0;
+                for (std::uint32_t j = 0; j < t_.count[f]; ++j)
+                    faces += std::binary_search(generatedFrom_[f][j].begin(), generatedFrom_[f][j].end(), edge) ? 1 : 0;
+                const TopoName* record = recordOf(names_[f][i].front());
+                if (faces == 1 && record != nullptr && record->role == role)
+                    table.wholeBlends.push_back(names_[f][i].front());
+            }
+        }
+        sortUnique(table.wholeBlends);
     }
 
     // The record of a name that no result element holds, as this build or an input map knew it (held or an ancestor).
@@ -981,6 +1041,7 @@ private:
     std::array<std::vector<std::vector<SourceKey>>, 3> modifiedFrom_, generatedFrom_; // by result
     std::map<SourceKey, std::vector<SubId>> modifiedTo_;      // by input element; empty = Deleted
     std::map<SourceKey, std::vector<Hash256>> splitChildren_; // names of the pieces of a split input element
+    std::set<std::uint32_t> issuedFaces_;                     // faces this feature issued a name to
 };
 
 Result<NamingOutput> propagateChecked(const NamingInput& in)

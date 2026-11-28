@@ -2,6 +2,7 @@
 // model.reference action, CAM operations). The reader is a small strict RFC 8259 parser for this one schema.
 #include "naming_internal.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -123,6 +124,24 @@ void writeSamples(std::string& out, const PickSamples& s)
     out += '{';
     if (v3)
         out += s.between ? "\"between\":true," : "\"between\":false,";
+    // (T-081b round 11, optional: written only when an entry has flags.)
+    if (v3 && std::any_of(s.carrierHistory.begin(), s.carrierHistory.end(),
+                          [](const PickSamples::CarrierHistory& h) { return h.flags != 0; })) {
+        out += "\"carrierHistory\":[";
+        for (std::size_t i = 0; i < s.carrierHistory.size(); ++i) {
+            if (i > 0)
+                out += ',';
+            out += "{\"flags\":";
+            writeInteger(out, s.carrierHistory[i].flags);
+            if (s.carrierHistory[i].flags != 0) {
+                out += ",\"run\":\"";
+                out += s.carrierHistory[i].run.value.toString();
+                out += '"';
+            }
+            out += '}';
+        }
+        out += "],";
+    }
     if (v3) {
         out += "\"carrierNames\":[";
         for (std::size_t i = 0; i < s.carrierNames.size(); ++i) {
@@ -697,9 +716,9 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
     const bool v2 = s.version >= 2;
     const bool v3 = s.version >= 3;
     if (auto ok = v3 ? onlyKeys(v,
-                                {"between", "carrierNames", "carriers", "ends", "faceMoves", "firstEnd", "grounds",
-                                 "neighbourGrounds", "neighbourMoves", "neighbourOwners", "own", "placements", "points",
-                                 "spacing", "version", "whole"},
+                                {"between", "carrierHistory", "carrierNames", "carriers", "ends", "faceMoves",
+                                 "firstEnd", "grounds", "neighbourGrounds", "neighbourMoves", "neighbourOwners", "own",
+                                 "placements", "points", "spacing", "version", "whole"},
                                 field + ".")
                   : v2 ? onlyKeys(v,
                                   {"carriers", "ends", "firstEnd", "grounds", "neighbourGrounds", "neighbourOwners",
@@ -837,6 +856,40 @@ Result<PickSamples> readSamples(const Node& v, const std::string& field, std::si
                 return tl::unexpected(list.error());
             s.carrierNames.push_back(std::move(*list));
         }
+    }
+    if (const Node* history = v3 ? v.find("carrierHistory") : nullptr) {
+        const char* bad = "must hold one {\"flags\": 0 to 3, \"run\": feature UUID when flags are not 0} per carrier, "
+                          "flags not all 0";
+        if (history->type != Node::Type::Array || history->items.size() != s.carriers.size())
+            return fieldError(field + ".carrierHistory", bad);
+        for (std::size_t i = 0; i < history->items.size(); ++i) {
+            const Node& h = history->items[i];
+            const std::string at = field + ".carrierHistory[" + std::to_string(i) + "]";
+            if (h.type != Node::Type::Object)
+                return fieldError(at, bad);
+            if (auto ok = onlyKeys(h, {"flags", "run"}, at + "."); !ok)
+                return tl::unexpected(ok.error());
+            const Node* flags = h.find("flags");
+            const auto n = flags != nullptr ? wholeNumber(*flags) : std::nullopt;
+            if (!n || *n < 0 || *n > 3)
+                return fieldError(at + ".flags", bad);
+            PickSamples::CarrierHistory entry;
+            entry.flags = static_cast<std::uint8_t>(*n);
+            const Node* run = h.find("run");
+            if ((run != nullptr) != (entry.flags != 0))
+                return fieldError(at + ".run", bad);
+            if (run != nullptr) {
+                const Uuid id = run->type == Node::Type::String ? Uuid::fromString(run->text) : Uuid{};
+                if (run->type != Node::Type::String || id.toString() != run->text || id == Uuid{})
+                    return fieldError(at + ".run", "must be a lower-case UUID other than the nil one");
+                entry.run = FeatureId{id};
+            }
+            s.carrierHistory.push_back(entry);
+        }
+        // (Written only when one has flags: a list without would not be written back as it was read.)
+        if (std::all_of(s.carrierHistory.begin(), s.carrierHistory.end(),
+                        [](const PickSamples::CarrierHistory& h) { return h.flags == 0; }))
+            return fieldError(field + ".carrierHistory", bad);
     }
     if (const Node* moves = v3 ? v.find("neighbourMoves") : nullptr) {
         const char* bad = "must hold one face move (-1 or an index into faceMoves) per pick neighbour";

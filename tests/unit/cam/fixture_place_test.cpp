@@ -1073,9 +1073,13 @@ TEST_CASE("the vise's placement is a body placement: a face picked before it fol
     CHECK(info->centroid.x == Catch::Approx(want.x).margin(1e-3));
     CHECK(info->centroid.y == Catch::Approx(want.y).margin(1e-3));
     CHECK(info->centroid.z == Catch::Approx(want.z).margin(1e-3));
-    // The mutation check: the body moves ignored, the move is not known and the answer is no longer Exact.
+    // The mutation check: the body moves ignored, the move is not known and the answer is no longer Exact. (Since
+    // T-081b round 11 the move's history, one face in, one out, makes the face the pick by history as well: the check
+    // is asked of the body moves alone, identity by history off.)
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::Carried, false);
     naming::testing::setBodyMovesEnabled(false);
     const naming::Resolved off = resolver->resolve(ref);
     naming::testing::setBodyMovesEnabled(true);
+    naming::testing::setHistoryIdentityEnabled(naming::testing::HistoryIdentity::Carried, true);
     CHECK(off.state != naming::ResolveState::Exact);
 }

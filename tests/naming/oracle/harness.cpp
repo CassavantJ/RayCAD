@@ -315,6 +315,9 @@ bool Builder::blend(const Feature& f)
     }
     auto resolver = naming::makeResolver({naming::ResolverBody{testBody(), map_, shape_}});
     std::set<std::uint32_t> edges;
+    // The edges given by a reference picked now or resolved Exact (naming.h NamingInput::exactInputs), as the document
+    // gives them.
+    std::set<std::uint32_t> exact;
     if (mode_ == Mode::Author) {
         auto& picks = refs_[f.id];
         picks.clear();
@@ -326,6 +329,7 @@ bool Builder::blend(const Feature& f)
                 picks.push_back({k, withoutOutlineIfAsked(resolver->makeRef(testBody(), edge)),
                                  PickRecord{edge, desc, *samples, ownersAt}});
                 edges.insert(e);
+                exact.insert(e);
                 if (!desc.ok)
                     ++unverifiablePicks_;
             }
@@ -342,8 +346,11 @@ bool Builder::blend(const Feature& f)
                     ++unjudgedPicks_;
                 if (r.usable())
                     for (const SubId& s : r.elements)
-                        if (s.kind == SubKind::Edge)
+                        if (s.kind == SubKind::Edge) {
                             edges.insert(s.index);
+                            if (r.state == naming::ResolveState::Exact)
+                                exact.insert(s.index);
+                        }
             }
     }
     if (edges.empty()) {
@@ -362,7 +369,11 @@ bool Builder::blend(const Feature& f)
     }
     const std::array<const naming::ElementMap*, 1> maps{&map_};
     const std::array<const kernel::Shape*, 1> shapes{&shape_};
-    const naming::NamingInput input{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
+    naming::NamingInput input{featureIdOf(f.id), f.role, maps, &op->history, &op->shape, {}, std::span(shapes)};
+    std::vector<SubId> exactEdges;
+    for (const std::uint32_t e : exact)
+        exactEdges.push_back(SubId{SubKind::Edge, e});
+    input.exactInputs = exactEdges;
     auto named = naming::propagate(input);
     if (!named) {
         failed_.push_back(f.id + ": naming failed: " + named.error().message);

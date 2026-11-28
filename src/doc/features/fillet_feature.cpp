@@ -146,6 +146,7 @@ private:
         const naming::ElementMap& map = ctx.mapOf(body);
         FeatureOutput out;
         std::set<std::uint32_t> edges;
+        std::set<std::uint32_t> exact; // given by a reference that resolved Exact (naming.h NamingInput::exactInputs)
         std::vector<std::string> broken;
         const std::size_t n = props->edges.size();
         for (std::size_t i = 0; i < n; ++i) {
@@ -167,6 +168,9 @@ private:
                                   where + ": " + ordinal(i, n) + " now resolves to something that is not an edge.");
                 }
                 edges.insert(e.index);
+                if (r.state == naming::ResolveState::Exact) {
+                    exact.insert(e.index);
+                }
             }
             if (r.state == naming::ResolveState::Split) {
                 out.warnings.push_back(where + ": " + ordinal(i, n) + " was split by an earlier change; all " +
@@ -203,8 +207,12 @@ private:
         }
         const std::array<const naming::ElementMap*, 1> maps{&map};
         const std::array<const kernel::Shape*, 1> shapes{&*shape};
-        const naming::NamingInput input{f.id, std::string(kind_.type), maps, &op->history, &op->shape,
-                                        {},   std::span(shapes)};
+        naming::NamingInput input{f.id, std::string(kind_.type), maps, &op->history, &op->shape, {}, std::span(shapes)};
+        std::vector<kernel::SubId> exactEdges;
+        for (const std::uint32_t e : exact) {
+            exactEdges.push_back(kernel::SubId{kernel::SubKind::Edge, e});
+        }
+        input.exactInputs = exactEdges;
         auto named = naming::propagate(input);
         if (!named) {
             return failed(ErrorCode::Internal, where + ": naming the result failed: " + named.error().message);
