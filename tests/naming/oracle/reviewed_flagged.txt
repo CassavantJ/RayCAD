@@ -1,0 +1,10 @@
+# Known flagged-wrong suggestions of the naming resolver, looked at (the coordinator's ruling 1 after review round 9).
+# A Repaired answer is a suggestion, not usable until the user confirms it: a wrong or incomplete one is a FLAGGED
+# wrong, not a silent one, and it is not reclassified as a miss. One per line: <key> => <answer signature> =>
+# <one-line justification>, the key as the test prints it ("<key>: WRONG ..."). An entry matches only the answer with
+# its exact signature (harness.h knownFlagged: sameAnswer, without reviewCovers' widening), only a Repaired answer, and
+# a block (harness.h blockOfKey) may have at most one entry: the block gates fail otherwise (flaggedListProblems). A
+# WRONG answer matching an entry is counted as "WRONG (flagged suggestion, reviewed)", not in the WRONG count the gates
+# hold at 0.
+# Block 5 (seed 0x7E2B49C1D58A0000, keys "directedit-review5 "):
+directedit-review5 raycad-synthetic/l_bracket_1.stp #25|edge 94 => Repaired edge(55.1678 15.7834 7.2768 2.1780 54.9131 16.5504 8.0000 55.3000 15.0000 6.5381) => (the reviewer's ruling, round 9 VERDICTS.md: flagged, suggestion incomplete; resize R1) the crossing of the imported face I/i6 with R1's wall s3 the pick was is now two edges (83: 1.667 mm, 84: 2.178 mm); the suggestion names 84 only. Not usable without confirmation: a flagged wrong, not a silent one (docs/naming/KNOWN_MISSES.md).

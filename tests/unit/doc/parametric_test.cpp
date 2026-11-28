@@ -811,6 +811,44 @@ TEST_CASE("a feature moved by editing its sketch has another placement, and its 
     CHECK(info->centroid.x == Catch::Approx(50).margin(1e-6)); // the moved side
 }
 
+TEST_CASE("a profile mirrored and moved in its sketch: each wall's reference follows the sketch line that makes it",
+          "[doc][parametric]")
+{
+    // Review round 9, case S5 (the reviewer's document probe): the block's rectangle x 0..40 edited to x0 40, x1 -20,
+    // mirrored and moved. By docs/naming/POLICY.md the wall made by sketch line k is the same wall wherever line k
+    // goes: the wall at x 40, made by the right line (rect's base + 5, from (x1, y0) to (x1, y1)), is now the wall at x
+    // -20; the wall at x 0, made by the left line (base + 7), is now the wall at x 40.
+    Model m;
+    block(m);
+    BuildResultPtr b = m.build();
+    const auto wallAt = [](const kernel::Shape& shape, double x) {
+        return findFace(shape, [x](const kernel::SurfaceInfo& s) {
+            return s.type == kernel::SurfaceType::Plane && near(s.centroid.x, x, 1e-3) && near(s.centroid.z, 5, 1e-3);
+        });
+    };
+    const auto right = wallAt(bodyOf(*b, 'b').shape, 40);
+    const auto left = wallAt(bodyOf(*b, 'b').shape, 0);
+    REQUIRE(right);
+    REQUIRE(left);
+    const naming::TopoRef rightRef = refTo(*b, 'b', *right);
+    const naming::TopoRef leftRef = refTo(*b, 'b', *left);
+    m.run(editFeature("sketch", 2, sketchProps(kXY, SketchJson().rect(1, 40, 0, -20, 20))));
+    b = m.build();
+    REQUIRE(report(*b, 3).status == FeatureStatus::Ok);
+    const BuiltBody& body = bodyOf(*b, 'b');
+    for (const auto& [ref, x] : {std::make_pair(rightRef, -20.0), std::make_pair(leftRef, 40.0)}) {
+        INFO("the wall that follows its line to x " << x);
+        const naming::Resolved r = resolveOn(*b, 'b', ref);
+        INFO("resolver " << static_cast<int>(r.state) << ": " << r.reason);
+        REQUIRE(r.state == naming::ResolveState::Exact);
+        REQUIRE(r.elements.size() == 1);
+        const auto info = kernel::surfaceInfo(body.shape, r.elements[0]);
+        REQUIRE(info);
+        CHECK(info->type == kernel::SurfaceType::Plane);
+        CHECK(info->centroid.x == Catch::Approx(x).margin(1e-6));
+    }
+}
+
 TEST_CASE("the size of the pick-time evidence in a saved document (printed)", "[.toporef-size]")
 {
     // The document of golden/old_toporef built again with references made now (with evidence): the storage objects'

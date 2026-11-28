@@ -920,6 +920,54 @@ const ReviewedList& reviewedConflicts()
     return list;
 }
 
+const ReviewedList& reviewedFlagged()
+{
+    static const ReviewedList list = loadReviewed("reviewed_flagged.txt");
+    return list;
+}
+
+std::string blockOfKey(const std::string& key)
+{
+    const std::string first = key.substr(0, std::min(key.find(' '), key.find('|')));
+    return first.empty() || first.find('/') != std::string::npos ? std::string("random") : first;
+}
+
+std::vector<std::string> flaggedListProblems(const ReviewedList& list)
+{
+    std::vector<std::string> out;
+    std::map<std::string, std::vector<std::string>> byBlock;
+    for (const auto& [key, entry] : list) {
+        std::string state;
+        std::vector<SigElement> els;
+        if (!parseSignature(entry.answer, state, els) || els.empty())
+            out.push_back(key + ": no answer recorded");
+        else if (state != "Repaired")
+            out.push_back(key + ": a " + state + " answer (the list is for Repaired suggestions only)");
+        byBlock[blockOfKey(key)].push_back(key);
+    }
+    for (const auto& [block, keys] : byBlock)
+        if (keys.size() > 1) {
+            std::string all;
+            for (const std::string& k : keys)
+                all += " [" + k + "]";
+            out.push_back("block " + block + " has " + std::to_string(keys.size()) + " entries (at most one):" + all);
+        }
+    return out;
+}
+
+const ReviewedEntry* knownFlagged(const ReviewedList& list, const std::string& id, Answer answer, Verdict verdict,
+                                  const std::string& signature)
+{
+    if (!isWrong(verdict) || answer != Answer::Repaired || signature.rfind("Repaired ", 0) != 0 ||
+        !flaggedListProblems(list).empty())
+        return nullptr;
+    const auto [lo, hi] = list.equal_range(id);
+    for (auto it = lo; it != hi; ++it)
+        if (sameAnswer(it->second.answer, signature))
+            return &it->second;
+    return nullptr;
+}
+
 const ReviewedEntry* reviewedAnswer(const ReviewedList& list, const std::string& id, const std::string& signature)
 {
     const auto [lo, hi] = list.equal_range(id);
@@ -1125,6 +1173,7 @@ void Tally::merge(const Tally& o)
     twins += o.twins;
     selfCheckFailures += o.selfCheckFailures;
     exactNotIdentity += o.exactNotIdentity;
+    wrongFlaggedReviewed += o.wrongFlaggedReviewed;
     for (const auto& [k, v] : o.mutants) {
         auto& m = mutants[k];
         for (std::size_t i = 0; i < 3; ++i)
@@ -1138,7 +1187,7 @@ long Tally::wrong() const
     for (const Verdict v :
          {Verdict::WrongOther, Verdict::WrongIncomplete, Verdict::WrongGhost, Verdict::WrongSilentMerge})
         w += verdict[static_cast<std::size_t>(v)];
-    return w;
+    return w - wrongFlaggedReviewed;
 }
 
 long Tally::mutantsMade() const
@@ -1284,12 +1333,27 @@ void account(const std::string& id, const RefResult& rr, const naming::Resolved&
     const bool explainThis = explainOnly != nullptr && id.size() > std::strlen(explainOnly) &&
                              id.compare(id.size() - std::strlen(explainOnly), std::string::npos, explainOnly) == 0 &&
                              id[id.size() - std::strlen(explainOnly) - 1] == '|';
+    // A known flagged-wrong suggestion (reviewed_flagged.txt): counted apart from the WRONG count, and said so.
+    const ReviewedEntry* flagged =
+        rr.ambiguous ? nullptr : knownFlagged(reviewedFlagged(), id, rr.answer, v, rr.signature);
+    if (flagged != nullptr)
+        ++tally.wrongFlaggedReviewed;
     if (isWrong(v) || v == Verdict::Unjudged || explainThis) {
-        addWrong(id + ": " + verdictName(v) + "; resolver " + answer + " (" + res.reason + "), oracle expects " +
+        std::string flagNote;
+        if (flagged != nullptr)
+            flagNote = " [reviewed: " + flagged->why + "]";
+        else if (isWrong(v) && rr.answer == Answer::Repaired)
+            flagNote = " [not a known flagged suggestion; answer " + rr.signature + "]";
+        // ("WRONG (flagged suggestion, reviewed) incomplete set" for "WRONG incomplete set".)
+        std::string verdict = verdictName(v);
+        if (flagged != nullptr)
+            verdict = "WRONG (flagged suggestion, reviewed) " +
+                      (verdict.rfind("WRONG ", 0) == 0 ? verdict.substr(std::strlen("WRONG ")) : verdict);
+        addWrong(id + ": " + verdict + "; resolver " + answer + " (" + res.reason + "), oracle expects " +
                  list(rr.expected) + (rr.merged ? " merged" : "") +
                  (rr.noAnchor.empty() ? "" : " (" + rr.noAnchor + ")") +
                  (rr.crossing.empty() ? "" : " (sliding crossing, " + rr.crossing + ")") + ", congruent " +
-                 std::to_string(rr.congruent));
+                 std::to_string(rr.congruent) + flagNote);
         if (std::getenv("RAYCAD_NAMING_VERBOSE") != nullptr && log.wrongs.size() < log.maxWrongs)
             log.wrongs.push_back(verbose());
     }
@@ -1443,6 +1507,9 @@ void printTally(const char* title, const Tally& t)
                 v(Verdict::Correct), v(Verdict::BrokenGone), v(Verdict::Missed), v(Verdict::Unjudged), t.wrong(),
                 v(Verdict::WrongOther), v(Verdict::WrongIncomplete), v(Verdict::WrongGhost),
                 v(Verdict::WrongSilentMerge));
+    std::printf("  WRONG (flagged suggestion, reviewed: reviewed_flagged.txt, in the counts by kind above, not in "
+                "WRONG): %ld\n",
+                t.wrongFlaggedReviewed);
     std::printf("  among references whose element still exists: %s%% Exact, Split or Merged (%ld of %ld)\n",
                 percent(t.existingOk, t.existing).c_str(), t.existingOk, t.existing);
     std::printf(

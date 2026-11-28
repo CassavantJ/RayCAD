@@ -1254,6 +1254,9 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
     CHECK(t.accepted == t.acceptedReviewed);
     CHECK(t.acceptedNewGround == t.acceptedNewGroundReviewed);
     CHECK(t.conflicts == t.conflictsReviewed);
+    // The known flagged-wrong suggestions (reviewed_flagged.txt): Repaired only, at most one per block.
+    for (const std::string& problem : flaggedListProblems(reviewedFlagged()))
+        FAIL_CHECK("reviewed_flagged.txt: " << problem);
     REQUIRE(t.wrong() == 0);
 }
 
@@ -1388,8 +1391,9 @@ TEST_CASE("Review block 5: 1,000 randomised sequences with direct edits, the rev
 {
     // The reviewer's frozen block 5 (seed 0x7E2B49C1D58A0000, run on oracle-freeze-5 and adjudicated in review round 9:
     // no silent wrong answer; 13:12, 14:23 and 11:18 the oracle's, decided by identity in round 12, docs/naming/
-    // POLICY.md; 8:25 edge 94 a flagged, incomplete Repaired suggestion, docs/naming/KNOWN_MISSES.md; its 2 answers not
-    // judged reviewed), kept as a regular block: gated as the holdouts.
+    // POLICY.md; 8:25 edge 94 a flagged, incomplete Repaired suggestion, docs/naming/KNOWN_MISSES.md, the block's one
+    // entry on reviewed_flagged.txt; its 2 answers not judged reviewed), kept as a regular block: gated as the
+    // holdouts.
     runHoldout("Direct-edit review block 5", 0x7E2B49C1D58A0000ull, "directedit-review5 ");
 }
 
@@ -2051,7 +2055,7 @@ void replayCases(bool keyOnly)
         // place or carried by the boss's move: Broken, the old Exact WRONG.
         // Round 12 (docs/naming/POLICY.md, the oracle's WHOLE GENERATOR; the class of block 5 14:23 face 47): the start
         // cap was one face before and is one after, R4 moved: by identity that patch is R4's start cap, so Broken is a
-        // miss (Exact {39} right).
+        // miss (Exact {39} right). The expectation changed by POLICY.md (whole generator), round 8.
         {4,
          29,
          k + "fillet_block_1.stp #29|face 17",
@@ -2485,7 +2489,8 @@ TEST_CASE("Post-condition pins (round 8): an answer holds the pick as its featur
         // oracle no longer credits its old place). Broken; Exact on the strip WRONG. (Off: Exact {5}.)
         // Round 12 (docs/naming/POLICY.md, the oracle's WHOLE GENERATOR): the cap was one face before and is one face
         // after, R2 moved: by identity the strip is R2's end cap, so Broken is a miss and Exact on it right (the
-        // post-condition still decides the resolver's answer: the mutation check below stands).
+        // post-condition still decides the resolver's answer: the mutation check below stands). The expectation changed
+        // by POLICY.md (whole generator), round 8.
         {"review4 13:25",
          13,
          SubKind::Face,
@@ -2610,18 +2615,21 @@ TEST_CASE("Identity refusal pins (round 10, ruling A): on the pick's own surface
     };
     const std::vector<Pin> pins{
         {"holdout1 7:33", 7, {39.2339, -2.5489, 10.5459}, 27.0338, "another patch of a boss's side"},
+        // The expectation changed by POLICY.md (whole generator), round 8.
         {"review4 13:25",
          13,
          {110.9422, 39.0751, 5.0154},
          181.1502,
          "a moved cut's end cap whose image left the part",
          true},
+        // The expectation changed by POLICY.md (whole generator), round 8.
         {"random 11:43",
          11,
          {12.8857, 49.1827, 7.6208},
          289.3283,
          "T-081a random 11:43 face 8, on its own surface",
          true},
+        // The expectation changed by POLICY.md (whole generator), round 8.
         {"directedit 8:3",
          8,
          {3.6352, 25.4857, 38.2551},
@@ -3587,7 +3595,7 @@ TEST_CASE("Every entry of the reviewed lists records the answer it reviewed", "[
 {
     // T-081b round 5, item 1: an entry counts an answer as reviewed only when the answer matches the one recorded
     // (state and geometric signature), so an entry without one would never match: none may be left.
-    for (const auto* list : {&reviewedUnjudged(), &reviewedConflicts(), &reviewedTerritory()})
+    for (const auto* list : {&reviewedUnjudged(), &reviewedConflicts(), &reviewedTerritory(), &reviewedFlagged()})
         for (const auto& [key, entry] : *list) {
             INFO(key);
             CHECK(sameAnswer(entry.answer, entry.answer));
@@ -3635,6 +3643,82 @@ TEST_CASE("Review matching (round 10, ruling F): a reviewed Exact covers a Repai
     CHECK(reviewedAnswer(reviewedUnjudged(), listed, "Repaired " + rest) != nullptr);
     CHECK(reviewedAnswer(reviewedUnjudged(), listed, "Split " + rest) == nullptr);
     CHECK(reviewedAnswer(reviewedUnjudged(), listed, "Merged " + rest) == nullptr);
+}
+
+TEST_CASE("Known flagged-wrong suggestions (the coordinator's ruling 1 after review round 9): Repaired only, by the "
+          "full answer, at most one per block, counted apart from WRONG",
+          "[naming][oracle-gate]")
+{
+    // A Repaired answer is a suggestion, not usable until confirmed: a wrong or incomplete one is a flagged wrong, not
+    // a silent one (and not a miss). reviewed_flagged.txt lists such answers that were looked at; a WRONG answer
+    // matching an entry is counted in Tally::wrongFlaggedReviewed, not in Tally::wrong().
+    const std::string pts = " edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.1656 1.3573 1.1583 2.1590)";
+    const std::string other = " edge(1.3573 1.1583 0.4967 3.3246 1.3573 1.1583 -1.0656 1.3573 1.1583 2.0590)";
+    const std::string key = "directedit-review9 raycad-synthetic/l_bracket_1.stp #25|edge 94";
+    CHECK(blockOfKey(key) == "directedit-review9");
+    CHECK(blockOfKey("directedit raycad-synthetic/l_bracket_1.stp #3|face 15") == "directedit");
+    CHECK(blockOfKey("raycad-synthetic/thin_wall_box_1.stp #28|face 4") == "random");
+    ReviewedList list;
+    list.emplace(key, ReviewedEntry{"Repaired" + pts, "an incomplete suggestion, looked at"});
+    REQUIRE(flaggedListProblems(list).empty());
+    // Matches: a WRONG verdict on a Repaired answer with the entry's signature.
+    CHECK(knownFlagged(list, key, Answer::Repaired, Verdict::WrongIncomplete, "Repaired" + pts) != nullptr);
+    CHECK(knownFlagged(list, key, Answer::Repaired, Verdict::WrongOther, "Repaired" + pts) != nullptr);
+    // Never an Exact, Split or Merged answer (whatever its elements), nor a Repaired one with another signature, nor
+    // another reference, nor a verdict that is not WRONG.
+    for (const Answer a : {Answer::Exact, Answer::Split, Answer::Merged}) {
+        const std::string sig = std::string(a == Answer::Exact   ? "Exact"
+                                            : a == Answer::Split ? "Split"
+                                                                 : "Merged") +
+                                pts;
+        CHECK(knownFlagged(list, key, a, Verdict::WrongIncomplete, sig) == nullptr);
+        CHECK(knownFlagged(list, key, a, Verdict::WrongIncomplete, "Repaired" + pts) == nullptr);
+    }
+    CHECK(knownFlagged(list, key, Answer::Repaired, Verdict::WrongIncomplete, "Repaired" + other) == nullptr);
+    CHECK(knownFlagged(list, key, Answer::Repaired, Verdict::WrongIncomplete, "Repaired" + pts + pts) == nullptr);
+    CHECK(knownFlagged(list, key + "0", Answer::Repaired, Verdict::WrongIncomplete, "Repaired" + pts) == nullptr);
+    CHECK(knownFlagged(list, key, Answer::Repaired, Verdict::Correct, "Repaired" + pts) == nullptr);
+    CHECK(knownFlagged(list, key, Answer::Repaired, Verdict::Unjudged, "Repaired" + pts) == nullptr);
+    // An entry for anything but a Repaired answer makes the list unsound, and then nothing matches.
+    {
+        ReviewedList bad = list;
+        bad.emplace("directedit-review8 raycad-synthetic/l_bracket_1.stp #1|edge 2", ReviewedEntry{"Exact" + pts, "?"});
+        CHECK(flaggedListProblems(bad).size() == 1);
+        CHECK(knownFlagged(bad, key, Answer::Repaired, Verdict::WrongIncomplete, "Repaired" + pts) == nullptr);
+        ReviewedList unrecorded = list;
+        unrecorded.emplace("directedit-review8 raycad-synthetic/l_bracket_1.stp #1|edge 2", ReviewedEntry{"", "?"});
+        CHECK(flaggedListProblems(unrecorded).size() == 1);
+    }
+    // A second entry in a block makes the list unsound (another reference, or the same one with another answer),
+    // whatever their answers; an entry in another block does not.
+    {
+        ReviewedList two = list;
+        two.emplace("directedit-review9 raycad-synthetic/fixture_plate_1.stp #7|edge 3",
+                    ReviewedEntry{"Repaired" + other, "another"});
+        CHECK(flaggedListProblems(two).size() == 1);
+        CHECK(knownFlagged(two, key, Answer::Repaired, Verdict::WrongIncomplete, "Repaired" + pts) == nullptr);
+        ReviewedList twice = list;
+        twice.emplace(key, ReviewedEntry{"Repaired" + other, "the same reference, another answer"});
+        CHECK(flaggedListProblems(twice).size() == 1);
+        ReviewedList apart = list;
+        apart.emplace("directedit-review8 raycad-synthetic/fixture_plate_1.stp #7|edge 3",
+                      ReviewedEntry{"Repaired" + other, "another block"});
+        CHECK(flaggedListProblems(apart).empty());
+    }
+    // The tally: a flagged WRONG stays in the verdict counts, out of wrong().
+    Tally t;
+    t.add(Answer::Repaired, Verdict::WrongIncomplete);
+    CHECK(t.wrong() == 1);
+    t.wrongFlaggedReviewed = 1;
+    CHECK(t.wrong() == 0);
+    Tally sum;
+    sum.merge(t);
+    sum.merge(t);
+    CHECK(sum.wrong() == 0);
+    CHECK(sum.wrongFlaggedReviewed == 2);
+    // The list in the tree: sound, and it holds block 5's 8:25 edge 94.
+    CHECK(flaggedListProblems(reviewedFlagged()).empty());
+    CHECK(reviewedFlagged().count("directedit-review5 raycad-synthetic/l_bracket_1.stp #25|edge 94") == 1);
 }
 
 TEST_CASE("A regression to a wrong element on a reviewed reference is not reviewed (holdout2 17:24 edge 3)",

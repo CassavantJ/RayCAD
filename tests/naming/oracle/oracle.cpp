@@ -40,7 +40,9 @@ constexpr std::size_t kVertex = 0, kEdge = 1, kFace = 2;
 // round 12 (identity, docs/naming/POLICY.md): whole-generator (the one face of a pick's edited generator is E, wherever
 // it lies), whole-generator-once (its "whole before and after" test: the negatives' check), slid-end (an edge between
 // the same end elements, its slider moved along the curve, is E), slid-end-ends and slid-end-ground (its end-element
-// and third-edge tests: the negatives' checks). For checking the pins only; never set in a gate run.
+// and third-edge tests: the negatives' checks); round 13: clockwise-loop (a clockwise profile loop, a mirrored profile,
+// has its walls' material side turned: off, every loop is taken as counter-clockwise) and clockwise-loop-sign (the
+// negatives' check: every loop taken as clockwise). For checking the pins only; never set in a gate run.
 
 // How near a point must be to a face held before an edit to lie on its ground (Owner::heldByOther), mm.
 constexpr double kHeldTolerance = 1e-3;
@@ -228,6 +230,37 @@ double distEnt(const Ent& e, double u, double v)
         return std::abs(rr - e.r);
     return std::min(dmath::hypot(u - e.x0, v - e.y0), dmath::hypot(u - e.x1, v - e.y1));
 }
+// The signed area of a loop, its entities taken in order and direction: positive counter-clockwise. A line adds its
+// chord's term; a (counter-clockwise) arc its chord's and its circular segment's; a full circle its disc.
+double loopArea(const Loop& l)
+{
+    double a = 0;
+    for (const Ent& e : l.ents) {
+        if (e.k == 'C') {
+            a += kPi * e.r * e.r;
+            continue;
+        }
+        a += 0.5 * (e.x0 * e.y1 - e.x1 * e.y0);
+        if (e.k == 'A') {
+            const double t = normAng(dmath::atan2(e.y1 - e.cy, e.x1 - e.cx) - dmath::atan2(e.y0 - e.cy, e.x0 - e.cx));
+            a += 0.5 * e.r * e.r * (t - dmath::sin(t));
+        }
+    }
+    return a;
+}
+
+// Is the loop clockwise about its frame's normal (a mirrored profile)? Its region is the same either way (the kernel
+// takes a loop in either direction), but its material side is not the one the loop's direction gives a
+// counter-clockwise loop: buildOwners turns its walls' sides. Mutation "clockwise-loop": every loop taken as
+// counter-clockwise (the oracle before round 13: a mirrored profile's walls fit no face); "clockwise-loop-sign" (the
+// negatives' check): every loop taken as clockwise.
+bool clockwise(const Loop& l)
+{
+    if (mutated("clockwise-loop"))
+        return false;
+    return mutated("clockwise-loop-sign") || loopArea(l) < 0;
+}
+
 double distLoop(const Loop& l, double u, double v)
 {
     double d = 1e9;
@@ -836,6 +869,10 @@ Owners buildOwners(const Script& script)
                 h = sg * dot(d, fr.n);
             };
             for (const Loop& l : f.loops) {
+                // The material side of a wall: for a counter-clockwise loop the region lies left of each entity's
+                // direction; for a clockwise one (a mirrored profile, clockwise()) right of it. A cut's material is
+                // outside the region.
+                const double side = (cut ? -1.0 : 1.0) * (clockwise(l) ? -1.0 : 1.0);
                 for (const Ent& e : l.ents) {
                     Owner o;
                     o.key = f.id + "/s" + std::to_string(e.tag);
@@ -843,7 +880,7 @@ Owners buildOwners(const Script& script)
                     if (e.k == 'L') {
                         const double len = dmath::hypot(e.x1 - e.x0, e.y1 - e.y0);
                         const double tx = (e.x1 - e.x0) / len, ty = (e.y1 - e.y0) / len;
-                        const double ox = cut ? -ty : ty, oy = cut ? tx : -tx;
+                        const double ox = side * ty, oy = -side * tx;
                         o.c.oriented = true;
                         o.c.k = Carrier::K::Plane;
                         o.c.p = fr.at(e.x0, e.y0);
@@ -860,7 +897,8 @@ Owners buildOwners(const Script& script)
                         o.c.p = fr.at(e.cx, e.cy);
                         o.c.a = fr.n;
                         o.c.r = e.r;
-                        o.c.sigma = cut ? -1 : +1;
+                        // (A counter-clockwise arc in a clockwise loop is a concave stretch of its region.)
+                        o.c.sigma = side > 0 ? +1 : -1;
                         const double a0 = dmath::atan2(e.y0 - e.cy, e.x0 - e.cx);
                         const double span = e.k == 'C' ? 2 * kPi : normAng(dmath::atan2(e.y1 - e.cy, e.x1 - e.cx) - a0);
                         o.in = [=](const Vec3& p, double m) {

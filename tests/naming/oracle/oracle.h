@@ -173,7 +173,9 @@ struct Ent {
 };
 struct Loop {
     std::uint64_t id = 0;  // stable region id
-    std::vector<Ent> ents; // closed, counter-clockwise about the frame normal
+    std::vector<Ent> ents; // closed (each entity starting where the one before ends), counter-clockwise about the
+                           // frame normal; or clockwise (a mirrored profile): the same region, the kernel takes either,
+                           // and buildOwners turns its walls' material side (oracle.cpp clockwise)
 };
 struct Frame {
     Vec3 o{0, 0, 0};

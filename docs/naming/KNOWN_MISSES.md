@@ -80,9 +80,13 @@ so the refusal's Broken is a miss (the oracle's WHOLE GENERATOR):
 - T-081a random 11:43 face 8 (plate_counterbore_1), random-directedit 8:3 face 15 (l_bracket_1).
 - random-directedit-sorted 4:29 face 17 (fillet_block_1; a moved boss's start-cap window).
 
+Refusal 3 (OnPickSurfaces) may be over-refusing whole generator faces; to revisit after M6, not now.
+
 ### A flagged suggestion left incomplete
 
 Not a miss, recorded here as a known shortfall: block 5 (seed 0x7E2B49C1D58A0000, `[random-directedit-review5]`) 8:25
 edge 94, R1 resized: the crossing the pick was is now two edges (83: 1.667 mm, 84: 2.178 mm), and the Repaired
 suggestion names 84 only. It is flagged and not usable without confirmation; the oracle counts it WRONG (incomplete),
-and that judgement is kept.
+and that judgement is kept. Since the next round it is listed, by its answer, on the known flagged-wrong suggestions
+(tests/naming/oracle/reviewed_flagged.txt, at most one per block, Repaired only): counted as "WRONG (flagged
+suggestion, reviewed)", apart from the WRONG count the gates hold at 0.

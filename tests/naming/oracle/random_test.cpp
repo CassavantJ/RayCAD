@@ -882,6 +882,9 @@ void checkGates(const BlockResult& r, int perPart, const std::string& holdoutPre
     CHECK(t.accepted == t.acceptedReviewed);
     CHECK(t.acceptedNewGround == t.acceptedNewGroundReviewed);
     CHECK(t.conflicts == t.conflictsReviewed);
+    // The known flagged-wrong suggestions (reviewed_flagged.txt): Repaired only, at most one per block.
+    for (const std::string& problem : flaggedListProblems(reviewedFlagged()))
+        FAIL_CHECK("reviewed_flagged.txt: " << problem);
     REQUIRE(t.wrong() == 0);
 }
 

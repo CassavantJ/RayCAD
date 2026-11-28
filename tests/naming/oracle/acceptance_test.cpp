@@ -9,6 +9,7 @@
 #include "harness.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <iterator>
@@ -1420,6 +1421,149 @@ TEST_CASE(
                 CHECK_FALSE(isWrong(o.verdict));
             }
     }
+}
+
+namespace {
+
+// The faces of the edited shape whose centroid lies within 1e-3 mm of the plane through `p` with normal `n` (a unit
+// axis), as indices.
+std::vector<std::uint32_t> facesOnPlane(const Run& r, const Vec3& p, const Vec3& n)
+{
+    std::vector<std::uint32_t> out;
+    const auto& F = r.now->of(SubKind::Face);
+    for (std::uint32_t i = 0; i < F.size(); ++i)
+        if (F[i].type == static_cast<int>(kernel::SurfaceType::Plane) &&
+            std::abs(dot(sub(F[i].centroid, p), n)) < 1e-3 && std::abs(std::abs(dot(F[i].nrm, n)) - 1) < 1e-6)
+            out.push_back(i);
+    return out;
+}
+
+// Review round 9, case i2b (the reviewer's review_probe.cpp [.review5-rules]): boss B (x 20..50, y 20..40, 6 high) on a
+// block, fillet R1 on B/s1's top edge (the wall at y 20, from sketch line 1). `boss` is the boss's sketch rectangle as
+// edited; `fillet` false leaves R1 out, `slot` true adds a slot through the wall at y 40 (and into the block).
+Script i2bScript(const Loop& boss, bool fillet, bool slot)
+{
+    Script s = block(100, 60, 10);
+    s.push_back(sweep("B", BOp::Join, top(10), boss, 6));
+    if (fillet)
+        s.push_back(blendOn("R1", true, Target{"B/s1", "B/c1/1"}, 1.0));
+    if (slot)
+        s.push_back(sweep("T", BOp::Cut, top(16), rect(34, 35, 36, 45), 8));
+    return s;
+}
+
+const Vec3 kY{0, 1, 0}, kX{1, 0, 0};
+
+// Each wall's one face reference: E is one face, on the plane where the wall's sketch line now is, Exact on it judged
+// correct, and the resolver's answer not WRONG.
+void checkWalls(const Run& r, const std::vector<std::pair<std::string, std::pair<Vec3, Vec3>>>& walls)
+{
+    for (const auto& [owner, plane] : walls) {
+        const auto pick = [&](const Outcome& o) {
+            return faceOf(o, owner);
+        };
+        INFO("references about " << owner << ":" << refsAbout(r, owner));
+        REQUIRE(count(r.out, pick) == 1);
+        const std::vector<std::uint32_t> there = facesOnPlane(r, plane.first, plane.second);
+        for (const Outcome& o : r.out)
+            if (pick(o)) {
+                INFO(owner << ": resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason
+                           << "), expected" << text(o.expected.elems) << ", faces on its line's plane" << text(there)
+                           << ", verdict " << verdictName(o.verdict));
+                REQUIRE(o.expected.elems.size() == 1);
+                CHECK(std::find(there.begin(), there.end(), o.expected.elems[0]) != there.end());
+                CHECK(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict == Verdict::Correct);
+                CHECK_FALSE(isWrong(o.verdict));
+            }
+    }
+}
+
+} // namespace
+
+TEST_CASE("Oracle (round 13): a clockwise profile loop (a mirrored profile) has its walls on the material side the "
+          "kernel builds; each wall and the fillet follow their sketch line",
+          "[naming][acceptance][oracle-gate]")
+{
+    // i2b: the edited boss is mirrored AND moved, its sketch rectangle y0 20 -> 40, y1 40 -> 10: line 1 is at y 40 now,
+    // line 3 at y 10, and the loop is clockwise. The kernel takes a loop in either direction (the region is the same);
+    // the oracle took every loop as counter-clockwise, so the walls' material side was backwards (oracle.cpp
+    // buildOwners): no face fitted B/s1..B/s4 or R1/b0, and the resolver's Exact answers on them were judged WRONG
+    // ghost. By docs/naming/POLICY.md the wall made by line k is the same wall wherever line k goes: B/s1 the wall at y
+    // 40, B/s3 the one at y 10, B/s2 and B/s4 the walls at x 50 and x 20, and the fillet the one on B/s1's top edge,
+    // now at y 40. (RAYCAD_ORACLE_MUTATE=clockwise-loop: E {} for B/s1, this fails.)
+    const Run r = run(i2bScript(rect(20, 20, 50, 40), true, false), i2bScript(rect(20, 40, 50, 10), true, false));
+    checkWalls(r, {{"B/s1", {{35, 40, 13}, kY}},
+                   {"B/s2", {{50, 25, 13}, kX}},
+                   {"B/s3", {{35, 10, 13}, kY}},
+                   {"B/s4", {{20, 25, 13}, kX}}});
+    const auto fillet = [](const Outcome& o) {
+        return faceOf(o, "R1/b0");
+    };
+    INFO("references about R1/b0:" << refsAbout(r, "R1/b0"));
+    REQUIRE(count(r.out, fillet) == 1);
+    for (const Outcome& o : r.out)
+        if (fillet(o)) {
+            INFO("R1/b0: resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                                    << text(o.expected.elems) << ", verdict " << verdictName(o.verdict));
+            REQUIRE(o.expected.elems.size() == 1);
+            CHECK(r.now->of(SubKind::Face)[o.expected.elems[0]].centroid.y > 39);
+            CHECK(judgeOther(r, o, Answer::Exact, o.expected.elems).verdict == Verdict::Correct);
+            CHECK_FALSE(isWrong(o.verdict));
+        }
+    checkNoneWrong(r);
+}
+
+TEST_CASE("Oracle (round 13), negative: a mirrored profile's wall split in two is not answered Exact on one piece",
+          "[naming][acceptance][oracle-gate]")
+{
+    // i2b with a slot T through the wall at y 40 (B/s1's after the edit) and into the block: B/s1 is that wall, in two
+    // pieces. Split on both right, Exact on either piece WRONG. (RAYCAD_ORACLE_MUTATE=clockwise-loop: no piece fits
+    // B/s1, E {}, this fails.)
+    const Run r = run(i2bScript(rect(20, 20, 50, 40), true, false), i2bScript(rect(20, 40, 50, 10), true, true));
+    const auto pick = [](const Outcome& o) {
+        return faceOf(o, "B/s1");
+    };
+    INFO("references about B/s1:" << refsAbout(r, "B/s1"));
+    REQUIRE(count(r.out, pick) == 1);
+    const std::vector<std::uint32_t> there = facesOnPlane(r, {35, 40, 13}, kY);
+    for (const Outcome& o : r.out)
+        if (pick(o)) {
+            const std::vector<std::uint32_t> all = logicalElements(r, o);
+            INFO("B/s1: resolver " << static_cast<int>(o.resolved.state) << " (" << o.resolved.reason << "), expected"
+                                   << text(o.expected.elems) << ", logical" << text(all) << ", faces at y 40"
+                                   << text(there) << ", verdict " << verdictName(o.verdict));
+            REQUIRE(all.size() == 2);
+            for (const std::uint32_t e : all)
+                CHECK(std::find(there.begin(), there.end(), e) != there.end());
+            CHECK(o.expected.elems == all);
+            CHECK(judgeOther(r, o, Answer::Split, all).verdict == Verdict::Correct);
+            for (const std::uint32_t e : all)
+                CHECK(isWrong(judgeOther(r, o, Answer::Exact, {e}).verdict));
+            CHECK_FALSE(isWrong(o.verdict));
+        }
+}
+
+TEST_CASE("Oracle (round 13), negative: a counter-clockwise profile moved to the same place is judged as before",
+          "[naming][acceptance][oracle-gate]")
+{
+    // The control: boss B dragged to the same place without the mirror (y0 20 -> 10, y1 40 -> 40), the loop still
+    // counter-clockwise, without the fillet. Line 1 is at y 10 now, line 3 where it was: B/s1 is the wall at y 10, and
+    // Exact on the wall at y 40 is WRONG. The same with RAYCAD_ORACLE_MUTATE=clockwise-loop (the oracle before the
+    // fix); with RAYCAD_ORACLE_MUTATE=clockwise-loop-sign (every loop's side turned, counter-clockwise ones too) it
+    // fails.
+    const Run r = run(i2bScript(rect(20, 20, 50, 40), false, false), i2bScript(rect(20, 10, 50, 40), false, false));
+    checkWalls(r, {{"B/s1", {{35, 10, 13}, kY}},
+                   {"B/s2", {{50, 25, 13}, kX}},
+                   {"B/s3", {{35, 40, 13}, kY}},
+                   {"B/s4", {{20, 25, 13}, kX}}});
+    for (const Outcome& o : r.out)
+        if (faceOf(o, "B/s1")) {
+            const std::vector<std::uint32_t> far = facesOnPlane(r, {35, 40, 13}, kY);
+            INFO("faces at y 40" << text(far));
+            REQUIRE(far.size() == 1);
+            CHECK(isWrong(judgeOther(r, o, Answer::Exact, far).verdict));
+        }
+    checkNoneWrong(r);
 }
 
 TEST_CASE("The size of a reference's JSON form with and without pick-time evidence, on corpus parts (printed)",

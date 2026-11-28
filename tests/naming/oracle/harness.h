@@ -196,17 +196,19 @@ struct Tally {
     long conflicts = 0;                 // the one congruent-in-place element is not E, nothing moved, and the
                                         // answer was judged correct (gated: oracle and resolver may share an error)
     long conflictsReviewed = 0;
-    long unjudgedReviewed = 0;  // not-judged answers on the reviewed list (reviewed_unjudged.txt)
-    long conflictsOther = 0;    // the same with a Broken or wrong answer (counted: no answer was accepted)
-    long congruentGhosts = 0;   // the same after a move (another element took the place: counted only)
-    long injectivity = 0;       // elements answered Exact for two or more distinct references
-    long twins = 0;             // Exact on one of coincident vertices (oracle.h Expectation::twins)
-    long selfCheckFailures = 0; // the oracle's own expected answer not judged correct
-    long exactNotIdentity = 0;  // Exact answers not decided by generator identity (naming::Resolved::identity)
+    long unjudgedReviewed = 0;     // not-judged answers on the reviewed list (reviewed_unjudged.txt)
+    long conflictsOther = 0;       // the same with a Broken or wrong answer (counted: no answer was accepted)
+    long congruentGhosts = 0;      // the same after a move (another element took the place: counted only)
+    long injectivity = 0;          // elements answered Exact for two or more distinct references
+    long twins = 0;                // Exact on one of coincident vertices (oracle.h Expectation::twins)
+    long selfCheckFailures = 0;    // the oracle's own expected answer not judged correct
+    long exactNotIdentity = 0;     // Exact answers not decided by generator identity (naming::Resolved::identity)
+    long wrongFlaggedReviewed = 0; // WRONG Repaired answers on the known flagged-wrong list (knownFlagged): in the
+                                   // verdict counts, not in wrong()
     std::map<std::string, std::array<long, 3>> mutants; // class: made, caught, caught only by the review gate
     void add(Answer a, Verdict v);
     void merge(const Tally& o);
-    long wrong() const;
+    long wrong() const; // the WRONG verdicts less wrongFlaggedReviewed (the gates hold it at 0)
     long unjudged() const { return verdict[static_cast<std::size_t>(Verdict::Unjudged)]; }
     long mutantsMade() const;
     long mutantsCaught() const;
@@ -235,6 +237,23 @@ const ReviewedList& reviewedTerritory();
 const ReviewedList& reviewedConflicts();
 // tests/naming/oracle/reviewed_unjudged.txt: answers the oracle could not judge (no anchor), each looked at.
 const ReviewedList& reviewedUnjudged();
+// tests/naming/oracle/reviewed_flagged.txt, the known flagged-wrong suggestions (the coordinator's ruling 1 after
+// review round 9): a Repaired answer is a suggestion that is not usable until confirmed, so a wrong or incomplete one
+// is a FLAGGED wrong, not a silent one, and it is not reclassified as a miss. Same line format; keyed by the full
+// answer signature (sameAnswer, without reviewCovers' widening); valid for Repaired answers only; at most one entry per
+// block (blockOfKey). A WRONG answer matching an entry (knownFlagged) is counted in Tally::wrongFlaggedReviewed, not in
+// Tally::wrong(), and printed as "WRONG (flagged suggestion, reviewed)".
+const ReviewedList& reviewedFlagged();
+// The block a reviewed-list key belongs to: its first word when that names no part ("directedit-review5",
+// "holdout3", "directedit"), else "random" (the T-081a block, whose keys start with the part).
+std::string blockOfKey(const std::string& key);
+// What makes a flagged list unsound: an entry whose answer is not Repaired (or not recorded), a block with two entries.
+// Empty when it is sound. The block gates (checkGates) fail on a non-empty answer for reviewedFlagged().
+std::vector<std::string> flaggedListProblems(const ReviewedList& list);
+// The entry of the flagged list for reference `id` that this answer matches, or null: only for a WRONG verdict, a
+// Repaired answer and the entry's exact signature (sameAnswer), and only while the list is sound (flaggedListProblems).
+const ReviewedEntry* knownFlagged(const ReviewedList& list, const std::string& id, Answer answer, Verdict verdict,
+                                  const std::string& signature);
 // The gate on answers the oracle could not judge, for every block: each must be on the reviewed list by its answer
 // (T-081b round 6: it used to apply to a holdout block only once the list had an entry with the block's prefix).
 inline bool unjudgedGateOk(const Tally& t)
